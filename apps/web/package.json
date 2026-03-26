@@ -9,7 +9,6 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@labelflow/shared": "*",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@prisma/client": "^5.14.0",
     "@supabase/supabase-js": "^2.43.0",
