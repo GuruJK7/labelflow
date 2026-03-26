@@ -1,0 +1,13 @@
+{
+  "name": "@labelflow/shared",
+  "version": "1.0.0",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "lint": "echo ok"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

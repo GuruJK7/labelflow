@@ -1,0 +1,21 @@
+{
+  "name": "labelflow",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:worker": "npm run dev --workspace=apps/worker",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "db:generate": "npx prisma generate --schema=apps/web/prisma/schema.prisma",
+    "db:push": "npx prisma db push --schema=apps/web/prisma/schema.prisma",
+    "db:migrate": "npx prisma migrate dev --schema=apps/web/prisma/schema.prisma",
+    "db:studio": "npx prisma studio --schema=apps/web/prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
