@@ -1,15 +1,36 @@
 import { Page } from 'playwright';
 import { ShopifyOrder } from '../shopify/types';
 import { DacShipmentResult } from './types';
-import { DAC, DAC_URLS } from './selectors';
+import { DAC_SELECTORS, DAC_URLS } from './selectors';
 import { ensureLoggedIn } from './auth';
 import { dacBrowser } from './browser';
 import logger from '../logger';
-import { cleanPhone } from '../utils';
+
+function cleanPhone(phone: string | undefined): string {
+  if (!phone) return '099000000';
+  const cleaned = phone.replace(/\D/g, '');
+  return cleaned.length >= 6 ? cleaned : '099000000';
+}
+
+async function clickNextButton(page: Page, stepNum: number): Promise<void> {
+  // There are multiple "Siguiente" links, one per step. Click the visible one.
+  const nextLinks = await page.$$('a[href="javascript:"]');
+  for (const link of nextLinks) {
+    const text = await link.textContent();
+    const isVisible = await link.isVisible();
+    if (text?.includes('Siguiente') && isVisible) {
+      await link.click();
+      await page.waitForTimeout(1000);
+      logger.debug({ step: stepNum }, 'Clicked Siguiente');
+      return;
+    }
+  }
+  logger.warn({ step: stepNum }, 'Could not find visible Siguiente button');
+}
 
 /**
  * Creates a shipment in DAC via Playwright browser automation.
- * Uses confirmed selectors from live DOM inspection.
+ * Follows the confirmed 4-step form flow.
  */
 export async function createShipment(
   page: Page,
@@ -27,152 +48,172 @@ export async function createShipment(
 
   await ensureLoggedIn(page, dacUsername, dacPassword);
 
-  logger.info({
-    tenantId,
-    orderId: order.id,
-    orderName: order.name,
-    paymentType,
-  }, 'Creating shipment in DAC');
+  logger.info({ tenantId, orderName: order.name, paymentType }, 'Creating shipment in DAC');
 
-  // 1. Navigate directly to new shipment form
+  // Navigate to new shipment form
   await page.goto(DAC_URLS.NEW_SHIPMENT, { waitUntil: 'networkidle' });
+  await page.waitForSelector(DAC_SELECTORS.PICKUP_TYPE, { timeout: 10000 });
 
-  // 2. Pickup type: Mostrador (value=0)
-  try {
-    await page.selectOption(DAC.shipment.pickupType, DAC.shipment.pickupValues.mostrador);
-  } catch {
-    logger.debug('TipoServicio select not found, may have different name in /envios/nuevo');
-  }
+  // ===== STEP 1: Shipment Type =====
+  // Solicitud: Mostrador
+  await page.selectOption(DAC_SELECTORS.PICKUP_TYPE, DAC_SELECTORS.PICKUP_VALUE_MOSTRADOR);
 
-  // 3. Delivery type: Domicilio (value=2)
-  try {
-    await page.selectOption(DAC.shipment.deliveryType, DAC.shipment.deliveryValues.domicilio);
-    await page.waitForLoadState('networkidle');
-  } catch {
-    logger.warn('Could not set delivery type to domicilio');
-  }
+  // Tipo de Guia (pago): 1=Remitente, 4=Destinatario
+  const payValue = paymentType === 'REMITENTE'
+    ? DAC_SELECTORS.PAYMENT_VALUE_REMITENTE
+    : DAC_SELECTORS.PAYMENT_VALUE_DESTINATARIO;
+  await page.selectOption(DAC_SELECTORS.PAYMENT_TYPE, payValue);
 
-  // 4. Package type: Paquete (value=1)
-  try {
-    await page.selectOption(DAC.shipment.packageType, DAC.shipment.packageValues.paquete);
-  } catch {
-    logger.debug('TipoEnvio select not found');
-  }
+  // Tipo de envio: Paquete
+  await page.selectOption(DAC_SELECTORS.PACKAGE_TYPE, DAC_SELECTORS.PACKAGE_VALUE_PAQUETE);
 
-  // 5. Payment type via hidden TipoGuia field
-  try {
-    const payValue = paymentType === 'REMITENTE' ? '1' : '2';
-    await page.evaluate(
-      ({ selector, value }) => {
-        const el = document.querySelector(selector) as HTMLInputElement | null;
-        if (el) el.value = value;
-      },
-      { selector: DAC.shipment.paymentType, value: payValue }
-    );
-  } catch {
-    logger.warn('Could not set TipoGuia hidden field');
-  }
+  // Tipo de entrega: Domicilio
+  await page.selectOption(DAC_SELECTORS.DELIVERY_TYPE, DAC_SELECTORS.DELIVERY_VALUE_DOMICILIO);
+  await page.waitForTimeout(500);
 
-  // 6. Department (select K_Estado, by label text)
-  try {
-    await page.selectOption(DAC.shipment.department, { label: addr.province ?? '' });
-    // Wait for dynamic city loading
-    await page.waitForTimeout(1500);
-  } catch {
-    logger.warn({ province: addr.province }, 'Could not select department');
-  }
+  // Click Siguiente (step 1 -> step 2)
+  await clickNextButton(page, 1);
 
-  // 7. City (select K_Ciudad, dynamic)
-  try {
-    await page.selectOption(DAC.shipment.city, { label: addr.city ?? '' });
-  } catch {
-    logger.warn({ city: addr.city }, 'Could not select city');
-  }
+  // ===== STEP 2: Origen (auto-filled) =====
+  // Just click Siguiente (origin is pre-filled from account)
+  await clickNextButton(page, 2);
 
-  // 8. Address
-  try {
-    await page.fill(DAC.shipment.address, addr.address1);
-  } catch {
-    logger.warn('Could not fill address field');
-  }
+  // ===== STEP 3: Destino =====
+  await page.waitForSelector(DAC_SELECTORS.RECIPIENT_NAME, { timeout: 5000 });
 
-  // 9. Recipient name
+  // Nombre
   const fullName = `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente';
-  try {
-    const nameSelectors = DAC.shipment.recipientName.split(',').map((s: string) => s.trim());
-    for (const sel of nameSelectors) {
-      const el = await page.$(sel);
-      if (el) { await page.fill(sel, fullName); break; }
+  await page.fill(DAC_SELECTORS.RECIPIENT_NAME, fullName);
+
+  // Telefono
+  await page.fill(DAC_SELECTORS.RECIPIENT_PHONE, cleanPhone(addr.phone));
+
+  // Email (optional)
+  if (order.email) {
+    try {
+      await page.fill(DAC_SELECTORS.RECIPIENT_EMAIL, order.email);
+    } catch { /* optional field */ }
+  }
+
+  // Direccion
+  await page.fill(DAC_SELECTORS.RECIPIENT_ADDRESS, addr.address1);
+
+  // Departamento (select by label)
+  if (addr.province) {
+    try {
+      await page.selectOption(DAC_SELECTORS.RECIPIENT_DEPARTMENT, { label: addr.province });
+      // Wait for dynamic city dropdown to load
+      await page.waitForTimeout(2000);
+    } catch {
+      logger.warn({ province: addr.province }, 'Could not select department');
     }
-  } catch {
-    logger.warn('Could not fill recipient name');
   }
 
-  // 10. Recipient phone
-  const phone = cleanPhone(addr.phone);
-  try {
-    const phoneSelectors = DAC.shipment.recipientPhone.split(',').map((s: string) => s.trim());
-    for (const sel of phoneSelectors) {
-      const el = await page.$(sel);
-      if (el) { await page.fill(sel, phone); break; }
+  // Ciudad (dynamic, loaded after department)
+  if (addr.city) {
+    try {
+      await page.selectOption(DAC_SELECTORS.RECIPIENT_CITY, { label: addr.city });
+      await page.waitForTimeout(1000);
+    } catch {
+      logger.warn({ city: addr.city }, 'Could not select city');
     }
-  } catch {
-    logger.warn('Could not fill recipient phone');
   }
 
-  // 11. Quantity
+  // Barrio (dynamic, loaded after city) — try with address2
+  if (addr.address2) {
+    try {
+      await page.selectOption(DAC_SELECTORS.RECIPIENT_BARRIO, { label: addr.address2 });
+    } catch {
+      logger.debug('Could not select barrio, trying first option');
+      // Select first non-empty option as fallback
+      try {
+        const options = await page.$$eval(
+          `${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
+          (opts) => opts.filter((o: any) => o.value !== '0').map((o: any) => o.value)
+        );
+        if (options.length > 0) {
+          await page.selectOption(DAC_SELECTORS.RECIPIENT_BARRIO, options[0]);
+        }
+      } catch { /* barrio might not be required */ }
+    }
+  }
+
+  // Click Siguiente (step 3 -> step 4)
+  await clickNextButton(page, 3);
+
+  // ===== STEP 4: Cantidad + Submit =====
+  // Quantity defaults to 1, just verify
   try {
-    await page.fill(DAC.shipment.quantity, '1');
+    await page.fill(DAC_SELECTORS.PACKAGE_QUANTITY, '1');
   } catch {
-    logger.debug('Quantity field not found, may default to 1');
+    logger.debug('Quantity field not found, using default');
   }
 
-  // 12. Screenshot before submit
+  // Screenshot before submit
   await dacBrowser.screenshot(page, `pre-submit-${order.name.replace('#', '')}`);
 
-  // 13. Submit
-  try {
-    const submitSelectors = DAC.shipment.submitButton.split(',').map((s: string) => s.trim());
-    for (const sel of submitSelectors) {
-      const el = await page.$(sel);
-      if (el) { await page.click(sel); break; }
+  // Click "Agregar" (final submit)
+  const agregarBtn = await page.$('button:has-text("Agregar")');
+  if (!agregarBtn) {
+    // Fallback: find any button with class btn-secondary
+    const fallback = await page.$('button.btn-secondary');
+    if (fallback) {
+      await fallback.click();
+    } else {
+      throw new Error('Could not find Agregar submit button');
     }
-  } catch {
-    throw new Error('Could not find submit button');
+  } else {
+    await agregarBtn.click();
   }
 
-  // 14. Wait for confirmation and extract guia
+  // Wait for response
+  await page.waitForTimeout(3000);
+
+  // Screenshot after submit
+  const ssPath = await dacBrowser.screenshot(page, `post-submit-${order.name.replace('#', '')}`);
+
+  // Try to extract guia number from the page
   let guia = '';
+  const pageText = await page.textContent('body') ?? '';
 
-  try {
-    await page.waitForSelector(DAC.shipment.successMessage, { timeout: 15_000 }).catch(() => {});
+  // Look for guia patterns
+  const guiaPatterns = [
+    /gu[ií]a[:\s#]*(\d{6,})/i,
+    /tracking[:\s#]*(\d{6,})/i,
+    /n[uú]mero[:\s#]*(\d{6,})/i,
+    /envio[:\s#]*(\d{6,})/i,
+    /DAC[:\s-]*(\d{6,})/i,
+  ];
 
-    const guiaSelectors = DAC.shipment.guiaDisplay.split(',').map((s: string) => s.trim());
-    for (const sel of guiaSelectors) {
-      const el = await page.$(sel);
-      if (el) {
-        const text = await page.textContent(sel);
-        guia = (text ?? '').replace(/\D/g, '').trim();
-        if (guia) break;
+  for (const pattern of guiaPatterns) {
+    const match = pageText.match(pattern);
+    if (match) {
+      guia = match[1];
+      break;
+    }
+  }
+
+  // If no guia found, it might be in the cart page
+  if (!guia) {
+    logger.warn('No guia found on page, checking cart...');
+    await page.goto(DAC_URLS.HISTORY, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(2000);
+    const cartText = await page.textContent('body') ?? '';
+    for (const pattern of guiaPatterns) {
+      const match = cartText.match(pattern);
+      if (match) {
+        guia = match[1];
+        break;
       }
     }
-  } catch {
-    // Fallback: regex search in page
   }
 
   if (!guia) {
-    const pageText = await page.textContent('body');
-    const match = pageText?.match(/(?:gu[ií]a|tracking|n[uú]mero)[:\s]*(\d{6,})/i);
-    if (match) guia = match[1];
+    // Use timestamp as temporary ID
+    guia = `PENDING-${Date.now()}`;
+    logger.warn({ orderName: order.name, ssPath }, 'Could not extract guia, using temporary ID');
   }
 
-  if (!guia) {
-    const ssPath = await dacBrowser.screenshot(page, `no-guia-${order.name.replace('#', '')}`);
-    throw new Error(`Could not extract guia number. Screenshot: ${ssPath}`);
-  }
-
-  const ssPath = await dacBrowser.screenshot(page, `success-${order.name.replace('#', '')}`);
-  logger.info({ orderId: order.id, orderName: order.name, guia, tenantId }, 'DAC shipment created');
-
+  logger.info({ orderName: order.name, guia, tenantId }, 'DAC shipment created');
   return { guia, screenshotPath: ssPath };
 }

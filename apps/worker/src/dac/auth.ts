@@ -1,11 +1,11 @@
 import { Page } from 'playwright';
-import { DAC, DAC_URLS } from './selectors';
+import { DAC_SELECTORS, DAC_URLS } from './selectors';
 import { dacBrowser } from './browser';
 import logger from '../logger';
 
 /**
  * Login to dac.com.uy using document/RUT + password.
- * DAC uses JS onclick buttons (NOT form submit).
+ * DAC uses JS onclick button (NOT form submit).
  */
 export async function loginDac(page: Page, username: string, password: string): Promise<void> {
   logger.info('Logging into DAC...');
@@ -13,21 +13,20 @@ export async function loginDac(page: Page, username: string, password: string): 
   await page.goto(DAC_URLS.LOGIN, { waitUntil: 'networkidle' });
 
   // Wait for login form
-  await page.waitForSelector(DAC.login.form, { timeout: 10_000 });
+  await page.waitForSelector(DAC_SELECTORS.LOGIN_USER_INPUT, { timeout: 10_000 });
 
   // Fill document/RUT
-  await page.fill(DAC.login.userInput, username);
+  await page.fill(DAC_SELECTORS.LOGIN_USER_INPUT, username);
 
   // Fill password
-  await page.fill(DAC.login.passwordInput, password);
+  await page.fill(DAC_SELECTORS.LOGIN_PASSWORD_INPUT, password);
 
   // Click login button (type="button", JS onclick)
-  await page.click(DAC.login.submitButton);
+  await page.click(DAC_SELECTORS.LOGIN_SUBMIT_BUTTON);
 
-  // Wait for navigation — the click triggers JS POST to /usuarios/doLogin
+  // Wait for navigation to /envios/nuevo
   try {
-    await page.waitForURL('**/envios/**', { timeout: 10_000 }).catch(() => {});
-    await page.waitForSelector(DAC.login.successIndicator, { timeout: 10_000 });
+    await page.waitForURL('**/envios/**', { timeout: 15_000 });
     logger.info('DAC login successful');
   } catch {
     const screenshotPath = await dacBrowser.screenshot(page, 'login-failed');
@@ -40,8 +39,10 @@ export async function loginDac(page: Page, username: string, password: string): 
  */
 export async function isLoggedIn(page: Page): Promise<boolean> {
   try {
-    const indicator = await page.$(DAC.login.successIndicator);
-    return indicator !== null;
+    const url = page.url();
+    if (url.includes('/usuarios/login')) return false;
+    const bienvenido = await page.$('text=Bienvenido');
+    return bienvenido !== null;
   } catch {
     return false;
   }
