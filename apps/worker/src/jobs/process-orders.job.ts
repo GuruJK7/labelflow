@@ -67,6 +67,15 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     // STEP 2: Get Shopify orders
     const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken);
     let orders = await getUnfulfilledOrders(shopifyClient);
+
+    // Filter out orders already processed in our DB (double-safety with Shopify tag)
+    const existingLabels = await db.label.findMany({
+      where: { tenantId, status: { in: ['CREATED', 'COMPLETED'] } },
+      select: { shopifyOrderId: true },
+    });
+    const processedIds = new Set(existingLabels.map(l => l.shopifyOrderId));
+    orders = orders.filter(o => !processedIds.has(String(o.id)));
+
     totalOrders = orders.length;
 
     if (orders.length === 0) {
