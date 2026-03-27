@@ -34,8 +34,9 @@ export const DAC_SELECTORS = {
   PICKUP_TYPE: 'select[name="TipoServicio"]',
   PICKUP_VALUE_MOSTRADOR: '0',
 
-  /** Tipo de Guia (PAYMENT): 1=Paga remitente, 4=Paga destinatario */
-  PAYMENT_TYPE: 'select[name="TipoGuia"]',
+  /** Tipo de Guia (PAYMENT): 1=Paga remitente, 4=Paga destinatario
+   *  NOTE: This might be a hidden input or select — shipment.ts handles both */
+  PAYMENT_TYPE: '[name="TipoGuia"]',
   PAYMENT_VALUE_REMITENTE: '1',
   PAYMENT_VALUE_DESTINATARIO: '4',
 
