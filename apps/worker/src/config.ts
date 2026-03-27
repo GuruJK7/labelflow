@@ -15,6 +15,7 @@ const configSchema = z.object({
   WORKER_CONCURRENCY: z.coerce.number().default(2),
   PLAYWRIGHT_HEADLESS: z.string().default('true').transform((v) => v !== 'false'),
   LABELS_TMP_DIR: z.string().default('/tmp/labelflow'),
+  CAPTCHA_API_KEY: z.string().optional(),
   SUPABASE_URL: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   SUPABASE_STORAGE_BUCKET: z.string().default('labels'),
