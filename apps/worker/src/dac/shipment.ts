@@ -4,11 +4,12 @@ import { DacShipmentResult } from './types';
 import { DAC_SELECTORS, DAC_URLS } from './selectors';
 import { ensureLoggedIn } from './auth';
 import { dacBrowser } from './browser';
+import { DAC_STEPS } from './steps';
+import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
 
-/**
- * Normalize a string for fuzzy matching: lowercase, remove accents, trim.
- */
+// ---- Helpers ----
+
 function normalize(s: string): string {
   return s
     .toLowerCase()
@@ -17,9 +18,6 @@ function normalize(s: string): string {
     .trim();
 }
 
-/**
- * Find the best matching option value in a select element.
- */
 async function findBestOptionMatch(
   page: Page,
   selector: string,
@@ -33,15 +31,19 @@ async function findBestOptionMatch(
   const search = normalize(searchText);
   if (!search) return null;
 
+  // Exact match
   for (const opt of options) {
     if (normalize(opt.text) === search && opt.value && opt.value !== '0') return opt.value;
   }
+  // Contains match
   for (const opt of options) {
     if (normalize(opt.text).includes(search) && opt.value && opt.value !== '0') return opt.value;
   }
+  // Reverse contains
   for (const opt of options) {
     if (opt.text.length > 2 && search.includes(normalize(opt.text)) && opt.value && opt.value !== '0') return opt.value;
   }
+  // Word match
   const searchWords = search.split(/\s+/);
   for (const opt of options) {
     const optWords = normalize(opt.text).split(/\s+/);
@@ -58,136 +60,83 @@ function cleanPhone(phone: string | undefined): string {
 }
 
 /**
- * Inspect the current page DOM to understand form structure.
- * Logs all interactive elements for debugging.
+ * Click the visible "Siguiente" button using Playwright locator (real click).
+ * Returns true if a visible button was found and clicked.
  */
-async function inspectFormDOM(page: Page, label: string): Promise<void> {
-  const domInfo = await page.evaluate(() => {
-    // Get all visible links with text
-    const links = Array.from(document.querySelectorAll('a')).map(a => ({
-      text: a.textContent?.trim().substring(0, 50),
-      href: a.href?.substring(0, 80),
-      visible: a.offsetParent !== null,
-      classes: a.className?.substring(0, 50),
-    })).filter(a => a.text && a.text.length > 0);
+async function clickSiguiente(page: Page, slog: StepLogger, stepLabel: string): Promise<boolean> {
+  // Use Playwright locator to find VISIBLE "Siguiente" links
+  const siguienteLocator = page.locator('a').filter({ hasText: 'Siguiente' }).filter({ has: page.locator(':visible') });
 
-    // Get all buttons
-    const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]')).map(b => ({
-      text: (b.textContent?.trim() || (b as HTMLInputElement).value)?.substring(0, 50),
-      type: (b as HTMLButtonElement).type,
-      visible: (b as HTMLElement).offsetParent !== null,
-      classes: b.className?.substring(0, 50),
-      id: b.id,
-    }));
+  // Fallback: try all matching anchors and click the first visible one
+  const allLinks = page.locator('a');
+  const count = await allLinks.count();
 
-    // Get all form steps/tabs/wizard indicators
-    const steps = Array.from(document.querySelectorAll('[class*="step"], [class*="wizard"], [class*="tab"], [class*="fase"], [role="tabpanel"], .nav-tabs li, .nav-pills li')).map(s => ({
-      text: s.textContent?.trim().substring(0, 50),
-      classes: s.className?.substring(0, 80),
-      visible: (s as HTMLElement).offsetParent !== null,
-    }));
+  for (let i = 0; i < count; i++) {
+    const link = allLinks.nth(i);
+    const text = await link.textContent().catch(() => '');
+    if (!text || !text.toLowerCase().includes('siguiente')) continue;
 
-    // Get all selects and their current values
-    const selects = Array.from(document.querySelectorAll('select')).map(s => ({
-      name: s.name,
-      id: s.id,
-      value: s.value,
-      visible: s.offsetParent !== null,
-      optionCount: s.options.length,
-    }));
+    const isVisible = await link.isVisible().catch(() => false);
+    if (!isVisible) continue;
 
-    // Get all inputs
-    const inputs = Array.from(document.querySelectorAll('input:not([type="hidden"])')).map(i => ({
-      name: (i as HTMLInputElement).name,
-      type: (i as HTMLInputElement).type,
-      id: i.id,
-      value: (i as HTMLInputElement).value?.substring(0, 30),
-      visible: (i as HTMLElement).offsetParent !== null,
-      placeholder: (i as HTMLInputElement).placeholder?.substring(0, 30),
-    }));
+    slog.info(stepLabel, `Clicking visible Siguiente button (index ${i})`, { text: text.trim() });
+    await link.click({ timeout: 5000 });
+    await page.waitForTimeout(1000);
+    return true;
+  }
 
-    // Get page title and URL
-    const title = document.title;
-    const url = window.location.href;
-
-    return { title, url, links: links.slice(0, 20), buttons, steps, selects, inputs: inputs.slice(0, 20) };
-  });
-
-  logger.info({ label, dom: domInfo }, 'DOM inspection');
+  slog.warn(stepLabel, 'No visible Siguiente button found');
+  return false;
 }
 
 /**
- * Navigate the multi-step form using JavaScript execution.
- * DAC's form uses Chukupax framework which may hide/show steps via JS.
+ * Safely fill an input field using Playwright locator (real interaction).
  */
-async function navigateToNextStep(page: Page, stepNum: number): Promise<boolean> {
-  // Take screenshot for debugging
-  await dacBrowser.screenshot(page, `step-${stepNum}-before-click`);
-
-  // Strategy 1: Execute any JS function that DAC uses to advance steps
-  const jsResult = await page.evaluate((step: number) => {
-    // Common patterns for multi-step forms:
-    // 1. Direct function call (Chukupax-style)
-    if (typeof (window as any).siguiente === 'function') {
-      (window as any).siguiente();
-      return 'called window.siguiente()';
+async function safeFill(page: Page, selector: string, value: string, slog: StepLogger, step: string, label: string): Promise<boolean> {
+  try {
+    const el = await page.$(selector);
+    if (!el) {
+      slog.warn(step, `Field not found: ${label}`, { selector });
+      return false;
     }
-    if (typeof (window as any).nextStep === 'function') {
-      (window as any).nextStep();
-      return 'called window.nextStep()';
+    // Clear and fill using Playwright's fill (triggers proper events)
+    await page.fill(selector, value);
+    slog.info(step, `Filled ${label}`, { selector, value: value.substring(0, 30) });
+    return true;
+  } catch (err) {
+    slog.warn(step, `Failed to fill ${label}: ${(err as Error).message}`, { selector });
+    return false;
+  }
+}
+
+/**
+ * Safely select an option in a dropdown using Playwright (real interaction).
+ */
+async function safeSelect(page: Page, selector: string, value: string, slog: StepLogger, step: string, label: string): Promise<boolean> {
+  try {
+    const el = await page.$(selector);
+    if (!el) {
+      slog.warn(step, `Select not found: ${label}`, { selector });
+      return false;
     }
-    if (typeof (window as any).next === 'function') {
-      (window as any).next();
-      return 'called window.next()';
-    }
-
-    // 2. Look for onclick handlers on links/buttons with "Siguiente"
-    const allElements = Array.from(document.querySelectorAll('a, button, input[type="button"]'));
-    for (const el of allElements) {
-      const text = el.textContent?.toLowerCase() || (el as HTMLInputElement).value?.toLowerCase() || '';
-      if (text.includes('siguiente') || text.includes('next')) {
-        // Try to get onclick attribute
-        const onclick = el.getAttribute('onclick');
-        if (onclick) {
-          try {
-            eval(onclick);
-            return `eval onclick: ${onclick.substring(0, 100)}`;
-          } catch { /* continue */ }
-        }
-        // Force click even if hidden
-        (el as HTMLElement).click();
-        return `force-clicked: ${text.substring(0, 30)}`;
-      }
-    }
-
-    // 3. Try to find step navigation via data attributes
-    const nextBtns = document.querySelectorAll('[data-step], [data-target], [data-slide="next"]');
-    for (const btn of Array.from(nextBtns)) {
-      (btn as HTMLElement).click();
-      return 'clicked data-step/target element';
-    }
-
-    // 4. Look for tab navigation
-    const tabs = document.querySelectorAll('.nav-tabs a, .nav-pills a, [role="tab"]');
-    const tabArray = Array.from(tabs);
-    if (tabArray.length > step) {
-      (tabArray[step] as HTMLElement).click();
-      return `clicked tab ${step}`;
-    }
-
-    return 'no_method_found';
-  }, stepNum);
-
-  logger.info({ step: stepNum, result: jsResult }, 'Navigate step result');
-
-  await page.waitForTimeout(1000);
-  await dacBrowser.screenshot(page, `step-${stepNum}-after-click`);
-
-  return jsResult !== 'no_method_found';
+    await page.selectOption(selector, value);
+    slog.info(step, `Selected ${label}`, { selector, value });
+    return true;
+  } catch (err) {
+    slog.warn(step, `Failed to select ${label}: ${(err as Error).message}`, { selector });
+    return false;
+  }
 }
 
 /**
  * Creates a shipment in DAC via Playwright browser automation.
+ *
+ * BUG FIXES applied:
+ *   1. Phone field uses TelD (not TelefonoD)
+ *   2. Uses real Playwright clicks for Siguiente/Agregar (not page.evaluate force-clicks)
+ *   3. Submit via .btnAdd click after proper step navigation (not direct POST)
+ *   4. Guia regex only matches numbers starting with 88 and 12+ digits
+ *   5. Ultra-detailed step logging to console + DB
  */
 export async function createShipment(
   page: Page,
@@ -195,8 +144,10 @@ export async function createShipment(
   paymentType: 'REMITENTE' | 'DESTINATARIO',
   dacUsername: string,
   dacPassword: string,
-  tenantId: string
+  tenantId: string,
+  jobId?: string
 ): Promise<DacShipmentResult> {
+  const slog = createStepLogger(jobId ?? 'manual', tenantId);
   const addr = order.shipping_address;
 
   if (!addr || !addr.address1) {
@@ -205,336 +156,306 @@ export async function createShipment(
 
   await ensureLoggedIn(page, dacUsername, dacPassword, tenantId);
 
-  logger.info({ tenantId, orderName: order.name, paymentType }, 'Creating shipment in DAC');
+  slog.info(DAC_STEPS.NAV_NEW_SHIPMENT, `Navigating to new shipment form for ${order.name}`, {
+    orderName: order.name,
+    paymentType,
+    city: addr.city,
+    province: addr.province,
+  });
 
   // Navigate to new shipment form
   await page.goto(DAC_URLS.NEW_SHIPMENT, { waitUntil: 'domcontentloaded', timeout: 15_000 });
-
-  // Wait for page to be interactive
   await page.waitForTimeout(2000);
 
-  // INSPECT the DOM to understand the form structure
-  await inspectFormDOM(page, 'new-shipment-loaded');
-  await dacBrowser.screenshot(page, `form-initial-${order.name.replace('#', '')}`);
-
-  // Check if form is a multi-step wizard or single page
-  const formType = await page.evaluate(() => {
-    // Check for common wizard patterns
-    const hasSteps = document.querySelectorAll('[class*="step"], [class*="wizard"], [class*="fase"]').length > 0;
-    const hasTabs = document.querySelectorAll('.nav-tabs, .nav-pills, [role="tablist"]').length > 0;
-    const hasSiguiente = Array.from(document.querySelectorAll('a, button')).some(
-      el => el.textContent?.toLowerCase().includes('siguiente')
-    );
-    const hasAgregar = Array.from(document.querySelectorAll('button')).some(
-      el => el.textContent?.toLowerCase().includes('agregar')
-    );
-
-    // Check what fields are visible right now
-    const visibleSelects = Array.from(document.querySelectorAll('select')).filter(
-      s => (s as HTMLElement).offsetParent !== null
-    ).map(s => s.name);
-
-    const visibleInputs = Array.from(document.querySelectorAll('input:not([type="hidden"])')).filter(
-      i => (i as HTMLElement).offsetParent !== null
-    ).map(i => (i as HTMLInputElement).name);
-
-    // Get all forms on the page
-    const forms = Array.from(document.querySelectorAll('form')).map(f => ({
-      id: f.id,
-      action: f.action?.substring(0, 80),
-      method: f.method,
-    }));
-
-    return {
-      hasSteps,
-      hasTabs,
-      hasSiguiente,
-      hasAgregar,
-      visibleSelects,
-      visibleInputs,
-      forms,
-    };
-  });
-
-  logger.info({ formType }, 'Form structure detected');
-
-  // Try to find and wait for TipoServicio select
-  let hasTipoServicio = false;
+  // Wait for the form to be present
   try {
-    await page.waitForSelector('select[name="TipoServicio"]', { timeout: 5_000 });
-    hasTipoServicio = true;
+    await page.waitForSelector('select[name="TipoServicio"]', { timeout: 8_000 });
+    slog.info(DAC_STEPS.NAV_FORM_LOADED, 'Shipment form loaded, TipoServicio visible');
   } catch {
-    logger.warn('TipoServicio select not found, form may have different structure');
+    await dacBrowser.screenshot(page, `form-not-loaded-${order.name.replace('#', '')}`);
+    throw new Error('DAC shipment form did not load (TipoServicio not found)');
   }
 
-  if (hasTipoServicio) {
-    // ===== STANDARD FORM FLOW (as confirmed in selectors.ts) =====
-    logger.info('Using standard DAC form flow');
+  // ===== STEP 1: Shipment Type =====
+  slog.info(DAC_STEPS.STEP1_START, 'Filling Step 1: shipment type fields');
 
-    // Set all Step 1 fields via JS
-    await page.evaluate(({ pickupVal, payVal, packageVal, deliveryVal }: {
-      pickupVal: string; payVal: string; packageVal: string; deliveryVal: string;
-    }) => {
-      function setField(name: string, value: string) {
-        const el = document.querySelector(`[name="${name}"]`) as HTMLSelectElement | HTMLInputElement;
-        if (!el) return false;
-        el.value = value;
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        return true;
-      }
-      setField('TipoServicio', pickupVal);
-      setField('TipoGuia', payVal);
-      setField('TipoEnvio', packageVal);
-      setField('TipoEntrega', deliveryVal);
-    }, {
-      pickupVal: DAC_SELECTORS.PICKUP_VALUE_MOSTRADOR,
-      payVal: paymentType === 'REMITENTE'
-        ? DAC_SELECTORS.PAYMENT_VALUE_REMITENTE
-        : DAC_SELECTORS.PAYMENT_VALUE_DESTINATARIO,
-      packageVal: DAC_SELECTORS.PACKAGE_VALUE_PAQUETE,
-      deliveryVal: DAC_SELECTORS.DELIVERY_VALUE_DOMICILIO,
-    });
+  const pickupVal = DAC_SELECTORS.PICKUP_VALUE_MOSTRADOR;
+  const payVal = paymentType === 'REMITENTE'
+    ? DAC_SELECTORS.PAYMENT_VALUE_REMITENTE
+    : DAC_SELECTORS.PAYMENT_VALUE_DESTINATARIO;
+  const packageVal = DAC_SELECTORS.PACKAGE_VALUE_PAQUETE;
+  const deliveryVal = DAC_SELECTORS.DELIVERY_VALUE_DOMICILIO;
 
-    logger.info({ paymentType }, 'Step 1 fields set');
-    await page.waitForTimeout(500);
+  await safeSelect(page, 'select[name="TipoServicio"]', pickupVal, slog, DAC_STEPS.STEP1_TIPO_SERVICIO, 'TipoServicio');
+  await page.waitForTimeout(300);
+
+  // TipoGuia might be a select or hidden input
+  const tipoGuiaEl = await page.$('select[name="TipoGuia"]');
+  if (tipoGuiaEl) {
+    await safeSelect(page, 'select[name="TipoGuia"]', payVal, slog, DAC_STEPS.STEP1_TIPO_GUIA, 'TipoGuia');
+  } else {
+    // Set hidden input value via evaluate
+    await page.evaluate((val: string) => {
+      const el = document.querySelector('[name="TipoGuia"]') as HTMLInputElement;
+      if (el) { el.value = val; el.dispatchEvent(new Event('change', { bubbles: true })); }
+    }, payVal);
+    slog.info(DAC_STEPS.STEP1_TIPO_GUIA, 'Set TipoGuia (hidden input)', { value: payVal });
   }
 
-  // Try to advance to next step
-  const advanced1 = await navigateToNextStep(page, 1);
-  if (!advanced1) {
-    logger.warn('Could not advance past step 1, trying to fill all fields on current page');
+  await safeSelect(page, 'select[name="TipoEnvio"]', packageVal, slog, DAC_STEPS.STEP1_TIPO_ENVIO, 'TipoEnvio');
+  await page.waitForTimeout(300);
+  await safeSelect(page, 'select[name="TipoEntrega"]', deliveryVal, slog, DAC_STEPS.STEP1_TIPO_ENTREGA, 'TipoEntrega');
+  await page.waitForTimeout(300);
+
+  slog.info(DAC_STEPS.STEP1_OK, 'Step 1 complete', { pickupVal, payVal, packageVal, deliveryVal });
+
+  // Click Siguiente to advance from Step 1 to Step 2
+  await dacBrowser.screenshot(page, `step1-complete-${order.name.replace('#', '')}`);
+  const adv1 = await clickSiguiente(page, slog, DAC_STEPS.STEP1_SIGUIENTE);
+  if (!adv1) {
+    slog.warn(DAC_STEPS.STEP1_SIGUIENTE, 'Could not click Siguiente after Step 1, continuing anyway');
   }
+  await page.waitForTimeout(800);
 
-  // Try to advance step 2 (origin, pre-filled)
-  await page.waitForTimeout(500);
-  await navigateToNextStep(page, 2);
+  // ===== STEP 2: Origin (auto-filled) =====
+  slog.info(DAC_STEPS.STEP2_START, 'Step 2: Origin (auto-filled from account)');
+  await dacBrowser.screenshot(page, `step2-before-${order.name.replace('#', '')}`);
 
-  // ===== FILL RECIPIENT DATA =====
-  // Try to find recipient fields (may be on current page or next step)
+  const adv2 = await clickSiguiente(page, slog, DAC_STEPS.STEP2_SIGUIENTE);
+  if (!adv2) {
+    slog.warn(DAC_STEPS.STEP2_SIGUIENTE, 'Could not click Siguiente after Step 2, continuing anyway');
+  }
   await page.waitForTimeout(1000);
-  await inspectFormDOM(page, 'before-recipient-fields');
+  slog.info(DAC_STEPS.STEP2_OK, 'Step 2 complete');
+
+  // ===== STEP 3: Recipient =====
+  slog.info(DAC_STEPS.STEP3_START, 'Filling Step 3: recipient data');
+  await dacBrowser.screenshot(page, `step3-before-${order.name.replace('#', '')}`);
 
   const fullName = `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente';
   const phone = cleanPhone(addr.phone);
 
-  // Fill all fields using page.evaluate to handle any visibility issues
-  const fillResult = await page.evaluate(({ name, phoneNum, email, address, province, city, barrio }: {
-    name: string; phoneNum: string; email: string; address: string;
-    province: string; city: string; barrio: string;
-  }) => {
-    const results: string[] = [];
+  // BUG FIX 1: Phone field is "TelD" not "TelefonoD"
+  // Fill each field using Playwright's fill() for real browser events
+  await safeFill(page, 'input[name="NombreD"]', fullName, slog, DAC_STEPS.STEP3_FILL_NAME, 'NombreD (name)');
 
-    function fillInput(selectors: string[], value: string, label: string) {
-      for (const sel of selectors) {
-        const el = document.querySelector(sel) as HTMLInputElement;
-        if (el) {
-          el.value = value;
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-          results.push(`${label}: filled via ${sel}`);
-          return true;
-        }
-      }
-      results.push(`${label}: NOT FOUND`);
-      return false;
+  // TelD is the correct phone field name
+  const phoneFilled = await safeFill(page, 'input[name="TelD"]', phone, slog, DAC_STEPS.STEP3_FILL_PHONE, 'TelD (phone)');
+  if (!phoneFilled) {
+    // Fallback: try other possible phone selectors
+    slog.warn(DAC_STEPS.STEP3_FILL_PHONE, 'TelD not found, trying fallback selectors');
+    await safeFill(page, 'input[name="telefono"]', phone, slog, DAC_STEPS.STEP3_FILL_PHONE, 'telefono (fallback)');
+  }
+
+  // Email (optional)
+  if (order.email) {
+    const emailFilled = await safeFill(page, 'input[name="Correo_Destinatario"]', order.email, slog, DAC_STEPS.STEP3_FILL_EMAIL, 'Correo_Destinatario');
+    if (!emailFilled) {
+      await safeFill(page, 'input[name="EmailD"]', order.email, slog, DAC_STEPS.STEP3_FILL_EMAIL, 'EmailD (fallback)');
     }
+  }
 
-    // Name
-    fillInput([
-      'input[name="nombre"]', 'input[name="NombreD"]',
-      'input[name="nombre_destinatario"]', 'input[placeholder*="ombre"]',
-    ], name, 'name');
-
-    // Phone - DAC uses name="TelD" (confirmed from DOM inspection)
-    fillInput([
-      'input[name="TelD"]', 'input[name="telefono"]', 'input[name="TelefonoD"]',
-      'input[name="tel"]', 'input[type="tel"]', 'input[placeholder*="el"]',
-    ], phoneNum, 'phone');
-
-    // Email
-    if (email) {
-      fillInput([
-        'input[name="email"]', 'input[name="EmailD"]',
-        'input[type="email"]', 'input[placeholder*="mail"]',
-      ], email, 'email');
-    }
-
-    // Address
-    fillInput([
-      '#DirD', 'input[name="DirD"]',
-      'input[name="direccion"]', 'input[name="DireccionD"]',
-      'input[placeholder*="irecc"]',
-    ], address, 'address');
-
-    return results;
-  }, {
-    name: fullName,
-    phoneNum: phone,
-    email: order.email ?? '',
-    address: addr.address1,
-    province: addr.province ?? '',
-    city: addr.city ?? '',
-    barrio: addr.address2 ?? '',
-  });
-
-  logger.info({ fillResult }, 'Recipient fields fill result');
+  // Address
+  const addrFilled = await safeFill(page, 'input[name="DirD"]', addr.address1, slog, DAC_STEPS.STEP3_FILL_ADDRESS, 'DirD (address)');
+  if (!addrFilled) {
+    await safeFill(page, '#DirD', addr.address1, slog, DAC_STEPS.STEP3_FILL_ADDRESS, 'DirD by id (fallback)');
+  }
 
   // Department (select)
   if (addr.province) {
-    try {
-      const deptMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, addr.province);
-      if (deptMatch) {
-        await page.selectOption(DAC_SELECTORS.RECIPIENT_DEPARTMENT, deptMatch);
-        await page.waitForTimeout(1500);
-        logger.info({ province: addr.province, matched: deptMatch }, 'Department selected');
-      }
-    } catch (err) {
-      logger.warn({ province: addr.province, error: (err as Error).message }, 'Error selecting department');
+    slog.info(DAC_STEPS.STEP3_SELECT_DEPT, `Selecting department: ${addr.province}`);
+    const deptMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, addr.province);
+    if (deptMatch) {
+      await safeSelect(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, deptMatch, slog, DAC_STEPS.STEP3_SELECT_DEPT, 'K_Estado (department)');
+      // Wait for city dropdown to populate after department change
+      slog.info(DAC_STEPS.STEP3_WAIT_CITIES, 'Waiting for cities to load after department change');
+      await page.waitForTimeout(1500);
+    } else {
+      slog.warn(DAC_STEPS.STEP3_SELECT_DEPT, `No department match for: ${addr.province}`);
     }
   }
 
-  // City
+  // City (select)
   if (addr.city) {
-    try {
-      const cityMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, addr.city);
-      if (cityMatch) {
-        await page.selectOption(DAC_SELECTORS.RECIPIENT_CITY, cityMatch);
-        await page.waitForTimeout(800);
-        logger.info({ city: addr.city, matched: cityMatch }, 'City selected');
-      } else {
-        const firstOpt = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_CITY} option`,
-          (opts: any[]) => { const v = opts.filter(o => o.value && o.value !== '0'); return v[0]?.value || null; });
-        if (firstOpt) await page.selectOption(DAC_SELECTORS.RECIPIENT_CITY, firstOpt);
+    slog.info(DAC_STEPS.STEP3_SELECT_CITY, `Selecting city: ${addr.city}`);
+    const cityMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, addr.city);
+    if (cityMatch) {
+      await safeSelect(page, DAC_SELECTORS.RECIPIENT_CITY, cityMatch, slog, DAC_STEPS.STEP3_SELECT_CITY, 'K_Ciudad (city)');
+      await page.waitForTimeout(800);
+    } else {
+      // Pick first non-empty option as fallback
+      slog.warn(DAC_STEPS.STEP3_SELECT_CITY, `No city match for: ${addr.city}, using first option`);
+      const firstOpt = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_CITY} option`,
+        (opts: any[]) => { const v = opts.filter(o => o.value && o.value !== '0'); return v[0]?.value || null; });
+      if (firstOpt) {
+        await safeSelect(page, DAC_SELECTORS.RECIPIENT_CITY, firstOpt, slog, DAC_STEPS.STEP3_SELECT_CITY, 'K_Ciudad (first option)');
       }
-    } catch (err) {
-      logger.warn({ city: addr.city, error: (err as Error).message }, 'Error selecting city');
     }
   }
 
-  // Barrio
+  // Barrio (select, optional)
   try {
     const barrioEl = await page.$(DAC_SELECTORS.RECIPIENT_BARRIO);
     if (barrioEl) {
       const firstBarrio = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
         (opts: any[]) => { const v = opts.filter(o => o.value && o.value !== '0' && o.value !== ''); return v[0]?.value || null; });
-      if (firstBarrio) await page.selectOption(DAC_SELECTORS.RECIPIENT_BARRIO, firstBarrio);
-    }
-  } catch { /* barrio optional */ }
-
-  // Try to advance to step 4 (quantity + submit)
-  await navigateToNextStep(page, 3);
-  await page.waitForTimeout(1000);
-
-  // Set quantity and package size on step 4
-  await page.evaluate(() => {
-    function setField(name: string, value: string) {
-      const el = document.querySelector(`[name="${name}"]`) as HTMLSelectElement | HTMLInputElement;
-      if (!el) return;
-      el.value = value;
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    // Quantity = 1
-    setField('Cantidad', '1');
-    // Package size: 1 = "Hasta 2Kg 20x20x20" (chico)
-    setField('K_Tipo_Empaque', '1');
-  });
-  await page.waitForTimeout(500);
-
-  // Take screenshot before submit
-  await dacBrowser.screenshot(page, `pre-submit-${order.name.replace('#', '')}`);
-
-  // ===== SUBMIT =====
-  // Strategy: Extract ALL form data and POST directly to /envios/SaveGuias
-  // This bypasses hidden button issues completely.
-  const formData = await page.evaluate(() => {
-    const form = document.querySelector('#formNuevo, form[action*="SaveGuias"]') as HTMLFormElement;
-    if (!form) return null;
-
-    const data: Record<string, string> = {};
-    const elements = form.querySelectorAll('input, select, textarea');
-    for (const el of Array.from(elements)) {
-      const input = el as HTMLInputElement | HTMLSelectElement;
-      const name = input.name;
-      if (!name) continue;
-      if (input.type === 'checkbox') {
-        data[name] = (input as HTMLInputElement).checked ? '1' : '0';
-      } else {
-        data[name] = input.value ?? '';
+      if (firstBarrio) {
+        await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, firstBarrio, slog, DAC_STEPS.STEP3_SELECT_BARRIO, 'K_Barrio');
       }
     }
-    return { action: form.action, data };
-  });
-
-  let submitResult = 'no_form_found';
-
-  if (formData) {
-    logger.info({ action: formData.action, fields: Object.keys(formData.data).length }, 'Submitting form via POST');
-
-    // Build URL-encoded form body
-    const body = Object.entries(formData.data)
-      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-      .join('&');
-
-    const response = await page.request.post(formData.action, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      data: body,
-    });
-
-    submitResult = `POST ${response.status()} ${response.url()}`;
-    logger.info({ status: response.status(), url: response.url() }, 'Form POST response');
-
-    // Navigate to cart to see if it worked
-    await page.goto(DAC_URLS.CART, { waitUntil: 'domcontentloaded', timeout: 15_000 });
-    await page.waitForTimeout(2000);
-  } else {
-    logger.error('No form found on page');
+  } catch {
+    slog.info(DAC_STEPS.STEP3_SELECT_BARRIO, 'Barrio field not available (optional)');
   }
 
-  logger.info({ submitResult }, 'Submit result');
+  slog.info(DAC_STEPS.STEP3_OK, 'Step 3 recipient data complete', { name: fullName, phone, city: addr.city, province: addr.province });
+  await dacBrowser.screenshot(page, `step3-complete-${order.name.replace('#', '')}`);
 
-  // Wait for DAC to process
-  await page.waitForTimeout(4000);
-  await dacBrowser.screenshot(page, `post-submit-${order.name.replace('#', '')}`);
+  // BUG FIX 2 & 3: Click Siguiente to advance from Step 3 to Step 4
+  // The phone field being empty (old TelefonoD bug) was preventing form validation
+  // from allowing the step advance. Now that TelD is correctly filled, this should work.
+  const adv3 = await clickSiguiente(page, slog, DAC_STEPS.STEP3_SIGUIENTE);
+  if (!adv3) {
+    slog.error(DAC_STEPS.STEP3_SIGUIENTE, 'CRITICAL: Could not advance past Step 3 to Step 4');
+    await dacBrowser.screenshot(page, `step3-stuck-${order.name.replace('#', '')}`);
+    throw new Error('Cannot advance past Step 3 (recipient). Form validation may have failed.');
+  }
+  await page.waitForTimeout(1000);
 
-  // Check if we were redirected to cart (success) or stayed on form (error)
-  const currentUrl = page.url();
-  logger.info({ currentUrl }, 'Post-submit URL');
+  // ===== STEP 4: Quantity + Submit =====
+  slog.info(DAC_STEPS.STEP4_START, 'Filling Step 4: quantity and package size');
 
-  // Extract guia by checking the cart/history page
-  let guia = '';
+  // Fill quantity = 1
+  const qtyFilled = await safeFill(page, 'input[name="Cantidad"]', '1', slog, DAC_STEPS.STEP4_FILL_QTY, 'Cantidad');
+  if (!qtyFilled) {
+    // Try via evaluate as fallback
+    await page.evaluate(() => {
+      const el = document.querySelector('[name="Cantidad"]') as HTMLInputElement;
+      if (el) { el.value = '1'; el.dispatchEvent(new Event('change', { bubbles: true })); }
+    });
+    slog.info(DAC_STEPS.STEP4_FILL_QTY, 'Set Cantidad via evaluate fallback');
+  }
 
-  // Navigate to envios history to find the latest shipment
-  await page.goto(DAC_URLS.CART, { waitUntil: 'domcontentloaded', timeout: 15_000 });
-  await page.waitForTimeout(2000);
+  // Package size: 1 = small
+  const pkgEl = await page.$('select[name="K_Tipo_Empaque"]');
+  if (pkgEl) {
+    await safeSelect(page, 'select[name="K_Tipo_Empaque"]', '1', slog, DAC_STEPS.STEP4_FILL_PACKAGE, 'K_Tipo_Empaque');
+  } else {
+    await page.evaluate(() => {
+      const el = document.querySelector('[name="K_Tipo_Empaque"]') as HTMLInputElement;
+      if (el) { el.value = '1'; el.dispatchEvent(new Event('change', { bubbles: true })); }
+    });
+    slog.info(DAC_STEPS.STEP4_FILL_PACKAGE, 'Set K_Tipo_Empaque via evaluate fallback');
+  }
+
+  await page.waitForTimeout(500);
+  await dacBrowser.screenshot(page, `step4-pre-submit-${order.name.replace('#', '')}`);
+
+  // BUG FIX 3: Click .btnAdd via real Playwright click (NOT page.request.post)
+  // Wait for the submit button to become visible
+  slog.info(DAC_STEPS.STEP4_WAIT_BTN, 'Waiting for .btnAdd (Agregar) button to be visible');
+
+  let btnFound = false;
+
+  // Try .btnAdd first (common class in DAC)
+  try {
+    await page.waitForSelector('.btnAdd', { state: 'visible', timeout: 10_000 });
+    btnFound = true;
+    slog.info(DAC_STEPS.STEP4_WAIT_BTN, '.btnAdd is visible');
+  } catch {
+    slog.warn(DAC_STEPS.STEP4_WAIT_BTN, '.btnAdd not visible after 10s, trying alternative selectors');
+  }
+
+  // Fallback: button with text "Agregar"
+  if (!btnFound) {
+    try {
+      const agregarBtn = page.locator('button, input[type="button"], input[type="submit"]').filter({ hasText: /agregar/i });
+      const agregarCount = await agregarBtn.count();
+      if (agregarCount > 0) {
+        btnFound = true;
+        slog.info(DAC_STEPS.STEP4_WAIT_BTN, `Found Agregar button via text match (count: ${agregarCount})`);
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  if (!btnFound) {
+    await dacBrowser.screenshot(page, `no-submit-btn-${order.name.replace('#', '')}`);
+    throw new Error('Submit button (.btnAdd / Agregar) not found or not visible after Step 4');
+  }
+
+  // Click the submit button
+  slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Clicking submit button');
+
+  try {
+    // Prefer .btnAdd
+    const btnAddEl = await page.$('.btnAdd');
+    if (btnAddEl && await btnAddEl.isVisible()) {
+      await page.click('.btnAdd', { timeout: 5000 });
+      slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Clicked .btnAdd successfully');
+    } else {
+      // Fallback: click by text
+      await page.locator('button:has-text("Agregar")').first().click({ timeout: 5000 });
+      slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Clicked Agregar button by text');
+    }
+  } catch (clickErr) {
+    await dacBrowser.screenshot(page, `submit-click-error-${order.name.replace('#', '')}`);
+    throw new Error(`Failed to click submit button: ${(clickErr as Error).message}`);
+  }
+
+  slog.info(DAC_STEPS.STEP4_OK, 'Submit button clicked');
+
+  // ===== POST-SUBMIT: Wait for navigation to cart =====
+  slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, 'Waiting for navigation after submit');
+
+  // Wait for the page to navigate (DAC should redirect to cart)
+  try {
+    await page.waitForURL('**/envios/cart**', { timeout: 15_000 });
+    slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, 'Redirected to cart page');
+  } catch {
+    // May not redirect -- check current URL
+    const currentUrl = page.url();
+    slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV, `No redirect detected, current URL: ${currentUrl}`);
+
+    // Navigate to cart manually
+    await page.goto(DAC_URLS.CART, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+    await page.waitForTimeout(2000);
+  }
+
   await dacBrowser.screenshot(page, `cart-after-submit-${order.name.replace('#', '')}`);
 
-  // Look for the first guia number in the table (most recent shipment)
-  const guiaFromCart = await page.evaluate(() => {
-    // DAC cart page has a table with guia numbers in the first column
+  // ===== EXTRACT GUIA =====
+  slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Extracting guia from cart page');
+
+  // BUG FIX 4: Guia regex only matches numbers starting with 88 and 12+ digits
+  const GUIA_REGEX = /\b88\d{10,}\b/;
+
+  const guiaFromCart = await page.evaluate((regexStr: string) => {
+    const regex = new RegExp(regexStr);
+    // Check table rows first
     const rows = document.querySelectorAll('table tr, .envio-row, [class*="envio"]');
     for (const row of Array.from(rows)) {
       const text = row.textContent ?? '';
-      // DAC guia numbers are 12+ digit numbers starting with 88
-      const match = text.match(/\b(88\d{10,})\b/);
-      if (match) return match[1];
+      const match = text.match(regex);
+      if (match) return match[0];
     }
-    // Fallback: any 12+ digit number in the page
+    // Fallback: search full page text
     const pageText = document.body?.textContent ?? '';
-    const allGuias = pageText.match(/\b(88\d{10,})\b/g);
-    if (allGuias && allGuias.length > 0) return allGuias[0]; // First (most recent)
+    const allGuias = pageText.match(new RegExp(regexStr, 'g'));
+    if (allGuias && allGuias.length > 0) return allGuias[0];
     return null;
-  });
+  }, GUIA_REGEX.source);
+
+  let guia: string;
 
   if (guiaFromCart) {
     guia = guiaFromCart;
-    logger.info({ guia }, 'Guia extracted from cart page');
+    slog.success(DAC_STEPS.SUBMIT_OK, `Shipment created! Guia: ${guia}`, { guia, orderName: order.name });
   } else {
     guia = `PENDING-${Date.now()}`;
-    logger.warn({ orderName: order.name }, 'Could not extract guia from cart');
+    slog.warn(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Could not extract guia from cart page', { orderName: order.name });
+    await dacBrowser.screenshot(page, `no-guia-found-${order.name.replace('#', '')}`);
   }
 
-  logger.info({ orderName: order.name, guia, tenantId }, 'DAC shipment created');
   return { guia, screenshotPath: '' };
 }

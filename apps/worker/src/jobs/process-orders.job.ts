@@ -10,12 +10,39 @@ import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
 import { sendShipmentNotification } from '../notifier/email';
 import { uploadLabelPdf } from '../storage/upload';
+import { createStepLogger } from '../logger';
 import logger from '../logger';
 import { sleep } from '../utils';
 import fs from 'fs';
 import path from 'path';
 
 const DELAY_BETWEEN_ORDERS_MS = 500;
+const MAX_RETRIES_PER_ORDER = 2;
+
+/**
+ * Retry wrapper: attempts fn up to maxRetries times with a short delay.
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number,
+  label: string,
+  slog: ReturnType<typeof createStepLogger>
+): Promise<T> {
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 1) {
+        slog.info('retry', `Retry attempt ${attempt}/${maxRetries} for ${label}`);
+        await sleep(2000);
+      }
+      return await fn();
+    } catch (err) {
+      lastError = err as Error;
+      slog.warn('retry', `Attempt ${attempt}/${maxRetries} failed for ${label}: ${lastError.message}`);
+    }
+  }
+  throw lastError!;
+}
 
 export async function processOrdersJob(tenantId: string, jobId: string): Promise<void> {
   const startTime = Date.now();
@@ -24,11 +51,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
   let skippedCount = 0;
   let totalOrders = 0;
 
-  const logToDB = async (level: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS', message: string, meta?: Record<string, unknown>) => {
-    await db.runLog.create({
-      data: { tenantId, jobId, level, message, meta: meta ? JSON.parse(JSON.stringify(meta)) : undefined },
-    }).catch(() => {});
-  };
+  const slog = createStepLogger(jobId, tenantId);
 
   try {
     // Mark job as running
@@ -37,10 +60,20 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
       data: { status: 'RUNNING', startedAt: new Date() },
     });
 
+    // Check for testMode flag in RunLog meta
+    const testModeLog = await db.runLog.findFirst({
+      where: { jobId, message: 'testMode' },
+      orderBy: { createdAt: 'desc' },
+    });
+    const testMode = !!(testModeLog?.meta as any)?.testMode;
+    if (testMode) {
+      slog.info('config', 'TEST MODE enabled -- will process but not tag orders in Shopify');
+    }
+
     // STEP 1: Load tenant config and decrypt credentials
     const tenant = await db.tenant.findUnique({ where: { id: tenantId } });
     if (!tenant) {
-      await logToDB('ERROR', 'Tenant not found');
+      slog.error('config', 'Tenant not found');
       await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Tenant not found' } });
       return;
     }
@@ -51,35 +84,46 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     const dacPassword = decryptIfPresent(tenant.dacPassword);
 
     if (!shopifyUrl || !shopifyToken) {
-      await logToDB('ERROR', 'Shopify credentials not configured');
+      slog.error('config', 'Shopify credentials not configured');
       await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Missing Shopify config' } });
       return;
     }
 
     if (!dacUsername || !dacPassword) {
-      await logToDB('ERROR', 'DAC credentials not configured');
+      slog.error('config', 'DAC credentials not configured');
       await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Missing DAC config' } });
       return;
     }
 
-    await logToDB('INFO', 'Starting order processing cycle');
+    slog.info('start', 'Starting order processing cycle');
 
     // STEP 2: Get Shopify orders
     const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken);
     let orders = await getUnfulfilledOrders(shopifyClient);
 
-    // Filter out orders already processed in our DB (double-safety with Shopify tag)
+    slog.info('shopify', `Fetched ${orders.length} unfulfilled orders from Shopify`);
+
+    // BUG FIX 5: Filter out orders with existing CREATED/COMPLETED labels
+    // BUT allow retry of FAILED labels (previously blocked by unique constraint)
     const existingLabels = await db.label.findMany({
-      where: { tenantId, status: { in: ['CREATED', 'COMPLETED'] } },
+      where: {
+        tenantId,
+        status: { in: ['CREATED', 'COMPLETED'] },
+      },
       select: { shopifyOrderId: true },
     });
     const processedIds = new Set(existingLabels.map(l => l.shopifyOrderId));
+    const beforeFilter = orders.length;
     orders = orders.filter(o => !processedIds.has(String(o.id)));
+    const filteredOut = beforeFilter - orders.length;
+    if (filteredOut > 0) {
+      slog.info('filter', `Filtered out ${filteredOut} orders with existing CREATED/COMPLETED labels`);
+    }
 
     totalOrders = orders.length;
 
     if (orders.length === 0) {
-      await logToDB('INFO', 'No pending orders found');
+      slog.info('complete', 'No pending orders found');
       await db.job.update({
         where: { id: jobId },
         data: { status: 'COMPLETED', totalOrders: 0, finishedAt: new Date(), durationMs: Date.now() - startTime },
@@ -91,16 +135,17 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     if (orders.length > tenant.maxOrdersPerRun) {
       skippedCount = orders.length - tenant.maxOrdersPerRun;
       orders = orders.slice(0, tenant.maxOrdersPerRun);
-      await logToDB('WARN', `Limited to ${tenant.maxOrdersPerRun} orders, ${skippedCount} skipped`);
+      slog.warn('limit', `Limited to ${tenant.maxOrdersPerRun} orders, ${skippedCount} skipped`);
     }
 
     // STEP 3: Start browser and login to DAC
+    slog.info('dac-login', 'Starting browser and logging into DAC');
     const page = await dacBrowser.getPage();
     try {
       await smartLogin(page, dacUsername, dacPassword, tenantId);
-      await logToDB('SUCCESS', 'DAC login successful');
+      slog.success('dac-login', 'DAC login successful');
     } catch (err) {
-      await logToDB('ERROR', `DAC login failed: ${(err as Error).message}`);
+      slog.error('dac-login', `DAC login failed: ${(err as Error).message}`);
       await dacBrowser.close();
       await db.job.update({
         where: { id: jobId },
@@ -109,7 +154,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
       return;
     }
 
-    // STEP 4: Process each order sequentially
+    // STEP 4: Process each order sequentially with retry
     const config = getConfig();
     const tmpDir = path.join(config.LABELS_TMP_DIR, new Date().toISOString().split('T')[0]);
 
@@ -118,10 +163,21 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
       const addr = order.shipping_address;
       const customerName = addr ? `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente' : 'Sin datos';
 
+      slog.info('order-start', `Processing order ${i + 1}/${orders.length}: ${order.name}`, {
+        orderId: order.id,
+        orderName: order.name,
+        customer: customerName,
+        city: addr?.city,
+      });
+
       // Validate address
       if (!addr || !addr.address1) {
-        await db.label.create({
-          data: {
+        // BUG FIX 5: Upsert instead of create to handle retries of FAILED labels
+        await db.label.upsert({
+          where: {
+            tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
+          },
+          create: {
             tenantId, jobId,
             shopifyOrderId: String(order.id),
             shopifyOrderName: order.name,
@@ -133,9 +189,15 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             status: 'FAILED',
             errorMessage: 'No shipping address',
           },
-        });
+          update: {
+            jobId,
+            status: 'FAILED',
+            errorMessage: 'No shipping address',
+          },
+        }).catch(() => {});
+
         await addOrderNote(shopifyClient, order.id, 'LabelFlow ERROR: No shipping address').catch(() => {});
-        await logToDB('ERROR', `Order ${order.name} skipped: no shipping address`);
+        slog.error('order-validate', `Order ${order.name} skipped: no shipping address`);
         failedCount++;
         continue;
       }
@@ -143,11 +205,19 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
       try {
         // a) Determine payment type
         const paymentType = determinePaymentType(order, tenant.paymentThreshold);
+        slog.info('order-payment', `Payment type: ${paymentType}`, { orderName: order.name });
 
-        // b) Create shipment in DAC
-        const result = await createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId);
+        // b) Create shipment in DAC (with retry)
+        const result = await withRetry(
+          () => createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId),
+          MAX_RETRIES_PER_ORDER,
+          `DAC shipment for ${order.name}`,
+          slog
+        );
 
-        // c) Create or update label record in DB (upsert to handle retries)
+        slog.success('order-shipment', `DAC shipment created for ${order.name}`, { guia: result.guia });
+
+        // c) Create or update label record in DB (upsert to handle retries of FAILED labels)
         const labelRecord = await db.label.upsert({
           where: {
             tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
@@ -175,9 +245,12 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           },
         });
 
+        slog.info('order-db', `Label record saved: ${labelRecord.id}`, { guia: result.guia });
+
         // d) Download PDF label (skip if guia is temporary/pending)
         if (result.guia && !result.guia.startsWith('PENDING-')) {
           try {
+            slog.info('order-pdf', `Downloading PDF for guia ${result.guia}`);
             const labelLocalPath = await downloadLabel(page, result.guia, tmpDir, dacUsername, dacPassword);
             if (labelLocalPath && fs.existsSync(labelLocalPath)) {
               const pdfBuffer = fs.readFileSync(labelLocalPath);
@@ -187,25 +260,31 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
                   where: { id: labelRecord.id },
                   data: { pdfPath: upload.path, status: 'COMPLETED' },
                 });
+                slog.info('order-pdf', 'PDF uploaded successfully', { path: upload.path });
               }
               fs.unlinkSync(labelLocalPath);
             }
           } catch (downloadErr) {
-            logger.warn({ guia: result.guia, error: (downloadErr as Error).message }, 'PDF download failed, shipment still created');
+            slog.warn('order-pdf', `PDF download failed (non-fatal): ${(downloadErr as Error).message}`, { guia: result.guia });
           }
         } else {
-          logger.warn({ guia: result.guia }, 'Guia is pending, skipping PDF download');
+          slog.warn('order-pdf', 'Guia is pending, skipping PDF download', { guia: result.guia });
           await db.label.update({
             where: { id: labelRecord.id },
-            data: { status: 'COMPLETED' },  // Mark as completed even without PDF
+            data: { status: 'COMPLETED' },
           });
         }
 
-        // e) Mark order as processed in Shopify (non-fatal if fails)
-        try {
-          await markOrderProcessed(shopifyClient, order.id, result.guia);
-        } catch (tagErr) {
-          logger.warn({ orderId: order.id, error: (tagErr as Error).message }, 'Shopify tagging failed (non-fatal, shipment already created in DAC)');
+        // e) Mark order as processed in Shopify (skip in testMode)
+        if (!testMode) {
+          try {
+            await markOrderProcessed(shopifyClient, order.id, result.guia);
+            slog.info('order-shopify', `Order ${order.name} tagged in Shopify`);
+          } catch (tagErr) {
+            slog.warn('order-shopify', `Shopify tagging failed (non-fatal): ${(tagErr as Error).message}`);
+          }
+        } else {
+          slog.info('order-shopify', `TEST MODE: Skipping Shopify tag for ${order.name}`);
         }
 
         // f) Send email notification
@@ -229,17 +308,24 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
                 where: { id: labelRecord.id },
                 data: { emailSent: true, emailSentAt: new Date() },
               });
+              slog.info('order-email', `Notification email sent for ${order.name}`);
             }
           }
         }
 
-        await logToDB('SUCCESS', `Order ${order.name} processed`, { guia: result.guia, paymentType, emailSent });
+        slog.success('order-complete', `Order ${order.name} processed successfully`, {
+          guia: result.guia, paymentType, emailSent,
+        });
         successCount++;
       } catch (err) {
         const errorMsg = (err as Error).message;
 
-        await db.label.create({
-          data: {
+        // BUG FIX 5: Upsert instead of create to handle retries
+        await db.label.upsert({
+          where: {
+            tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
+          },
+          create: {
             tenantId, jobId,
             shopifyOrderId: String(order.id),
             shopifyOrderName: order.name,
@@ -253,14 +339,19 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             status: 'FAILED',
             errorMessage: errorMsg.substring(0, 500),
           },
+          update: {
+            jobId,
+            status: 'FAILED',
+            errorMessage: errorMsg.substring(0, 500),
+          },
         }).catch(() => {});
 
         await addOrderNote(shopifyClient, order.id, `LabelFlow ERROR: ${errorMsg.substring(0, 200)}`).catch(() => {});
-        await logToDB('ERROR', `Order ${order.name} failed: ${errorMsg}`);
+        slog.error('order-fail', `Order ${order.name} failed: ${errorMsg}`);
         failedCount++;
       }
 
-      // Rate limit: 2s between orders
+      // Rate limit between orders
       if (i < orders.length - 1) {
         await sleep(DELAY_BETWEEN_ORDERS_MS);
       }
@@ -296,7 +387,9 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
       },
     });
 
-    await logToDB('INFO', `Cycle complete: ${successCount} success, ${failedCount} failed, ${skippedCount} skipped`, { durationMs });
+    slog.success('complete', `Cycle complete: ${successCount} success, ${failedCount} failed, ${skippedCount} skipped`, {
+      durationMs, successCount, failedCount, skippedCount,
+    });
 
   } catch (err) {
     await dacBrowser.close();
@@ -314,6 +407,6 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         errorMessage: errorMsg,
       },
     });
-    await logToDB('ERROR', `Fatal error: ${errorMsg}`);
+    slog.error('fatal', `Fatal error: ${errorMsg}`);
   }
 }
