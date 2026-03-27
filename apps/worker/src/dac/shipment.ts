@@ -346,9 +346,9 @@ export async function createShipment(
       'input[name="nombre_destinatario"]', 'input[placeholder*="ombre"]',
     ], name, 'name');
 
-    // Phone
+    // Phone - DAC uses name="TelD" (confirmed from DOM inspection)
     fillInput([
-      'input[name="telefono"]', 'input[name="TelefonoD"]',
+      'input[name="TelD"]', 'input[name="telefono"]', 'input[name="TelefonoD"]',
       'input[name="tel"]', 'input[type="tel"]', 'input[placeholder*="el"]',
     ], phoneNum, 'phone');
 
@@ -424,38 +424,53 @@ export async function createShipment(
 
   // Try to advance to step 4 (quantity + submit)
   await navigateToNextStep(page, 3);
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(1000);
 
-  // Set quantity
-  try {
-    await page.evaluate(() => {
-      const qty = document.querySelector('input[name="Cantidad"]') as HTMLInputElement;
-      if (qty) { qty.value = '1'; qty.dispatchEvent(new Event('change', { bubbles: true })); }
-    });
-  } catch { /* default is 1 */ }
+  // Set quantity and package size on step 4
+  await page.evaluate(() => {
+    function setField(name: string, value: string) {
+      const el = document.querySelector(`[name="${name}"]`) as HTMLSelectElement | HTMLInputElement;
+      if (!el) return;
+      el.value = value;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    // Quantity = 1
+    setField('Cantidad', '1');
+    // Package size: 1 = "Hasta 2Kg 20x20x20" (chico)
+    setField('K_Tipo_Empaque', '1');
+  });
+  await page.waitForTimeout(500);
 
   // Take screenshot before submit
   await dacBrowser.screenshot(page, `pre-submit-${order.name.replace('#', '')}`);
-  await inspectFormDOM(page, 'pre-submit');
 
   // ===== SUBMIT =====
-  // Try multiple strategies to submit
+  // The form action is /envios/SaveGuias (confirmed from DOM).
+  // The "Agregar" button (class btnAdd) may be hidden due to step navigation.
+  // Strategy: use the form's btnAdd click via JS, OR submit the form directly.
   const submitResult = await page.evaluate(() => {
-    // 1. Find "Agregar" button
-    const btns = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'));
+    // 1. Try clicking btnAdd (the actual submit button for adding to cart)
+    const btnAdd = document.querySelector('.btnAdd') as HTMLButtonElement;
+    if (btnAdd) {
+      btnAdd.click();
+      return 'clicked: .btnAdd';
+    }
+
+    // 2. Try any button with "Agregar" text
+    const btns = Array.from(document.querySelectorAll('button'));
     for (const btn of btns) {
-      const text = (btn.textContent?.trim() || (btn as HTMLInputElement).value || '').toLowerCase();
-      if (text.includes('agregar') || text.includes('enviar') || text.includes('confirmar') || text.includes('finalizar')) {
-        (btn as HTMLElement).click();
-        return `clicked: ${text.substring(0, 30)}`;
+      if (btn.textContent?.toLowerCase().includes('agregar')) {
+        btn.click();
+        return `clicked: ${btn.textContent.trim().substring(0, 30)}`;
       }
     }
 
-    // 2. Try form submit
-    const form = document.querySelector('form');
+    // 3. Try form submit directly to SaveGuias
+    const form = document.querySelector('#formNuevo, form[action*="SaveGuias"]') as HTMLFormElement;
     if (form) {
       form.submit();
-      return 'form.submit()';
+      return 'form.submit() to SaveGuias';
     }
 
     return 'no_submit_found';
@@ -463,49 +478,45 @@ export async function createShipment(
 
   logger.info({ submitResult }, 'Submit result');
 
-  // Wait for response
-  await page.waitForTimeout(3000);
+  // Wait for DAC to process
+  await page.waitForTimeout(4000);
   await dacBrowser.screenshot(page, `post-submit-${order.name.replace('#', '')}`);
 
-  // Extract guia number
+  // Check if we were redirected to cart (success) or stayed on form (error)
+  const currentUrl = page.url();
+  logger.info({ currentUrl }, 'Post-submit URL');
+
+  // Extract guia by checking the cart/history page
   let guia = '';
-  const pageText = await page.textContent('body') ?? '';
 
-  const guiaPatterns = [
-    /gu[ií]a[:\s#]*(\d{6,})/i,
-    /tracking[:\s#]*(\d{6,})/i,
-    /n[uú]mero[:\s#]*(\d{6,})/i,
-    /envio[:\s#]*(\d{6,})/i,
-    /DAC[:\s-]*(\d{6,})/i,
-    /(\d{12,})/,  // Any long number (DAC guias are 12 digits)
-  ];
+  // Navigate to envios history to find the latest shipment
+  await page.goto(DAC_URLS.CART, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+  await page.waitForTimeout(2000);
+  await dacBrowser.screenshot(page, `cart-after-submit-${order.name.replace('#', '')}`);
 
-  for (const pattern of guiaPatterns) {
-    const match = pageText.match(pattern);
-    if (match) {
-      guia = match[1];
-      break;
+  // Look for the first guia number in the table (most recent shipment)
+  const guiaFromCart = await page.evaluate(() => {
+    // DAC cart page has a table with guia numbers in the first column
+    const rows = document.querySelectorAll('table tr, .envio-row, [class*="envio"]');
+    for (const row of Array.from(rows)) {
+      const text = row.textContent ?? '';
+      // DAC guia numbers are 12+ digit numbers starting with 88
+      const match = text.match(/\b(88\d{10,})\b/);
+      if (match) return match[1];
     }
-  }
+    // Fallback: any 12+ digit number in the page
+    const pageText = document.body?.textContent ?? '';
+    const allGuias = pageText.match(/\b(88\d{10,})\b/g);
+    if (allGuias && allGuias.length > 0) return allGuias[0]; // First (most recent)
+    return null;
+  });
 
-  // Check cart page for guia
-  if (!guia) {
-    logger.warn('No guia on current page, checking cart...');
-    await page.goto(DAC_URLS.CART, { waitUntil: 'domcontentloaded', timeout: 10_000 });
-    await page.waitForTimeout(2000);
-    const cartText = await page.textContent('body') ?? '';
-    for (const pattern of guiaPatterns) {
-      const match = cartText.match(pattern);
-      if (match) {
-        guia = match[1];
-        break;
-      }
-    }
-  }
-
-  if (!guia) {
+  if (guiaFromCart) {
+    guia = guiaFromCart;
+    logger.info({ guia }, 'Guia extracted from cart page');
+  } else {
     guia = `PENDING-${Date.now()}`;
-    logger.warn({ orderName: order.name }, 'Could not extract guia, using temporary ID');
+    logger.warn({ orderName: order.name }, 'Could not extract guia from cart');
   }
 
   logger.info({ orderName: order.name, guia, tenantId }, 'DAC shipment created');
