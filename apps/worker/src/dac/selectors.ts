@@ -1,83 +1,71 @@
 /**
  * DAC Uruguay (dac.com.uy) — CSS Selectors
  *
- * CONFIRMED via live Chrome DOM inspection (March 2026).
- * Technology: Server-rendered PHP (Chukupax framework), vanilla HTML.
+ * CONFIRMED via live Chrome DOM inspection (March 27, 2026).
+ * Account: Luciano (RUT 56345725)
  *
- * IMPORTANT: All buttons are type="button" (JS onclick), NOT type="submit".
+ * FORM FLOW (4 steps, multi-section single page):
+ *   Step 1: TipoServicio + TipoGuia + TipoEnvio + TipoEntrega -> click "Siguiente"
+ *   Step 2: Origen (auto-filled from account) -> click "Siguiente"
+ *   Step 3: Destino (NombreD, TelD, DirD, K_Estado, K_Ciudad, K_Barrio) -> click "Siguiente"
+ *   Step 4: Cantidad -> click "Agregar" (final submit)
+ *
+ * LOGIN: "Documento o RUT" + "Contrasena" at /usuarios/login
+ * POST-LOGIN: Redirects to /envios/nuevo
+ * POST-SUBMIT: Shipment goes to cart at /envios/cart
  */
 
 export const DAC_URLS = {
-  BASE: 'https://www.dac.com.uy',
   LOGIN: 'https://www.dac.com.uy/usuarios/login',
   NEW_SHIPMENT: 'https://www.dac.com.uy/envios/nuevo',
+  HISTORY: 'https://www.dac.com.uy/envios/cart',
   TRACK: 'https://www.dac.com.uy/envios/rastrear',
-  CART: 'https://www.dac.com.uy/envios/cart',
 } as const;
 
-export const DAC = {
-  // ===== LOGIN (CONFIRMED) =====
-  // Form: #loginForm, action="/usuarios/doLogin", POST
-  login: {
-    form: '#loginForm',
-    /** input#documento name="documento" — NOT email, it's document/RUT */
-    userInput: '#documento',
-    /** input#password name="password" */
-    passwordInput: '#password',
-    /** button#btnLogin type="button" — uses JS onclick, NOT form submit */
-    submitButton: '#btnLogin',
-    /** Visible after successful login */
-    successIndicator: 'a[href*="envios/nuevo"], a[href*="logout"], a[href*="cerrar"]',
-  },
+export const DAC_SELECTORS = {
+  // ========== LOGIN (CONFIRMED) ==========
+  LOGIN_USER_INPUT: 'input[name="documento"]',
+  LOGIN_PASSWORD_INPUT: 'input[name="password"]',
+  LOGIN_SUBMIT_BUTTON: '#btnLogin',
+  LOGIN_SUCCESS_INDICATOR: 'text=Bienvenido',
 
-  // ===== NEW SHIPMENT FORM (CONFIRMED from /tarifas) =====
-  // Field names confirmed via DOM inspection of tariff calculator
-  shipment: {
-    /** select[name="TipoServicio"] — 0=Mostrador, 1=Levante */
-    pickupType: 'select[name="TipoServicio"]',
-    pickupValues: { mostrador: '0', levante: '1' },
+  // ========== STEP 1: SHIPMENT TYPE ==========
+  /** Solicitud: 0=Mostrador, 1=Levante */
+  PICKUP_TYPE: 'select[name="TipoServicio"]',
+  PICKUP_VALUE_MOSTRADOR: '0',
 
-    /** select[name="TipoEntrega"] — 1=Agencia, 2=A Domicilio */
-    deliveryType: 'select[name="TipoEntrega"]',
-    deliveryValues: { agencia: '1', domicilio: '2' },
+  /** Tipo de Guia (PAYMENT): 1=Paga remitente, 4=Paga destinatario */
+  PAYMENT_TYPE: 'select[name="TipoGuia"]',
+  PAYMENT_VALUE_REMITENTE: '1',
+  PAYMENT_VALUE_DESTINATARIO: '4',
 
-    /** select[name="TipoEnvio"] — 1=Paquete, 2=Carta, 3=Sobre, 4=Producto */
-    packageType: 'select[name="TipoEnvio"]',
-    packageValues: { paquete: '1', carta: '2', sobre: '3', producto: '4' },
+  /** Tipo de envio: 1=Paquete */
+  PACKAGE_TYPE: 'select[name="TipoEnvio"]',
+  PACKAGE_VALUE_PAQUETE: '1',
 
-    /** input[name="TipoGuia"] — hidden, payment type */
-    paymentType: 'input[name="TipoGuia"]',
+  /** Tipo de entrega: 2=Domicilio */
+  DELIVERY_TYPE: 'select[name="TipoEntrega"]',
+  DELIVERY_VALUE_DOMICILIO: '2',
 
-    /** select[name="K_Estado"] — department (1-19 values) */
-    department: 'select[name="K_Estado"]',
+  // ========== STEP 3: RECIPIENT ==========
+  RECIPIENT_NAME: 'input[name="NombreD"]',
+  RECIPIENT_PHONE: 'input[name="TelD"]',
+  RECIPIENT_RUT: 'input[name="RUT_Destinatario"]',
+  RECIPIENT_EMAIL: 'input[name="Correo_Destinatario"]',
+  RECIPIENT_ADDRESS: 'input[name="DirD"]',
+  RECIPIENT_DEPARTMENT: 'select[name="K_Estado"]',
+  RECIPIENT_CITY: 'select[name="K_Ciudad"]',
+  RECIPIENT_BARRIO: 'select[name="K_Barrio"]',
 
-    /** select[name="K_Ciudad"] — city (loaded dynamically based on department) */
-    city: 'select[name="K_Ciudad"]',
+  // ========== STEP 4: QUANTITY ==========
+  PACKAGE_QUANTITY: 'input[name="Cantidad"]',
 
-    /** input#DirD name="DirD" — delivery address */
-    address: '#DirD, input[name="DirD"]',
+  // ========== NAVIGATION ==========
+  NEXT_BUTTON: 'a:has-text("Siguiente")',
+  PREV_BUTTON: 'a:has-text("Anterior")',
+  SUBMIT_BUTTON: 'button:has-text("Agregar")',
 
-    /** input[name="Cantidad"] type=number — package count, default 1 */
-    quantity: 'input[name="Cantidad"]',
-
-    // These fields need confirmation via authenticated probe:
-    recipientName: 'input[name="nombre"], input[name="NombreD"], input[placeholder*="nombre" i]',
-    recipientPhone: 'input[name="telefono"], input[name="TelefonoD"], input[type="tel"], input[placeholder*="tel" i]',
-
-    /** Submit button (likely type="button" like all DAC buttons) */
-    submitButton: 'button.btnAdd, button:has-text("Agregar"), button:has-text("Finalizar")',
-    guiaDisplay: '.guia-number, .tracking-number, .numero-guia, [data-guia]',
-    successMessage: '.success, .alert-success, [class*="success"], [class*="exito"]',
-  },
-
-  // ===== TRACKING (CONFIRMED) =====
-  // Form: #FormRastreo, action="/envios/doRastrear2", POST
-  tracking: {
-    form: '#FormRastreo',
-    /** input[name="rastreopedido"] — no ID */
-    searchInput: 'input[name="rastreopedido"]',
-    /** button#btnSearch type="button" */
-    searchButton: '#btnSearch',
-    downloadButton: 'a:has-text("Descargar"), a:has-text("Etiqueta"), a[href*=".pdf"]',
-  },
+  // ========== HISTORY / DOWNLOAD ==========
+  HISTORY_LINK: 'a:has-text("Historial de env")',
+  DOWNLOAD_LABEL: 'a:has-text("Descargar"), a[href*="etiqueta"], a[href*=".pdf"]',
 } as const;
