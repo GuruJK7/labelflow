@@ -6,6 +6,68 @@ import { ensureLoggedIn } from './auth';
 import { dacBrowser } from './browser';
 import logger from '../logger';
 
+/**
+ * Normalize a string for fuzzy matching: lowercase, remove accents, trim.
+ */
+function normalize(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+/**
+ * Find the best matching option value in a select element.
+ * Tries: exact label, case-insensitive, accent-insensitive, partial contains.
+ */
+async function findBestOptionMatch(
+  page: Page,
+  selector: string,
+  searchText: string
+): Promise<string | null> {
+  const options = await page.$$eval(
+    `${selector} option`,
+    (opts: any[]) => opts.map((o: any) => ({ value: o.value, text: o.textContent?.trim() ?? '' }))
+  );
+
+  const search = normalize(searchText);
+  if (!search) return null;
+
+  // 1. Exact match (case-insensitive, accent-insensitive)
+  for (const opt of options) {
+    if (normalize(opt.text) === search && opt.value && opt.value !== '0') {
+      return opt.value;
+    }
+  }
+
+  // 2. Option contains search text
+  for (const opt of options) {
+    if (normalize(opt.text).includes(search) && opt.value && opt.value !== '0') {
+      return opt.value;
+    }
+  }
+
+  // 3. Search text contains option text
+  for (const opt of options) {
+    if (opt.text.length > 2 && search.includes(normalize(opt.text)) && opt.value && opt.value !== '0') {
+      return opt.value;
+    }
+  }
+
+  // 4. Word-level match (any word in search matches any word in option)
+  const searchWords = search.split(/\s+/);
+  for (const opt of options) {
+    const optWords = normalize(opt.text).split(/\s+/);
+    const hasMatch = searchWords.some(sw => optWords.some(ow => ow === sw && sw.length > 2));
+    if (hasMatch && opt.value && opt.value !== '0') {
+      return opt.value;
+    }
+  }
+
+  return null;
+}
+
 function cleanPhone(phone: string | undefined): string {
   if (!phone) return '099000000';
   const cleaned = phone.replace(/\D/g, '');
@@ -13,19 +75,62 @@ function cleanPhone(phone: string | undefined): string {
 }
 
 async function clickNextButton(page: Page, stepNum: number): Promise<void> {
-  // There are multiple "Siguiente" links, one per step. Click the visible one.
-  const nextLinks = await page.$$('a[href="javascript:"]');
+  // Strategy 1: Find visible "Siguiente" link
+  const nextLinks = await page.$$('a[href="javascript:"], a[href="javascript:void(0)"], a[href="#"]');
   for (const link of nextLinks) {
     const text = await link.textContent();
     const isVisible = await link.isVisible();
-    if (text?.includes('Siguiente') && isVisible) {
+    if (text?.toLowerCase().includes('siguiente') && isVisible) {
       await link.click();
-      await page.waitForTimeout(1000);
-      logger.debug({ step: stepNum }, 'Clicked Siguiente');
+      await page.waitForTimeout(1500);
+      logger.info({ step: stepNum }, 'Clicked Siguiente link');
       return;
     }
   }
-  logger.warn({ step: stepNum }, 'Could not find visible Siguiente button');
+
+  // Strategy 2: Find any button/link with "Siguiente" text
+  try {
+    const btn = await page.$('button:has-text("Siguiente"), input[value*="Siguiente"], a:has-text("Siguiente")');
+    if (btn) {
+      const isVisible = await btn.isVisible();
+      if (isVisible) {
+        await btn.click();
+        await page.waitForTimeout(1500);
+        logger.info({ step: stepNum }, 'Clicked Siguiente button');
+        return;
+      }
+    }
+  } catch { /* continue */ }
+
+  // Strategy 3: Try clicking via JS (for hidden elements that are triggered by JS)
+  try {
+    await page.evaluate((step: number) => {
+      const links = Array.from(document.querySelectorAll('a'));
+      const nextLink = links.find(a =>
+        a.textContent?.toLowerCase().includes('siguiente') &&
+        a.offsetParent !== null
+      );
+      if (nextLink) {
+        (nextLink as HTMLElement).click();
+        return true;
+      }
+      // Try any "next" style button
+      const btns = Array.from(document.querySelectorAll('button, input[type="button"]'));
+      const nextBtn = btns.find(b =>
+        b.textContent?.toLowerCase().includes('siguiente') ||
+        (b as HTMLInputElement).value?.toLowerCase().includes('siguiente')
+      );
+      if (nextBtn) {
+        (nextBtn as HTMLElement).click();
+        return true;
+      }
+      return false;
+    }, stepNum);
+    await page.waitForTimeout(1500);
+    logger.info({ step: stepNum }, 'Clicked Siguiente via JS evaluate');
+  } catch (err) {
+    logger.warn({ step: stepNum, error: (err as Error).message }, 'Could not find Siguiente button');
+  }
 }
 
 /**
@@ -98,45 +203,85 @@ export async function createShipment(
   // Direccion
   await page.fill(DAC_SELECTORS.RECIPIENT_ADDRESS, addr.address1);
 
-  // Departamento (select by label)
+  // Departamento (select by partial match, case insensitive)
   if (addr.province) {
     try {
-      await page.selectOption(DAC_SELECTORS.RECIPIENT_DEPARTMENT, { label: addr.province });
-      // Wait for dynamic city dropdown to load
-      await page.waitForTimeout(2000);
-    } catch {
-      logger.warn({ province: addr.province }, 'Could not select department');
+      const deptMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, addr.province);
+      if (deptMatch) {
+        await page.selectOption(DAC_SELECTORS.RECIPIENT_DEPARTMENT, deptMatch);
+        await page.waitForTimeout(2000); // Wait for city dropdown to load
+        logger.info({ province: addr.province, matched: deptMatch }, 'Department selected');
+      } else {
+        logger.warn({ province: addr.province }, 'Could not match department');
+      }
+    } catch (err) {
+      logger.warn({ province: addr.province, error: (err as Error).message }, 'Error selecting department');
     }
   }
 
-  // Ciudad (dynamic, loaded after department)
+  // Ciudad (dynamic, loaded after department — partial match)
   if (addr.city) {
     try {
-      await page.selectOption(DAC_SELECTORS.RECIPIENT_CITY, { label: addr.city });
-      await page.waitForTimeout(1000);
-    } catch {
-      logger.warn({ city: addr.city }, 'Could not select city');
+      const cityMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, addr.city);
+      if (cityMatch) {
+        await page.selectOption(DAC_SELECTORS.RECIPIENT_CITY, cityMatch);
+        await page.waitForTimeout(1000); // Wait for barrio dropdown
+        logger.info({ city: addr.city, matched: cityMatch }, 'City selected');
+      } else {
+        // Fallback: select first non-empty option
+        const firstOption = await page.$$eval(
+          `${DAC_SELECTORS.RECIPIENT_CITY} option`,
+          (opts: any[]) => {
+            const valid = opts.filter(o => o.value && o.value !== '0' && o.value !== '');
+            return valid.length > 0 ? valid[0].value : null;
+          }
+        );
+        if (firstOption) {
+          await page.selectOption(DAC_SELECTORS.RECIPIENT_CITY, firstOption);
+          await page.waitForTimeout(1000);
+          logger.warn({ city: addr.city, fallback: firstOption }, 'City not matched, using first option');
+        } else {
+          logger.warn({ city: addr.city }, 'No city options available');
+        }
+      }
+    } catch (err) {
+      logger.warn({ city: addr.city, error: (err as Error).message }, 'Error selecting city');
     }
   }
 
-  // Barrio (dynamic, loaded after city) — try with address2
-  if (addr.address2) {
-    try {
-      await page.selectOption(DAC_SELECTORS.RECIPIENT_BARRIO, { label: addr.address2 });
-    } catch {
-      logger.debug('Could not select barrio, trying first option');
-      // Select first non-empty option as fallback
-      try {
-        const options = await page.$$eval(
-          `${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
-          (opts) => opts.filter((o: any) => o.value !== '0').map((o: any) => o.value)
-        );
-        if (options.length > 0) {
-          await page.selectOption(DAC_SELECTORS.RECIPIENT_BARRIO, options[0]);
+  // Barrio (dynamic, loaded after city — try match, fallback to first)
+  try {
+    const barrioSelector = DAC_SELECTORS.RECIPIENT_BARRIO;
+    const barrioExists = await page.$(barrioSelector);
+    if (barrioExists) {
+      if (addr.address2) {
+        const barrioMatch = await findBestOptionMatch(page, barrioSelector, addr.address2);
+        if (barrioMatch) {
+          await page.selectOption(barrioSelector, barrioMatch);
+        } else {
+          // Select first valid option
+          const first = await page.$$eval(
+            `${barrioSelector} option`,
+            (opts: any[]) => {
+              const valid = opts.filter(o => o.value && o.value !== '0' && o.value !== '');
+              return valid.length > 0 ? valid[0].value : null;
+            }
+          );
+          if (first) await page.selectOption(barrioSelector, first);
         }
-      } catch { /* barrio might not be required */ }
+      } else {
+        // No address2, just pick first barrio
+        const first = await page.$$eval(
+          `${barrioSelector} option`,
+          (opts: any[]) => {
+            const valid = opts.filter(o => o.value && o.value !== '0' && o.value !== '');
+            return valid.length > 0 ? valid[0].value : null;
+          }
+        );
+        if (first) await page.selectOption(barrioSelector, first);
+      }
     }
-  }
+  } catch { /* barrio might not exist or not be required */ }
 
   // Click Siguiente (step 3 -> step 4)
   await clickNextButton(page, 3);
