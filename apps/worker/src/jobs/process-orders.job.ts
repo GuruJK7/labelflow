@@ -11,7 +11,7 @@ import { determinePaymentType } from '../rules/payment';
 import { sendShipmentNotification } from '../notifier/email';
 import { uploadLabelPdf } from '../storage/upload';
 import logger from '../logger';
-import { sleep } from '@labelflow/shared';
+import { sleep } from '../utils';
 import fs from 'fs';
 import path from 'path';
 

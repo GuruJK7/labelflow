@@ -5,7 +5,7 @@ import { DAC, DAC_URLS } from './selectors';
 import { ensureLoggedIn } from './auth';
 import { dacBrowser } from './browser';
 import logger from '../logger';
-import { cleanPhone } from '@labelflow/shared';
+import { cleanPhone } from '../utils';
 
 /**
  * Creates a shipment in DAC via Playwright browser automation.

@@ -2,7 +2,7 @@ import nodemailer from 'nodemailer';
 import { buildShipmentEmailHtml, buildSubject } from './templates';
 import { ShopifyOrder } from '../shopify/types';
 import logger from '../logger';
-import { maskEmail } from '@labelflow/shared';
+import { maskEmail } from '../utils';
 
 interface EmailConfig {
   host: string;
