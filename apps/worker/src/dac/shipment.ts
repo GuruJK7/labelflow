@@ -82,7 +82,7 @@ async function clickNextButton(page: Page, stepNum: number): Promise<void> {
     const isVisible = await link.isVisible();
     if (text?.toLowerCase().includes('siguiente') && isVisible) {
       await link.click();
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(800);
       logger.info({ step: stepNum }, 'Clicked Siguiente link');
       return;
     }
@@ -95,7 +95,7 @@ async function clickNextButton(page: Page, stepNum: number): Promise<void> {
       const isVisible = await btn.isVisible();
       if (isVisible) {
         await btn.click();
-        await page.waitForTimeout(1500);
+        await page.waitForTimeout(800);
         logger.info({ step: stepNum }, 'Clicked Siguiente button');
         return;
       }
@@ -126,7 +126,7 @@ async function clickNextButton(page: Page, stepNum: number): Promise<void> {
       }
       return false;
     }, stepNum);
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(800);
     logger.info({ step: stepNum }, 'Clicked Siguiente via JS evaluate');
   } catch (err) {
     logger.warn({ step: stepNum, error: (err as Error).message }, 'Could not find Siguiente button');
@@ -151,13 +151,13 @@ export async function createShipment(
     throw new Error(`Order ${order.name} has no shipping address`);
   }
 
-  await ensureLoggedIn(page, dacUsername, dacPassword);
+  await ensureLoggedIn(page, dacUsername, dacPassword, tenantId);
 
   logger.info({ tenantId, orderName: order.name, paymentType }, 'Creating shipment in DAC');
 
-  // Navigate to new shipment form
-  await page.goto(DAC_URLS.NEW_SHIPMENT, { waitUntil: 'networkidle' });
-  await page.waitForSelector(DAC_SELECTORS.PICKUP_TYPE, { timeout: 10000 });
+  // Navigate to new shipment form (domcontentloaded is faster than networkidle)
+  await page.goto(DAC_URLS.NEW_SHIPMENT, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+  await page.waitForSelector(DAC_SELECTORS.PICKUP_TYPE, { timeout: 8_000 });
 
   // ===== STEP 1: Shipment Type =====
   // Solicitud: Mostrador
@@ -184,7 +184,7 @@ export async function createShipment(
   await clickNextButton(page, 2);
 
   // ===== STEP 3: Destino =====
-  await page.waitForSelector(DAC_SELECTORS.RECIPIENT_NAME, { timeout: 5000 });
+  await page.waitForSelector(DAC_SELECTORS.RECIPIENT_NAME, { timeout: 8_000 });
 
   // Nombre
   const fullName = `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente';
@@ -209,7 +209,7 @@ export async function createShipment(
       const deptMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, addr.province);
       if (deptMatch) {
         await page.selectOption(DAC_SELECTORS.RECIPIENT_DEPARTMENT, deptMatch);
-        await page.waitForTimeout(2000); // Wait for city dropdown to load
+        await page.waitForTimeout(1200); // Wait for city dropdown to load
         logger.info({ province: addr.province, matched: deptMatch }, 'Department selected');
       } else {
         logger.warn({ province: addr.province }, 'Could not match department');
@@ -225,7 +225,7 @@ export async function createShipment(
       const cityMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, addr.city);
       if (cityMatch) {
         await page.selectOption(DAC_SELECTORS.RECIPIENT_CITY, cityMatch);
-        await page.waitForTimeout(1000); // Wait for barrio dropdown
+        await page.waitForTimeout(800); // Wait for barrio dropdown
         logger.info({ city: addr.city, matched: cityMatch }, 'City selected');
       } else {
         // Fallback: select first non-empty option
@@ -294,8 +294,7 @@ export async function createShipment(
     logger.debug('Quantity field not found, using default');
   }
 
-  // Screenshot before submit
-  await dacBrowser.screenshot(page, `pre-submit-${order.name.replace('#', '')}`);
+  // Skip pre-submit screenshot in production (saves ~2s)
 
   // Click "Agregar" (final submit)
   const agregarBtn = await page.$('button:has-text("Agregar")');
@@ -311,11 +310,11 @@ export async function createShipment(
     await agregarBtn.click();
   }
 
-  // Wait for response
-  await page.waitForTimeout(3000);
+  // Wait for response (reduced from 3s)
+  await page.waitForTimeout(2000);
 
-  // Screenshot after submit
-  const ssPath = await dacBrowser.screenshot(page, `post-submit-${order.name.replace('#', '')}`);
+  // Screenshot only for debugging (skip in fast mode)
+  const ssPath = '';
 
   // Try to extract guia number from the page
   let guia = '';

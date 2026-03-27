@@ -5,15 +5,15 @@ import { dacBrowser } from './browser';
 import logger from '../logger';
 
 const RECAPTCHA_SITEKEY = '6LeKGrIaAAAAAANa6NZk_i6xkQD-c-_U3Bt-OffC';
+const FAST_TIMEOUT = 5_000; // 5s instead of 30s for fail-fast
 
 /**
- * Solve reCAPTCHA v2 on DAC login page using 2Captcha service.
- * Returns the g-recaptcha-response token.
+ * Solve reCAPTCHA v2 via 2Captcha service.
  */
 async function solveRecaptcha(pageUrl: string): Promise<string> {
   const apiKey = process.env.CAPTCHA_API_KEY;
   if (!apiKey) {
-    throw new Error('CAPTCHA_API_KEY env var is required for DAC login (2captcha.com API key)');
+    throw new Error('CAPTCHA_API_KEY env var is required for DAC login');
   }
 
   logger.info('Solving reCAPTCHA via 2Captcha...');
@@ -24,34 +24,57 @@ async function solveRecaptcha(pageUrl: string): Promise<string> {
     googlekey: RECAPTCHA_SITEKEY,
   });
 
-  logger.info({ taskId: result.id }, 'reCAPTCHA solved successfully');
+  logger.info({ taskId: result.id }, 'reCAPTCHA solved');
   return result.data;
 }
 
 /**
- * Login to dac.com.uy using document/RUT + password.
- * Handles reCAPTCHA v2 via 2Captcha solving service.
- *
- * Flow:
- * 1. Navigate to login page
- * 2. Fill credentials
- * 3. Solve reCAPTCHA via 2Captcha API
- * 4. Inject token into g-recaptcha-response
- * 5. Call LoginSend() JS function to submit
- * 6. Wait for redirect to /envios/nuevo
+ * Try to login using saved cookies (no CAPTCHA needed).
+ * Returns true if session is still valid.
+ */
+export async function tryLoginWithCookies(
+  page: Page,
+  tenantId: string
+): Promise<boolean> {
+  const loaded = await dacBrowser.loadCookies(tenantId);
+  if (!loaded) return false;
+
+  logger.info('Trying login with saved cookies...');
+
+  // Navigate to a protected page to test session
+  await page.goto(DAC_URLS.NEW_SHIPMENT, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+
+  // Check if we got redirected to login
+  const url = page.url();
+  if (url.includes('/usuarios/login') || url.includes('/login')) {
+    logger.info('Saved cookies expired, need fresh login');
+    return false;
+  }
+
+  // Check for a form element that only shows when logged in
+  try {
+    await page.waitForSelector(DAC_SELECTORS.PICKUP_TYPE, { timeout: FAST_TIMEOUT });
+    logger.info('Cookie login successful — skipped CAPTCHA!');
+    return true;
+  } catch {
+    logger.info('Cookie login failed, form not found');
+    return false;
+  }
+}
+
+/**
+ * Full login with CAPTCHA solving.
  */
 export async function loginDac(page: Page, username: string, password: string): Promise<void> {
-  logger.info('Logging into DAC...');
+  logger.info('Logging into DAC (full login with CAPTCHA)...');
 
-  await page.goto(DAC_URLS.LOGIN, { waitUntil: 'networkidle' });
+  await page.goto(DAC_URLS.LOGIN, { waitUntil: 'domcontentloaded', timeout: 15_000 });
 
   // Wait for login form
-  await page.waitForSelector(DAC_SELECTORS.LOGIN_USER_INPUT, { timeout: 15_000 });
+  await page.waitForSelector(DAC_SELECTORS.LOGIN_USER_INPUT, { timeout: 10_000 });
 
-  // Fill document/RUT
+  // Fill credentials
   await page.fill(DAC_SELECTORS.LOGIN_USER_INPUT, username);
-
-  // Fill password
   await page.fill(DAC_SELECTORS.LOGIN_PASSWORD_INPUT, password);
 
   // Solve reCAPTCHA
@@ -63,49 +86,61 @@ export async function loginDac(page: Page, username: string, password: string): 
     throw new Error(`reCAPTCHA solving failed: ${(err as Error).message}. Screenshot: ${screenshotPath}`);
   }
 
-  // Inject reCAPTCHA token and submit via DAC's LoginSend() function
+  // Inject token and submit
   await page.evaluate((token: string) => {
-    // Set the reCAPTCHA response textarea (standard field used by grecaptcha)
     const responseField = document.querySelector('#g-recaptcha-response') as HTMLTextAreaElement;
-    if (responseField) {
-      responseField.value = token;
-    }
+    if (responseField) responseField.value = token;
 
-    // Also set any textarea with name g-recaptcha-response (some sites use multiple)
     const allResponses = document.querySelectorAll('textarea[name="g-recaptcha-response"]');
-    allResponses.forEach((el) => {
-      (el as HTMLTextAreaElement).value = token;
-    });
+    allResponses.forEach((el) => { (el as HTMLTextAreaElement).value = token; });
 
-    // Call DAC's LoginSend() function directly (defined in /usuarios.js)
     if (typeof (window as any).LoginSend === 'function') {
       (window as any).LoginSend();
     }
   }, captchaToken);
 
-  // Wait for navigation to /envios/nuevo or any post-login page
+  // Wait for redirect (use shorter timeout)
   try {
-    await page.waitForURL('**/envios/**', { timeout: 20_000 });
+    await page.waitForURL('**/envios/**', { timeout: 15_000 });
     logger.info('DAC login successful');
   } catch {
-    // Check if there's an error message on the page
     const errorText = await page.evaluate(() => {
       const alerts = document.querySelectorAll('.alert, .error, .formError, .validationError');
       return Array.from(alerts).map(el => el.textContent?.trim()).filter(Boolean).join('; ');
     });
 
     const screenshotPath = await dacBrowser.screenshot(page, 'login-failed');
-
-    if (errorText) {
-      throw new Error(`DAC login failed: ${errorText}. Screenshot: ${screenshotPath}`);
-    }
-
-    throw new Error(`DAC login failed. Check credentials. Screenshot: ${screenshotPath}`);
+    throw new Error(
+      errorText
+        ? `DAC login failed: ${errorText}. Screenshot: ${screenshotPath}`
+        : `DAC login failed. Check credentials. Screenshot: ${screenshotPath}`
+    );
   }
 }
 
 /**
- * Checks if the current page has an active DAC session.
+ * Smart login: try cookies first, fall back to full login.
+ * Saves cookies after successful login for next time.
+ */
+export async function smartLogin(
+  page: Page,
+  username: string,
+  password: string,
+  tenantId: string
+): Promise<void> {
+  // Try cookie-based login first (no CAPTCHA, ~2s)
+  const cookieSuccess = await tryLoginWithCookies(page, tenantId);
+  if (cookieSuccess) return;
+
+  // Full login with CAPTCHA (~60-80s)
+  await loginDac(page, username, password);
+
+  // Save cookies for next time
+  await dacBrowser.saveCookies(tenantId);
+}
+
+/**
+ * Checks if current page has active DAC session.
  */
 export async function isLoggedIn(page: Page): Promise<boolean> {
   try {
@@ -119,12 +154,21 @@ export async function isLoggedIn(page: Page): Promise<boolean> {
 }
 
 /**
- * Ensures we're logged in, re-authenticating if needed.
+ * Ensures logged in, using smart login (cookies first).
  */
-export async function ensureLoggedIn(page: Page, username: string, password: string): Promise<void> {
+export async function ensureLoggedIn(
+  page: Page,
+  username: string,
+  password: string,
+  tenantId?: string
+): Promise<void> {
   const loggedIn = await isLoggedIn(page);
   if (!loggedIn) {
     logger.info('DAC session expired, re-authenticating...');
-    await loginDac(page, username, password);
+    if (tenantId) {
+      await smartLogin(page, username, password, tenantId);
+    } else {
+      await loginDac(page, username, password);
+    }
   }
 }

@@ -4,7 +4,7 @@ import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify/client';
 import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify/orders';
 import { dacBrowser } from '../dac/browser';
-import { loginDac } from '../dac/auth';
+import { smartLogin } from '../dac/auth';
 import { createShipment } from '../dac/shipment';
 import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
@@ -15,7 +15,7 @@ import { sleep } from '../utils';
 import fs from 'fs';
 import path from 'path';
 
-const DELAY_BETWEEN_ORDERS_MS = 2_000;
+const DELAY_BETWEEN_ORDERS_MS = 500;
 
 export async function processOrdersJob(tenantId: string, jobId: string): Promise<void> {
   const startTime = Date.now();
@@ -88,7 +88,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     // STEP 3: Start browser and login to DAC
     const page = await dacBrowser.getPage();
     try {
-      await loginDac(page, dacUsername, dacPassword);
+      await smartLogin(page, dacUsername, dacPassword, tenantId);
       await logToDB('SUCCESS', 'DAC login successful');
     } catch (err) {
       await logToDB('ERROR', `DAC login failed: ${(err as Error).message}`);
@@ -233,7 +233,8 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
       }
     }
 
-    // STEP 5: Close browser
+    // STEP 5: Save cookies for next run, then close browser
+    await dacBrowser.saveCookies(tenantId);
     await dacBrowser.close();
 
     // STEP 6: Update job and tenant
