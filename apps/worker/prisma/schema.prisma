@@ -1,0 +1,236 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// --- AUTH ---
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String?
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+  tenant   Tenant?
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// --- TENANT ---
+
+model Tenant {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  name      String
+  slug      String   @unique
+  apiKey    String   @unique @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Shopify
+  shopifyStoreUrl String?
+  shopifyToken    String? // Encrypted AES-256
+
+  // DAC
+  dacUsername String?
+  dacPassword String? // Encrypted AES-256
+
+  // Email
+  emailHost String?
+  emailPort Int?    @default(587)
+  emailUser String?
+  emailPass String? // Encrypted AES-256
+  emailFrom String?
+  storeName String?
+
+  // Config
+  paymentThreshold Float   @default(4000)
+  cronSchedule     String  @default("*/15 * * * *")
+  maxOrdersPerRun  Int     @default(20)
+  isActive         Boolean @default(false)
+
+  // Stripe Billing
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  stripePriceId        String?
+  subscriptionStatus   SubscriptionStatus @default(INACTIVE)
+  currentPeriodEnd     DateTime?
+
+  // Usage
+  labelsThisMonth Int      @default(0)
+  labelsTotal     Int      @default(0)
+  lastRunAt       DateTime?
+
+  user    User     @relation(fields: [userId], references: [id])
+  jobs    Job[]
+  labels  Label[]
+  runLogs RunLog[]
+
+  @@index([slug])
+  @@index([stripeCustomerId])
+  @@index([apiKey])
+}
+
+enum SubscriptionStatus {
+  INACTIVE
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  PAUSED
+}
+
+// --- JOBS ---
+
+model Job {
+  id         String     @id @default(cuid())
+  tenantId   String
+  bullJobId  String?    @unique
+  type       JobType    @default(PROCESS_ORDERS)
+  status     JobStatus  @default(PENDING)
+  trigger    JobTrigger @default(CRON)
+  startedAt  DateTime?
+  finishedAt DateTime?
+  durationMs Int?
+
+  totalOrders  Int @default(0)
+  successCount Int @default(0)
+  failedCount  Int @default(0)
+  skippedCount Int @default(0)
+
+  errorMessage String?
+  createdAt    DateTime @default(now())
+
+  tenant Tenant   @relation(fields: [tenantId], references: [id])
+  labels Label[]
+  logs   RunLog[]
+
+  @@index([tenantId, createdAt(sort: Desc)])
+}
+
+enum JobType {
+  PROCESS_ORDERS
+  RETRY_FAILED
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  PARTIAL
+}
+
+enum JobTrigger {
+  CRON
+  WEBHOOK
+  MANUAL
+  MCP
+}
+
+// --- LABELS ---
+
+model Label {
+  id               String      @id @default(cuid())
+  tenantId         String
+  jobId            String?
+  shopifyOrderId   String
+  shopifyOrderName String
+  customerName     String
+  customerEmail    String?
+  customerPhone    String?
+  deliveryAddress  String
+  city             String
+  department       String
+  totalUyu         Float
+  paymentType      PaymentType
+  dacGuia          String?     @unique
+  pdfPath          String?
+  pdfUrl           String?
+  status           LabelStatus @default(PENDING)
+  errorMessage     String?
+  emailSent        Boolean     @default(false)
+  emailSentAt      DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  job    Job?   @relation(fields: [jobId], references: [id])
+
+  @@unique([tenantId, shopifyOrderId])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([dacGuia])
+}
+
+enum LabelStatus {
+  PENDING
+  CREATED
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+enum PaymentType {
+  REMITENTE
+  DESTINATARIO
+}
+
+// --- RUN LOGS ---
+
+model RunLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  jobId     String?
+  level     LogLevel @default(INFO)
+  message   String
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  job    Job?   @relation(fields: [jobId], references: [id])
+
+  @@index([tenantId, createdAt(sort: Desc)])
+}
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+  SUCCESS
+}

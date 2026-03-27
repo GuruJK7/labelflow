@@ -2,11 +2,9 @@ FROM mcr.microsoft.com/playwright:v1.44.0-jammy
 
 WORKDIR /app
 
-# Copy only the worker's package.json first for caching
-COPY apps/worker/package.json ./package.json
-
-# Copy prisma schema (needed for prisma generate)
-COPY apps/web/prisma/ ./prisma/
+# Copy package.json and prisma schema
+COPY package.json ./
+COPY prisma/ ./prisma/
 
 # Install deps
 RUN npm install --legacy-peer-deps
@@ -14,10 +12,10 @@ RUN npm install --legacy-peer-deps
 # Generate Prisma client
 RUN npx prisma generate --schema=./prisma/schema.prisma
 
-# Copy worker source
-COPY apps/worker/ ./
+# Copy all worker source
+COPY . .
 
-# Build TypeScript
+# Build TypeScript (allow errors for now)
 RUN npx tsc || true
 
 # Playwright browsers already in base image
