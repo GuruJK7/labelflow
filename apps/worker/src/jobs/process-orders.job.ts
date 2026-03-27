@@ -201,8 +201,12 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           });
         }
 
-        // e) Mark order as processed in Shopify
-        await markOrderProcessed(shopifyClient, order.id, result.guia);
+        // e) Mark order as processed in Shopify (non-fatal if fails)
+        try {
+          await markOrderProcessed(shopifyClient, order.id, result.guia);
+        } catch (tagErr) {
+          logger.warn({ orderId: order.id, error: (tagErr as Error).message }, 'Shopify tagging failed (non-fatal, shipment already created in DAC)');
+        }
 
         // f) Send email notification
         let emailSent = false;
