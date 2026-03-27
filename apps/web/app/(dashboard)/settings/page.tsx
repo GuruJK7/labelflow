@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, FormEvent } from 'react';
-import { Save, Loader2, CheckCircle, ExternalLink } from 'lucide-react';
+import { useEffect, useState, FormEvent, useCallback } from 'react';
+import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar } from 'lucide-react';
 
 interface SettingsData {
   shopifyStoreUrl: string;
@@ -34,6 +34,78 @@ export default function SettingsPage() {
   const [storeName, setStoreName] = useState('');
   const [threshold, setThreshold] = useState(4000);
   const [cronSchedule, setCronSchedule] = useState('*/15 * * * *');
+  const [scheduleHours, setScheduleHours] = useState<string[]>(['09:00']);
+  const [scheduleDays, setScheduleDays] = useState<number[]>([1, 2, 3, 4, 5]); // Mon-Fri
+
+  const DAYS = [
+    { value: 0, label: 'Dom', short: 'D' },
+    { value: 1, label: 'Lun', short: 'L' },
+    { value: 2, label: 'Mar', short: 'M' },
+    { value: 3, label: 'Mie', short: 'X' },
+    { value: 4, label: 'Jue', short: 'J' },
+    { value: 5, label: 'Vie', short: 'V' },
+    { value: 6, label: 'Sab', short: 'S' },
+  ];
+
+  // Parse cron to visual schedule on load
+  const parseCronToSchedule = useCallback((cron: string) => {
+    const parts = cron.split(' ');
+    if (parts.length !== 5) return;
+    const [minute, hour, , , dayOfWeek] = parts;
+
+    // Parse hours
+    if (hour.includes(',')) {
+      const hours = hour.split(',');
+      const minutes = minute.split(',');
+      const times: string[] = [];
+      hours.forEach((h, i) => {
+        const m = minutes[i] ?? minutes[0] ?? '0';
+        times.push(`${h.padStart(2, '0')}:${m.padStart(2, '0')}`);
+      });
+      setScheduleHours(times);
+    } else if (hour !== '*' && !hour.includes('/')) {
+      setScheduleHours([`${hour.padStart(2, '0')}:${(minute === '*' ? '0' : minute).padStart(2, '0')}`]);
+    }
+
+    // Parse days
+    if (dayOfWeek === '*') {
+      setScheduleDays([0, 1, 2, 3, 4, 5, 6]);
+    } else if (dayOfWeek.includes('-')) {
+      const [start, end] = dayOfWeek.split('-').map(Number);
+      const days: number[] = [];
+      for (let i = start; i <= end; i++) days.push(i);
+      setScheduleDays(days);
+    } else if (dayOfWeek.includes(',')) {
+      setScheduleDays(dayOfWeek.split(',').map(Number));
+    }
+  }, []);
+
+  // Convert visual schedule to cron
+  function scheduleToCron(hours: string[], days: number[]): string {
+    if (hours.length === 0) return '0 9 * * *';
+    const minutes = hours.map(h => h.split(':')[1] ?? '0').join(',');
+    const hourNums = hours.map(h => h.split(':')[0]).join(',');
+    const dayStr = days.length === 7 ? '*' : days.sort((a, b) => a - b).join(',');
+    return `${minutes} ${hourNums} * * ${dayStr}`;
+  }
+
+  function toggleDay(day: number) {
+    setScheduleDays(prev =>
+      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+    );
+  }
+
+  function addHour() {
+    setScheduleHours(prev => [...prev, '12:00']);
+  }
+
+  function removeHour(index: number) {
+    setScheduleHours(prev => prev.filter((_, i) => i !== index));
+  }
+
+  function updateHour(index: number, value: string) {
+    setScheduleHours(prev => prev.map((h, i) => i === index ? value : h));
+  }
   const [saving, setSaving] = useState('');
   const [message, setMessage] = useState({ type: '', text: '' });
 
@@ -51,11 +123,13 @@ export default function SettingsPage() {
           setEmailFrom(data.emailFrom ?? '');
           setStoreName(data.storeName ?? '');
           setThreshold(data.paymentThreshold ?? 4000);
-          setCronSchedule(data.cronSchedule ?? '*/15 * * * *');
+          const cron = data.cronSchedule ?? '*/15 * * * *';
+          setCronSchedule(cron);
+          parseCronToSchedule(cron);
         }
       })
       .catch(() => {});
-  }, []);
+  }, [parseCronToSchedule]);
 
   async function saveSection(section: string, body: Record<string, unknown>) {
     setSaving(section);
@@ -153,24 +227,108 @@ export default function SettingsPage() {
           </button>
         </div>
 
-        {/* Rules */}
+        {/* Reglas de pago */}
         <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
-          <h2 className="text-sm font-semibold text-white mb-4">Reglas de negocio</h2>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelClass}>Umbral pago (UYU)</label>
-              <input type="number" value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} className={inputClass} />
-              <p className="text-[10px] text-zinc-600 mt-1">Por encima: paga remitente. Por debajo: paga destinatario.</p>
+          <h2 className="text-sm font-semibold text-white mb-4">Regla de pago</h2>
+          <div>
+            <label className={labelClass}>Umbral pago (UYU)</label>
+            <input type="number" value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} className={inputClass + ' max-w-xs'} />
+            <p className="text-[10px] text-zinc-600 mt-1">Pedidos por encima: paga tu tienda. Por debajo: paga el cliente al recibir.</p>
+          </div>
+          <button onClick={() => saveSection('threshold', { paymentThreshold: threshold })} disabled={saving === 'threshold'}
+            className="mt-3 inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
+            {saving === 'threshold' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar regla
+          </button>
+        </div>
+
+        {/* Programacion de horarios */}
+        <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
+          <div className="flex items-center gap-2 mb-5">
+            <Clock className="w-4 h-4 text-cyan-400" />
+            <h2 className="text-sm font-semibold text-white">Programacion automatica</h2>
+          </div>
+
+          {/* Dias de la semana */}
+          <div className="mb-5">
+            <label className={labelClass}>Dias de ejecucion</label>
+            <div className="flex gap-2 mt-1">
+              {DAYS.map((day) => (
+                <button
+                  key={day.value}
+                  onClick={() => toggleDay(day.value)}
+                  className={`w-10 h-10 rounded-lg text-xs font-medium transition-all ${
+                    scheduleDays.includes(day.value)
+                      ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-500/20'
+                      : 'bg-zinc-800/50 text-zinc-500 border border-white/[0.06] hover:border-cyan-500/30 hover:text-zinc-300'
+                  }`}
+                >
+                  {day.label}
+                </button>
+              ))}
             </div>
-            <div>
-              <label className={labelClass}>Frecuencia (cron)</label>
-              <input value={cronSchedule} onChange={(e) => setCronSchedule(e.target.value)} className={inputClass} />
-              <p className="text-[10px] text-zinc-600 mt-1">*/15 * * * * = cada 15 min</p>
+            <div className="flex gap-2 mt-2">
+              <button onClick={() => setScheduleDays([1, 2, 3, 4, 5])} className="text-[10px] text-cyan-400/70 hover:text-cyan-400 transition-colors">Lun-Vie</button>
+              <span className="text-zinc-700 text-[10px]">|</span>
+              <button onClick={() => setScheduleDays([0, 1, 2, 3, 4, 5, 6])} className="text-[10px] text-cyan-400/70 hover:text-cyan-400 transition-colors">Todos</button>
+              <span className="text-zinc-700 text-[10px]">|</span>
+              <button onClick={() => setScheduleDays([1, 3, 5])} className="text-[10px] text-cyan-400/70 hover:text-cyan-400 transition-colors">Lun-Mie-Vie</button>
             </div>
           </div>
-          <button onClick={() => saveSection('rules', { paymentThreshold: threshold, cronSchedule })} disabled={saving === 'rules'}
-            className="mt-3 inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
-            {saving === 'rules' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar reglas
+
+          {/* Horarios */}
+          <div className="mb-5">
+            <label className={labelClass}>Horarios de ejecucion</label>
+            <div className="space-y-2 mt-1">
+              {scheduleHours.map((hour, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <input
+                    type="time"
+                    value={hour}
+                    onChange={(e) => updateHour(index, e.target.value)}
+                    className="px-3 py-2 bg-zinc-800/50 border border-white/[0.08] rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-colors [color-scheme:dark]"
+                  />
+                  {scheduleHours.length > 1 && (
+                    <button onClick={() => removeHour(index)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-500/10 text-zinc-500 hover:text-red-400 transition-colors">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button onClick={addHour} className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-cyan-400/70 hover:text-cyan-400 transition-colors">
+              <Plus className="w-3 h-3" /> Agregar otro horario
+            </button>
+          </div>
+
+          {/* Preview */}
+          <div className="bg-zinc-800/30 border border-white/[0.04] rounded-lg px-4 py-3 mb-4">
+            <p className="text-[11px] text-zinc-500 mb-1">Resumen:</p>
+            <p className="text-xs text-white">
+              <Calendar className="w-3 h-3 inline mr-1 text-cyan-400" />
+              {scheduleDays.length === 7
+                ? 'Todos los dias'
+                : scheduleDays.length === 0
+                  ? 'Ningun dia seleccionado'
+                  : scheduleDays.sort((a, b) => a - b).map(d => DAYS.find(dd => dd.value === d)?.label).join(', ')
+              }
+              {' a las '}
+              <span className="text-cyan-400 font-medium">
+                {scheduleHours.length === 0 ? '(sin horario)' : scheduleHours.join(', ')}
+              </span>
+            </p>
+            <p className="text-[10px] text-zinc-600 mt-1">Cron: {scheduleToCron(scheduleHours, scheduleDays)}</p>
+          </div>
+
+          <button
+            onClick={() => {
+              const cron = scheduleToCron(scheduleHours, scheduleDays);
+              setCronSchedule(cron);
+              saveSection('schedule', { cronSchedule: cron });
+            }}
+            disabled={saving === 'schedule'}
+            className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+          >
+            {saving === 'schedule' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar programacion
           </button>
         </div>
 

@@ -9,9 +9,10 @@ export async function middleware(request: NextRequest) {
   const publicPaths = [
     '/login',
     '/signup',
+    '/onboarding',
     '/api/auth',
     '/api/webhooks',
-    '/api/v1/mcp',
+    '/api/v1/mcp', // MCP uses its own Bearer token auth
     '/_next',
     '/favicon.ico',
   ];
@@ -25,25 +26,30 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Dashboard routes require auth
-  const dashboardPaths = [
+  // All protected routes (dashboard + API)
+  const protectedPaths = [
     '/dashboard',
     '/orders',
     '/labels',
     '/logs',
     '/settings',
-    '/onboarding',
+    '/api/v1',
+    '/api/stripe',
   ];
 
-  const isDashboardRoute = dashboardPaths.some((p) => pathname.startsWith(p));
+  const isProtected = protectedPaths.some((p) => pathname.startsWith(p));
 
-  if (isDashboardRoute) {
+  if (isProtected) {
     const token = await getToken({
       req: request,
       secret: process.env.NEXTAUTH_SECRET,
     });
 
     if (!token) {
+      // API routes return 401 JSON, pages redirect to login
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
       const loginUrl = new URL('/login', request.url);
       loginUrl.searchParams.set('callbackUrl', pathname);
       return NextResponse.redirect(loginUrl);

@@ -5,19 +5,29 @@ import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { encryptIfPresent } from '@/lib/encryption';
 
 const updateSchema = z.object({
-  shopifyStoreUrl: z.string().optional(),
-  shopifyToken: z.string().optional(),
-  dacUsername: z.string().optional(),
-  dacPassword: z.string().optional(),
-  emailHost: z.string().optional(),
-  emailPort: z.number().optional(),
-  emailUser: z.string().optional(),
-  emailPass: z.string().optional(),
-  emailFrom: z.string().optional(),
-  storeName: z.string().optional(),
-  paymentThreshold: z.number().min(0).optional(),
-  cronSchedule: z.string().optional(),
-  maxOrdersPerRun: z.number().min(1).max(100).optional(),
+  shopifyStoreUrl: z.string()
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/, 'Must be a valid Shopify domain (e.g. your-store.myshopify.com)')
+    .optional(),
+  shopifyToken: z.string().min(1).optional(),
+  dacUsername: z.string().min(1).optional(),
+  dacPassword: z.string().min(1).optional(),
+  emailHost: z.string().min(1).optional(),
+  emailPort: z.number().min(1).max(65535).optional(),
+  emailUser: z.string().min(1).optional(),
+  emailPass: z.string().min(1).optional(),
+  emailFrom: z.string().min(1).optional(),
+  storeName: z.string().max(100).optional(),
+  paymentThreshold: z.number().min(0).max(1000000).optional(),
+  cronSchedule: z.string()
+    .regex(/^(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)$/, 'Invalid cron expression')
+    .refine((val) => {
+      const [min] = val.split(' ');
+      if (min === '*') return false;
+      if (min.startsWith('*/')) return parseInt(min.substring(2)) >= 15;
+      return true;
+    }, 'Minimum interval is 15 minutes')
+    .optional(),
+  maxOrdersPerRun: z.number().min(1).max(50).optional(),
 }).partial();
 
 export async function GET() {

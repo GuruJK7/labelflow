@@ -2,6 +2,7 @@ import { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { db } from './db';
 
 export const authOptions: NextAuthOptions = {
@@ -13,18 +14,22 @@ export const authOptions: NextAuthOptions = {
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null;
+        try {
+          if (!credentials?.email || !credentials?.password) return null;
 
-        const user = await db.user.findUnique({
-          where: { email: credentials.email.toLowerCase() },
-        });
+          const user = await db.user.findUnique({
+            where: { email: credentials.email.toLowerCase() },
+          });
 
-        if (!user || !user.passwordHash) return null;
+          if (!user || !user.passwordHash) return null;
 
-        const valid = await bcrypt.compare(credentials.password, user.passwordHash);
-        if (!valid) return null;
+          const valid = await bcrypt.compare(credentials.password, user.passwordHash);
+          if (!valid) return null;
 
-        return { id: user.id, email: user.email, name: user.name };
+          return { id: user.id, email: user.email, name: user.name };
+        } catch {
+          return null;
+        }
       },
     }),
     ...(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET
@@ -36,7 +41,7 @@ export const authOptions: NextAuthOptions = {
         ]
       : []),
   ],
-  session: { strategy: 'jwt' },
+  session: { strategy: 'jwt', maxAge: 7 * 24 * 60 * 60 }, // 7 days instead of 30
   pages: {
     signIn: '/login',
     newUser: '/onboarding',
@@ -46,7 +51,6 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id;
       }
-      // Load tenant ID
       if (token.id) {
         const tenant = await db.tenant.findUnique({
           where: { userId: token.id as string },
@@ -72,16 +76,25 @@ export const authOptions: NextAuthOptions = {
       return session;
     },
     async signIn({ user, account }) {
-      // For OAuth: create user if not exists
       if (account?.provider === 'google' && user.email) {
         const existing = await db.user.findUnique({ where: { email: user.email } });
         if (!existing) {
-          await db.user.create({
+          const newUser = await db.user.create({
             data: {
               email: user.email,
               name: user.name,
               image: user.image,
               emailVerified: new Date(),
+            },
+          });
+          // Create tenant for OAuth users too
+          const slug = user.email.split('@')[0].replace(/[^a-z0-9]/gi, '-').toLowerCase();
+          await db.tenant.create({
+            data: {
+              userId: newUser.id,
+              name: user.name ?? slug,
+              slug: `${slug}-${Date.now()}`,
+              apiKey: crypto.randomBytes(32).toString('hex'),
             },
           });
         }
@@ -91,9 +104,6 @@ export const authOptions: NextAuthOptions = {
   },
 };
 
-/**
- * Helper to get tenant ID from session, throws if not found.
- */
 export function requireTenantId(session: Record<string, unknown>): string {
   const tenantId = (session.user as Record<string, unknown>)?.tenantId as string | undefined;
   if (!tenantId) {

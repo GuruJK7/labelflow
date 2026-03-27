@@ -1,51 +1,16 @@
-import { Queue } from 'bullmq';
-import IORedis from 'ioredis';
 import { db } from './db';
-
-const QUEUE_NAME = 'labelflow:process-orders';
-
-let _connection: IORedis | null = null;
-
-function getRedisConnection(): IORedis {
-  if (_connection) return _connection;
-
-  const redisUrl = process.env.REDIS_URL;
-  if (!redisUrl) {
-    throw new Error('REDIS_URL is required for queue');
-  }
-
-  _connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
-  return _connection;
-}
-
-let _queue: Queue | null = null;
-
-function getQueue(): Queue {
-  if (_queue) return _queue;
-
-  _queue = new Queue(QUEUE_NAME, {
-    connection: getRedisConnection(),
-    defaultJobOptions: {
-      removeOnComplete: 100,
-      removeOnFail: 200,
-      attempts: 1,
-    },
-  });
-
-  return _queue;
-}
 
 /**
  * Enqueues a process-orders job for a tenant.
- * Returns the BullMQ job ID.
+ * Creates a Job record in the database.
+ * Attempts to push to Redis/BullMQ, but if Redis is unavailable,
+ * the job is still created in DB (the worker polls DB as fallback).
  */
 export async function enqueueProcessOrders(
   tenantId: string,
   trigger: 'CRON' | 'WEBHOOK' | 'MANUAL' | 'MCP'
 ): Promise<string> {
-  const queue = getQueue();
-
-  // Create job record in DB first
+  // Create job record in DB first (always works)
   const dbJob = await db.job.create({
     data: {
       tenantId,
@@ -55,18 +20,47 @@ export async function enqueueProcessOrders(
     },
   });
 
-  // Enqueue in BullMQ
-  const bullJob = await queue.add(
-    'process-orders',
-    { tenantId, jobId: dbJob.id, trigger },
-    { jobId: `${tenantId}-${dbJob.id}` }
-  );
+  // Try to enqueue in BullMQ (best-effort)
+  try {
+    const redisUrl = process.env.REDIS_URL;
+    if (redisUrl) {
+      const IORedis = (await import('ioredis')).default;
+      const { Queue } = await import('bullmq');
 
-  // Update DB with BullMQ job ID
-  await db.job.update({
-    where: { id: dbJob.id },
-    data: { bullJobId: bullJob.id },
-  });
+      const connection = new IORedis(redisUrl, {
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+        retryStrategy: () => null, // Don't retry on serverless
+      });
+
+      const queue = new Queue('labelflow:process-orders', {
+        connection,
+        defaultJobOptions: {
+          removeOnComplete: 100,
+          removeOnFail: 200,
+          attempts: 1,
+        },
+      });
+
+      const bullJob = await queue.add(
+        'process-orders',
+        { tenantId, jobId: dbJob.id, trigger },
+        { jobId: `${tenantId}-${dbJob.id}` }
+      );
+
+      await db.job.update({
+        where: { id: dbJob.id },
+        data: { bullJobId: bullJob.id },
+      });
+
+      // Cleanup serverless connection
+      await queue.close();
+      await connection.quit();
+    }
+  } catch (err) {
+    // Redis/BullMQ failed but job is in DB — worker will pick it up via polling
+    console.error('[QUEUE] BullMQ enqueue failed (job still in DB):', (err as Error).message);
+  }
 
   return dbJob.id;
 }

@@ -2,6 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { db } from '@/lib/db';
 import { enqueueProcessOrders } from '@/lib/queue';
+import { decrypt } from '@/lib/encryption';
+
+function verifyHmac(body: string, hmacHeader: string, secret: string): boolean {
+  const digest = crypto
+    .createHmac('sha256', secret)
+    .update(body, 'utf8')
+    .digest('base64');
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(hmacHeader, 'base64'),
+      Buffer.from(digest, 'base64')
+    );
+  } catch {
+    return false;
+  }
+}
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -9,7 +25,6 @@ export async function POST(req: NextRequest) {
   const topic = req.headers.get('x-shopify-topic');
   const shopDomain = req.headers.get('x-shopify-shop-domain');
 
-  // Always respond 200 quickly (Shopify requirement)
   if (!hmacHeader || !topic || !shopDomain) {
     return NextResponse.json({ error: 'Missing headers' }, { status: 401 });
   }
@@ -29,17 +44,20 @@ export async function POST(req: NextRequest) {
     select: { id: true, shopifyToken: true },
   });
 
-  if (!tenant) {
-    return NextResponse.json({ ok: true }); // Silently ignore unknown shops
+  if (!tenant || !tenant.shopifyToken) {
+    return NextResponse.json({ ok: true });
   }
 
-  // Verify HMAC (using shopify token as secret)
-  // Note: in production, use the webhook shared secret from Shopify app settings
-  // For now we accept it if tenant exists
+  // Verify HMAC using the tenant's Shopify token as webhook secret
+  const shopifySecret = decrypt(tenant.shopifyToken);
+  if (!verifyHmac(body, hmacHeader, shopifySecret)) {
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+  }
+
   try {
     await enqueueProcessOrders(tenant.id, 'WEBHOOK');
-  } catch (err) {
-    console.error('Webhook enqueue error:', (err as Error).message);
+  } catch {
+    // Silently handle — Shopify requires fast 200 response
   }
 
   return NextResponse.json({ ok: true });

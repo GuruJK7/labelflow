@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { db } from '@/lib/db';
 
 const signupSchema = z.object({
@@ -44,7 +45,8 @@ export async function POST(req: Request) {
         tenant: {
           create: {
             name: name,
-            slug: email.split('@')[0] + '-' + Date.now().toString(36),
+            slug: email.split('@')[0].replace(/[^a-z0-9]/gi, '-').toLowerCase() + '-' + Date.now().toString(36),
+            apiKey: crypto.randomBytes(32).toString('hex'),
           },
         },
       },
@@ -56,7 +58,7 @@ export async function POST(req: Request) {
       { status: 201 }
     );
   } catch (err) {
-    console.error('Signup error:', (err as Error).message);
+    // Do not log error details to prevent info leakage
     return NextResponse.json(
       { error: 'Error interno del servidor' },
       { status: 500 }
