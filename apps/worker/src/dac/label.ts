@@ -1,5 +1,5 @@
 import { Page } from 'playwright';
-import { DAC, DAC_URLS } from './selectors';
+import { DAC_SELECTORS, DAC_URLS } from './selectors';
 import { ensureLoggedIn } from './auth';
 import { dacBrowser } from './browser';
 import logger from '../logger';
@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 
 /**
- * Downloads a shipping label PDF from DAC's tracking page.
+ * Downloads a shipping label PDF from DAC's history/cart page.
  */
 export async function downloadLabel(
   page: Page,
@@ -23,19 +23,13 @@ export async function downloadLabel(
 
   logger.info({ guia, outputDir }, 'Downloading label from DAC');
 
-  // Navigate to tracking page
-  await page.goto(DAC_URLS.TRACK, { waitUntil: 'networkidle' });
+  // Navigate to history/cart page
+  await page.goto(DAC_URLS.HISTORY, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(2000);
 
-  // Fill tracking number
-  await page.fill(DAC.tracking.searchInput, guia);
-
-  // Click search (type="button", JS onclick)
-  await page.click(DAC.tracking.searchButton);
-  await page.waitForLoadState('networkidle');
-
-  // Try to download the label PDF
+  // Try to find and click download button
   try {
-    const downloadSelectors = DAC.tracking.downloadButton.split(',').map((s: string) => s.trim());
+    const downloadSelectors = DAC_SELECTORS.DOWNLOAD_LABEL.split(',').map((s: string) => s.trim());
 
     for (const selector of downloadSelectors) {
       const el = await page.$(selector);
@@ -71,9 +65,11 @@ export async function downloadLabel(
       return outputPath;
     }
 
-    throw new Error('No download button or PDF link found');
+    logger.warn({ guia }, 'No download button found, label may need manual download');
+    return '';
   } catch (err) {
     const ssPath = await dacBrowser.screenshot(page, `download-error-${guia}`);
-    throw new Error(`Label download failed for guia ${guia}: ${(err as Error).message}. Screenshot: ${ssPath}`);
+    logger.error({ guia, error: (err as Error).message, ssPath }, 'Label download failed');
+    return '';
   }
 }
