@@ -138,11 +138,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         // b) Create shipment in DAC
         const result = await createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId);
 
-        // c) Download PDF label
-        const labelLocalPath = await downloadLabel(page, result.guia, tmpDir, dacUsername, dacPassword);
-
-        // d) Upload PDF to Supabase Storage
-        const pdfBuffer = fs.readFileSync(labelLocalPath);
+        // c) Create label record in DB
         const labelRecord = await db.label.create({
           data: {
             tenantId, jobId,
@@ -161,11 +157,29 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           },
         });
 
-        const upload = await uploadLabelPdf(tenantId, labelRecord.id, pdfBuffer);
-        if (!upload.error) {
+        // d) Download PDF label (skip if guia is temporary/pending)
+        if (result.guia && !result.guia.startsWith('PENDING-')) {
+          try {
+            const labelLocalPath = await downloadLabel(page, result.guia, tmpDir, dacUsername, dacPassword);
+            if (labelLocalPath && fs.existsSync(labelLocalPath)) {
+              const pdfBuffer = fs.readFileSync(labelLocalPath);
+              const upload = await uploadLabelPdf(tenantId, labelRecord.id, pdfBuffer);
+              if (!upload.error) {
+                await db.label.update({
+                  where: { id: labelRecord.id },
+                  data: { pdfPath: upload.path, status: 'COMPLETED' },
+                });
+              }
+              fs.unlinkSync(labelLocalPath);
+            }
+          } catch (downloadErr) {
+            logger.warn({ guia: result.guia, error: (downloadErr as Error).message }, 'PDF download failed, shipment still created');
+          }
+        } else {
+          logger.warn({ guia: result.guia }, 'Guia is pending, skipping PDF download');
           await db.label.update({
             where: { id: labelRecord.id },
-            data: { pdfPath: upload.path, status: 'COMPLETED' },
+            data: { status: 'COMPLETED' },  // Mark as completed even without PDF
           });
         }
 
@@ -199,9 +213,6 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
 
         await logToDB('SUCCESS', `Order ${order.name} processed`, { guia: result.guia, paymentType, emailSent });
         successCount++;
-
-        // Clean up local file
-        fs.unlinkSync(labelLocalPath);
       } catch (err) {
         const errorMsg = (err as Error).message;
 
