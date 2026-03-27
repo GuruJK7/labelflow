@@ -18,6 +18,7 @@
 export const DAC_URLS = {
   LOGIN: 'https://www.dac.com.uy/usuarios/login',
   NEW_SHIPMENT: 'https://www.dac.com.uy/envios/nuevo',
+  CART: 'https://www.dac.com.uy/envios/cart',
   HISTORY: 'https://www.dac.com.uy/envios/cart',
   TRACK: 'https://www.dac.com.uy/envios/rastrear',
 } as const;
