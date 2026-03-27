@@ -446,35 +446,51 @@ export async function createShipment(
   await dacBrowser.screenshot(page, `pre-submit-${order.name.replace('#', '')}`);
 
   // ===== SUBMIT =====
-  // The form action is /envios/SaveGuias (confirmed from DOM).
-  // The "Agregar" button (class btnAdd) may be hidden due to step navigation.
-  // Strategy: use the form's btnAdd click via JS, OR submit the form directly.
-  const submitResult = await page.evaluate(() => {
-    // 1. Try clicking btnAdd (the actual submit button for adding to cart)
-    const btnAdd = document.querySelector('.btnAdd') as HTMLButtonElement;
-    if (btnAdd) {
-      btnAdd.click();
-      return 'clicked: .btnAdd';
-    }
+  // Strategy: Extract ALL form data and POST directly to /envios/SaveGuias
+  // This bypasses hidden button issues completely.
+  const formData = await page.evaluate(() => {
+    const form = document.querySelector('#formNuevo, form[action*="SaveGuias"]') as HTMLFormElement;
+    if (!form) return null;
 
-    // 2. Try any button with "Agregar" text
-    const btns = Array.from(document.querySelectorAll('button'));
-    for (const btn of btns) {
-      if (btn.textContent?.toLowerCase().includes('agregar')) {
-        btn.click();
-        return `clicked: ${btn.textContent.trim().substring(0, 30)}`;
+    const data: Record<string, string> = {};
+    const elements = form.querySelectorAll('input, select, textarea');
+    for (const el of Array.from(elements)) {
+      const input = el as HTMLInputElement | HTMLSelectElement;
+      const name = input.name;
+      if (!name) continue;
+      if (input.type === 'checkbox') {
+        data[name] = (input as HTMLInputElement).checked ? '1' : '0';
+      } else {
+        data[name] = input.value ?? '';
       }
     }
-
-    // 3. Try form submit directly to SaveGuias
-    const form = document.querySelector('#formNuevo, form[action*="SaveGuias"]') as HTMLFormElement;
-    if (form) {
-      form.submit();
-      return 'form.submit() to SaveGuias';
-    }
-
-    return 'no_submit_found';
+    return { action: form.action, data };
   });
+
+  let submitResult = 'no_form_found';
+
+  if (formData) {
+    logger.info({ action: formData.action, fields: Object.keys(formData.data).length }, 'Submitting form via POST');
+
+    // Build URL-encoded form body
+    const body = Object.entries(formData.data)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join('&');
+
+    const response = await page.request.post(formData.action, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: body,
+    });
+
+    submitResult = `POST ${response.status()} ${response.url()}`;
+    logger.info({ status: response.status(), url: response.url() }, 'Form POST response');
+
+    // Navigate to cart to see if it worked
+    await page.goto(DAC_URLS.CART, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+    await page.waitForTimeout(2000);
+  } else {
+    logger.error('No form found on page');
+  }
 
   logger.info({ submitResult }, 'Submit result');
 
