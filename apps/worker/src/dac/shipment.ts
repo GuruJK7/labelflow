@@ -155,26 +155,88 @@ export async function createShipment(
 
   logger.info({ tenantId, orderName: order.name, paymentType }, 'Creating shipment in DAC');
 
-  // Navigate to new shipment form (domcontentloaded is faster than networkidle)
+  // Navigate to new shipment form
   await page.goto(DAC_URLS.NEW_SHIPMENT, { waitUntil: 'domcontentloaded', timeout: 15_000 });
   await page.waitForSelector(DAC_SELECTORS.PICKUP_TYPE, { timeout: 8_000 });
 
+  logger.info('Step 1: Form loaded, setting shipment type fields');
+
   // ===== STEP 1: Shipment Type =====
   // Solicitud: Mostrador
-  await page.selectOption(DAC_SELECTORS.PICKUP_TYPE, DAC_SELECTORS.PICKUP_VALUE_MOSTRADOR);
+  try {
+    await page.selectOption(DAC_SELECTORS.PICKUP_TYPE, DAC_SELECTORS.PICKUP_VALUE_MOSTRADOR);
+    logger.info('Pickup type set: Mostrador');
+  } catch (err) {
+    logger.warn({ error: (err as Error).message }, 'Failed to set pickup type');
+  }
 
   // Tipo de Guia (pago): 1=Remitente, 4=Destinatario
+  // TipoGuia might be a hidden input OR a select — try both strategies
   const payValue = paymentType === 'REMITENTE'
     ? DAC_SELECTORS.PAYMENT_VALUE_REMITENTE
     : DAC_SELECTORS.PAYMENT_VALUE_DESTINATARIO;
-  await page.selectOption(DAC_SELECTORS.PAYMENT_TYPE, payValue);
+
+  try {
+    // Strategy 1: Try as select element
+    const isSelect = await page.evaluate((sel: string) => {
+      const el = document.querySelector(sel);
+      return el?.tagName === 'SELECT';
+    }, DAC_SELECTORS.PAYMENT_TYPE);
+
+    if (isSelect) {
+      await page.selectOption(DAC_SELECTORS.PAYMENT_TYPE, payValue);
+      logger.info({ payValue }, 'Payment type set via selectOption');
+    } else {
+      // Strategy 2: Set value on hidden input via JS
+      await page.evaluate(({ sel, val }: { sel: string; val: string }) => {
+        const el = document.querySelector(sel) as HTMLInputElement;
+        if (el) {
+          el.value = val;
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }, { sel: DAC_SELECTORS.PAYMENT_TYPE, val: payValue });
+      logger.info({ payValue }, 'Payment type set via JS (hidden input)');
+    }
+  } catch (err) {
+    logger.warn({ error: (err as Error).message }, 'Failed to set payment type, continuing');
+  }
 
   // Tipo de envio: Paquete
-  await page.selectOption(DAC_SELECTORS.PACKAGE_TYPE, DAC_SELECTORS.PACKAGE_VALUE_PAQUETE);
+  try {
+    await page.selectOption(DAC_SELECTORS.PACKAGE_TYPE, DAC_SELECTORS.PACKAGE_VALUE_PAQUETE);
+    logger.info('Package type set: Paquete');
+  } catch (err) {
+    logger.warn({ error: (err as Error).message }, 'Failed to set package type');
+  }
 
   // Tipo de entrega: Domicilio
-  await page.selectOption(DAC_SELECTORS.DELIVERY_TYPE, DAC_SELECTORS.DELIVERY_VALUE_DOMICILIO);
+  try {
+    await page.selectOption(DAC_SELECTORS.DELIVERY_TYPE, DAC_SELECTORS.DELIVERY_VALUE_DOMICILIO);
+    logger.info('Delivery type set: Domicilio');
+  } catch (err) {
+    logger.warn({ error: (err as Error).message }, 'Failed to set delivery type');
+  }
+
   await page.waitForTimeout(500);
+
+  // Debug: Take screenshot of step 1 to see form state
+  await dacBrowser.screenshot(page, `debug-step1-${order.name.replace('#', '')}`);
+
+  // Inspect the page to find all visible buttons/links for debugging
+  const visibleButtons = await page.evaluate(() => {
+    const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'));
+    return elements
+      .filter(el => (el as HTMLElement).offsetParent !== null)
+      .map(el => ({
+        tag: el.tagName,
+        text: el.textContent?.trim()?.substring(0, 50),
+        href: (el as HTMLAnchorElement).href || '',
+        type: (el as HTMLInputElement).type || '',
+        className: el.className?.substring(0, 50),
+      }))
+      .slice(0, 20);
+  });
+  logger.info({ visibleButtons }, 'Visible buttons/links on step 1');
 
   // Click Siguiente (step 1 -> step 2)
   await clickNextButton(page, 1);
