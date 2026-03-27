@@ -138,9 +138,12 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         // b) Create shipment in DAC
         const result = await createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId);
 
-        // c) Create label record in DB
-        const labelRecord = await db.label.create({
-          data: {
+        // c) Create or update label record in DB (upsert to handle retries)
+        const labelRecord = await db.label.upsert({
+          where: {
+            tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
+          },
+          create: {
             tenantId, jobId,
             shopifyOrderId: String(order.id),
             shopifyOrderName: order.name,
@@ -154,6 +157,12 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             paymentType,
             dacGuia: result.guia,
             status: 'CREATED',
+          },
+          update: {
+            jobId,
+            dacGuia: result.guia,
+            status: 'CREATED',
+            errorMessage: null,
           },
         });
 
