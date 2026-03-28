@@ -96,11 +96,14 @@ export async function POST(req: NextRequest) {
             trialing: 'TRIALING',
             paused: 'PAUSED',
           };
+          const mappedStatus = statusMap[sub.status] ?? 'INACTIVE';
+          const isActive = sub.status === 'active' || sub.status === 'trialing';
           await db.tenant.updateMany({
             where: { stripeCustomerId: sub.customer as string },
             data: {
               stripePriceId: sub.items.data[0]?.price.id,
-              subscriptionStatus: (statusMap[sub.status] ?? 'INACTIVE') as 'ACTIVE',
+              subscriptionStatus: mappedStatus as 'ACTIVE',
+              isActive,
               currentPeriodEnd: new Date(sub.current_period_end * 1000),
             },
           });

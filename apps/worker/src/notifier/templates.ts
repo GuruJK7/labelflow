@@ -7,12 +7,25 @@ interface EmailData {
   items: Array<{ title: string; quantity: number }>;
 }
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function buildShipmentEmailHtml(data: EmailData): string {
-  const { customerName, orderName, guia, storeName, paymentType, items } = data;
+  const customerName = escapeHtml(data.customerName);
+  const orderName = escapeHtml(data.orderName);
+  const guia = escapeHtml(data.guia);
+  const storeName = escapeHtml(data.storeName);
+  const { paymentType, items } = data;
   const trackingUrl = `https://www.dac.com.uy/envios/rastrear`;
 
   const itemsHtml = items
-    .map((item) => `<tr><td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:14px;color:#333;">${item.title}</td><td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:14px;color:#333;text-align:center;">${item.quantity}</td></tr>`)
+    .map((item) => `<tr><td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:14px;color:#333;">${escapeHtml(item.title)}</td><td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:14px;color:#333;text-align:center;">${item.quantity}</td></tr>`)
     .join('');
 
   const paymentNotice = paymentType === 'DESTINATARIO'

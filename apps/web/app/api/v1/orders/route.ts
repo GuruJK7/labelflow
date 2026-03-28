@@ -12,6 +12,11 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get('status');
   const skip = (page - 1) * limit;
 
+  const VALID_STATUSES = ['PENDING', 'CREATED', 'COMPLETED', 'FAILED', 'SKIPPED', 'all'];
+  if (status && !VALID_STATUSES.includes(status.toUpperCase()) && status !== 'all') {
+    return apiError('Invalid status value', 400);
+  }
+
   const where: Record<string, unknown> = { tenantId: auth.tenantId };
   if (status && status !== 'all') {
     where.status = status.toUpperCase();

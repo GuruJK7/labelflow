@@ -12,7 +12,6 @@ import {
   XCircle,
   AlertTriangle,
   Zap,
-  ArrowUpRight,
   Activity,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -22,6 +21,9 @@ interface StatsData {
   labelsMonth: number;
   successRate: number;
   lastRunAt: string | null;
+  shopifyTokenSet: boolean;
+  dacPasswordSet: boolean;
+  emailPassSet: boolean;
 }
 
 interface JobSummary {
@@ -40,6 +42,7 @@ export default function DashboardPage() {
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [triggering, setTriggering] = useState(false);
   const [error, setError] = useState('');
+  const [orderCount, setOrderCount] = useState(1);
 
   const fetchData = useCallback(async () => {
     try {
@@ -47,19 +50,40 @@ export default function DashboardPage() {
         fetch('/api/v1/settings'),
         fetch('/api/v1/jobs'),
       ]);
+      let settingsData: Record<string, unknown> | null = null;
       if (settingsRes.ok) {
-        const { data } = await settingsRes.json();
-        setStats({
-          labelsToday: 0,
-          labelsMonth: data.labelsThisMonth ?? 0,
-          successRate: 0,
-          lastRunAt: data.lastRunAt ?? null,
-        });
+        const res = await settingsRes.json();
+        settingsData = res.data;
       }
+      let jobsData: JobSummary[] = [];
       if (jobsRes.ok) {
-        const { data } = await jobsRes.json();
-        setJobs(data ?? []);
+        const res = await jobsRes.json();
+        jobsData = res.data ?? [];
       }
+      setJobs(jobsData);
+
+      // Calculate labelsToday from jobs created today
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayJobs = jobsData.filter(
+        (j) => new Date(j.createdAt) >= todayStart
+      );
+      const labelsToday = todayJobs.reduce((sum, j) => sum + j.successCount, 0);
+
+      // Calculate success rate from all jobs
+      const totalOrders = jobsData.reduce((sum, j) => sum + j.totalOrders, 0);
+      const totalSuccess = jobsData.reduce((sum, j) => sum + j.successCount, 0);
+      const successRate = totalOrders > 0 ? Math.round((totalSuccess / totalOrders) * 100) : 0;
+
+      setStats({
+        labelsToday,
+        labelsMonth: (settingsData?.labelsThisMonth as number) ?? 0,
+        successRate,
+        lastRunAt: (settingsData?.lastRunAt as string) ?? null,
+        shopifyTokenSet: !!(settingsData?.shopifyTokenSet),
+        dacPasswordSet: !!(settingsData?.dacPasswordSet),
+        emailPassSet: !!(settingsData?.emailPassSet),
+      });
     } catch {
       // Silent
     }
@@ -75,9 +99,14 @@ export default function DashboardPage() {
     setTriggering(true);
     setError('');
     try {
-      const res = await fetch('/api/v1/jobs', { method: 'POST' });
+      const res = await fetch('/api/v1/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxOrders: orderCount }),
+      });
       const data = await res.json();
       if (!res.ok) setError(data.error ?? 'Error');
+      else window.location.href = '/logs';
       await fetchData();
     } catch {
       setError('Error de conexion');
@@ -100,7 +129,6 @@ export default function DashboardPage() {
       icon: Tags,
       color: 'from-cyan-500/20 to-cyan-500/5',
       iconColor: 'text-cyan-400',
-      trend: '+12%',
     },
     {
       title: 'Este mes',
@@ -108,7 +136,6 @@ export default function DashboardPage() {
       icon: Calendar,
       color: 'from-emerald-500/20 to-emerald-500/5',
       iconColor: 'text-emerald-400',
-      trend: '+8%',
     },
     {
       title: 'Tasa de exito',
@@ -138,29 +165,24 @@ export default function DashboardPage() {
           </div>
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
         </div>
-        <div className="flex items-center gap-2 animate-fade-in delay-150">
-          <button
-            onClick={async () => {
-              setTriggering(true);
-              setError('');
-              try {
-                const res = await fetch('/api/v1/jobs', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ testMode: true }),
-                });
-                const d = await res.json();
-                if (!res.ok) setError(d.error ?? 'Error');
-                else window.location.href = '/logs';
-              } catch { setError('Error de conexion'); }
-              setTriggering(false);
-            }}
-            disabled={triggering}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-medium border border-cyan-500/30 text-cyan-400 bg-cyan-500/5 hover:bg-cyan-500/10 transition-all disabled:opacity-50"
-          >
-            <Zap className="w-3.5 h-3.5" />
-            Test 1 pedido
-          </button>
+        <div className="flex items-center gap-3 animate-fade-in delay-150">
+          <div className="flex items-center gap-1.5">
+            {[1, 3, 5, 10, 20].map((n) => (
+              <button
+                key={n}
+                onClick={() => setOrderCount(n)}
+                disabled={triggering}
+                className={cn(
+                  'w-9 h-9 rounded-lg text-xs font-semibold transition-all border',
+                  orderCount === n
+                    ? 'bg-cyan-600 border-cyan-500 text-white shadow-lg shadow-cyan-500/20'
+                    : 'bg-white/[0.03] border-white/[0.06] text-zinc-400 hover:text-white hover:border-white/[0.15]'
+                )}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
           <button
             onClick={handleTrigger}
             disabled={triggering}
@@ -176,7 +198,7 @@ export default function DashboardPage() {
             ) : (
               <Play className="w-4 h-4" />
             )}
-            Ejecutar ahora
+            Ejecutar {orderCount === 1 ? '1 pedido' : `${orderCount} pedidos`}
           </button>
         </div>
       </div>
@@ -215,12 +237,7 @@ export default function DashboardPage() {
                 <p className={cn('font-bold text-white', card.isText ? 'text-lg' : 'text-3xl animate-count-up')}>
                   {card.value}
                 </p>
-                {card.trend && (
-                  <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
-                    <ArrowUpRight className="w-3 h-3" />
-                    {card.trend}
-                  </span>
-                )}
+{}
               </div>
             </div>
           </div>
@@ -232,20 +249,16 @@ export default function DashboardPage() {
         <div className="flex flex-wrap items-center gap-6">
           <span className="text-xs font-medium text-zinc-500">Conexiones:</span>
           <div className="flex items-center gap-2">
-            <span className="status-dot active" />
+            <span className={`status-dot ${stats?.shopifyTokenSet ? 'active' : ''}`} />
             <span className="text-xs text-zinc-400">Shopify</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="status-dot active" />
+            <span className={`status-dot ${stats?.dacPasswordSet ? 'active' : ''}`} />
             <span className="text-xs text-zinc-400">DAC Uruguay</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="status-dot active" />
+            <span className={`status-dot ${stats?.emailPassSet ? 'active' : ''}`} />
             <span className="text-xs text-zinc-400">Email SMTP</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="status-dot active" />
-            <span className="text-xs text-zinc-400">Worker activo</span>
           </div>
         </div>
       </div>

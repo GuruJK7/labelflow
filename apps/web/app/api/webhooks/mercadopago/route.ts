@@ -47,19 +47,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  // Signature verification
+  // Signature verification (mandatory)
   const webhookSecret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
-  if (webhookSecret) {
-    const isValid = verifyMercadoPagoSignature(req, rawBody, webhookSecret);
-    if (!isValid) {
-      console.error('MercadoPago: webhook signature verification failed');
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
-    }
-  } else {
-    console.warn(
-      'MercadoPago: MERCADOPAGO_WEBHOOK_SECRET not set — skipping signature verification. ' +
-      'Set this env var in production to secure your webhook endpoint.'
-    );
+  if (!webhookSecret) {
+    console.error('MercadoPago: MERCADOPAGO_WEBHOOK_SECRET is not set — rejecting webhook');
+    return NextResponse.json({ error: 'Server misconfiguration' }, { status: 500 });
+  }
+
+  const isValid = verifyMercadoPagoSignature(req, rawBody, webhookSecret);
+  if (!isValid) {
+    console.error('MercadoPago: webhook signature verification failed');
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
   const type = body.type as string | undefined;

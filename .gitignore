@@ -3,8 +3,13 @@ dist/
 .next/
 .env
 .env.local
+.env.production
+apps/web/.env
+apps/worker/.env
 etiquetas/
 logs/
+!apps/web/app/api/v1/logs/
 dac-screenshots/
 *.pdf
 .turbo/
+.vercel

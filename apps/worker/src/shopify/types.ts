@@ -18,4 +18,5 @@ export interface ShopifyOrder {
   } | null;
   line_items: Array<{ title: string; quantity: number; price: string }>;
   note: string | null;
+  note_attributes: Array<{ name: string; value: string }> | null;
 }
