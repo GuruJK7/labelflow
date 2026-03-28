@@ -404,23 +404,42 @@ export async function createShipment(
     throw new Error('Submit button (.btnAdd / Agregar) not found or not visible after Step 4');
   }
 
-  // Click the submit button
-  slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Clicking submit button');
+  // Click the submit button using JavaScript click (bypasses Playwright visibility check)
+  // The .btnAdd button is inside fieldset#cargaEnvios which has d-none class.
+  // Even after removing d-none, Playwright's click() still fails with timeout
+  // because the element's computed style chain may not update fast enough.
+  // Solution: use page.evaluate() to click directly in the DOM.
+  slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Clicking submit button via JS evaluate');
 
-  try {
-    // Prefer .btnAdd
-    const btnAddEl = await page.$('.btnAdd');
-    if (btnAddEl && await btnAddEl.isVisible()) {
-      await page.click('.btnAdd', { timeout: 5000 });
-      slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Clicked .btnAdd successfully');
-    } else {
-      // Fallback: click by text
-      await page.locator('button:has-text("Agregar")').first().click({ timeout: 5000 });
-      slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Clicked Agregar button by text');
+  const clickResult = await page.evaluate(() => {
+    // Force fieldset visible one more time
+    const fs = document.getElementById('cargaEnvios');
+    if (fs) { fs.classList.remove('d-none'); fs.style.display = 'block'; }
+
+    // Find and click .btnAdd
+    const btn = document.querySelector('.btnAdd') as HTMLButtonElement;
+    if (btn) {
+      btn.click();
+      return 'clicked .btnAdd via JS';
     }
-  } catch (clickErr) {
-    await dacBrowser.screenshot(page, `submit-click-error-${order.name.replace('#', '')}`);
-    throw new Error(`Failed to click submit button: ${(clickErr as Error).message}`);
+
+    // Fallback: any button with "Agregar" text
+    const buttons = Array.from(document.querySelectorAll('button'));
+    for (const b of buttons) {
+      if (b.textContent?.toLowerCase().includes('agregar')) {
+        b.click();
+        return 'clicked Agregar button via JS';
+      }
+    }
+
+    return 'no button found';
+  });
+
+  slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, `Submit result: ${clickResult}`);
+
+  if (clickResult === 'no button found') {
+    await dacBrowser.screenshot(page, `no-submit-btn-${order.name.replace('#', '')}`);
+    throw new Error('No submit button found in DOM');
   }
 
   slog.info(DAC_STEPS.STEP4_OK, 'Submit button clicked');
