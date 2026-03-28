@@ -106,7 +106,7 @@ export default function OnboardingPage() {
   async function handleSelectPlan(plan: string) {
     setSaving(true);
     try {
-      const res = await fetch(`/api/stripe/checkout?plan=${plan}`);
+      const res = await fetch(`/api/mercadopago/checkout?plan=${plan}`);
       if (res.redirected) {
         window.location.href = res.url;
       } else {

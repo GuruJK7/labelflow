@@ -10,6 +10,8 @@ export async function middleware(request: NextRequest) {
     '/login',
     '/signup',
     '/onboarding',
+    '/terminos',
+    '/privacidad',
     '/api/auth',
     '/api/webhooks',
     '/api/v1/mcp', // MCP uses its own Bearer token auth
@@ -35,6 +37,7 @@ export async function middleware(request: NextRequest) {
     '/settings',
     '/api/v1',
     '/api/stripe',
+    '/api/mercadopago',
   ];
 
   const isProtected = protectedPaths.some((p) => pathname.startsWith(p));

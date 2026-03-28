@@ -8,6 +8,9 @@ const signupSchema = z.object({
   name: z.string().min(1).max(100),
   email: z.string().email(),
   password: z.string().min(8).max(100),
+  tosAccepted: z.literal(true, {
+    errorMap: () => ({ message: 'Debes aceptar los Terminos de Servicio y la Politica de Privacidad' }),
+  }),
 });
 
 export async function POST(req: Request) {
@@ -23,6 +26,12 @@ export async function POST(req: Request) {
     }
 
     const { name, email, password } = parsed.data;
+
+    // Capture IP for legal compliance (Ley 18.331)
+    const signupIp =
+      req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+      req.headers.get('x-real-ip') ||
+      'unknown';
 
     // Check if user exists
     const existing = await db.user.findUnique({ where: { email } });
@@ -47,6 +56,8 @@ export async function POST(req: Request) {
             name: name,
             slug: email.split('@')[0].replace(/[^a-z0-9]/gi, '-').toLowerCase() + '-' + Date.now().toString(36),
             apiKey: crypto.randomBytes(32).toString('hex'),
+            signupIp,
+            tosAcceptedAt: new Date(),
           },
         },
       },

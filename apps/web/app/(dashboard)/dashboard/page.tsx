@@ -138,24 +138,47 @@ export default function DashboardPage() {
           </div>
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
         </div>
-        <button
-          onClick={handleTrigger}
-          disabled={triggering}
-          className={cn(
-            'inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium transition-all duration-200',
-            'bg-gradient-to-r from-cyan-600 to-cyan-500 text-white',
-            'hover:from-cyan-500 hover:to-cyan-400 hover:shadow-lg hover:shadow-cyan-500/25',
-            'disabled:opacity-50 disabled:cursor-not-allowed',
-            'animate-fade-in delay-150'
-          )}
-        >
-          {triggering ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Play className="w-4 h-4" />
-          )}
-          Ejecutar ahora
-        </button>
+        <div className="flex items-center gap-2 animate-fade-in delay-150">
+          <button
+            onClick={async () => {
+              setTriggering(true);
+              setError('');
+              try {
+                const res = await fetch('/api/v1/jobs', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ testMode: true }),
+                });
+                const d = await res.json();
+                if (!res.ok) setError(d.error ?? 'Error');
+                else window.location.href = '/logs';
+              } catch { setError('Error de conexion'); }
+              setTriggering(false);
+            }}
+            disabled={triggering}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-medium border border-cyan-500/30 text-cyan-400 bg-cyan-500/5 hover:bg-cyan-500/10 transition-all disabled:opacity-50"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            Test 1 pedido
+          </button>
+          <button
+            onClick={handleTrigger}
+            disabled={triggering}
+            className={cn(
+              'inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium transition-all duration-200',
+              'bg-gradient-to-r from-cyan-600 to-cyan-500 text-white',
+              'hover:from-cyan-500 hover:to-cyan-400 hover:shadow-lg hover:shadow-cyan-500/25',
+              'disabled:opacity-50 disabled:cursor-not-allowed',
+            )}
+          >
+            {triggering ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Play className="w-4 h-4" />
+            )}
+            Ejecutar ahora
+          </button>
+        </div>
       </div>
 
       {error && (

@@ -1,11 +1,23 @@
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
-import { getPlanLimit } from '@/lib/stripe';
+import { getPlanLimit } from '@/lib/mercadopago';
 
-export async function POST() {
+export async function POST(req: Request) {
   const auth = await getAuthenticatedTenant();
   if (!auth) return apiError('No autorizado', 401);
+
+  let testMode = false;
+  let maxOrders = 0; // 0 = use tenant default
+  try {
+    const body = await req.json();
+    testMode = body?.testMode === true;
+    if (body?.maxOrders && Number.isInteger(body.maxOrders) && body.maxOrders > 0 && body.maxOrders <= 50) {
+      maxOrders = body.maxOrders;
+    }
+  } catch {
+    // No body or invalid JSON — default to normal mode
+  }
 
   // Check tenant is active
   const tenant = await db.tenant.findUnique({
@@ -41,7 +53,22 @@ export async function POST() {
 
   const jobId = await enqueueProcessOrders(auth.tenantId, 'MANUAL');
 
-  return apiSuccess({ jobId, message: 'Job encolado exitosamente' }, { status: 202 });
+  // Store maxOrders override in RunLog so the worker reads it
+  const effectiveMax = maxOrders || (testMode ? 1 : 0);
+  if (effectiveMax > 0) {
+    await db.runLog.create({
+      data: {
+        jobId,
+        tenantId: auth.tenantId,
+        level: 'INFO',
+        message: `maxOrdersOverride=${effectiveMax}`,
+        meta: { testMode, maxOrdersPerRun: effectiveMax },
+      },
+    });
+  }
+
+  const label = effectiveMax === 1 ? '1 pedido' : effectiveMax > 0 ? `${effectiveMax} pedidos` : 'todos los pedidos';
+  return apiSuccess({ jobId, maxOrders: effectiveMax, message: `Job encolado: ${label}` }, { status: 202 });
 }
 
 export async function GET() {

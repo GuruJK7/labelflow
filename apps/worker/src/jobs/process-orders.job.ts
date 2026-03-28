@@ -60,12 +60,16 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
       data: { status: 'RUNNING', startedAt: new Date() },
     });
 
-    // Check for testMode flag in RunLog meta
-    const testModeLog = await db.runLog.findFirst({
-      where: { jobId, message: 'testMode' },
+    // Check for maxOrders override in RunLog meta
+    const overrideLog = await db.runLog.findFirst({
+      where: { jobId, message: { contains: 'maxOrdersOverride' } },
       orderBy: { createdAt: 'desc' },
     });
-    const testMode = !!(testModeLog?.meta as any)?.testMode;
+    const maxOrdersOverride = (overrideLog?.meta as any)?.maxOrdersPerRun ?? 0;
+    const testMode = !!(overrideLog?.meta as any)?.testMode;
+    if (maxOrdersOverride > 0) {
+      slog.info('config', `Max orders override: ${maxOrdersOverride}`);
+    }
     if (testMode) {
       slog.info('config', 'TEST MODE enabled -- will process but not tag orders in Shopify');
     }
@@ -131,11 +135,12 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
       return;
     }
 
-    // Apply limit
-    if (orders.length > tenant.maxOrdersPerRun) {
-      skippedCount = orders.length - tenant.maxOrdersPerRun;
-      orders = orders.slice(0, tenant.maxOrdersPerRun);
-      slog.warn('limit', `Limited to ${tenant.maxOrdersPerRun} orders, ${skippedCount} skipped`);
+    // Apply limit (override from UI takes priority over tenant default)
+    const effectiveLimit = maxOrdersOverride > 0 ? maxOrdersOverride : tenant.maxOrdersPerRun;
+    if (orders.length > effectiveLimit) {
+      skippedCount = orders.length - effectiveLimit;
+      orders = orders.slice(0, effectiveLimit);
+      slog.warn('limit', `Limited to ${effectiveLimit} orders, ${skippedCount} skipped`);
     }
 
     // STEP 3: Start browser and login to DAC

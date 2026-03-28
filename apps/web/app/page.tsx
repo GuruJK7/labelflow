@@ -112,7 +112,17 @@ export default function LandingPage() {
       </section>
 
       <footer className="py-12 px-6 border-t border-white/[0.04]">
-        <p className="text-zinc-600 text-sm text-center">LabelFlow &mdash; Automatizacion de envios Uruguay</p>
+        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+          <p className="text-zinc-600 text-sm">LabelFlow &mdash; Automatizacion de envios Uruguay</p>
+          <div className="flex items-center gap-6">
+            <Link href="/terminos" className="text-zinc-600 hover:text-zinc-400 text-sm transition-colors">
+              Terminos de Servicio
+            </Link>
+            <Link href="/privacidad" className="text-zinc-600 hover:text-zinc-400 text-sm transition-colors">
+              Politica de Privacidad
+            </Link>
+          </div>
+        </div>
       </footer>
     </div>
   );

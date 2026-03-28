@@ -9,6 +9,7 @@ export default function SignupPage() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [tosAccepted, setTosAccepted] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -21,7 +22,7 @@ export default function SignupPage() {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email: email.toLowerCase(), password }),
+        body: JSON.stringify({ name, email: email.toLowerCase(), password, tosAccepted }),
       });
 
       const data = await res.json();
@@ -103,9 +104,29 @@ export default function SignupPage() {
               />
             </div>
 
+            <div className="flex items-start gap-3">
+              <input
+                id="tos"
+                type="checkbox"
+                checked={tosAccepted}
+                onChange={(e) => setTosAccepted(e.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-white/[0.15] bg-zinc-800/50 text-cyan-600 focus:ring-cyan-500/40 focus:ring-offset-0 cursor-pointer"
+              />
+              <label htmlFor="tos" className="text-sm text-zinc-400 cursor-pointer leading-snug">
+                Acepto los{' '}
+                <Link href="/terminos" target="_blank" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                  Terminos de Servicio
+                </Link>{' '}
+                y la{' '}
+                <Link href="/privacidad" target="_blank" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                  Politica de Privacidad
+                </Link>
+              </label>
+            </div>
+
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !tosAccepted}
               className="w-full bg-cyan-600 hover:bg-cyan-500 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Creando cuenta...' : 'Crear cuenta'}

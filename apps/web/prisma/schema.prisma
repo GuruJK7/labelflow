@@ -92,6 +92,10 @@ model Tenant {
   subscriptionStatus   SubscriptionStatus @default(INACTIVE)
   currentPeriodEnd     DateTime?
 
+  // Legal / compliance
+  signupIp      String?
+  tosAcceptedAt DateTime?
+
   // Usage
   labelsThisMonth Int      @default(0)
   labelsTotal     Int      @default(0)
