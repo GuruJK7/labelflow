@@ -442,6 +442,45 @@ export async function createShipment(
 
   slog.info(DAC_STEPS.STEP4_OK, 'Item added to cart');
 
+  // ===== FILL OBSERVACIONES (address2 + order notes) =====
+  const observations: string[] = [];
+  if (addr.address2) observations.push(addr.address2);
+  if (order.note) observations.push(order.note);
+  if (order.note_attributes && Array.isArray(order.note_attributes)) {
+    for (const attr of order.note_attributes) {
+      if (attr.value) observations.push(`${attr.name}: ${attr.value}`);
+    }
+  }
+
+  if (observations.length > 0) {
+    const obsText = observations.join(' | ');
+    const obsFilled = await page.evaluate((text: string) => {
+      // Try multiple selectors for the Observaciones textarea
+      const selectors = [
+        'textarea[name="Observaciones"]',
+        'textarea[name="observaciones"]',
+        'textarea[placeholder*="bservacion"]',
+        'textarea',
+      ];
+      for (const sel of selectors) {
+        const el = document.querySelector(sel) as HTMLTextAreaElement;
+        if (el && el.offsetParent !== null) {
+          el.value = text;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return sel;
+        }
+      }
+      return null;
+    }, obsText);
+
+    if (obsFilled) {
+      slog.info(DAC_STEPS.STEP4_OK, `Observaciones filled: "${obsText.substring(0, 80)}"`, { selector: obsFilled });
+    } else {
+      slog.warn(DAC_STEPS.STEP4_OK, `Could not fill Observaciones field (text: "${obsText.substring(0, 50)}")`);
+    }
+  }
+
   // ===== CLICK "Finalizar envio" (BUG C: separate button after Agregar) =====
   slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, 'Looking for Finalizar envio button');
 
