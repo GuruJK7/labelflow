@@ -335,22 +335,42 @@ export async function createShipment(
     slog.info(DAC_STEPS.STEP4_FILL_QTY, 'Set Cantidad via evaluate fallback');
   }
 
-  // Package size: 1 = small
-  const pkgEl = await page.$('select[name="K_Tipo_Empaque"]');
-  if (pkgEl) {
-    await safeSelect(page, 'select[name="K_Tipo_Empaque"]', '1', slog, DAC_STEPS.STEP4_FILL_PACKAGE, 'K_Tipo_Empaque');
-  } else {
-    await page.evaluate(() => {
-      const el = document.querySelector('[name="K_Tipo_Empaque"]') as HTMLInputElement;
-      if (el) { el.value = '1'; el.dispatchEvent(new Event('change', { bubbles: true })); }
-    });
-    slog.info(DAC_STEPS.STEP4_FILL_PACKAGE, 'Set K_Tipo_Empaque via evaluate fallback');
-  }
+  // Package size: select "Hasta 2Kg 20x20x20" (value=1)
+  // DAC uses Choices.js widget — page.selectOption() doesn't work.
+  // Strategy: set the hidden select value directly + update the Choices.js display
+  await page.evaluate(() => {
+    // 1. Set the native select value
+    const sel = document.querySelector('select[name="K_Tipo_Empaque"]') as HTMLSelectElement;
+    if (sel) {
+      sel.value = '1';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    // 2. Try to update Choices.js wrapper if it exists
+    const choicesContainer = document.querySelector('.choices') as any;
+    if (choicesContainer && choicesContainer.choices) {
+      choicesContainer.choices.setChoiceByValue('1');
+    }
+    // 3. Force the fieldset visible (the parent that hides Step 4)
+    const fieldset = document.getElementById('cargaEnvios');
+    if (fieldset) fieldset.classList.remove('d-none');
+  });
+  slog.info(DAC_STEPS.STEP4_FILL_PACKAGE, 'Set K_Tipo_Empaque=1 (Hasta 2Kg) via evaluate + forced cargaEnvios visible');
 
   await page.waitForTimeout(500);
   await dacBrowser.screenshot(page, `step4-pre-submit-${order.name.replace('#', '')}`);
 
-  // BUG FIX 3: Click .btnAdd via real Playwright click (NOT page.request.post)
+  // Force Step 4 container visible (fieldset#cargaEnvios has d-none class)
+  // This is the ROOT CAUSE of btnAdd being invisible — the Siguiente button
+  // doesn't always remove d-none from this fieldset properly.
+  await page.evaluate(() => {
+    const fieldset = document.getElementById('cargaEnvios');
+    if (fieldset) {
+      fieldset.classList.remove('d-none');
+      fieldset.style.display = 'block';
+    }
+  });
+  slog.info(DAC_STEPS.STEP4_WAIT_BTN, 'Forced cargaEnvios fieldset visible');
+
   // Wait for the submit button to become visible
   slog.info(DAC_STEPS.STEP4_WAIT_BTN, 'Waiting for .btnAdd (Agregar) button to be visible');
 
