@@ -19,5 +19,5 @@ COPY . .
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV NODE_ENV=production
 
-# Run directly with ts-node (skip tsc build to avoid stale dist issues)
-CMD ["npx", "ts-node", "--skipProject", "--transpile-only", "src/index.ts"]
+# Run directly with ts-node using project tsconfig
+CMD ["npx", "ts-node", "--transpile-only", "src/index.ts"]
