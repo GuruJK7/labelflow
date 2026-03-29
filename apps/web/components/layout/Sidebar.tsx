@@ -15,6 +15,10 @@ import {
   ChevronLeft,
   Menu,
   X,
+  Megaphone,
+  Image,
+  BarChart3,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useState } from 'react';
@@ -26,6 +30,15 @@ const navSections = [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/orders', label: 'Pedidos', icon: Package },
       { href: '/labels', label: 'Etiquetas', icon: Tags },
+    ],
+  },
+  {
+    label: 'META ADS',
+    items: [
+      { href: '/ads', label: 'Panel de Anuncios', icon: Megaphone },
+      { href: '/ads/creativos', label: 'Anuncios', icon: Image },
+      { href: '/ads/rendimiento', label: 'Rendimiento', icon: BarChart3 },
+      { href: '/ads/configuracion', label: 'Config. Ads', icon: SlidersHorizontal },
     ],
   },
   {

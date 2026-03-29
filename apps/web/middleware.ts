@@ -35,7 +35,9 @@ export async function middleware(request: NextRequest) {
     '/labels',
     '/logs',
     '/settings',
+    '/ads',
     '/api/v1',
+    '/api/ads',
     '/api/stripe',
     '/api/mercadopago',
   ];

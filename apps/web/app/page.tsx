@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Zap, Package, Mail, Check, ArrowRight } from 'lucide-react';
+import { Zap, Package, Mail, Check, ArrowRight, Tags, Megaphone } from 'lucide-react';
 
 export default function LandingPage() {
   return (
@@ -108,6 +108,52 @@ export default function LandingPage() {
               <p className="text-sm text-zinc-500">{faq.a}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* Products */}
+      <section className="py-20 px-6 border-t border-white/[0.04]">
+        <div className="max-w-5xl mx-auto">
+          <h2 className="text-3xl font-bold text-white text-center mb-4">Dos herramientas, una plataforma</h2>
+          <p className="text-zinc-500 text-center mb-12">Automatiza tu logistica y tus anuncios desde un solo lugar.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* DAC Automation */}
+            <div className="bg-zinc-900/50 border border-white/[0.06] rounded-2xl p-8 relative">
+              <div className="w-12 h-12 bg-cyan-600/10 rounded-xl flex items-center justify-center mb-5">
+                <Tags className="w-6 h-6 text-cyan-400" />
+              </div>
+              <h3 className="text-xl font-bold text-white mb-2">DAC Automation</h3>
+              <p className="text-sm text-zinc-500 mb-5 leading-relaxed">
+                Genera etiquetas de envio automaticamente desde Shopify. Procesamiento de pedidos, creacion de guias y notificacion al cliente.
+              </p>
+              <ul className="space-y-2">
+                {['Deteccion automatica de pedidos', 'Generacion de etiquetas DAC', 'Email con guia al cliente', 'Dashboard en tiempo real'].map((f) => (
+                  <li key={f} className="flex items-center gap-2 text-sm text-zinc-400">
+                    <Check className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" /> {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Meta Ads Agent */}
+            <div className="bg-zinc-900/50 border border-cyan-500/10 rounded-2xl p-8 relative">
+              <div className="absolute -top-3 right-6 bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wide">Nuevo</div>
+              <div className="w-12 h-12 bg-cyan-600/10 rounded-xl flex items-center justify-center mb-5">
+                <Megaphone className="w-6 h-6 text-cyan-400" />
+              </div>
+              <h3 className="text-xl font-bold text-white mb-2">Meta Ads Agent</h3>
+              <p className="text-sm text-zinc-500 mb-5 leading-relaxed">
+                Sube creativos desde Google Drive, crea anuncios en Meta automaticamente y pausa los que no rinden con reglas inteligentes.
+              </p>
+              <ul className="space-y-2">
+                {['Escaneo automatico de Drive', 'Subida a Meta Ads API', 'Monitoreo de metricas', 'Auto-pausa por reglas'].map((f) => (
+                  <li key={f} className="flex items-center gap-2 text-sm text-zinc-400">
+                    <Check className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" /> {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </div>
       </section>
 

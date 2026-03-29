@@ -3,6 +3,8 @@ import { processOrdersJob } from './jobs/process-orders.job';
 import { dacBrowser } from './dac/browser';
 import { db } from './db';
 import logger from './logger';
+import { processAdUploadJob } from './ads/upload-job';
+import { processAdMonitorJob } from './ads/monitor-job';
 
 const POLL_INTERVAL_MS = 5_000; // Check for jobs every 5 seconds
 
@@ -36,6 +38,48 @@ async function pollForJobs(): Promise<void> {
   }
 }
 
+async function pollForAdUploadJobs(): Promise<void> {
+  const pendingJob = await db.adUploadJob.findFirst({
+    where: { status: 'PENDING' },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  if (!pendingJob) return;
+
+  logger.info(
+    { jobId: pendingJob.id, metaAdAccountId: pendingJob.metaAdAccountId },
+    'Found pending ad upload job, processing...'
+  );
+
+  await db.adUploadJob.update({
+    where: { id: pendingJob.id },
+    data: { status: 'RUNNING', startedAt: new Date() },
+  });
+
+  await processAdUploadJob(pendingJob.id, pendingJob.metaAdAccountId);
+}
+
+async function pollForAdMonitorJobs(): Promise<void> {
+  const pendingJob = await db.adMonitorQueue.findFirst({
+    where: { status: 'PENDING' },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  if (!pendingJob) return;
+
+  logger.info(
+    { jobId: pendingJob.id, metaAdAccountId: pendingJob.metaAdAccountId },
+    'Found pending ad monitor job, processing...'
+  );
+
+  await db.adMonitorQueue.update({
+    where: { id: pendingJob.id },
+    data: { status: 'RUNNING', startedAt: new Date() },
+  });
+
+  await processAdMonitorJob(pendingJob.id, pendingJob.metaAdAccountId);
+}
+
 async function main(): Promise<void> {
   const config = getConfig();
 
@@ -48,7 +92,7 @@ async function main(): Promise<void> {
     'LabelFlow Worker starting (DB polling mode)...'
   );
 
-  // Poll loop
+  // Poll loop — DAC jobs
   const poll = async () => {
     while (true) {
       await pollForJobs();
@@ -57,6 +101,25 @@ async function main(): Promise<void> {
   };
 
   poll();
+
+  // Poll loop — Meta Ads jobs (independent, never affects DAC)
+  const pollAds = async () => {
+    while (true) {
+      try {
+        await pollForAdUploadJobs();
+      } catch (err) {
+        logger.error({ error: (err as Error).message }, 'Error in ad upload poll cycle');
+      }
+      try {
+        await pollForAdMonitorJobs();
+      } catch (err) {
+        logger.error({ error: (err as Error).message }, 'Error in ad monitor poll cycle');
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+  };
+
+  pollAds();
 
   logger.info('LabelFlow Worker ready and polling for jobs');
 

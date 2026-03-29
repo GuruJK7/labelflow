@@ -106,6 +106,9 @@ model Tenant {
   labels  Label[]
   runLogs RunLog[]
 
+  // Meta Ads
+  metaAdAccount MetaAdAccount?
+
   @@index([slug])
   @@index([stripeCustomerId])
   @@index([apiKey])
@@ -237,4 +240,173 @@ enum LogLevel {
   WARN
   ERROR
   SUCCESS
+}
+
+// --- META ADS AGENT ---
+
+enum AdStatus {
+  PENDING
+  ACTIVE
+  PAUSED
+  PAUSED_AUTO
+  ERROR
+  DELETED
+}
+
+model MetaAdAccount {
+  id        String   @id @default(cuid())
+  tenantId  String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Meta API credentials (encrypted AES-256)
+  metaAccessToken String? // Encrypted
+  metaAdAccountId String? // e.g. act_123456
+  metaPageId      String?
+  metaPixelId     String?
+
+  // Google Drive source
+  driveFolderId   String? // Root folder with creatives
+  driveApiKey     String? // Encrypted
+
+  // Notification settings
+  notifyEmail     String?
+  notifyWebhook   String?
+
+  // Config
+  isActive        Boolean @default(false)
+  scanSchedule    String  @default("0 8 * * 1-5") // weekdays 8am
+  monitorSchedule String  @default("*/30 * * * *") // every 30min
+
+  tenant     Tenant          @relation(fields: [tenantId], references: [id])
+  rules      AdRule[]
+  ads        ManagedAd[]
+  uploadJobs AdUploadJob[]
+  monitorQueue AdMonitorQueue[]
+
+  @@index([tenantId])
+}
+
+model AdRule {
+  id              String   @id @default(cuid())
+  metaAdAccountId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Rule config
+  name            String
+  metric          String   // e.g. "purchase_intent_rate", "ctr", "cpc", "cpm"
+  operator        String   // "lt", "gt", "lte", "gte"
+  threshold       Float
+  windowHours     Int      @default(48) // evaluation window
+  action          String   @default("pause") // "pause" | "notify"
+  isActive        Boolean  @default(true)
+
+  metaAdAccount MetaAdAccount @relation(fields: [metaAdAccountId], references: [id], onDelete: Cascade)
+
+  @@index([metaAdAccountId])
+}
+
+model ManagedAd {
+  id              String   @id @default(cuid())
+  metaAdAccountId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Meta references
+  metaCampaignId  String?
+  metaAdSetId     String?
+  metaAdId        String?
+  metaCreativeId  String?
+
+  // Creative info
+  creativeName    String
+  creativeType    String   @default("IMAGE") // IMAGE | VIDEO
+  driveFileId     String?
+  headline        String?
+  bodyText        String?
+  callToAction    String?  @default("SHOP_NOW")
+  linkUrl         String?
+
+  // Status
+  status          AdStatus @default(PENDING)
+  errorMessage    String?
+  lastCheckedAt   DateTime?
+
+  // Latest metrics snapshot
+  impressions     Int      @default(0)
+  clicks          Int      @default(0)
+  spend           Float    @default(0)
+  purchases       Int      @default(0)
+  ctr             Float    @default(0)
+  cpc             Float    @default(0)
+  cpm             Float    @default(0)
+  roas            Float    @default(0)
+  purchaseIntentRate Float @default(0)
+
+  metaAdAccount   MetaAdAccount      @relation(fields: [metaAdAccountId], references: [id], onDelete: Cascade)
+  metricsHistory  AdMetricsHistory[]
+
+  @@index([metaAdAccountId])
+  @@index([metaAdId])
+}
+
+model AdMetricsHistory {
+  id          String   @id @default(cuid())
+  managedAdId String
+  recordedAt  DateTime @default(now())
+
+  impressions     Int    @default(0)
+  clicks          Int    @default(0)
+  spend           Float  @default(0)
+  purchases       Int    @default(0)
+  ctr             Float  @default(0)
+  cpc             Float  @default(0)
+  cpm             Float  @default(0)
+  roas            Float  @default(0)
+  purchaseIntentRate Float @default(0)
+
+  managedAd ManagedAd @relation(fields: [managedAdId], references: [id], onDelete: Cascade)
+
+  @@index([managedAdId, recordedAt(sort: Desc)])
+}
+
+model AdUploadJob {
+  id              String    @id @default(cuid())
+  metaAdAccountId String
+  status          JobStatus @default(PENDING)
+  trigger         String    @default("MANUAL") // MANUAL | CRON
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  durationMs      Int?
+
+  totalFiles      Int       @default(0)
+  successCount    Int       @default(0)
+  failedCount     Int       @default(0)
+  skippedCount    Int       @default(0)
+
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+
+  metaAdAccount MetaAdAccount @relation(fields: [metaAdAccountId], references: [id], onDelete: Cascade)
+
+  @@index([metaAdAccountId, createdAt(sort: Desc)])
+  @@index([status])
+}
+
+model AdMonitorQueue {
+  id              String    @id @default(cuid())
+  metaAdAccountId String
+  status          JobStatus @default(PENDING)
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  adsChecked      Int       @default(0)
+  adsPaused       Int       @default(0)
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+
+  metaAdAccount MetaAdAccount @relation(fields: [metaAdAccountId], references: [id], onDelete: Cascade)
+
+  @@index([metaAdAccountId, createdAt(sort: Desc)])
+  @@index([status])
 }
