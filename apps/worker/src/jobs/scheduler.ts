@@ -20,10 +20,8 @@ function cronMatchesNow(cronExpr: string, now: Date): boolean {
   );
 }
 
-/**
- * Checks if a single cron field matches a value.
- * Supports: *, */N, N, N-M, N,M,O
- */
+// Checks if a single cron field matches a value.
+// Supports: star, star-slash-N, N, N-M, comma-separated
 function fieldMatches(field: string, value: number, min: number, max: number): boolean {
   if (field === '*') return true;
 
