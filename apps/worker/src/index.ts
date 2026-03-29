@@ -1,5 +1,6 @@
 import { getConfig } from './config';
 import { processOrdersJob } from './jobs/process-orders.job';
+import { startScheduler } from './jobs/scheduler';
 import { dacBrowser } from './dac/browser';
 import { db } from './db';
 import logger from './logger';
@@ -120,6 +121,9 @@ async function main(): Promise<void> {
   };
 
   pollAds();
+
+  // Start cron scheduler (checks every minute, validates all 5 cron fields)
+  startScheduler();
 
   logger.info('LabelFlow Worker ready and polling for jobs');
 
