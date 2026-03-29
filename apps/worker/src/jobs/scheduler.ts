@@ -1,4 +1,3 @@
-import cron from 'node-cron';
 import { db } from '../db';
 import logger from '../logger';
 
@@ -71,8 +70,8 @@ function fieldMatches(field: string, value: number, min: number, max: number): b
  * matches the current time (all 5 fields), and if so, creates a PENDING job.
  */
 export function startScheduler(): void {
-  // Check every minute
-  cron.schedule('* * * * *', async () => {
+  // Check every 60 seconds (no node-cron dependency to avoid regex bugs)
+  setInterval(async () => {
     try {
       const tenants = await db.tenant.findMany({
         where: {
@@ -91,7 +90,7 @@ export function startScheduler(): void {
       const now = new Date();
 
       for (const tenant of tenants) {
-        if (!tenant.cronSchedule || !cron.validate(tenant.cronSchedule)) continue;
+        if (!tenant.cronSchedule || tenant.cronSchedule.trim().split(/\s+/).length < 5) continue;
 
         // Check ALL 5 cron fields against current time
         if (!cronMatchesNow(tenant.cronSchedule, now)) continue;
@@ -116,7 +115,7 @@ export function startScheduler(): void {
     } catch (err) {
       logger.error({ error: (err as Error).message }, 'Scheduler error');
     }
-  });
+  }, 60_000); // every 60 seconds
 
-  logger.info('Tenant cron scheduler started (checks every minute, validates all 5 cron fields)');
+  logger.info('Tenant cron scheduler started (checks every 60s, validates all 5 cron fields, no node-cron)');
 }
