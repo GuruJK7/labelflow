@@ -15,6 +15,7 @@ import {
   Activity,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { JobFeedPanel } from '@/components/JobFeedPanel';
 
 interface StatsData {
   labelsToday: number;
@@ -43,6 +44,7 @@ export default function DashboardPage() {
   const [triggering, setTriggering] = useState(false);
   const [error, setError] = useState('');
   const [orderCount, setOrderCount] = useState(1);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -105,8 +107,11 @@ export default function DashboardPage() {
         body: JSON.stringify({ maxOrders: orderCount }),
       });
       const data = await res.json();
-      if (!res.ok) setError(data.error ?? 'Error');
-      else window.location.href = '/logs';
+      if (!res.ok) {
+        setError(data.error ?? 'Error');
+      } else if (data.job?.id) {
+        setActiveJobId(data.job.id);
+      }
       await fetchData();
     } catch {
       setError('Error de conexion');
@@ -209,6 +214,12 @@ export default function DashboardPage() {
           {error}
         </div>
       )}
+
+      {/* Job Feed Panel — appears when a job is active */}
+      <JobFeedPanel
+        jobId={activeJobId}
+        onClose={() => setActiveJobId(null)}
+      />
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">

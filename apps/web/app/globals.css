@@ -137,3 +137,188 @@ body {
 .glow-cyan:hover {
   box-shadow: 0 0 30px rgba(6, 182, 212, 0.3), 0 0 80px rgba(6, 182, 212, 0.15);
 }
+
+/* =================== JOB FEED PANEL =================== */
+.job-feed-panel {
+  margin-top: 24px;
+  background: #080d18;
+  border: 1px solid rgba(0, 255, 170, 0.18);
+  border-radius: 12px;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  box-shadow:
+    0 0 40px rgba(0, 255, 170, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Header */
+.feed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: rgba(0, 255, 170, 0.05);
+  border-bottom: 1px solid rgba(0, 255, 170, 0.12);
+}
+.feed-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.feed-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.feed-status-dot.pulse {
+  background: #00ffaa;
+  box-shadow: 0 0 8px #00ffaa;
+  animation: pulseDot 1.2s ease-in-out infinite;
+}
+.feed-status-dot.done {
+  background: #4a5568;
+}
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
+}
+.feed-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #00ffaa;
+  text-transform: uppercase;
+}
+.feed-job-id {
+  font-size: 11px;
+  color: #4a5568;
+  letter-spacing: 0.05em;
+}
+.feed-elapsed {
+  font-size: 12px;
+  color: #718096;
+  font-variant-numeric: tabular-nums;
+}
+.feed-header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.feed-stats {
+  font-size: 12px;
+  color: #718096;
+}
+.feed-close {
+  background: none;
+  border: none;
+  color: #4a5568;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.2s;
+}
+.feed-close:hover { color: #e53e3e; }
+
+/* Body */
+.feed-body {
+  padding: 16px 20px;
+  min-height: 80px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.feed-body::-webkit-scrollbar { width: 4px; }
+.feed-body::-webkit-scrollbar-track { background: transparent; }
+.feed-body::-webkit-scrollbar-thumb { background: rgba(0,255,170,0.2); border-radius: 4px; }
+
+/* Feed line */
+.feed-line {
+  display: flex;
+  gap: 16px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+.feed-line-enter {
+  animation: fadeSlideIn 0.25s ease forwards;
+  opacity: 0;
+}
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.feed-ts {
+  font-size: 11px;
+  color: #00ffaa;
+  white-space: nowrap;
+  min-width: 80px;
+  opacity: 0.7;
+}
+.feed-msg {
+  font-size: 13px;
+  color: #a0aec0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+}
+.feed-msg.feed-success { color: #68d391; }
+.feed-msg.feed-active  { color: #90cdf4; }
+.feed-msg.feed-muted   { color: #4a5568; }
+.feed-line.feed-error .feed-msg { color: #fc8181; }
+
+/* Puntos animados (loading) */
+.feed-dots-anim::after {
+  content: '';
+  animation: loadingDots 1.4s steps(4, end) infinite;
+}
+@keyframes loadingDots {
+  0%   { content: ''; }
+  25%  { content: '.'; }
+  50%  { content: '..'; }
+  75%  { content: '...'; }
+  100% { content: ''; }
+}
+
+/* Cursor parpadeante */
+.feed-cursor-line {
+  padding-top: 2px;
+  height: 20px;
+}
+.feed-cursor-blink {
+  color: #00ffaa;
+  animation: blink 1s step-end infinite;
+  font-size: 14px;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* Empty state */
+.feed-empty {
+  display: flex;
+  align-items: center;
+  padding: 8px 0;
+}
+
+/* Footer */
+.feed-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  font-size: 13px;
+  color: #718096;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.feed-ver-logs {
+  color: #00ffaa;
+  text-decoration: none;
+  font-size: 12px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.feed-ver-logs:hover { opacity: 1; }
