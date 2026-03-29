@@ -518,30 +518,46 @@ export async function createShipment(
   const GUIA_REGEX = /\b88\d{10,}\b/;
   let guia: string = '';
 
-  // Method 1: Check if we're on the confirmation page (guiacreada/XXXX)
-  if (currentUrl.includes('guiacreada')) {
-    // The URL contains the internal ID, not the guia. Navigate to mis envios to get it.
-    slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'On confirmation page — navigating to mis envios for guia');
-    await page.goto(DAC_URLS.CART, { waitUntil: 'domcontentloaded', timeout: 15_000 });
-    await page.waitForTimeout(2000);
-  }
-
-  // Method 2: Search current page for guia pattern (88XXXXXXXXXX)
-  const pageGuia = await page.evaluate((regexStr: string) => {
+  // Method 1: Search CURRENT page first (confirmation page or wherever we are)
+  let pageGuia = await page.evaluate((regexStr: string) => {
     const regex = new RegExp(regexStr, 'g');
     const text = document.body?.textContent ?? '';
     const matches = text.match(regex);
-    // Return the LAST match (most recent guia)
     if (matches && matches.length > 0) return matches[matches.length - 1];
     return null;
   }, GUIA_REGEX.source);
 
   if (pageGuia) {
     guia = pageGuia;
-    slog.success(DAC_STEPS.SUBMIT_OK, `Shipment created! Guia: ${guia}`, { guia, orderName: order.name });
-  } else {
+    slog.success(DAC_STEPS.SUBMIT_OK, `Guia found on current page: ${guia}`, { guia, orderName: order.name, url: currentUrl });
+  }
+
+  // Method 2: If not found, navigate to mis envios/historial and search there
+  if (!guia) {
+    slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Guia not on current page — checking mis envios');
+    await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'domcontentloaded', timeout: 15_000 });
+    await page.waitForTimeout(3000);
+
+    // Search the historial page for the latest guia
+    pageGuia = await page.evaluate((regexStr: string) => {
+      const regex = new RegExp(regexStr, 'g');
+      const text = document.body?.textContent ?? '';
+      const matches = text.match(regex);
+      // Return the LAST match (most recent guia at bottom of list)
+      if (matches && matches.length > 0) return matches[matches.length - 1];
+      return null;
+    }, GUIA_REGEX.source);
+
+    if (pageGuia) {
+      guia = pageGuia;
+      slog.success(DAC_STEPS.SUBMIT_OK, `Guia found in historial: ${guia}`, { guia, orderName: order.name });
+    }
+  }
+
+  // Method 3: Still not found — use PENDING as last resort
+  if (!guia) {
     guia = `PENDING-${Date.now()}`;
-    slog.warn(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Could not extract guia from page', { orderName: order.name, url: page.url() });
+    slog.warn(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Could not extract guia from any page', { orderName: order.name, url: page.url() });
     await dacBrowser.screenshot(page, `no-guia-found-${order.name.replace('#', '')}`);
   }
 
