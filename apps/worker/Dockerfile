@@ -15,8 +15,8 @@ RUN npx prisma generate --schema=./prisma/schema.prisma
 # Copy all worker source
 COPY . .
 
-# Build TypeScript (allow errors for now)
-RUN npx tsc --skipLibCheck || true
+# Clean dist and build TypeScript fresh
+RUN rm -rf dist && npx tsc --skipLibCheck || true
 
 # Playwright browsers already in base image
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
