@@ -28,15 +28,9 @@ export async function getUnfulfilledOrders(client: AxiosInstance): Promise<Shopi
 }
 
 export async function addOrderTag(client: AxiosInstance, orderId: number, tag: string): Promise<void> {
-  const { data } = await client.get(`/orders/${orderId}.json`);
-  const currentTags: string = data.order?.tags ?? '';
-  const tagsArray = currentTags.split(',').map((t: string) => t.trim()).filter(Boolean);
-
-  if (tagsArray.includes(tag)) return;
-  tagsArray.push(tag);
-
+  // Replace ALL existing tags with only the specified tag
   await client.put(`/orders/${orderId}.json`, {
-    order: { id: orderId, tags: tagsArray.join(', ') },
+    order: { id: orderId, tags: tag },
   });
 }
 
