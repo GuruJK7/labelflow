@@ -3,6 +3,7 @@ import { decryptIfPresent } from '../encryption';
 import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify/client';
 import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify/orders';
+import { fulfillOrderWithTracking } from '../shopify/fulfillment';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment } from '../dac/shipment';
@@ -280,7 +281,20 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           });
         }
 
-        // e) Mark order as processed in Shopify (skip in testMode)
+        // e) Fulfill order in Shopify with DAC tracking + notify customer
+        if (!testMode && result.guia && !result.guia.startsWith('PENDING-')) {
+          try {
+            slog.info('order-fulfill', `Marking order ${order.name} as Prepared in Shopify with tracking...`);
+            await fulfillOrderWithTracking(shopifyClient, order.id, result.guia);
+            slog.success('order-fulfill', `Order ${order.name} fulfilled in Shopify — tracking sent to customer`, { guia: result.guia });
+          } catch (fulfillErr) {
+            slog.warn('order-fulfill', `Shopify fulfillment failed (non-fatal): ${(fulfillErr as Error).message}`, { guia: result.guia });
+          }
+        } else if (testMode) {
+          slog.info('order-fulfill', `TEST MODE: Skipping Shopify fulfillment for ${order.name}`);
+        }
+
+        // f) Mark order as processed in Shopify — tag + note (skip in testMode)
         if (!testMode) {
           try {
             await markOrderProcessed(shopifyClient, order.id, result.guia);
