@@ -3,13 +3,22 @@ import logger from '../logger';
 
 /**
  * Determines payment type based on order total and threshold.
- * > threshold = REMITENTE (store pays shipping)
- * <= threshold = DESTINATARIO (customer pays on delivery)
+ * If paymentRuleEnabled is false, always returns DESTINATARIO.
+ * If enabled:
+ *   > threshold = REMITENTE (store pays with pre-loaded DAC card)
+ *   <= threshold = DESTINATARIO (customer pays on delivery)
  */
 export function determinePaymentType(
   order: ShopifyOrder,
-  thresholdUyu: number
+  thresholdUyu: number,
+  paymentRuleEnabled: boolean = false,
 ): 'REMITENTE' | 'DESTINATARIO' {
+  // If payment rule is disabled, customer always pays on delivery
+  if (!paymentRuleEnabled) {
+    logger.info({ orderId: order.id, paymentRuleEnabled }, 'Payment rule disabled — defaulting to DESTINATARIO');
+    return 'DESTINATARIO';
+  }
+
   let totalUyu = parseFloat(order.total_price);
 
   if (!Number.isFinite(totalUyu)) {
@@ -25,7 +34,7 @@ export function determinePaymentType(
 
   const paymentType = totalUyu > thresholdUyu ? 'REMITENTE' : 'DESTINATARIO';
 
-  logger.info({ orderId: order.id, totalUyu, thresholdUyu, paymentType }, 'Payment type determined');
+  logger.info({ orderId: order.id, totalUyu, thresholdUyu, paymentType, paymentRuleEnabled }, 'Payment type determined');
 
   return paymentType;
 }

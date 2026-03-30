@@ -18,6 +18,7 @@ const updateSchema = z.object({
   emailFrom: z.string().min(1).optional(),
   storeName: z.string().max(100).optional(),
   paymentThreshold: z.number().min(0).max(1000000).optional(),
+  paymentRuleEnabled: z.boolean().optional(),
   cronSchedule: z.string()
     .regex(/^(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)$/, 'Invalid cron expression')
     .refine((val) => {
@@ -48,6 +49,7 @@ export async function GET() {
       emailFrom: true,
       storeName: true,
       paymentThreshold: true,
+      paymentRuleEnabled: true,
       cronSchedule: true,
       maxOrdersPerRun: true,
       isActive: true,
@@ -76,6 +78,7 @@ export async function GET() {
     emailFrom: tenant.emailFrom,
     storeName: tenant.storeName,
     paymentThreshold: tenant.paymentThreshold,
+    paymentRuleEnabled: tenant.paymentRuleEnabled,
     cronSchedule: tenant.cronSchedule,
     maxOrdersPerRun: tenant.maxOrdersPerRun,
     isActive: tenant.isActive,
@@ -111,6 +114,7 @@ export async function PUT(req: NextRequest) {
   if (input.emailFrom !== undefined) data.emailFrom = input.emailFrom;
   if (input.storeName !== undefined) data.storeName = input.storeName;
   if (input.paymentThreshold !== undefined) data.paymentThreshold = input.paymentThreshold;
+  if (input.paymentRuleEnabled !== undefined) data.paymentRuleEnabled = input.paymentRuleEnabled;
   if (input.cronSchedule !== undefined) data.cronSchedule = input.cronSchedule;
   if (input.maxOrdersPerRun !== undefined) data.maxOrdersPerRun = input.maxOrdersPerRun;
 

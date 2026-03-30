@@ -209,8 +209,8 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
       }
 
       try {
-        // a) Determine payment type
-        const paymentType = determinePaymentType(order, tenant.paymentThreshold);
+        // a) Determine payment type (respects paymentRuleEnabled toggle)
+        const paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
         slog.info('order-payment', `Payment type: ${paymentType}`, { orderName: order.name });
 
         // b) Create shipment in DAC (with retry)

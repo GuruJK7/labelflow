@@ -2,21 +2,57 @@ import { db } from '../db';
 import logger from '../logger';
 
 /**
- * Checks if a cron expression matches a given Date.
+ * Converts a UTC Date to a Date-like object in a given IANA timezone.
+ * Returns { minutes, hours, date, month (1-based), dayOfWeek (0=Sun) }
+ */
+function toTimezone(utcDate: Date, tz: string): { minutes: number; hours: number; date: number; month: number; dayOfWeek: number } {
+  // Use Intl to get parts in the target timezone
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour: 'numeric', minute: 'numeric', second: 'numeric',
+    year: 'numeric', month: 'numeric', day: 'numeric',
+    weekday: 'short',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(utcDate);
+  const get = (type: string) => parts.find(p => p.type === type)?.value ?? '0';
+
+  const weekdayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+  return {
+    minutes: parseInt(get('minute'), 10),
+    hours: parseInt(get('hour'), 10),
+    date: parseInt(get('day'), 10),
+    month: parseInt(get('month'), 10),
+    dayOfWeek: weekdayMap[get('weekday')] ?? 0,
+  };
+}
+
+/**
+ * Checks if a cron expression matches a given Date in a specific timezone.
  * Parses all 5 fields: minute, hour, day-of-month, month, day-of-week.
  */
-function cronMatchesNow(cronExpr: string, now: Date): boolean {
+function cronMatchesNow(cronExpr: string, now: Date, timezone?: string): boolean {
   const parts = cronExpr.trim().split(/\s+/);
   if (parts.length < 5) return false;
 
   const [minField, hourField, domField, monthField, dowField] = parts;
 
+  // Convert to tenant's timezone (default UTC if not specified)
+  const t = timezone ? toTimezone(now, timezone) : {
+    minutes: now.getUTCMinutes(),
+    hours: now.getUTCHours(),
+    date: now.getUTCDate(),
+    month: now.getUTCMonth() + 1,
+    dayOfWeek: now.getUTCDay(),
+  };
+
   return (
-    fieldMatches(minField, now.getMinutes(), 0, 59) &&
-    fieldMatches(hourField, now.getHours(), 0, 23) &&
-    fieldMatches(domField, now.getDate(), 1, 31) &&
-    fieldMatches(monthField, now.getMonth() + 1, 1, 12) &&
-    fieldMatches(dowField, now.getDay(), 0, 6)
+    fieldMatches(minField, t.minutes, 0, 59) &&
+    fieldMatches(hourField, t.hours, 0, 23) &&
+    fieldMatches(domField, t.date, 1, 31) &&
+    fieldMatches(monthField, t.month, 1, 12) &&
+    fieldMatches(dowField, t.dayOfWeek, 0, 6)
   );
 }
 
@@ -82,6 +118,7 @@ export function startScheduler(): void {
         select: {
           id: true,
           cronSchedule: true,
+          timezone: true,
         },
       });
 
@@ -90,8 +127,8 @@ export function startScheduler(): void {
       for (const tenant of tenants) {
         if (!tenant.cronSchedule || tenant.cronSchedule.trim().split(/\s+/).length < 5) continue;
 
-        // Check ALL 5 cron fields against current time
-        if (!cronMatchesNow(tenant.cronSchedule, now)) continue;
+        // Check ALL 5 cron fields against current time in tenant's timezone
+        if (!cronMatchesNow(tenant.cronSchedule, now, tenant.timezone ?? 'America/Montevideo')) continue;
 
         // Check no running/pending job
         const existingJob = await db.job.findFirst({

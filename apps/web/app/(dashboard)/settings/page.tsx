@@ -15,6 +15,7 @@ interface SettingsData {
   emailFrom: string;
   storeName: string;
   paymentThreshold: number;
+  paymentRuleEnabled: boolean;
   cronSchedule: string;
   maxOrdersPerRun: number;
   apiKey: string;
@@ -33,6 +34,7 @@ export default function SettingsPage() {
   const [emailFrom, setEmailFrom] = useState('');
   const [storeName, setStoreName] = useState('');
   const [threshold, setThreshold] = useState(4000);
+  const [paymentRuleEnabled, setPaymentRuleEnabled] = useState(false);
   const [cronSchedule, setCronSchedule] = useState('*/15 * * * *');
   const [scheduleHours, setScheduleHours] = useState<string[]>(['09:00']);
   const [scheduleDays, setScheduleDays] = useState<number[]>([1, 2, 3, 4, 5]); // Mon-Fri
@@ -123,6 +125,7 @@ export default function SettingsPage() {
           setEmailFrom(data.emailFrom ?? '');
           setStoreName(data.storeName ?? '');
           setThreshold(data.paymentThreshold ?? 4000);
+          setPaymentRuleEnabled(data.paymentRuleEnabled ?? false);
           const cron = data.cronSchedule ?? '*/15 * * * *';
           setCronSchedule(cron);
           parseCronToSchedule(cron);
@@ -230,12 +233,39 @@ export default function SettingsPage() {
         {/* Reglas de pago */}
         <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
           <h2 className="text-sm font-semibold text-white mb-4">Regla de pago</h2>
-          <div>
-            <label className={labelClass}>Umbral pago (UYU)</label>
-            <input type="number" value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} className={inputClass + ' max-w-xs'} />
-            <p className="text-[10px] text-zinc-600 mt-1">Pedidos por encima: paga tu tienda. Por debajo: paga el cliente al recibir.</p>
+
+          {/* Toggle */}
+          <div className="flex items-center justify-between mb-4 p-3 rounded-lg bg-zinc-800/30 border border-white/[0.04]">
+            <div>
+              <p className="text-sm text-white font-medium">Pagar con tarjeta precargada en DAC</p>
+              <p className="text-[10px] text-zinc-500 mt-0.5">
+                {paymentRuleEnabled
+                  ? 'Pedidos por encima del umbral se pagan con tu saldo DAC (remitente)'
+                  : 'Desactivado — todos los envios los paga el cliente al recibir (destinatario)'}
+              </p>
+            </div>
+            <button
+              onClick={() => setPaymentRuleEnabled(!paymentRuleEnabled)}
+              className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
+                paymentRuleEnabled ? 'bg-cyan-600' : 'bg-zinc-700'
+              }`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                paymentRuleEnabled ? 'translate-x-5' : 'translate-x-0'
+              }`} />
+            </button>
           </div>
-          <button onClick={() => saveSection('threshold', { paymentThreshold: threshold })} disabled={saving === 'threshold'}
+
+          {/* Threshold (only visible when enabled) */}
+          {paymentRuleEnabled && (
+            <div className="mb-3">
+              <label className={labelClass}>Umbral pago (UYU)</label>
+              <input type="number" value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} className={inputClass + ' max-w-xs'} />
+              <p className="text-[10px] text-zinc-600 mt-1">Pedidos por encima: paga tu tienda con saldo DAC. Por debajo: paga el cliente al recibir.</p>
+            </div>
+          )}
+
+          <button onClick={() => saveSection('threshold', { paymentThreshold: threshold, paymentRuleEnabled })} disabled={saving === 'threshold'}
             className="mt-3 inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
             {saving === 'threshold' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar regla
           </button>
