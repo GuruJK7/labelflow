@@ -34,7 +34,7 @@ export function createStepLogger(jobId: string, tenantId: string): StepLogger {
         jobId,
         level,
         message: fullMessage,
-        meta: meta ? JSON.parse(JSON.stringify(meta)) : undefined,
+        meta: { step, ...meta } as any,
       },
     }).catch(() => {
       // DB write failure should never crash the worker

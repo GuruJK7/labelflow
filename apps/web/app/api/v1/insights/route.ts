@@ -47,13 +47,19 @@ export async function GET() {
     },
   });
 
-  // Get real-time logs for active job if one is running
+  // Get real-time logs for active/recent job
+  // Show logs if job is running OR finished within the last 5 minutes
   let activeLogs: unknown[] = [];
-  if (activeJob && (activeJob.status === 'RUNNING' || activeJob.status === 'PENDING')) {
+  const showLogs = activeJob && (
+    activeJob.status === 'RUNNING' ||
+    activeJob.status === 'PENDING' ||
+    (activeJob.finishedAt && Date.now() - new Date(activeJob.finishedAt).getTime() < 5 * 60 * 1000)
+  );
+  if (activeJob && showLogs) {
     activeLogs = await db.runLog.findMany({
       where: { tenantId, jobId: activeJob.id },
       orderBy: { createdAt: 'asc' },
-      take: 100,
+      take: 200,
       select: {
         id: true,
         level: true,

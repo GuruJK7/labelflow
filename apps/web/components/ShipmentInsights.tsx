@@ -68,9 +68,10 @@ const STATUS_MAP: Record<string, { label: string; color: string; bg: string; ico
 };
 
 function getStepFromLog(log: LogEntry): { emoji: string; text: string } | null {
-  const step = (log.meta as Record<string, unknown>)?.step as string | undefined;
   const meta = log.meta as Record<string, unknown>;
-  const msg = log.message;
+  // Step can be in meta.step (new logger) or parsed from message "[step] ..."
+  const step = (meta?.step as string | undefined) ?? log.message.match(/^\[([^\]]+)\]/)?.[1];
+  const msg = log.message.replace(/^\[[^\]]+\]\s*/, '');
 
   if (step === 'dac-login' && msg.includes('successful')) return { emoji: '\u{1F513}', text: 'Login DAC exitoso' };
   if (step === 'dac-login' && msg.includes('Starting')) return { emoji: '\u{1F510}', text: 'Conectando a DAC...' };
@@ -141,6 +142,7 @@ export function ShipmentInsights() {
   if (!data) return null;
 
   const isRunning = data.activeJob?.status === 'RUNNING' || data.activeJob?.status === 'PENDING';
+  const hasLogs = (data.activeLogs ?? []).length > 0;
   const filteredLogs = (data.activeLogs ?? [])
     .map((log) => ({ log, step: getStepFromLog(log) }))
     .filter(({ step }) => step !== null);
@@ -189,12 +191,21 @@ export function ShipmentInsights() {
 
       {expanded && (
         <div className="divide-y divide-white/[0.04]">
-          {/* Live Logs (when job is running) */}
-          {isRunning && filteredLogs.length > 0 && (
+          {/* Live Logs (when job is running or just finished) */}
+          {(isRunning || hasLogs) && filteredLogs.length > 0 && (
             <div className="px-6 py-4">
               <div className="flex items-center gap-2 mb-3">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                <span className="text-[11px] font-medium text-cyan-400 uppercase tracking-wider">En vivo</span>
+                {isRunning ? (
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                ) : (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                )}
+                <span className={cn(
+                  'text-[11px] font-medium uppercase tracking-wider',
+                  isRunning ? 'text-cyan-400' : 'text-emerald-400'
+                )}>
+                  {isRunning ? 'En vivo' : 'Ultimo procesamiento'}
+                </span>
               </div>
               <div className="max-h-[260px] overflow-y-auto space-y-1 scrollbar-thin pr-1">
                 {filteredLogs.map(({ log, step }) => {
