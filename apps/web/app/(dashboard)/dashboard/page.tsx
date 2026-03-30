@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { JobFeedPanel } from '@/components/JobFeedPanel';
+import { ShipmentInsights } from '@/components/ShipmentInsights';
 
 interface StatsData {
   labelsToday: number;
@@ -273,6 +274,9 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Shipment Insights — real-time progress per shipment */}
+      <ShipmentInsights />
 
       {/* Recent jobs */}
       <div className="glass rounded-2xl overflow-hidden animate-fade-in-up delay-300">

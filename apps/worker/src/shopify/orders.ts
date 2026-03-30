@@ -2,7 +2,7 @@ import { AxiosInstance } from 'axios';
 import { ShopifyOrder } from './types';
 import logger from '../logger';
 
-const PROCESSED_TAG = 'labelflow-procesado';
+const PROCESSED_TAG = 'RASTREO ENVIADO';
 const GUIA_NOTE_PREFIX = 'LabelFlow-GUIA:';
 
 export async function getUnfulfilledOrders(client: AxiosInstance): Promise<ShopifyOrder[]> {
@@ -19,7 +19,9 @@ export async function getUnfulfilledOrders(client: AxiosInstance): Promise<Shopi
 
   return orders.filter((order) => {
     const tags = order.tags.split(',').map((t: string) => t.trim().toLowerCase());
-    if (tags.includes(PROCESSED_TAG)) return false;
+    if (tags.includes(PROCESSED_TAG.toLowerCase())) return false;
+    // Also respect legacy tag
+    if (tags.includes('labelflow-procesado')) return false;
     if (order.note?.includes(GUIA_NOTE_PREFIX)) return false;
     return true;
   });
