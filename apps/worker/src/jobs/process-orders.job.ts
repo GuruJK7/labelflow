@@ -163,6 +163,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     // STEP 4: Process each order sequentially with retry
     const config = getConfig();
     const tmpDir = path.join(config.LABELS_TMP_DIR, new Date().toISOString().split('T')[0]);
+    const usedGuias = new Set<string>(); // Track guias assigned in this batch to prevent cross-assignment
 
     for (let i = 0; i < orders.length; i++) {
       const order = orders[i];
@@ -215,11 +216,16 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
 
         // b) Create shipment in DAC (with retry)
         const result = await withRetry(
-          () => createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId),
+          () => createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId, usedGuias),
           MAX_RETRIES_PER_ORDER,
           `DAC shipment for ${order.name}`,
           slog
         );
+
+        // Track this guia so it won't be assigned to another order in this batch
+        if (result.guia && !result.guia.startsWith('PENDING-')) {
+          usedGuias.add(result.guia);
+        }
 
         slog.success('order-shipment', `DAC shipment created for ${order.name}`, { guia: result.guia });
 
