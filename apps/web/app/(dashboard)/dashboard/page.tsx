@@ -73,17 +73,13 @@ export default function DashboardPage() {
       }
       setJobs(jobsData);
 
-      // Calculate labelsToday from jobs created today
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const todayJobs = jobsData.filter(
-        (j) => new Date(j.createdAt) >= todayStart
-      );
-      const labelsToday = todayJobs.reduce((sum, j) => sum + j.successCount, 0);
+      // Use real label counts from API (calculated from Label table)
+      const labelsToday = (settingsData?.labelsToday as number) ?? 0;
 
-      // Calculate success rate from all jobs
-      const totalOrders = jobsData.reduce((sum, j) => sum + j.totalOrders, 0);
-      const totalSuccess = jobsData.reduce((sum, j) => sum + j.successCount, 0);
+      // Calculate success rate only from jobs that actually processed orders
+      const jobsWithOrders = jobsData.filter((j) => j.totalOrders > 0);
+      const totalOrders = jobsWithOrders.reduce((sum, j) => sum + j.totalOrders, 0);
+      const totalSuccess = jobsWithOrders.reduce((sum, j) => sum + j.successCount, 0);
       const successRate = totalOrders > 0 ? Math.round((totalSuccess / totalOrders) * 100) : 0;
 
       setStats({

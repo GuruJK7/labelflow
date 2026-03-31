@@ -64,11 +64,26 @@ export async function GET() {
       currentPeriodEnd: true,
       labelsThisMonth: true,
       labelsTotal: true,
+      lastRunAt: true,
       apiKey: true,
     },
   });
 
   if (!tenant) return apiError('Tenant no encontrado', 404);
+
+  // Calculate real label counts from Label table
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const [labelsThisMonthReal, labelsTodayReal] = await Promise.all([
+    db.label.count({
+      where: { tenantId: auth.tenantId, createdAt: { gte: startOfMonth } },
+    }),
+    db.label.count({
+      where: { tenantId: auth.tenantId, createdAt: { gte: startOfDay } },
+    }),
+  ]);
 
   // Never return encrypted values, return booleans instead
   return apiSuccess({
@@ -92,8 +107,10 @@ export async function GET() {
     stripePriceId: tenant.stripePriceId,
     stripeSubscriptionId: tenant.stripeSubscriptionId,
     currentPeriodEnd: tenant.currentPeriodEnd,
-    labelsThisMonth: tenant.labelsThisMonth,
+    labelsThisMonth: labelsThisMonthReal,
+    labelsToday: labelsTodayReal,
     labelsTotal: tenant.labelsTotal,
+    lastRunAt: tenant.lastRunAt,
     apiKey: tenant.apiKey,
   });
 }
