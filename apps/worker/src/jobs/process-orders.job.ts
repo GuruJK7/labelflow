@@ -344,8 +344,25 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         successCount++;
       } catch (err) {
         const errorMsg = (err as Error).message;
+        const isDacGuiaConstraint = errorMsg.includes('Unique constraint') && errorMsg.includes('dacGuia');
+
+        if (isDacGuiaConstraint) {
+          // Extract guia from the error context if possible
+          const guiaMatch = errorMsg.match(/dacGuia/);
+          slog.warn('order-fail', `Order ${order.name}: guia already assigned to another order, skipping`, {
+            orderId: order.id,
+            orderName: order.name,
+            error: errorMsg.substring(0, 200),
+          });
+        } else {
+          slog.error('order-fail', `Order ${order.name} failed: ${errorMsg}`);
+        }
 
         // BUG FIX 5: Upsert instead of create to handle retries
+        const labelErrorMsg = isDacGuiaConstraint
+          ? 'Guia already assigned to another order'
+          : errorMsg.substring(0, 500);
+
         await db.label.upsert({
           where: {
             tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
@@ -362,17 +379,31 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType: 'DESTINATARIO',
             status: 'FAILED',
-            errorMessage: errorMsg.substring(0, 500),
+            errorMessage: labelErrorMsg,
           },
           update: {
             jobId,
             status: 'FAILED',
-            errorMessage: errorMsg.substring(0, 500),
+            errorMessage: labelErrorMsg,
           },
         }).catch(() => {});
 
-        await addOrderNote(shopifyClient, order.id, `LabelFlow ERROR: ${errorMsg.substring(0, 200)}`).catch(() => {});
-        slog.error('order-fail', `Order ${order.name} failed: ${errorMsg}`);
+        // Only write error notes to Shopify for non-constraint errors,
+        // and check for duplicate notes to avoid spamming
+        if (!isDacGuiaConstraint) {
+          const noteText = `LabelFlow ERROR: ${errorMsg.substring(0, 200)}`;
+          try {
+            const { data } = await shopifyClient.get(`/orders/${order.id}.json`);
+            const currentNote: string = data.order?.note ?? '';
+            // Prevent writing the same error note multiple times
+            if (!currentNote.includes(noteText.substring(0, 80))) {
+              await addOrderNote(shopifyClient, order.id, noteText);
+            }
+          } catch {
+            // Silently ignore note-writing failures
+          }
+        }
+
         failedCount++;
       }
 
