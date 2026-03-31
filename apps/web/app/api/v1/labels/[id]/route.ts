@@ -5,24 +5,31 @@ import { getSignedUrl } from '@/lib/supabase';
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
-  const auth = await getAuthenticatedTenant();
-  if (!auth) return apiError('No autorizado', 401);
+  try {
+    const auth = await getAuthenticatedTenant();
+    if (!auth) return apiError('No autorizado', 401);
 
-  const label = await db.label.findFirst({
-    where: { id: params.id, tenantId: auth.tenantId },
-  });
+    const { id } = await context.params;
 
-  if (!label) return apiError('Etiqueta no encontrada', 404);
+    const label = await db.label.findFirst({
+      where: { id, tenantId: auth.tenantId },
+    });
 
-  let pdfUrl: string | null = null;
-  if (label.pdfPath) {
-    pdfUrl = await getSignedUrl(label.pdfPath);
+    if (!label) return apiError('Etiqueta no encontrada', 404);
+
+    let pdfUrl: string | null = null;
+    if (label.pdfPath) {
+      pdfUrl = await getSignedUrl(label.pdfPath);
+    }
+
+    return apiSuccess({
+      ...label,
+      pdfUrl,
+    });
+  } catch (err) {
+    console.error('Labels API error:', err);
+    return apiError('Error interno', 500);
   }
-
-  return apiSuccess({
-    ...label,
-    pdfUrl,
-  });
 }
