@@ -98,7 +98,8 @@ export default function SettingsPage() {
 
   // Convert visual schedule to cron
   function slotsToCron(slots: ScheduleSlot[], days: number[]): string {
-    if (slots.length === 0) return '0 9 * * *';
+    // No slots = disabled (Feb 31 never happens, so this cron never fires)
+    if (slots.length === 0) return '0 0 31 2 *';
     const minutes = slots.map(s => s.time.split(':')[1] ?? '0').join(',');
     const hourNums = slots.map(s => s.time.split(':')[0]).join(',');
     const dayStr = days.length === 7 ? '*' : days.sort((a, b) => a - b).join(',');
@@ -337,39 +338,54 @@ export default function SettingsPage() {
 
           {/* Horarios con limite por slot */}
           <div className="mb-5">
-            <label className={labelClass}>Horarios de ejecucion</label>
-            <div className="space-y-2 mt-1">
-              {scheduleSlots.map((slot, index) => (
-                <div key={index} className="flex items-center gap-2 bg-zinc-800/20 border border-white/[0.04] rounded-lg p-2">
-                  <input
-                    type="time"
-                    value={slot.time}
-                    onChange={(e) => updateSlotTime(index, e.target.value)}
-                    className="px-3 py-2 bg-zinc-800/50 border border-white/[0.08] rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-colors [color-scheme:dark]"
-                  />
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-[10px] text-zinc-500 whitespace-nowrap">Max pedidos:</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className={labelClass + ' mb-0'}>Horarios de ejecucion</label>
+              {scheduleSlots.length > 0 && (
+                <button
+                  onClick={() => setScheduleSlots([])}
+                  className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors"
+                >
+                  Borrar todos
+                </button>
+              )}
+            </div>
+            {scheduleSlots.length === 0 ? (
+              <div className="bg-zinc-800/20 border border-dashed border-white/[0.08] rounded-lg p-4 text-center mt-1">
+                <p className="text-xs text-zinc-500">No hay horarios programados</p>
+                <p className="text-[10px] text-zinc-600 mt-1">Agrega un horario para automatizar el envio de etiquetas</p>
+              </div>
+            ) : (
+              <div className="space-y-2 mt-1">
+                {scheduleSlots.map((slot, index) => (
+                  <div key={index} className="flex items-center gap-2 bg-zinc-800/20 border border-white/[0.04] rounded-lg p-2">
                     <input
-                      type="number"
-                      min={0}
-                      max={50}
-                      value={slot.maxOrders}
-                      onChange={(e) => updateSlotMaxOrders(index, Math.max(0, Math.min(50, Number(e.target.value))))}
-                      className="w-16 px-2 py-2 bg-zinc-800/50 border border-white/[0.08] rounded-lg text-white text-sm text-center focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-colors"
-                      placeholder="0"
+                      type="time"
+                      value={slot.time}
+                      onChange={(e) => updateSlotTime(index, e.target.value)}
+                      className="px-3 py-2 bg-zinc-800/50 border border-white/[0.08] rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-colors [color-scheme:dark]"
                     />
-                    <span className="text-[9px] text-zinc-600">{slot.maxOrders === 0 ? '(todos)' : ''}</span>
-                  </div>
-                  {scheduleSlots.length > 1 && (
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[10px] text-zinc-500 whitespace-nowrap">Max pedidos:</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={50}
+                        value={slot.maxOrders}
+                        onChange={(e) => updateSlotMaxOrders(index, Math.max(0, Math.min(50, Number(e.target.value))))}
+                        className="w-16 px-2 py-2 bg-zinc-800/50 border border-white/[0.08] rounded-lg text-white text-sm text-center focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-colors"
+                        placeholder="0"
+                      />
+                      <span className="text-[9px] text-zinc-600">{slot.maxOrders === 0 ? '(todos)' : ''}</span>
+                    </div>
                     <button onClick={() => removeSlot(index)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-500/10 text-zinc-500 hover:text-red-400 transition-colors ml-auto">
                       <X className="w-3.5 h-3.5" />
                     </button>
-                  )}
-                </div>
-              ))}
-            </div>
+                  </div>
+                ))}
+              </div>
+            )}
             <button onClick={addSlot} className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-cyan-400/70 hover:text-cyan-400 transition-colors">
-              <Plus className="w-3 h-3" /> Agregar otro horario
+              <Plus className="w-3 h-3" /> Agregar horario
             </button>
             <p className="text-[10px] text-zinc-600 mt-1">Max pedidos: 0 = procesa todos los pendientes</p>
           </div>
@@ -377,27 +393,33 @@ export default function SettingsPage() {
           {/* Preview */}
           <div className="bg-zinc-800/30 border border-white/[0.04] rounded-lg px-4 py-3 mb-4">
             <p className="text-[11px] text-zinc-500 mb-1">Resumen:</p>
-            <p className="text-xs text-white">
-              <Calendar className="w-3 h-3 inline mr-1 text-cyan-400" />
-              {scheduleDays.length === 7
-                ? 'Todos los dias'
-                : scheduleDays.length === 0
-                  ? 'Ningun dia seleccionado'
-                  : scheduleDays.sort((a, b) => a - b).map(d => DAYS.find(dd => dd.value === d)?.label).join(', ')
-              }
-            </p>
-            <div className="mt-1.5 space-y-0.5">
-              {scheduleSlots.map((slot, i) => (
-                <p key={i} className="text-[11px] text-zinc-400">
-                  <span className="text-cyan-400 font-medium">{slot.time}</span>
-                  {' — '}
-                  <span className="text-zinc-500">
-                    {slot.maxOrders === 0 ? 'todos los pedidos' : `max ${slot.maxOrders} pedidos`}
-                  </span>
+            {scheduleSlots.length === 0 ? (
+              <p className="text-xs text-zinc-500">Sin programacion — los envios no se ejecutaran automaticamente</p>
+            ) : (
+              <>
+                <p className="text-xs text-white">
+                  <Calendar className="w-3 h-3 inline mr-1 text-cyan-400" />
+                  {scheduleDays.length === 7
+                    ? 'Todos los dias'
+                    : scheduleDays.length === 0
+                      ? 'Ningun dia seleccionado'
+                      : scheduleDays.sort((a, b) => a - b).map(d => DAYS.find(dd => dd.value === d)?.label).join(', ')
+                  }
                 </p>
-              ))}
-            </div>
-            <p className="text-[10px] text-zinc-600 mt-1.5">Cron: {slotsToCron(scheduleSlots, scheduleDays)}</p>
+                <div className="mt-1.5 space-y-0.5">
+                  {scheduleSlots.map((slot, i) => (
+                    <p key={i} className="text-[11px] text-zinc-400">
+                      <span className="text-cyan-400 font-medium">{slot.time}</span>
+                      {' — '}
+                      <span className="text-zinc-500">
+                        {slot.maxOrders === 0 ? 'todos los pedidos' : `max ${slot.maxOrders} pedidos`}
+                      </span>
+                    </p>
+                  ))}
+                </div>
+                <p className="text-[10px] text-zinc-600 mt-1.5">Cron: {slotsToCron(scheduleSlots, scheduleDays)}</p>
+              </>
+            )}
           </div>
 
           <button
