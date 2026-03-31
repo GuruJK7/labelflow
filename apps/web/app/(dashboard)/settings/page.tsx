@@ -127,7 +127,7 @@ export default function SettingsPage() {
     setScheduleSlots(prev => prev.map((s, i) => i === index ? { ...s, maxOrders: value } : s));
   }
   const [saving, setSaving] = useState('');
-  const [message, setMessage] = useState({ type: '', text: '' });
+  const [message, setMessage] = useState({ type: '', text: '', section: '' });
 
   useEffect(() => {
     fetch('/api/v1/settings')
@@ -154,7 +154,7 @@ export default function SettingsPage() {
 
   async function saveSection(section: string, body: Record<string, unknown>) {
     setSaving(section);
-    setMessage({ type: '', text: '' });
+    setMessage({ type: '', text: '', section: '' });
     const res = await fetch('/api/v1/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -163,10 +163,24 @@ export default function SettingsPage() {
     const data = await res.json();
     setSaving('');
     if (res.ok) {
-      setMessage({ type: 'success', text: 'Guardado' });
+      setMessage({ type: 'success', text: 'Guardado correctamente', section });
+      setTimeout(() => setMessage(prev => prev.section === section ? { type: '', text: '', section: '' } : prev), 4000);
     } else {
-      setMessage({ type: 'error', text: data.error ?? 'Error' });
+      setMessage({ type: 'error', text: data.error ?? 'Error al guardar', section });
+      setTimeout(() => setMessage(prev => prev.section === section ? { type: '', text: '', section: '' } : prev), 6000);
     }
+  }
+
+  function InlineMessage({ section: sec }: { section: string }) {
+    if (message.section !== sec || !message.text) return null;
+    return (
+      <span className={`inline-flex items-center gap-1.5 ml-3 text-xs font-medium animate-fade-in ${
+        message.type === 'success' ? 'text-emerald-400' : 'text-red-400'
+      }`}>
+        {message.type === 'success' ? <CheckCircle className="w-3.5 h-3.5" /> : <></>}
+        {message.text}
+      </span>
+    );
   }
 
   const inputClass = 'w-full px-3.5 py-2.5 bg-zinc-800/50 border border-white/[0.08] rounded-lg text-white text-sm placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-colors';
@@ -178,12 +192,6 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-bold text-white">Configuracion</h1>
         <p className="text-zinc-500 text-sm mt-1">Conecta tus servicios</p>
       </div>
-
-      {message.text && (
-        <div className={`px-4 py-3 rounded-lg text-sm mb-6 ${message.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-          {message.text}
-        </div>
-      )}
 
       <div className="space-y-6 max-w-2xl">
         {/* Shopify */}
@@ -205,6 +213,7 @@ export default function SettingsPage() {
               className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
               {saving === 'shopify' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar Shopify
             </button>
+            <InlineMessage section="shopify" />
           </div>
         </div>
 
@@ -228,6 +237,7 @@ export default function SettingsPage() {
               className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
               {saving === 'dac' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar DAC
             </button>
+            <InlineMessage section="dac" />
           </div>
         </div>
 
@@ -246,6 +256,7 @@ export default function SettingsPage() {
             className="mt-3 inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
             {saving === 'email' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar Email
           </button>
+          <InlineMessage section="email" />
         </div>
 
         {/* Reglas de pago */}
@@ -287,6 +298,7 @@ export default function SettingsPage() {
             className="mt-3 inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
             {saving === 'threshold' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar regla
           </button>
+          <InlineMessage section="threshold" />
         </div>
 
         {/* Programacion de horarios */}
@@ -399,6 +411,7 @@ export default function SettingsPage() {
           >
             {saving === 'schedule' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar programacion
           </button>
+          <InlineMessage section="schedule" />
         </div>
 
         {/* API Key */}
