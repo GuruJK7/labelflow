@@ -290,9 +290,9 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         // e) Fulfill order in Shopify with DAC tracking + notify customer
         if (!testMode && result.guia && !result.guia.startsWith('PENDING-')) {
           try {
-            slog.info('order-fulfill', `Marking order ${order.name} as Prepared in Shopify with tracking...`);
-            await fulfillOrderWithTracking(shopifyClient, order.id, result.guia);
-            slog.success('order-fulfill', `Order ${order.name} fulfilled in Shopify — tracking sent to customer`, { guia: result.guia });
+            slog.info('order-fulfill', `Marking order ${order.name} as Prepared in Shopify with tracking...`, { trackingUrl: result.trackingUrl ?? 'fallback' });
+            await fulfillOrderWithTracking(shopifyClient, order.id, result.guia, result.trackingUrl);
+            slog.success('order-fulfill', `Order ${order.name} fulfilled in Shopify — tracking sent to customer`, { guia: result.guia, trackingUrl: result.trackingUrl ?? 'fallback' });
           } catch (fulfillErr) {
             slog.warn('order-fulfill', `Shopify fulfillment failed (non-fatal): ${(fulfillErr as Error).message}`, { guia: result.guia });
           }

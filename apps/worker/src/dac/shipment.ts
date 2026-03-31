@@ -519,65 +519,109 @@ export async function createShipment(
   const GUIA_REGEX = /\b88\d{10,}\b/;
   const excludeGuias = usedGuias ? Array.from(usedGuias) : [];
   let guia: string = '';
+  let trackingUrl: string | undefined;
 
-  // Method 1: Search CURRENT page for guia, excluding already-assigned ones
-  let pageGuias = await page.evaluate((regexStr: string) => {
-    const regex = new RegExp(regexStr, 'g');
-    const text = document.body?.textContent ?? '';
-    return text.match(regex) ?? [];
-  }, GUIA_REGEX.source);
+  /**
+   * Extract guia numbers AND their href links from <a> elements on the page.
+   * Returns array of { guia, href } objects.
+   */
+  async function extractGuiasWithLinks(pg: Page): Promise<{ guia: string; href: string | null }[]> {
+    return pg.evaluate((regexStr: string) => {
+      const regex = new RegExp(regexStr);
+      const results: { guia: string; href: string | null }[] = [];
+      const seen = new Set<string>();
 
-  // Filter out guias already used in this batch
-  let newGuias = pageGuias.filter(g => !excludeGuias.includes(g));
+      // First: extract from <a> elements (these have the real tracking URLs)
+      const links = Array.from(document.querySelectorAll('a'));
+      for (const a of links) {
+        const text = a.textContent?.trim() ?? '';
+        if (regex.test(text)) {
+          const g = text.match(new RegExp(regexStr))?.[0];
+          if (g && !seen.has(g)) {
+            seen.add(g);
+            results.push({ guia: g, href: a.href || null });
+          }
+        }
+      }
 
-  if (newGuias.length > 0) {
-    // Take the LAST new guia (most recently created on the page)
-    guia = newGuias[newGuias.length - 1];
+      // Second: extract from full page text (catches guias not in links)
+      const allMatches = (document.body?.textContent ?? '').match(new RegExp(regexStr, 'g')) ?? [];
+      for (const g of allMatches) {
+        if (!seen.has(g)) {
+          seen.add(g);
+          results.push({ guia: g, href: null });
+        }
+      }
+
+      return results;
+    }, GUIA_REGEX.source);
+  }
+
+  // Method 1: Search CURRENT page for guia + href, excluding already-assigned ones
+  let pageResults = await extractGuiasWithLinks(page);
+  let newResults = pageResults.filter(r => !excludeGuias.includes(r.guia));
+
+  if (newResults.length > 0) {
+    const picked = newResults[newResults.length - 1]; // Last = most recently created
+    guia = picked.guia;
+    trackingUrl = picked.href || undefined;
     slog.success(DAC_STEPS.SUBMIT_OK, `Guia found on current page: ${guia}`, {
-      guia, orderName: order.name, url: currentUrl,
-      totalOnPage: pageGuias.length, excluded: excludeGuias.length,
+      guia, trackingUrl: trackingUrl ?? 'none', orderName: order.name, url: currentUrl,
+      totalOnPage: pageResults.length, excluded: excludeGuias.length,
     });
   }
 
-  // Method 2: If not found, navigate to historial and find the NEW guia
+  // Method 2: If not found, navigate to historial and find the NEW guia + href
   if (!guia) {
     slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Guia not on current page — checking mis envios');
     await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'domcontentloaded', timeout: 15_000 });
     await page.waitForTimeout(3000);
 
-    // Extract ALL guias from the historial page along with nearby text for validation
-    const historialData = await page.evaluate((regexStr: string) => {
-      const regex = new RegExp(regexStr, 'g');
-      const text = document.body?.textContent ?? '';
-      const matches = text.match(regex) ?? [];
-      // Also get page text for name validation
-      return { guias: matches, pageText: text.substring(0, 5000) };
-    }, GUIA_REGEX.source);
+    pageResults = await extractGuiasWithLinks(page);
+    newResults = pageResults.filter(r => !excludeGuias.includes(r.guia));
 
-    // Filter out guias already used in this batch
-    newGuias = historialData.guias.filter(g => !excludeGuias.includes(g));
-
-    if (newGuias.length > 0) {
-      // Prefer the FIRST new guia (most recent shipment typically at top of historial)
-      guia = newGuias[0];
+    if (newResults.length > 0) {
+      const picked = newResults[0]; // First = most recent in historial (top of list)
+      guia = picked.guia;
+      trackingUrl = picked.href || undefined;
       slog.success(DAC_STEPS.SUBMIT_OK, `Guia found in historial: ${guia}`, {
-        guia, orderName: order.name,
-        totalOnPage: historialData.guias.length, excluded: excludeGuias.length,
-        newGuiasAvailable: newGuias.length,
+        guia, trackingUrl: trackingUrl ?? 'none', orderName: order.name,
+        totalOnPage: pageResults.length, excluded: excludeGuias.length,
+        newGuiasAvailable: newResults.length,
       });
-    } else if (historialData.guias.length > 0) {
-      slog.error(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `All ${historialData.guias.length} guias on historial are already assigned to other orders in this batch`, {
+    } else if (pageResults.length > 0) {
+      slog.error(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `All ${pageResults.length} guias on historial are already assigned to other orders in this batch`, {
         orderName: order.name, excludedGuias: excludeGuias,
       });
     }
   }
 
-  // Method 3: Still not found — use PENDING as last resort
+  // Method 3: If we have guia but no trackingUrl, try to find the link in historial
+  if (guia && !trackingUrl && !guia.startsWith('PENDING-')) {
+    slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Have guia ${guia} but no tracking URL, checking historial for link`);
+    if (!page.url().includes('/envios')) {
+      await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'domcontentloaded', timeout: 15_000 });
+      await page.waitForTimeout(3000);
+    }
+    const linkHref = await page.evaluate((g: string) => {
+      const links = Array.from(document.querySelectorAll('a'));
+      for (const a of links) {
+        if (a.textContent?.trim().includes(g)) return a.href || null;
+      }
+      return null;
+    }, guia);
+    if (linkHref) {
+      trackingUrl = linkHref;
+      slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Found tracking URL for guia in historial`, { guia, trackingUrl });
+    }
+  }
+
+  // Method 4: Still no guia — use PENDING as last resort
   if (!guia) {
     guia = `PENDING-${Date.now()}`;
     slog.warn(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Could not extract guia from any page', { orderName: order.name, url: page.url() });
     await dacBrowser.screenshot(page, `no-guia-found-${order.name.replace('#', '')}`);
   }
 
-  return { guia, screenshotPath: '' };
+  return { guia, trackingUrl, screenshotPath: '' };
 }

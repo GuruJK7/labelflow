@@ -35,13 +35,15 @@ export async function fulfillOrderWithTracking(
   client: AxiosInstance,
   orderId: number,
   guia: string,
+  dacTrackingUrl?: string,
 ): Promise<void> {
   if (!guia || guia.startsWith('PENDING-')) {
     throw new Error(`Cannot fulfill order ${orderId}: invalid guia "${guia}"`);
   }
 
   const fulfillmentOrderIds = await getOpenFulfillmentOrderIds(client, orderId);
-  const trackingUrl = `${DAC_TRACKING_BASE_URL}?guia=${encodeURIComponent(guia)}`;
+  // Use the real DAC tracking URL if available, otherwise construct fallback
+  const trackingUrl = dacTrackingUrl || `${DAC_TRACKING_BASE_URL}?guia=${encodeURIComponent(guia)}`;
 
   const { data } = await client.post('/fulfillments.json', {
     fulfillment: {
