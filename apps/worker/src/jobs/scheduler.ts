@@ -118,7 +118,9 @@ export function startScheduler(): void {
         select: {
           id: true,
           cronSchedule: true,
+          scheduleSlots: true,
           timezone: true,
+          maxOrdersPerRun: true,
         },
       });
 
@@ -127,8 +129,10 @@ export function startScheduler(): void {
       for (const tenant of tenants) {
         if (!tenant.cronSchedule || tenant.cronSchedule.trim().split(/\s+/).length < 5) continue;
 
+        const tz = tenant.timezone ?? 'America/Montevideo';
+
         // Check ALL 5 cron fields against current time in tenant's timezone
-        if (!cronMatchesNow(tenant.cronSchedule, now, tenant.timezone ?? 'America/Montevideo')) continue;
+        if (!cronMatchesNow(tenant.cronSchedule, now, tz)) continue;
 
         // Check no running/pending job
         const existingJob = await db.job.findFirst({
@@ -140,12 +144,38 @@ export function startScheduler(): void {
           continue;
         }
 
+        // Determine maxOrders from matched schedule slot
+        let slotMaxOrders = 0; // 0 = use tenant default
+        const slots = tenant.scheduleSlots as { time: string; maxOrders: number }[] | null;
+        if (slots && slots.length > 0) {
+          const t = toTimezone(now, tz);
+          const nowTime = `${String(t.hours).padStart(2, '0')}:${String(t.minutes).padStart(2, '0')}`;
+          const matched = slots.find(s => s.time === nowTime);
+          if (matched) {
+            slotMaxOrders = matched.maxOrders;
+          }
+        }
+
         // Create job in DB (worker polling will pick it up)
         const dbJob = await db.job.create({
           data: { tenantId: tenant.id, trigger: 'CRON', type: 'PROCESS_ORDERS', status: 'PENDING' },
         });
 
-        logger.info({ tenantId: tenant.id, jobId: dbJob.id, cron: tenant.cronSchedule }, 'Cron job created');
+        // If slot has a specific maxOrders, store it as override in RunLog meta
+        if (slotMaxOrders > 0) {
+          await db.runLog.create({
+            data: {
+              tenantId: tenant.id,
+              jobId: dbJob.id,
+              level: 'INFO',
+              message: 'maxOrdersOverride',
+              meta: { maxOrdersPerRun: slotMaxOrders } as any,
+            },
+          });
+          logger.info({ tenantId: tenant.id, jobId: dbJob.id, slotMaxOrders }, 'Cron job created with slot maxOrders override');
+        } else {
+          logger.info({ tenantId: tenant.id, jobId: dbJob.id, cron: tenant.cronSchedule }, 'Cron job created');
+        }
       }
     } catch (err) {
       logger.error({ error: (err as Error).message }, 'Scheduler error');

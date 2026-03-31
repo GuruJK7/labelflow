@@ -3,6 +3,11 @@
 import { useEffect, useState, FormEvent, useCallback } from 'react';
 import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar } from 'lucide-react';
 
+interface ScheduleSlot {
+  time: string;   // "HH:MM"
+  maxOrders: number; // 0 = all
+}
+
 interface SettingsData {
   shopifyStoreUrl: string;
   shopifyTokenSet: boolean;
@@ -17,6 +22,7 @@ interface SettingsData {
   paymentThreshold: number;
   paymentRuleEnabled: boolean;
   cronSchedule: string;
+  scheduleSlots: ScheduleSlot[] | null;
   maxOrdersPerRun: number;
   apiKey: string;
 }
@@ -36,7 +42,7 @@ export default function SettingsPage() {
   const [threshold, setThreshold] = useState(4000);
   const [paymentRuleEnabled, setPaymentRuleEnabled] = useState(false);
   const [cronSchedule, setCronSchedule] = useState('*/15 * * * *');
-  const [scheduleHours, setScheduleHours] = useState<string[]>(['09:00']);
+  const [scheduleSlots, setScheduleSlots] = useState<ScheduleSlot[]>([{ time: '09:00', maxOrders: 0 }]);
   const [scheduleDays, setScheduleDays] = useState<number[]>([1, 2, 3, 4, 5]); // Mon-Fri
 
   const DAYS = [
@@ -49,27 +55,35 @@ export default function SettingsPage() {
     { value: 6, label: 'Sab', short: 'S' },
   ];
 
-  // Parse cron to visual schedule on load
-  const parseCronToSchedule = useCallback((cron: string) => {
-    const parts = cron.split(' ');
-    if (parts.length !== 5) return;
-    const [minute, hour, , , dayOfWeek] = parts;
+  // Parse cron + scheduleSlots to visual schedule on load
+  const parseCronToSchedule = useCallback((cron: string, slots: ScheduleSlot[] | null) => {
+    // If we have scheduleSlots, use those directly
+    if (slots && slots.length > 0) {
+      setScheduleSlots(slots);
+    } else {
+      // Legacy: parse from cron expression
+      const parts = cron.split(' ');
+      if (parts.length !== 5) return;
+      const [minute, hour] = parts;
 
-    // Parse hours
-    if (hour.includes(',')) {
-      const hours = hour.split(',');
-      const minutes = minute.split(',');
-      const times: string[] = [];
-      hours.forEach((h, i) => {
-        const m = minutes[i] ?? minutes[0] ?? '0';
-        times.push(`${h.padStart(2, '0')}:${m.padStart(2, '0')}`);
-      });
-      setScheduleHours(times);
-    } else if (hour !== '*' && !hour.includes('/')) {
-      setScheduleHours([`${hour.padStart(2, '0')}:${(minute === '*' ? '0' : minute).padStart(2, '0')}`]);
+      if (hour.includes(',')) {
+        const hours = hour.split(',');
+        const minutes = minute.split(',');
+        const times: ScheduleSlot[] = [];
+        hours.forEach((h, i) => {
+          const m = minutes[i] ?? minutes[0] ?? '0';
+          times.push({ time: `${h.padStart(2, '0')}:${m.padStart(2, '0')}`, maxOrders: 0 });
+        });
+        setScheduleSlots(times);
+      } else if (hour !== '*' && !hour.includes('/')) {
+        setScheduleSlots([{ time: `${hour.padStart(2, '0')}:${(minute === '*' ? '0' : minute).padStart(2, '0')}`, maxOrders: 0 }]);
+      }
     }
 
-    // Parse days
+    // Parse days from cron
+    const parts = cron.split(' ');
+    if (parts.length !== 5) return;
+    const dayOfWeek = parts[4];
     if (dayOfWeek === '*') {
       setScheduleDays([0, 1, 2, 3, 4, 5, 6]);
     } else if (dayOfWeek.includes('-')) {
@@ -83,10 +97,10 @@ export default function SettingsPage() {
   }, []);
 
   // Convert visual schedule to cron
-  function scheduleToCron(hours: string[], days: number[]): string {
-    if (hours.length === 0) return '0 9 * * *';
-    const minutes = hours.map(h => h.split(':')[1] ?? '0').join(',');
-    const hourNums = hours.map(h => h.split(':')[0]).join(',');
+  function slotsToCron(slots: ScheduleSlot[], days: number[]): string {
+    if (slots.length === 0) return '0 9 * * *';
+    const minutes = slots.map(s => s.time.split(':')[1] ?? '0').join(',');
+    const hourNums = slots.map(s => s.time.split(':')[0]).join(',');
     const dayStr = days.length === 7 ? '*' : days.sort((a, b) => a - b).join(',');
     return `${minutes} ${hourNums} * * ${dayStr}`;
   }
@@ -97,16 +111,20 @@ export default function SettingsPage() {
     );
   }
 
-  function addHour() {
-    setScheduleHours(prev => [...prev, '12:00']);
+  function addSlot() {
+    setScheduleSlots(prev => [...prev, { time: '12:00', maxOrders: 0 }]);
   }
 
-  function removeHour(index: number) {
-    setScheduleHours(prev => prev.filter((_, i) => i !== index));
+  function removeSlot(index: number) {
+    setScheduleSlots(prev => prev.filter((_, i) => i !== index));
   }
 
-  function updateHour(index: number, value: string) {
-    setScheduleHours(prev => prev.map((h, i) => i === index ? value : h));
+  function updateSlotTime(index: number, value: string) {
+    setScheduleSlots(prev => prev.map((s, i) => i === index ? { ...s, time: value } : s));
+  }
+
+  function updateSlotMaxOrders(index: number, value: number) {
+    setScheduleSlots(prev => prev.map((s, i) => i === index ? { ...s, maxOrders: value } : s));
   }
   const [saving, setSaving] = useState('');
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -128,7 +146,7 @@ export default function SettingsPage() {
           setPaymentRuleEnabled(data.paymentRuleEnabled ?? false);
           const cron = data.cronSchedule ?? '*/15 * * * *';
           setCronSchedule(cron);
-          parseCronToSchedule(cron);
+          parseCronToSchedule(cron, data.scheduleSlots);
         }
       })
       .catch(() => {});
@@ -305,29 +323,43 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Horarios */}
+          {/* Horarios con limite por slot */}
           <div className="mb-5">
             <label className={labelClass}>Horarios de ejecucion</label>
             <div className="space-y-2 mt-1">
-              {scheduleHours.map((hour, index) => (
-                <div key={index} className="flex items-center gap-2">
+              {scheduleSlots.map((slot, index) => (
+                <div key={index} className="flex items-center gap-2 bg-zinc-800/20 border border-white/[0.04] rounded-lg p-2">
                   <input
                     type="time"
-                    value={hour}
-                    onChange={(e) => updateHour(index, e.target.value)}
+                    value={slot.time}
+                    onChange={(e) => updateSlotTime(index, e.target.value)}
                     className="px-3 py-2 bg-zinc-800/50 border border-white/[0.08] rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-colors [color-scheme:dark]"
                   />
-                  {scheduleHours.length > 1 && (
-                    <button onClick={() => removeHour(index)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-500/10 text-zinc-500 hover:text-red-400 transition-colors">
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-[10px] text-zinc-500 whitespace-nowrap">Max pedidos:</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={50}
+                      value={slot.maxOrders}
+                      onChange={(e) => updateSlotMaxOrders(index, Math.max(0, Math.min(50, Number(e.target.value))))}
+                      className="w-16 px-2 py-2 bg-zinc-800/50 border border-white/[0.08] rounded-lg text-white text-sm text-center focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-colors"
+                      placeholder="0"
+                    />
+                    <span className="text-[9px] text-zinc-600">{slot.maxOrders === 0 ? '(todos)' : ''}</span>
+                  </div>
+                  {scheduleSlots.length > 1 && (
+                    <button onClick={() => removeSlot(index)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-500/10 text-zinc-500 hover:text-red-400 transition-colors ml-auto">
                       <X className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
               ))}
             </div>
-            <button onClick={addHour} className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-cyan-400/70 hover:text-cyan-400 transition-colors">
+            <button onClick={addSlot} className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-cyan-400/70 hover:text-cyan-400 transition-colors">
               <Plus className="w-3 h-3" /> Agregar otro horario
             </button>
+            <p className="text-[10px] text-zinc-600 mt-1">Max pedidos: 0 = procesa todos los pendientes</p>
           </div>
 
           {/* Preview */}
@@ -341,19 +373,26 @@ export default function SettingsPage() {
                   ? 'Ningun dia seleccionado'
                   : scheduleDays.sort((a, b) => a - b).map(d => DAYS.find(dd => dd.value === d)?.label).join(', ')
               }
-              {' a las '}
-              <span className="text-cyan-400 font-medium">
-                {scheduleHours.length === 0 ? '(sin horario)' : scheduleHours.join(', ')}
-              </span>
             </p>
-            <p className="text-[10px] text-zinc-600 mt-1">Cron: {scheduleToCron(scheduleHours, scheduleDays)}</p>
+            <div className="mt-1.5 space-y-0.5">
+              {scheduleSlots.map((slot, i) => (
+                <p key={i} className="text-[11px] text-zinc-400">
+                  <span className="text-cyan-400 font-medium">{slot.time}</span>
+                  {' — '}
+                  <span className="text-zinc-500">
+                    {slot.maxOrders === 0 ? 'todos los pedidos' : `max ${slot.maxOrders} pedidos`}
+                  </span>
+                </p>
+              ))}
+            </div>
+            <p className="text-[10px] text-zinc-600 mt-1.5">Cron: {slotsToCron(scheduleSlots, scheduleDays)}</p>
           </div>
 
           <button
             onClick={() => {
-              const cron = scheduleToCron(scheduleHours, scheduleDays);
+              const cron = slotsToCron(scheduleSlots, scheduleDays);
               setCronSchedule(cron);
-              saveSection('schedule', { cronSchedule: cron });
+              saveSection('schedule', { cronSchedule: cron, scheduleSlots });
             }}
             disabled={saving === 'schedule'}
             className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"

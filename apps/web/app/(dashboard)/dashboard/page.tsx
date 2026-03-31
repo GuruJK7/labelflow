@@ -18,6 +18,11 @@ import { cn } from '@/lib/cn';
 import { JobFeedPanel } from '@/components/JobFeedPanel';
 import { ShipmentInsights } from '@/components/ShipmentInsights';
 
+interface ScheduleSlot {
+  time: string;
+  maxOrders: number;
+}
+
 interface StatsData {
   labelsToday: number;
   labelsMonth: number;
@@ -26,6 +31,9 @@ interface StatsData {
   shopifyTokenSet: boolean;
   dacPasswordSet: boolean;
   emailPassSet: boolean;
+  scheduleSlots: ScheduleSlot[] | null;
+  cronSchedule: string | null;
+  isActive: boolean;
 }
 
 interface JobSummary {
@@ -86,6 +94,9 @@ export default function DashboardPage() {
         shopifyTokenSet: !!(settingsData?.shopifyTokenSet),
         dacPasswordSet: !!(settingsData?.dacPasswordSet),
         emailPassSet: !!(settingsData?.emailPassSet),
+        scheduleSlots: (settingsData?.scheduleSlots as ScheduleSlot[] | null) ?? null,
+        cronSchedule: (settingsData?.cronSchedule as string | null) ?? null,
+        isActive: !!(settingsData?.isActive),
       });
     } catch {
       // Silent
@@ -274,6 +285,75 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Automatic Schedule Display */}
+      {stats?.scheduleSlots && stats.scheduleSlots.length > 0 && (
+        <div className="glass rounded-2xl p-5 mb-8 animate-fade-in delay-300">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-cyan-400" />
+              <h3 className="text-sm font-semibold text-white">Horarios automaticos</h3>
+            </div>
+            <span className={cn(
+              'text-[10px] font-medium px-2 py-0.5 rounded-full',
+              stats.isActive
+                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                : 'bg-zinc-500/10 text-zinc-500 border border-zinc-500/20'
+            )}>
+              {stats.isActive ? 'Activo' : 'Inactivo'}
+            </span>
+          </div>
+
+          {/* Schedule days from cron */}
+          {stats.cronSchedule && (() => {
+            const parts = stats.cronSchedule.split(' ');
+            if (parts.length < 5) return null;
+            const dowField = parts[4];
+            const dayNames = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
+            let activeDays: number[] = [];
+            if (dowField === '*') {
+              activeDays = [0, 1, 2, 3, 4, 5, 6];
+            } else if (dowField.includes('-')) {
+              const [s, e] = dowField.split('-').map(Number);
+              for (let i = s; i <= e; i++) activeDays.push(i);
+            } else {
+              activeDays = dowField.split(',').map(Number);
+            }
+            return (
+              <div className="flex gap-1.5 mb-3">
+                {dayNames.map((name, i) => (
+                  <span
+                    key={i}
+                    className={cn(
+                      'w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-medium',
+                      activeDays.includes(i)
+                        ? 'bg-cyan-600/20 text-cyan-400 border border-cyan-500/20'
+                        : 'bg-zinc-800/30 text-zinc-700 border border-white/[0.04]'
+                    )}
+                  >
+                    {name}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* Time slots */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+            {stats.scheduleSlots.map((slot, i) => (
+              <div key={i} className="bg-zinc-800/30 border border-white/[0.04] rounded-lg px-3 py-2.5 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                  <span className="text-sm font-medium text-white font-mono">{slot.time}</span>
+                </div>
+                <span className="text-[10px] text-zinc-500">
+                  {slot.maxOrders === 0 ? 'todos' : `max ${slot.maxOrders}`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Shipment Insights — real-time progress per shipment */}
       <ShipmentInsights />

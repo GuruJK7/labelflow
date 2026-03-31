@@ -29,6 +29,10 @@ const updateSchema = z.object({
     }, 'Minimum interval is 15 minutes')
     .optional(),
   maxOrdersPerRun: z.number().min(1).max(50).optional(),
+  scheduleSlots: z.array(z.object({
+    time: z.string().regex(/^\d{2}:\d{2}$/),
+    maxOrders: z.number().min(0).max(50),
+  })).max(10).optional(),
 }).partial();
 
 export async function GET() {
@@ -52,6 +56,7 @@ export async function GET() {
       paymentRuleEnabled: true,
       cronSchedule: true,
       maxOrdersPerRun: true,
+      scheduleSlots: true,
       isActive: true,
       subscriptionStatus: true,
       stripePriceId: true,
@@ -81,6 +86,7 @@ export async function GET() {
     paymentRuleEnabled: tenant.paymentRuleEnabled,
     cronSchedule: tenant.cronSchedule,
     maxOrdersPerRun: tenant.maxOrdersPerRun,
+    scheduleSlots: tenant.scheduleSlots,
     isActive: tenant.isActive,
     subscriptionStatus: tenant.subscriptionStatus,
     stripePriceId: tenant.stripePriceId,
@@ -117,6 +123,7 @@ export async function PUT(req: NextRequest) {
   if (input.paymentRuleEnabled !== undefined) data.paymentRuleEnabled = input.paymentRuleEnabled;
   if (input.cronSchedule !== undefined) data.cronSchedule = input.cronSchedule;
   if (input.maxOrdersPerRun !== undefined) data.maxOrdersPerRun = input.maxOrdersPerRun;
+  if (input.scheduleSlots !== undefined) data.scheduleSlots = input.scheduleSlots;
 
   // Encrypted fields
   if (input.shopifyToken !== undefined) data.shopifyToken = encryptIfPresent(input.shopifyToken);
