@@ -1,6 +1,6 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
+import { getAuthenticatedTenant, apiError } from '@/lib/api-utils';
 import { getSignedUrl } from '@/lib/supabase';
 
 export async function GET(
@@ -19,15 +19,18 @@ export async function GET(
 
     if (!label) return apiError('Etiqueta no encontrada', 404);
 
-    let pdfUrl: string | null = null;
-    if (label.pdfPath) {
-      pdfUrl = await getSignedUrl(label.pdfPath);
+    if (!label.pdfPath) {
+      return apiError('PDF no disponible para esta etiqueta', 404);
     }
 
-    return apiSuccess({
-      ...label,
-      pdfUrl,
-    });
+    const pdfUrl = await getSignedUrl(label.pdfPath);
+
+    if (!pdfUrl) {
+      return apiError('No se pudo generar URL del PDF', 500);
+    }
+
+    // Redirect to the signed Supabase URL so the browser opens/downloads the PDF
+    return NextResponse.redirect(pdfUrl);
   } catch (err) {
     console.error('Labels API error:', err);
     return apiError('Error interno', 500);
