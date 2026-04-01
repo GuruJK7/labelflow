@@ -163,7 +163,16 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     // STEP 4: Process each order sequentially with retry
     const config = getConfig();
     const tmpDir = path.join(config.LABELS_TMP_DIR, new Date().toISOString().split('T')[0]);
-    const usedGuias = new Set<string>(); // Track guias assigned in this batch to prevent cross-assignment
+
+    // Load ALL existing guias from DB to prevent picking old guias from DAC historial
+    const existingGuias = await db.label.findMany({
+      where: { tenantId, dacGuia: { not: null } },
+      select: { dacGuia: true },
+    });
+    const usedGuias = new Set<string>(
+      existingGuias.map(l => l.dacGuia!).filter(g => !g.startsWith('PENDING-'))
+    );
+    slog.info('guia-protection', `Loaded ${usedGuias.size} existing guias from DB to prevent re-assignment`);
 
     for (let i = 0; i < orders.length; i++) {
       const order = orders[i];

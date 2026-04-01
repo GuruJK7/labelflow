@@ -788,9 +788,28 @@ export async function createShipment(
     }, GUIA_REGEX.source);
   }
 
+  // Method 0: Try to extract guia from confirmation page URL
+  // DAC redirects to /envios/guiacreada/XXXXX — page content should have the 88... guia
+  if (currentUrl.includes('guiacreada')) {
+    // Wait extra for confirmation page content to fully render
+    await page.waitForTimeout(2000);
+    // Log page text for debugging
+    const pagePreview = await page.evaluate(() => document.body?.textContent?.substring(0, 500) ?? '');
+    slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Confirmation page content preview: "${pagePreview.substring(0, 200)}"`);
+  }
+
   // Method 1: Search CURRENT page for guia + href, excluding already-assigned ones
   let pageResults = await extractGuiasWithLinks(page);
   let newResults = pageResults.filter(r => !excludeGuias.includes(r.guia));
+
+  // Log what was found vs excluded for debugging
+  if (pageResults.length > 0) {
+    slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Current page: ${pageResults.length} guias found, ${pageResults.length - newResults.length} excluded (already in DB)`, {
+      found: pageResults.map(r => r.guia),
+      excluded: pageResults.filter(r => excludeGuias.includes(r.guia)).map(r => r.guia),
+      new: newResults.map(r => r.guia),
+    });
+  }
 
   if (newResults.length > 0) {
     const picked = newResults[newResults.length - 1]; // Last = most recently created
@@ -812,7 +831,7 @@ export async function createShipment(
     newResults = pageResults.filter(r => !excludeGuias.includes(r.guia));
 
     if (newResults.length > 0) {
-      const picked = newResults[0]; // First = most recent in historial (top of list)
+      const picked = newResults[newResults.length - 1]; // LAST = most recent (historial is chronological, oldest first)
       guia = picked.guia;
       trackingUrl = picked.href || undefined;
       slog.success(DAC_STEPS.SUBMIT_OK, `Guia found in historial: ${guia}`, {
