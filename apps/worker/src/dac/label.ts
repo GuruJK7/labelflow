@@ -3,23 +3,25 @@ import { DAC_URLS } from './selectors';
 import { ensureLoggedIn } from './auth';
 import { dacBrowser } from './browser';
 import logger from '../logger';
+import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 
 /**
  * Downloads a shipping label PDF ("Obtener Guia") from DAC's history page.
  *
- * DAC historial structure per row:
- *   - "Rastrear envío"    → /envios/rastreo/Codigo_Rastreo/{codigoRastreo}
- *   - "Reenviar Guia"     → javascript:; (re-sends email)
- *   - "Obtener Guia"      → /envios/getGuia?K_Oficina={oficina}&K_Guia={guia}  ← THIS IS THE PDF
- *   - "Imprimir etiqueta" → /envios/getPegote?CodigoRastreo={codigoRastreo}   (small sticker label)
+ * DAC historial table structure — each row (<tr>) contains:
+ *   - "Rastrear envío"    → /envios/rastreo/Codigo_Rastreo/{fullGuia}        (has FULL guia in URL)
+ *   - "Reenviar Guia"     → javascript:;
+ *   - "Obtener Guia"      → /envios/getGuia?K_Oficina=XXX&K_Guia=XXXXXXX    ← THE PDF
+ *   - "Imprimir etiqueta" → /envios/getPegote?CodigoRastreo={fullGuia}
  *
- * The guia parameter (e.g. "882277502518") is the full tracking code.
- * The URL uses K_Oficina (first 3 digits) and K_Guia (remaining digits).
+ * Matching strategy: Find the <tr> that contains a "Rastrear envío" link with the
+ * full guia in its href (e.g. /envios/rastreo/Codigo_Rastreo/882277502518),
+ * then get the "Obtener Guia" href from that same row.
  *
  * IMPORTANT: Do NOT use generic selectors like a[href*=".pdf"] — the navbar has
- * a "Horarios Turismo" PDF link that would be matched instead.
+ * a "Horarios Turismo" PDF link that would match instead.
  */
 export async function downloadLabel(
   page: Page,
@@ -35,25 +37,89 @@ export async function downloadLabel(
 
   logger.info({ guia, outputDir }, 'Downloading label from DAC');
 
-  // Navigate to history page (/envios — NOT /envios/cart which is the empty cart)
-  await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'networkidle' });
-  await page.waitForTimeout(2000);
+  // Navigate to history page
+  await page.goto(DAC_URLS.HISTORY, { waitUntil: 'networkidle' });
+
+  // Wait for the table to load — look for any getGuia link as signal
+  try {
+    await page.waitForSelector('a[href*="/envios/getGuia"]', { timeout: 10_000 });
+  } catch {
+    // Table might be empty or loading slow — try with full content
+    await page.waitForTimeout(3000);
+  }
 
   try {
-    // Strategy 1: Find "Obtener Guia" link directly by text
-    // This is the most reliable — matches the exact button shown in the UI
-    const obtenerGuiaLink = await page.$('a:has-text("Obtener Guia")');
+    // ── Find the correct "Obtener Guia" href for THIS guia ──
+    // We search for the <tr> that has a link containing our guia number,
+    // then extract the getGuia URL from that same row.
+    const getGuiaHref = await page.evaluate((targetGuia: string) => {
+      const rows = Array.from(document.querySelectorAll('tr'));
+      for (const row of rows) {
+        const links = Array.from(row.querySelectorAll('a'));
+        let hasMatchingGuia = false;
+        let guiaHref: string | null = null;
 
-    if (obtenerGuiaLink) {
-      const href = await obtenerGuiaLink.getAttribute('href');
-      logger.info({ guia, href }, 'Found "Obtener Guia" link');
+        for (const link of links) {
+          const href = link.getAttribute('href') || '';
+          // Check if this row's tracking link contains our full guia
+          // Links: /envios/rastreo/Codigo_Rastreo/882277502518
+          //    or: /envios/getPegote?CodigoRastreo=882277502518
+          if (href.includes(targetGuia)) {
+            hasMatchingGuia = true;
+          }
+          // Capture the getGuia link from this row
+          if (href.includes('/envios/getGuia')) {
+            guiaHref = href;
+          }
+        }
 
-      if (href && href.startsWith('/envios/getGuia')) {
-        // Direct download via URL (more reliable than click-and-wait)
+        if (hasMatchingGuia && guiaHref) {
+          return guiaHref;
+        }
+      }
+      return null;
+    }, guia);
+
+    if (getGuiaHref) {
+      logger.info({ guia, href: getGuiaHref }, 'Found matching Obtener Guia link for this guia');
+
+      const fullUrl = `https://www.dac.com.uy${getGuiaHref}`;
+      const cookies = await page.context().cookies();
+      const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+
+      const response = await axios.get(fullUrl, {
+        responseType: 'arraybuffer',
+        headers: { Cookie: cookieHeader },
+        timeout: 30_000,
+      });
+
+      const buffer = Buffer.from(response.data);
+      const contentType = response.headers['content-type'] || '';
+      const isPdf = contentType.includes('application/pdf') ||
+        (buffer.length >= 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46); // %PDF
+
+      if (isPdf) {
+        fs.writeFileSync(outputPath, buffer);
+        logger.info({ guia, path: outputPath, size: buffer.length }, 'Label PDF downloaded successfully');
+        return outputPath;
+      } else {
+        logger.warn({ guia, contentType, size: buffer.length }, 'Obtener Guia returned non-PDF content');
+      }
+    } else {
+      logger.warn({ guia }, 'No matching row found for this guia on the history page');
+    }
+
+    // ── Fallback: if only one row exists, use its "Obtener Guia" link ──
+    // This covers the case right after creating a shipment (only 1 pending)
+    const allGetGuiaLinks = await page.$$('a[href*="/envios/getGuia"]');
+    if (allGetGuiaLinks.length === 1) {
+      const href = await allGetGuiaLinks[0].getAttribute('href');
+      if (href) {
+        logger.info({ guia, href }, 'Single getGuia link on page — using it as fallback');
+
         const fullUrl = `https://www.dac.com.uy${href}`;
         const cookies = await page.context().cookies();
         const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-        const axios = (await import('axios')).default;
 
         const response = await axios.get(fullUrl, {
           responseType: 'arraybuffer',
@@ -61,67 +127,31 @@ export async function downloadLabel(
           timeout: 30_000,
         });
 
-        // Verify we got a PDF (not an HTML error page)
-        const contentType = response.headers['content-type'] || '';
-        const buffer = Buffer.from(response.data);
-
-        if (contentType.includes('application/pdf') || buffer.subarray(0, 5).toString() === '%PDF-') {
-          fs.writeFileSync(outputPath, buffer);
-          logger.info({ guia, path: outputPath, size: buffer.length }, 'Label PDF downloaded via Obtener Guia');
-          return outputPath;
-        } else {
-          logger.warn({ guia, contentType, size: buffer.length }, 'Obtener Guia returned non-PDF content');
-        }
-      }
-    }
-
-    // Strategy 2: Find by href pattern /envios/getGuia
-    // In case the link text changes or there are multiple shipments
-    const getGuiaLinks = await page.$$('a[href*="/envios/getGuia"]');
-    if (getGuiaLinks.length > 0) {
-      // Use the first one (most recent shipment) — or try to match by guia number
-      for (const link of getGuiaLinks) {
-        const href = await link.getAttribute('href');
-        if (!href) continue;
-
-        // Extract K_Guia from href and check if it matches our guia
-        // URL format: /envios/getGuia?K_Oficina=882&K_Guia=2775025
-        // Full guia format: 882277502518 → K_Oficina=882, K_Guia=2775025 (partial match)
-        const guiaParam = new URLSearchParams(href.split('?')[1] || '').get('K_Guia');
-        const oficina = new URLSearchParams(href.split('?')[1] || '').get('K_Oficina');
-
-        logger.info({ guia, href, guiaParam, oficina }, 'Found getGuia link, checking match');
-
-        const fullUrl = `https://www.dac.com.uy${href}`;
-        const cookies = await page.context().cookies();
-        const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-        const axios = (await import('axios')).default;
-
-        const response = await axios.get(fullUrl, {
-          responseType: 'arraybuffer',
-          headers: { Cookie: cookieHeader },
-          timeout: 30_000,
-        });
-
         const buffer = Buffer.from(response.data);
         const contentType = response.headers['content-type'] || '';
+        const isPdf = contentType.includes('application/pdf') ||
+          (buffer.length >= 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46);
 
-        if (contentType.includes('application/pdf') || buffer.subarray(0, 5).toString() === '%PDF-') {
+        if (isPdf) {
           fs.writeFileSync(outputPath, buffer);
-          logger.info({ guia, path: outputPath, size: buffer.length, href }, 'Label PDF downloaded via getGuia href');
+          logger.info({ guia, path: outputPath, size: buffer.length }, 'Label PDF downloaded via single-link fallback');
           return outputPath;
         }
       }
     }
 
-    // Strategy 3: Click "Obtener Guia" and wait for download event
-    // Last resort if direct fetch didn't work
-    const obtenerBtn = await page.$('a:has-text("Obtener Guia")');
-    if (obtenerBtn) {
-      logger.info({ guia }, 'Trying click-to-download for Obtener Guia');
+    // ── Fallback: click-to-download (handles JS-generated PDFs) ──
+    const matchedLink = getGuiaHref
+      ? await page.$(`a[href="${getGuiaHref}"]`)
+      : allGetGuiaLinks.length === 1
+        ? allGetGuiaLinks[0]
+        : null;
+
+    if (matchedLink) {
+      logger.info({ guia }, 'Trying click-to-download as last resort');
       const [download] = await Promise.all([
         page.waitForEvent('download', { timeout: 15_000 }),
-        obtenerBtn.click(),
+        matchedLink.click(),
       ]);
       await download.saveAs(outputPath);
       logger.info({ guia, path: outputPath }, 'Label downloaded via click event');
@@ -129,7 +159,7 @@ export async function downloadLabel(
     }
 
     const ssPath = await dacBrowser.screenshot(page, `no-guia-link-${guia}`);
-    logger.warn({ guia, ssPath }, 'No "Obtener Guia" link found on history page');
+    logger.warn({ guia, ssPath }, 'No "Obtener Guia" link found for this guia');
     return '';
   } catch (err) {
     const ssPath = await dacBrowser.screenshot(page, `download-error-${guia}`);
