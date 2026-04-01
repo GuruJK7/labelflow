@@ -30,35 +30,42 @@ export async function GET(
       return apiError('Supabase config missing', 500);
     }
 
-    // Use REST API directly instead of SDK to avoid fetch issues on Vercel
-    const signUrl = `${supabaseUrl}/storage/v1/object/sign/${bucket}/${label.pdfPath}`;
-    const signRes = await fetch(signUrl, {
-      method: 'POST',
+    // Download the PDF directly from Supabase and stream it to the client.
+    // Using the authenticated object download endpoint (no signing needed).
+    const downloadUrl = `${supabaseUrl}/storage/v1/object/authenticated/${bucket}/${label.pdfPath}`;
+
+    const pdfRes = await fetch(downloadUrl, {
       headers: {
         'Authorization': `Bearer ${supabaseKey}`,
-        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ expiresIn: 3600 }),
     });
 
-    if (!signRes.ok) {
-      const errText = await signRes.text();
-      console.error('Supabase sign error:', errText, { status: signRes.status, bucket, path: label.pdfPath });
-      return apiError(`PDF sign error (${signRes.status}): ${errText}`, 500);
+    if (!pdfRes.ok) {
+      const errText = await pdfRes.text();
+      console.error('Supabase download error:', errText, {
+        status: pdfRes.status,
+        bucket,
+        path: label.pdfPath,
+        url: downloadUrl,
+      });
+      return apiError(`PDF download error (${pdfRes.status}): ${errText}`, 500);
     }
 
-    const signData = await signRes.json();
-    const signedUrl = signData.signedURL
-      ? `${supabaseUrl}/storage/v1${signData.signedURL}`
-      : null;
+    const pdfBuffer = await pdfRes.arrayBuffer();
+    const fileName = `etiqueta-${label.shopifyOrderName || label.id}.pdf`;
 
-    if (!signedUrl) {
-      return apiError(`No signed URL returned: ${JSON.stringify(signData)}`, 500);
-    }
-
-    return NextResponse.redirect(signedUrl);
+    return new NextResponse(pdfBuffer, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="${fileName}"`,
+        'Content-Length': String(pdfBuffer.byteLength),
+        'Cache-Control': 'private, max-age=3600',
+      },
+    });
   } catch (err) {
-    console.error('Labels API error:', err);
-    return apiError(`Error: ${(err as Error).message}`, 500);
+    const error = err as Error;
+    console.error('Labels API error:', error.message, error.cause ?? '', error.stack ?? '');
+    return apiError(`Error: ${error.message}`, 500);
   }
 }
