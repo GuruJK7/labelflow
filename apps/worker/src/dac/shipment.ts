@@ -51,7 +51,7 @@ const MONTEVIDEO_BARRIO_ALIASES: Record<string, string[]> = {
   'la comercial': ['la comercial', 'comercial'],
   'la figurita': ['la figurita', 'figurita'],
   'la teja': ['la teja', 'teja'],
-  'larrañaga': ['larranaga', 'larranaga'],
+  'larrañaga': ['larranaga'],
   'las acacias': ['las acacias', 'acacias'],
   'las canteras': ['las canteras', 'canteras'],
   'lezica': ['lezica'],
@@ -471,7 +471,7 @@ export async function createShipment(
     const geoDept = getDepartmentForCity(addr.city);
     if (geoDept) {
       // City found in our geo DB — use the correct department
-      if (geoDept.toLowerCase() !== normalize(resolvedDept)) {
+      if (normalize(geoDept) !== normalize(resolvedDept)) {
         slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
           `GEO CORRECTION: City "${addr.city}" belongs to "${geoDept}" but Shopify says "${addr.province}" — using "${geoDept}"`,
           { shopifyProvince: addr.province, correctedDept: geoDept, city: addr.city }
@@ -479,6 +479,16 @@ export async function createShipment(
         resolvedDept = geoDept;
       } else {
         slog.info(DAC_STEPS.STEP3_SELECT_DEPT, `GEO VERIFIED: City "${addr.city}" correctly in "${geoDept}"`);
+      }
+      // If geo resolved to Montevideo and the city name is a barrio, set the hint
+      if (normalize(geoDept) === 'montevideo') {
+        const barrio = detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
+        if (barrio) {
+          resolvedBarrioHint = barrio;
+          resolvedCity = 'Montevideo';
+          slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
+            `City "${addr.city}" is a Montevideo barrio "${barrio}" — will use "Montevideo" as city`);
+        }
       }
     } else {
       // City not in geo DB — check if it's a Montevideo barrio
@@ -522,7 +532,8 @@ export async function createShipment(
       await page.waitForTimeout(800);
     } else {
       // City not found in DAC dropdown for this department — try barrio fallback
-      const detectedBarrio = resolvedBarrioHint || detectBarrio(resolvedCity, addr.address1, addr.address2 ?? '');
+      const detectedBarrio = resolvedBarrioHint ||
+        (normalize(resolvedDept) === 'montevideo' ? detectBarrio(resolvedCity, addr.address1, addr.address2 ?? '') : null);
       if (detectedBarrio) {
         slog.info(DAC_STEPS.STEP3_SELECT_CITY, `City "${resolvedCity}" not in dropdown, detected barrio "${detectedBarrio}", trying "Montevideo"`);
         const mvdMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, 'Montevideo');
