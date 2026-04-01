@@ -7,6 +7,7 @@ import { dacBrowser } from './browser';
 import { DAC_STEPS } from './steps';
 import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
+import { getDepartmentForCity } from './uruguay-geo';
 
 // ---- Helpers ----
 
@@ -459,41 +460,79 @@ export async function createShipment(
     await safeFill(page, '#DirD', fullAddress, slog, DAC_STEPS.STEP3_FILL_ADDRESS, 'DirD by id (fallback)');
   }
 
-  // Department (select)
-  if (addr.province) {
-    slog.info(DAC_STEPS.STEP3_SELECT_DEPT, `Selecting department: ${addr.province}`);
-    const deptMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, addr.province);
+  // ── CROSS-VALIDATION: Resolve correct department from city using Uruguay geo DB ──
+  // Shopify customers often put wrong department or use barrio as city.
+  // We trust the CITY name and look up the real department from our geo database.
+  let resolvedDept = addr.province ?? '';
+  let resolvedCity = addr.city ?? '';
+  let resolvedBarrioHint: string | null = null;
+
+  if (addr.city) {
+    const geoDept = getDepartmentForCity(addr.city);
+    if (geoDept) {
+      // City found in our geo DB — use the correct department
+      if (geoDept.toLowerCase() !== normalize(resolvedDept)) {
+        slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+          `GEO CORRECTION: City "${addr.city}" belongs to "${geoDept}" but Shopify says "${addr.province}" — using "${geoDept}"`,
+          { shopifyProvince: addr.province, correctedDept: geoDept, city: addr.city }
+        );
+        resolvedDept = geoDept;
+      } else {
+        slog.info(DAC_STEPS.STEP3_SELECT_DEPT, `GEO VERIFIED: City "${addr.city}" correctly in "${geoDept}"`);
+      }
+    } else {
+      // City not in geo DB — check if it's a Montevideo barrio
+      const detectedBarrio = detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
+      if (detectedBarrio) {
+        slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
+          `City "${addr.city}" not in geo DB but detected as Montevideo barrio "${detectedBarrio}" — using Montevideo`,
+          { detectedBarrio }
+        );
+        resolvedDept = 'Montevideo';
+        resolvedCity = 'Montevideo';
+        resolvedBarrioHint = detectedBarrio;
+      } else {
+        slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+          `City "${addr.city}" not found in geo DB and not a known barrio — using Shopify province "${addr.province}" as-is`,
+          { city: addr.city, province: addr.province }
+        );
+      }
+    }
+  }
+
+  // Department (select) — using resolved (possibly corrected) department
+  if (resolvedDept) {
+    slog.info(DAC_STEPS.STEP3_SELECT_DEPT, `Selecting department: ${resolvedDept}`);
+    const deptMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, resolvedDept);
     if (deptMatch) {
       await safeSelect(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, deptMatch, slog, DAC_STEPS.STEP3_SELECT_DEPT, 'K_Estado (department)');
       slog.info(DAC_STEPS.STEP3_WAIT_CITIES, 'Waiting for cities to load after department change');
       await page.waitForTimeout(1500);
     } else {
-      slog.warn(DAC_STEPS.STEP3_SELECT_DEPT, `No department match for: ${addr.province}`);
+      slog.warn(DAC_STEPS.STEP3_SELECT_DEPT, `No department match in DAC dropdown for: ${resolvedDept}`);
     }
   }
 
-  // City (select) — BUG FIX 4: NO blind fallback to first option
-  if (addr.city) {
-    slog.info(DAC_STEPS.STEP3_SELECT_CITY, `Selecting city: ${addr.city}`);
-    const cityMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, addr.city);
+  // City (select) — using resolved city (may differ from Shopify if barrio was detected)
+  if (resolvedCity) {
+    slog.info(DAC_STEPS.STEP3_SELECT_CITY, `Selecting city: ${resolvedCity}`);
+    const cityMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, resolvedCity);
     if (cityMatch) {
       await safeSelect(page, DAC_SELECTORS.RECIPIENT_CITY, cityMatch, slog, DAC_STEPS.STEP3_SELECT_CITY, 'K_Ciudad (city)');
       await page.waitForTimeout(800);
     } else {
-      // BUG FIX 4: Instead of blindly picking first option (Aguada), try barrio detection
-      // If city is a barrio name (e.g. "Punta Carretas"), try to select "Montevideo" as city
-      const detectedBarrio = detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
+      // City not found in DAC dropdown for this department — try barrio fallback
+      const detectedBarrio = resolvedBarrioHint || detectBarrio(resolvedCity, addr.address1, addr.address2 ?? '');
       if (detectedBarrio) {
-        slog.info(DAC_STEPS.STEP3_SELECT_CITY, `City "${addr.city}" looks like a barrio, trying "Montevideo" as city`);
+        slog.info(DAC_STEPS.STEP3_SELECT_CITY, `City "${resolvedCity}" not in dropdown, detected barrio "${detectedBarrio}", trying "Montevideo"`);
         const mvdMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, 'Montevideo');
         if (mvdMatch) {
           await safeSelect(page, DAC_SELECTORS.RECIPIENT_CITY, mvdMatch, slog, DAC_STEPS.STEP3_SELECT_CITY, 'K_Ciudad (Montevideo fallback)');
           await page.waitForTimeout(800);
         }
       } else {
-        // Last resort: log prominently but do NOT select random city
-        slog.warn(DAC_STEPS.STEP3_SELECT_CITY, `No city match for "${addr.city}" and no barrio detected — city field left empty`, {
-          city: addr.city, province: addr.province,
+        slog.warn(DAC_STEPS.STEP3_SELECT_CITY, `No city match for "${resolvedCity}" and no barrio detected — city field left empty`, {
+          city: resolvedCity, province: resolvedDept,
         });
       }
     }
