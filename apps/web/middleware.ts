@@ -15,6 +15,7 @@ export async function middleware(request: NextRequest) {
     '/api/auth',
     '/api/webhooks',
     '/api/v1/mcp', // MCP uses its own Bearer token auth
+    '/api/recover/subscription-webhook', // MercadoPago calls this — no session available
     '/_next',
     '/favicon.ico',
   ];
@@ -36,10 +37,12 @@ export async function middleware(request: NextRequest) {
     '/logs',
     '/settings',
     '/ads',
+    '/recover',
     '/api/v1',
     '/api/ads',
     '/api/stripe',
     '/api/mercadopago',
+    '/api/recover',
   ];
 
   const isProtected = protectedPaths.some((p) => pathname.startsWith(p));

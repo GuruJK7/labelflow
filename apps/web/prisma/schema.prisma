@@ -97,9 +97,13 @@ model Tenant {
   tosAcceptedAt DateTime?
 
   // Usage
-  labelsThisMonth Int      @default(0)
-  labelsTotal     Int      @default(0)
+  labelsThisMonth Int       @default(0)
+  labelsTotal     Int       @default(0)
   lastRunAt       DateTime?
+
+  // Printing
+  defaultPrinter   String?
+  autoPrintEnabled Boolean @default(false)
 
   user    User     @relation(fields: [userId], references: [id])
   jobs    Job[]
@@ -108,6 +112,9 @@ model Tenant {
 
   // Meta Ads
   metaAdAccount MetaAdAccount?
+
+  // Recover (WhatsApp cart recovery)
+  recoverConfig RecoverConfig?
 
   @@index([slug])
   @@index([stripeCustomerId])
@@ -266,22 +273,22 @@ model MetaAdAccount {
   metaPixelId     String?
 
   // Google Drive source
-  driveFolderId   String? // Root folder with creatives
-  driveApiKey     String? // Encrypted
+  driveFolderId String? // Root folder with creatives
+  driveApiKey   String? // Encrypted
 
   // Notification settings
-  notifyEmail     String?
-  notifyWebhook   String?
+  notifyEmail   String?
+  notifyWebhook String?
 
   // Config
   isActive        Boolean @default(false)
   scanSchedule    String  @default("0 8 * * 1-5") // weekdays 8am
   monitorSchedule String  @default("*/30 * * * *") // every 30min
 
-  tenant     Tenant          @relation(fields: [tenantId], references: [id])
-  rules      AdRule[]
-  ads        ManagedAd[]
-  uploadJobs AdUploadJob[]
+  tenant       Tenant           @relation(fields: [tenantId], references: [id])
+  rules        AdRule[]
+  ads          ManagedAd[]
+  uploadJobs   AdUploadJob[]
   monitorQueue AdMonitorQueue[]
 
   @@index([tenantId])
@@ -294,13 +301,13 @@ model AdRule {
   updatedAt       DateTime @updatedAt
 
   // Rule config
-  name            String
-  metric          String   // e.g. "purchase_intent_rate", "ctr", "cpc", "cpm"
-  operator        String   // "lt", "gt", "lte", "gte"
-  threshold       Float
-  windowHours     Int      @default(48) // evaluation window
-  action          String   @default("pause") // "pause" | "notify"
-  isActive        Boolean  @default(true)
+  name        String
+  metric      String // e.g. "purchase_intent_rate", "ctr", "cpc", "cpm"
+  operator    String // "lt", "gt", "lte", "gte"
+  threshold   Float
+  windowHours Int     @default(48) // evaluation window
+  action      String  @default("pause") // "pause" | "notify"
+  isActive    Boolean @default(true)
 
   metaAdAccount MetaAdAccount @relation(fields: [metaAdAccountId], references: [id], onDelete: Cascade)
 
@@ -314,38 +321,38 @@ model ManagedAd {
   updatedAt       DateTime @updatedAt
 
   // Meta references
-  metaCampaignId  String?
-  metaAdSetId     String?
-  metaAdId        String?
-  metaCreativeId  String?
+  metaCampaignId String?
+  metaAdSetId    String?
+  metaAdId       String?
+  metaCreativeId String?
 
   // Creative info
-  creativeName    String
-  creativeType    String   @default("IMAGE") // IMAGE | VIDEO
-  driveFileId     String?
-  headline        String?
-  bodyText        String?
-  callToAction    String?  @default("SHOP_NOW")
-  linkUrl         String?
+  creativeName String
+  creativeType String  @default("IMAGE") // IMAGE | VIDEO
+  driveFileId  String?
+  headline     String?
+  bodyText     String?
+  callToAction String? @default("SHOP_NOW")
+  linkUrl      String?
 
   // Status
-  status          AdStatus @default(PENDING)
-  errorMessage    String?
-  lastCheckedAt   DateTime?
+  status        AdStatus  @default(PENDING)
+  errorMessage  String?
+  lastCheckedAt DateTime?
 
   // Latest metrics snapshot
-  impressions     Int      @default(0)
-  clicks          Int      @default(0)
-  spend           Float    @default(0)
-  purchases       Int      @default(0)
-  ctr             Float    @default(0)
-  cpc             Float    @default(0)
-  cpm             Float    @default(0)
-  roas            Float    @default(0)
+  impressions        Int   @default(0)
+  clicks             Int   @default(0)
+  spend              Float @default(0)
+  purchases          Int   @default(0)
+  ctr                Float @default(0)
+  cpc                Float @default(0)
+  cpm                Float @default(0)
+  roas               Float @default(0)
   purchaseIntentRate Float @default(0)
 
-  metaAdAccount   MetaAdAccount      @relation(fields: [metaAdAccountId], references: [id], onDelete: Cascade)
-  metricsHistory  AdMetricsHistory[]
+  metaAdAccount  MetaAdAccount      @relation(fields: [metaAdAccountId], references: [id], onDelete: Cascade)
+  metricsHistory AdMetricsHistory[]
 
   @@index([metaAdAccountId])
   @@index([metaAdId])
@@ -356,14 +363,14 @@ model AdMetricsHistory {
   managedAdId String
   recordedAt  DateTime @default(now())
 
-  impressions     Int    @default(0)
-  clicks          Int    @default(0)
-  spend           Float  @default(0)
-  purchases       Int    @default(0)
-  ctr             Float  @default(0)
-  cpc             Float  @default(0)
-  cpm             Float  @default(0)
-  roas            Float  @default(0)
+  impressions        Int   @default(0)
+  clicks             Int   @default(0)
+  spend              Float @default(0)
+  purchases          Int   @default(0)
+  ctr                Float @default(0)
+  cpc                Float @default(0)
+  cpm                Float @default(0)
+  roas               Float @default(0)
   purchaseIntentRate Float @default(0)
 
   managedAd ManagedAd @relation(fields: [managedAdId], references: [id], onDelete: Cascade)
@@ -380,13 +387,13 @@ model AdUploadJob {
   finishedAt      DateTime?
   durationMs      Int?
 
-  totalFiles      Int       @default(0)
-  successCount    Int       @default(0)
-  failedCount     Int       @default(0)
-  skippedCount    Int       @default(0)
+  totalFiles   Int @default(0)
+  successCount Int @default(0)
+  failedCount  Int @default(0)
+  skippedCount Int @default(0)
 
-  errorMessage    String?
-  createdAt       DateTime  @default(now())
+  errorMessage String?
+  createdAt    DateTime @default(now())
 
   metaAdAccount MetaAdAccount @relation(fields: [metaAdAccountId], references: [id], onDelete: Cascade)
 
@@ -409,4 +416,154 @@ model AdMonitorQueue {
 
   @@index([metaAdAccountId, createdAt(sort: Desc)])
   @@index([status])
+}
+
+// --- RECOVER MODULE (WhatsApp Cart Recovery) ---
+
+enum RecoverSubscriptionStatus {
+  INACTIVE
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+enum CartStatus {
+  PENDING
+  MESSAGE_1_SENT
+  MESSAGE_2_SENT
+  RECOVERED
+  OPTED_OUT
+  NO_PHONE
+  FAILED
+}
+
+enum RecoverMessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+model RecoverConfig {
+  id        String   @id @default(cuid())
+  tenantId  String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Subscription
+  subscriptionId     String?
+  subscriptionStatus RecoverSubscriptionStatus @default(INACTIVE)
+  isActive           Boolean                   @default(false)
+
+  // Timing
+  delayMinutes              Int     @default(60)
+  secondMessageEnabled      Boolean @default(false)
+  secondMessageDelayMinutes Int     @default(1440)
+
+  // Templates
+  messageTemplate1 String @default("Hola {{1}}, notamos que dejaste {{2}} en tu carrito. Necesitas ayuda para completar tu compra? {{3}}")
+  messageTemplate2 String @default("Ultimo aviso! Tu carrito con {{2}} todavia te espera {{3}}")
+
+  // Opt-out
+  optOutKeyword String @default("STOP")
+
+  // WhatsApp credentials mode
+  // "PLATFORM" = use AutoEnvia's shared number (env vars)
+  // "OWN"      = tenant uses their own WhatsApp Business API credentials
+  whatsappMode          String  @default("PLATFORM")
+  whatsappApiToken      String? // encrypted, only used when whatsappMode = "OWN"
+  whatsappPhoneNumberId String? // only used when whatsappMode = "OWN"
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  carts   RecoverCart[]
+  optOuts RecoverOptOut[]
+
+  @@index([tenantId])
+}
+
+model RecoverCart {
+  id        String   @id @default(cuid())
+  tenantId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Shopify checkout data
+  shopifyCheckoutId    String
+  shopifyCheckoutToken String
+  customerPhone        String?
+  customerName         String?
+  customerEmail        String?
+  cartTotal            Float?
+  currency             String  @default("UYU")
+  cartItems            Json    @default("[]")
+  checkoutUrl          String?
+
+  // Status tracking
+  status           CartStatus @default(PENDING)
+  recoveredAt      DateTime?
+  recoveredOrderId String?
+
+  // Relations
+  recoverConfigId String
+
+  recoverConfig RecoverConfig       @relation(fields: [recoverConfigId], references: [id], onDelete: Cascade)
+  messageLogs   RecoverMessageLog[]
+  jobs          RecoverJob[]
+
+  @@unique([tenantId, shopifyCheckoutId])
+  @@index([tenantId, status])
+  @@index([shopifyCheckoutId])
+}
+
+model RecoverMessageLog {
+  id        String   @id @default(cuid())
+  cartId    String
+  tenantId  String
+  createdAt DateTime @default(now())
+
+  messageNumber     Int
+  phone             String
+  messageBody       String
+  whatsappMessageId String?
+  status            RecoverMessageStatus @default(SENT)
+  metaErrorCode     String?
+  metaErrorMessage  String?
+
+  cart RecoverCart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  @@index([cartId])
+  @@index([whatsappMessageId])
+}
+
+model RecoverOptOut {
+  id        String   @id @default(cuid())
+  tenantId  String
+  phone     String
+  createdAt DateTime @default(now())
+
+  recoverConfigId String
+  recoverConfig   RecoverConfig @relation(fields: [recoverConfigId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, phone])
+}
+
+model RecoverJob {
+  id        String   @id @default(cuid())
+  tenantId  String
+  cartId    String
+  createdAt DateTime @default(now())
+
+  messageNumber Int
+  status        JobStatus @default(PENDING)
+  scheduledFor  DateTime
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  errorMessage  String?
+
+  cart RecoverCart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  @@index([status, scheduledFor])
+  @@index([tenantId])
+  @@index([cartId])
 }

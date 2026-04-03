@@ -19,6 +19,8 @@ import {
   Image,
   BarChart3,
   SlidersHorizontal,
+  MessageSquare,
+  ShoppingCart,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useState } from 'react';
@@ -39,6 +41,14 @@ const navSections = [
       { href: '/ads/creativos', label: 'Anuncios', icon: Image },
       { href: '/ads/rendimiento', label: 'Rendimiento', icon: BarChart3 },
       { href: '/ads/configuracion', label: 'Config. Ads', icon: SlidersHorizontal },
+    ],
+  },
+  {
+    label: 'RECOVER',
+    items: [
+      { href: '/recover', label: 'Panel Recover', icon: MessageSquare },
+      { href: '/recover/carts', label: 'Carritos', icon: ShoppingCart },
+      { href: '/recover/settings', label: 'Config. Recover', icon: SlidersHorizontal },
     ],
   },
   {

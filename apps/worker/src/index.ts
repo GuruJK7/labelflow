@@ -6,6 +6,9 @@ import { db } from './db';
 import logger from './logger';
 import { processAdUploadJob } from './ads/upload-job';
 import { processAdMonitorJob } from './ads/monitor-job';
+import { processRecoverMessage } from './recover/process-message';
+
+const RECOVER_POLL_INTERVAL_MS = 10_000; // Check for recover jobs every 10 seconds
 
 const POLL_INTERVAL_MS = 5_000; // Check for jobs every 5 seconds
 
@@ -58,6 +61,55 @@ async function pollForAdUploadJobs(): Promise<void> {
   });
 
   await processAdUploadJob(pendingJob.id, pendingJob.metaAdAccountId);
+}
+
+/**
+ * Polls for pending RecoverJobs that are due to be sent.
+ * Picks the oldest scheduled job where scheduledFor <= NOW().
+ * Completely independent of DAC and Ads loops.
+ */
+async function pollForRecoverJobs(): Promise<void> {
+  const now = new Date();
+
+  const pendingJob = await db.recoverJob.findFirst({
+    where: {
+      status: 'PENDING',
+      scheduledFor: { lte: now },
+    },
+    orderBy: { scheduledFor: 'asc' },
+  });
+
+  if (!pendingJob) return;
+
+  logger.info(
+    { jobId: pendingJob.id, cartId: pendingJob.cartId, messageNumber: pendingJob.messageNumber },
+    '[Recover] Found pending recover job, processing...'
+  );
+
+  await db.recoverJob.update({
+    where: { id: pendingJob.id },
+    data: { status: 'RUNNING', startedAt: new Date() },
+  });
+
+  try {
+    await processRecoverMessage(pendingJob.id);
+  } catch (err) {
+    // Ensure the job never stays stuck in RUNNING state
+    logger.error(
+      { jobId: pendingJob.id, error: (err as Error).message },
+      '[Recover] Unhandled error in processRecoverMessage — marking job FAILED'
+    );
+    await db.recoverJob
+      .update({
+        where: { id: pendingJob.id },
+        data: {
+          status: 'FAILED',
+          finishedAt: new Date(),
+          errorMessage: ((err as Error).message ?? 'Unhandled error').slice(0, 500),
+        },
+      })
+      .catch(() => {}); // best-effort — don't throw again
+  }
 }
 
 async function pollForAdMonitorJobs(): Promise<void> {
@@ -121,6 +173,20 @@ async function main(): Promise<void> {
   };
 
   pollAds();
+
+  // Poll loop — Recover jobs (WhatsApp cart recovery, independent of DAC and Ads)
+  const pollRecover = async () => {
+    while (true) {
+      try {
+        await pollForRecoverJobs();
+      } catch (err) {
+        logger.error({ error: (err as Error).message }, '[Recover] Error in recover poll cycle');
+      }
+      await new Promise((resolve) => setTimeout(resolve, RECOVER_POLL_INTERVAL_MS));
+    }
+  };
+
+  pollRecover();
 
   // Start cron scheduler (checks every minute, validates all 5 cron fields)
   startScheduler();
