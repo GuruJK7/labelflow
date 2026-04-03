@@ -19,7 +19,7 @@ export const DAC_URLS = {
   LOGIN: 'https://www.dac.com.uy/usuarios/login',
   NEW_SHIPMENT: 'https://www.dac.com.uy/envios/nuevo',
   CART: 'https://www.dac.com.uy/envios/cart',
-  HISTORY: 'https://www.dac.com.uy/envios/cart',
+  HISTORY: 'https://www.dac.com.uy/envios',
   TRACK: 'https://www.dac.com.uy/envios/rastrear',
 } as const;
 
@@ -69,5 +69,8 @@ export const DAC_SELECTORS = {
 
   // ========== HISTORY / DOWNLOAD ==========
   HISTORY_LINK: 'a:has-text("Historial de env")',
-  DOWNLOAD_LABEL: 'a:has-text("Descargar"), a[href*="etiqueta"], a[href*=".pdf"]',
+  /** "Obtener Guia" button → /envios/getGuia?K_Oficina=XXX&K_Guia=XXXXXXX (the real label PDF) */
+  DOWNLOAD_LABEL: 'a:has-text("Obtener Guia"), a[href*="/envios/getGuia"]',
+  /** "Imprimir etiqueta" → /envios/getPegote?CodigoRastreo=XXXXXXXXXXXX (small sticker) */
+  DOWNLOAD_STICKER: 'a:has-text("Imprimir etiqueta"), a[href*="/envios/getPegote"]',
 } as const;

@@ -1,28 +1,74 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
-import { getSignedUrl } from '@/lib/supabase';
+import { getAuthenticatedTenant, apiError } from '@/lib/api-utils';
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
-  const auth = await getAuthenticatedTenant();
-  if (!auth) return apiError('No autorizado', 401);
+  try {
+    const auth = await getAuthenticatedTenant();
+    if (!auth) return apiError('No autorizado', 401);
 
-  const label = await db.label.findFirst({
-    where: { id: params.id, tenantId: auth.tenantId },
-  });
+    const { id } = await context.params;
 
-  if (!label) return apiError('Etiqueta no encontrada', 404);
+    const label = await db.label.findFirst({
+      where: { id, tenantId: auth.tenantId },
+    });
 
-  let pdfUrl: string | null = null;
-  if (label.pdfPath) {
-    pdfUrl = await getSignedUrl(label.pdfPath);
+    if (!label) return apiError('Etiqueta no encontrada', 404);
+
+    if (!label.pdfPath) {
+      return apiError('PDF no disponible para esta etiqueta', 404);
+    }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? 'labels';
+
+    if (!supabaseUrl || !supabaseKey) {
+      return apiError('Supabase config missing', 500);
+    }
+
+    // Use Supabase REST API to create a signed URL
+    const signUrl = `${supabaseUrl}/storage/v1/object/sign/${bucket}/${label.pdfPath}`;
+    const signRes = await fetch(signUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ expiresIn: 3600 }),
+    });
+
+    if (!signRes.ok) {
+      const errText = await signRes.text();
+      console.error('Supabase sign error:', errText, { status: signRes.status, bucket, path: label.pdfPath });
+      return apiError(`PDF sign error (${signRes.status}): ${errText}`, 500);
+    }
+
+    const signData = await signRes.json();
+    const signedUrl = signData.signedURL
+      ? `${supabaseUrl}/storage/v1${signData.signedURL}`
+      : null;
+
+    if (!signedUrl) {
+      return apiError(`No signed URL returned: ${JSON.stringify(signData)}`, 500);
+    }
+
+    return NextResponse.redirect(signedUrl);
+  } catch (err) {
+    const error = err as Error;
+    const cause = error.cause ? ` | Cause: ${String(error.cause)}` : '';
+    console.error(`Labels API error: ${error.message}${cause}`);
+
+    // Friendly message for DNS/network issues (Supabase project likely paused)
+    if (error.message === 'fetch failed') {
+      return apiError(
+        'No se pudo conectar a Supabase Storage. El proyecto puede estar pausado. Contacta al administrador.',
+        503
+      );
+    }
+    return apiError(`Error: ${error.message}`, 500);
   }
-
-  return apiSuccess({
-    ...label,
-    pdfUrl,
-  });
 }

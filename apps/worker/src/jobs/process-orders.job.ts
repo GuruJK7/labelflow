@@ -3,6 +3,7 @@ import { decryptIfPresent } from '../encryption';
 import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify/client';
 import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify/orders';
+import { fulfillOrderWithTracking } from '../shopify/fulfillment';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment } from '../dac/shipment';
@@ -163,6 +164,16 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     const config = getConfig();
     const tmpDir = path.join(config.LABELS_TMP_DIR, new Date().toISOString().split('T')[0]);
 
+    // Load ALL existing guias from DB to prevent picking old guias from DAC historial
+    const existingGuias = await db.label.findMany({
+      where: { tenantId, dacGuia: { not: null } },
+      select: { dacGuia: true },
+    });
+    const usedGuias = new Set<string>(
+      existingGuias.map(l => l.dacGuia!).filter(g => !g.startsWith('PENDING-'))
+    );
+    slog.info('guia-protection', `Loaded ${usedGuias.size} existing guias from DB to prevent re-assignment`);
+
     for (let i = 0; i < orders.length; i++) {
       const order = orders[i];
       const addr = order.shipping_address;
@@ -208,17 +219,22 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
       }
 
       try {
-        // a) Determine payment type
-        const paymentType = determinePaymentType(order, tenant.paymentThreshold);
+        // a) Determine payment type (respects paymentRuleEnabled toggle)
+        const paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
         slog.info('order-payment', `Payment type: ${paymentType}`, { orderName: order.name });
 
         // b) Create shipment in DAC (with retry)
         const result = await withRetry(
-          () => createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId),
+          () => createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId, usedGuias),
           MAX_RETRIES_PER_ORDER,
           `DAC shipment for ${order.name}`,
           slog
         );
+
+        // Track this guia so it won't be assigned to another order in this batch
+        if (result.guia && !result.guia.startsWith('PENDING-')) {
+          usedGuias.add(result.guia);
+        }
 
         slog.success('order-shipment', `DAC shipment created for ${order.name}`, { guia: result.guia });
 
@@ -280,7 +296,20 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           });
         }
 
-        // e) Mark order as processed in Shopify (skip in testMode)
+        // e) Fulfill order in Shopify with DAC tracking + notify customer
+        if (!testMode && result.guia && !result.guia.startsWith('PENDING-')) {
+          try {
+            slog.info('order-fulfill', `Marking order ${order.name} as Prepared in Shopify with tracking...`, { trackingUrl: result.trackingUrl ?? 'fallback' });
+            await fulfillOrderWithTracking(shopifyClient, order.id, result.guia, result.trackingUrl);
+            slog.success('order-fulfill', `Order ${order.name} fulfilled in Shopify — tracking sent to customer`, { guia: result.guia, trackingUrl: result.trackingUrl ?? 'fallback' });
+          } catch (fulfillErr) {
+            slog.warn('order-fulfill', `Shopify fulfillment failed (non-fatal): ${(fulfillErr as Error).message}`, { guia: result.guia });
+          }
+        } else if (testMode) {
+          slog.info('order-fulfill', `TEST MODE: Skipping Shopify fulfillment for ${order.name}`);
+        }
+
+        // f) Mark order as processed in Shopify — tag + note (skip in testMode)
         if (!testMode) {
           try {
             await markOrderProcessed(shopifyClient, order.id, result.guia);
@@ -324,8 +353,25 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         successCount++;
       } catch (err) {
         const errorMsg = (err as Error).message;
+        const isDacGuiaConstraint = errorMsg.includes('Unique constraint') && errorMsg.includes('dacGuia');
+
+        if (isDacGuiaConstraint) {
+          // Extract guia from the error context if possible
+          const guiaMatch = errorMsg.match(/dacGuia/);
+          slog.warn('order-fail', `Order ${order.name}: guia already assigned to another order, skipping`, {
+            orderId: order.id,
+            orderName: order.name,
+            error: errorMsg.substring(0, 200),
+          });
+        } else {
+          slog.error('order-fail', `Order ${order.name} failed: ${errorMsg}`);
+        }
 
         // BUG FIX 5: Upsert instead of create to handle retries
+        const labelErrorMsg = isDacGuiaConstraint
+          ? 'Guia already assigned to another order'
+          : errorMsg.substring(0, 500);
+
         await db.label.upsert({
           where: {
             tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
@@ -342,17 +388,31 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType: 'DESTINATARIO',
             status: 'FAILED',
-            errorMessage: errorMsg.substring(0, 500),
+            errorMessage: labelErrorMsg,
           },
           update: {
             jobId,
             status: 'FAILED',
-            errorMessage: errorMsg.substring(0, 500),
+            errorMessage: labelErrorMsg,
           },
         }).catch(() => {});
 
-        await addOrderNote(shopifyClient, order.id, `LabelFlow ERROR: ${errorMsg.substring(0, 200)}`).catch(() => {});
-        slog.error('order-fail', `Order ${order.name} failed: ${errorMsg}`);
+        // Only write error notes to Shopify for non-constraint errors,
+        // and check for duplicate notes to avoid spamming
+        if (!isDacGuiaConstraint) {
+          const noteText = `LabelFlow ERROR: ${errorMsg.substring(0, 200)}`;
+          try {
+            const { data } = await shopifyClient.get(`/orders/${order.id}.json`);
+            const currentNote: string = data.order?.note ?? '';
+            // Prevent writing the same error note multiple times
+            if (!currentNote.includes(noteText.substring(0, 80))) {
+              await addOrderNote(shopifyClient, order.id, noteText);
+            }
+          } catch {
+            // Silently ignore note-writing failures
+          }
+        }
+
         failedCount++;
       }
 

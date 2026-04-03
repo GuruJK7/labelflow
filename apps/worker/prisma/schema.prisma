@@ -80,10 +80,13 @@ model Tenant {
   storeName String?
 
   // Config
-  paymentThreshold Float   @default(4000)
-  cronSchedule     String  @default("*/15 * * * *")
-  maxOrdersPerRun  Int     @default(20)
-  isActive         Boolean @default(false)
+  paymentThreshold    Float   @default(4000)
+  paymentRuleEnabled  Boolean @default(false)
+  cronSchedule        String  @default("*/15 * * * *")
+  scheduleSlots       Json?   // [{ time: "09:00", maxOrders: 0 }] — 0 means unlimited
+  timezone            String  @default("America/Montevideo")
+  maxOrdersPerRun     Int     @default(20)
+  isActive            Boolean @default(false)
 
   // Stripe Billing
   stripeCustomerId     String?            @unique

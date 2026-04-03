@@ -7,6 +7,7 @@ import { dacBrowser } from './browser';
 import { DAC_STEPS } from './steps';
 import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
+import { getDepartmentForCity } from './uruguay-geo';
 
 // ---- Helpers ----
 
@@ -16,6 +17,147 @@ function normalize(s: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .trim();
+}
+
+/**
+ * Montevideo barrio aliases: maps common names/variations to the canonical
+ * name DAC uses in its K_Barrio dropdown. This lets us match "Punta Carretas",
+ * "Pta Carretas", "Punta carretas" etc. to the right dropdown option.
+ */
+const MONTEVIDEO_BARRIO_ALIASES: Record<string, string[]> = {
+  'aguada': ['aguada'],
+  'aires puros': ['aires puros'],
+  'atahualpa': ['atahualpa'],
+  'barrio sur': ['barrio sur', 'bsur'],
+  'belvedere': ['belvedere'],
+  'brazo oriental': ['brazo oriental'],
+  'buceo': ['buceo'],
+  'capurro': ['capurro'],
+  'carrasco': ['carrasco'],
+  'carrasco norte': ['carrasco norte'],
+  'casabo': ['casabo'],
+  'casavalle': ['casavalle'],
+  'centro': ['centro'],
+  'cerrito': ['cerrito', 'cerrito de la victoria'],
+  'cerro': ['cerro'],
+  'ciudad vieja': ['ciudad vieja', 'casco viejo'],
+  'colon': ['colon', 'columbus'],
+  'cordon': ['cordon', 'el cordon'],
+  'flor de maronas': ['flor de maronas'],
+  'goes': ['goes', 'villa goes'],
+  'jacinto vera': ['jacinto vera'],
+  'jardines del hipódromo': ['jardines del hipodromo', 'jardines hipodromo'],
+  'la blanqueada': ['la blanqueada', 'blanqueada'],
+  'la comercial': ['la comercial', 'comercial'],
+  'la figurita': ['la figurita', 'figurita'],
+  'la teja': ['la teja', 'teja'],
+  'larrañaga': ['larranaga'],
+  'las acacias': ['las acacias', 'acacias'],
+  'las canteras': ['las canteras', 'canteras'],
+  'lezica': ['lezica'],
+  'malvin': ['malvin'],
+  'malvin norte': ['malvin norte'],
+  'manga': ['manga'],
+  'maronas': ['maronas'],
+  'mercado modelo': ['mercado modelo'],
+  'nuevo paris': ['nuevo paris'],
+  'palermo': ['palermo'],
+  'parque batlle': ['parque batlle', 'parque battle', 'parque batle'],
+  'parque rodo': ['parque rodo'],
+  'paso de la arena': ['paso de la arena', 'paso arena'],
+  'paso de las duranas': ['paso de las duranas'],
+  'peñarol': ['penarol'],
+  'piedras blancas': ['piedras blancas'],
+  'pocitos': ['pocitos'],
+  'pocitos nuevo': ['pocitos nuevo'],
+  'prado': ['prado'],
+  'punta carretas': ['punta carretas', 'pta carretas', 'punta carreta'],
+  'punta de rieles': ['punta de rieles'],
+  'punta gorda': ['punta gorda', 'pta gorda'],
+  'reducto': ['reducto'],
+  'sayago': ['sayago'],
+  'sur': ['sur'],
+  'tres cruces': ['tres cruces', '3 cruces'],
+  'tres ombues': ['tres ombues', '3 ombues'],
+  'union': ['union', 'la union'],
+  'villa dolores': ['villa dolores'],
+  'villa española': ['villa espanola'],
+  'villa garcia': ['villa garcia'],
+  'villa muñoz': ['villa munoz'],
+};
+
+/**
+ * Try to detect the barrio from any address-related text fields.
+ * Checks city, address1, address2 for known Montevideo barrio names.
+ */
+function detectBarrio(city: string, address1: string, address2: string): string | null {
+  const combined = normalize(`${city} ${address1} ${address2}`);
+
+  // Check each barrio and its aliases
+  for (const [canonical, aliases] of Object.entries(MONTEVIDEO_BARRIO_ALIASES)) {
+    for (const alias of aliases) {
+      const normalizedAlias = normalize(alias);
+      // Word boundary check: ensure we match the whole barrio name, not partial
+      // e.g. "centro" should not match "concentrar"
+      const regex = new RegExp(`\\b${normalizedAlias.replace(/\s+/g, '\\s+')}\\b`);
+      if (regex.test(combined)) {
+        return canonical;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Merge address1 + address2 into a single clean delivery address.
+ * Handles cases where the door number is in address2, or address2
+ * contains supplementary info like apartment/floor.
+ *
+ * RULES:
+ * - If address2 looks like just a number (door number), append to address1
+ * - If address2 looks like apt/floor/block info, append to address1
+ * - If address2 is a completely different address, combine them
+ * - Strip leading/trailing whitespace and normalize separators
+ */
+function mergeAddress(address1: string, address2: string | undefined | null): { fullAddress: string; extraObs: string } {
+  const a1 = (address1 ?? '').trim();
+  const a2 = (address2 ?? '').trim();
+
+  if (!a2) return { fullAddress: a1, extraObs: '' };
+
+  // Patterns that indicate address2 is part of the delivery address (NOT observations)
+  const isDoorNumber = /^\d{1,6}$/.test(a2); // Just a number: "1234"
+  const isAptFloor = /^(apto?\.?\s*\d|piso\s*\d|depto?\.?\s*\d|esc\.?\s*\d|torre\s*\d|block\s*\d|bloque\s*\d|unidad\s*\d|puerta\s*\d|casa\s*\d|local\s*\d|of\.?\s*\d|oficina\s*\d)/i.test(a2);
+  const isShortAddressPart = /^\d{1,6}\s*[a-z]/i.test(a2); // "1234 bis", "502A"
+  const startsWithNumber = /^\d/.test(a2);
+  const isAddressContinuation = a2.length < 30 && (isDoorNumber || isAptFloor || isShortAddressPart || startsWithNumber);
+
+  if (isDoorNumber) {
+    // Pure door number: append directly
+    return { fullAddress: `${a1} ${a2}`, extraObs: '' };
+  }
+
+  if (isAptFloor || isShortAddressPart) {
+    // Apartment/floor info: append to address
+    return { fullAddress: `${a1} ${a2}`, extraObs: '' };
+  }
+
+  if (isAddressContinuation) {
+    // Starts with a number and is short — likely part of address
+    return { fullAddress: `${a1} ${a2}`, extraObs: '' };
+  }
+
+  // Otherwise: address2 is extra info, still include in address but also keep in obs
+  // This handles cases like "esquina Av. Italia" or "entre X y Y"
+  const lowerA2 = a2.toLowerCase();
+  const isDirectionRef = /^(esq|entre|frente|al lado|cerca|junto|casi|a metros|esquina)/i.test(a2);
+
+  if (isDirectionRef) {
+    return { fullAddress: `${a1} ${a2}`, extraObs: '' };
+  }
+
+  // Default: put in both fullAddress and observations for safety
+  return { fullAddress: `${a1} - ${a2}`, extraObs: a2 };
 }
 
 async function findBestOptionMatch(
@@ -43,12 +185,43 @@ async function findBestOptionMatch(
   for (const opt of options) {
     if (opt.text.length > 2 && search.includes(normalize(opt.text)) && opt.value && opt.value !== '0') return opt.value;
   }
-  // Word match
-  const searchWords = search.split(/\s+/);
+  // Word match (require word length > 3 to avoid false positives)
+  const searchWords = search.split(/\s+/).filter(w => w.length > 3);
   for (const opt of options) {
     const optWords = normalize(opt.text).split(/\s+/);
-    const hasMatch = searchWords.some(sw => optWords.some(ow => ow === sw && sw.length > 2));
+    const hasMatch = searchWords.some(sw => optWords.some(ow => ow === sw));
     if (hasMatch && opt.value && opt.value !== '0') return opt.value;
+  }
+  return null;
+}
+
+/**
+ * Find best barrio match in DAC dropdown using detected barrio name.
+ */
+async function findBarrioMatch(
+  page: Page,
+  selector: string,
+  detectedBarrio: string
+): Promise<string | null> {
+  const options = await page.$$eval(
+    `${selector} option`,
+    (opts: any[]) => opts.map((o: any) => ({ value: o.value, text: o.textContent?.trim() ?? '' }))
+  );
+
+  const search = normalize(detectedBarrio);
+  if (!search) return null;
+
+  // Exact match first
+  for (const opt of options) {
+    if (normalize(opt.text) === search && opt.value && opt.value !== '0' && opt.value !== '') return opt.value;
+  }
+  // Contains match
+  for (const opt of options) {
+    if (normalize(opt.text).includes(search) && opt.value && opt.value !== '0' && opt.value !== '') return opt.value;
+  }
+  // Reverse contains
+  for (const opt of options) {
+    if (search.includes(normalize(opt.text)) && opt.text.length > 3 && opt.value && opt.value !== '0' && opt.value !== '') return opt.value;
   }
   return null;
 }
@@ -145,7 +318,8 @@ export async function createShipment(
   dacUsername: string,
   dacPassword: string,
   tenantId: string,
-  jobId?: string
+  jobId?: string,
+  usedGuias?: Set<string>
 ): Promise<DacShipmentResult> {
   const slog = createStepLogger(jobId ?? 'manual', tenantId);
   const addr = order.shipping_address;
@@ -235,14 +409,33 @@ export async function createShipment(
   const fullName = `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente';
   const phone = cleanPhone(addr.phone);
 
-  // BUG FIX 1: Phone field is "TelD" not "TelefonoD"
-  // Fill each field using Playwright's fill() for real browser events
-  await safeFill(page, 'input[name="NombreD"]', fullName, slog, DAC_STEPS.STEP3_FILL_NAME, 'NombreD (name)');
+  // BUG FIX 5 (NAME CROSS-ASSIGNMENT): Clear ALL recipient fields BEFORE filling
+  // This prevents stale data from previous order leaking into current one
+  await page.evaluate(() => {
+    const fields = ['NombreD', 'TelD', 'DirD', 'Correo_Destinatario', 'EmailD', 'telefono'];
+    for (const name of fields) {
+      const el = document.querySelector(`[name="${name}"]`) as HTMLInputElement;
+      if (el) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
+    }
+  });
+  slog.info(DAC_STEPS.STEP3_START, 'Cleared all recipient fields before filling new data');
+
+  // Fill name — MUST succeed, throw if it doesn't (prevents wrong name)
+  const nameFilled = await safeFill(page, 'input[name="NombreD"]', fullName, slog, DAC_STEPS.STEP3_FILL_NAME, 'NombreD (name)');
+  if (!nameFilled) {
+    throw new Error(`CRITICAL: Could not fill NombreD for order ${order.name} — aborting to prevent wrong name`);
+  }
+  // Verify the name was actually written correctly
+  const nameVerify = await page.$eval('input[name="NombreD"]', (el: any) => el.value).catch(() => '');
+  if (nameVerify !== fullName) {
+    slog.warn(DAC_STEPS.STEP3_FILL_NAME, `Name verification mismatch! Expected "${fullName}", got "${nameVerify}" — refilling`);
+    await page.fill('input[name="NombreD"]', '');
+    await page.fill('input[name="NombreD"]', fullName);
+  }
 
   // TelD is the correct phone field name
   const phoneFilled = await safeFill(page, 'input[name="TelD"]', phone, slog, DAC_STEPS.STEP3_FILL_PHONE, 'TelD (phone)');
   if (!phoneFilled) {
-    // Fallback: try other possible phone selectors
     slog.warn(DAC_STEPS.STEP3_FILL_PHONE, 'TelD not found, trying fallback selectors');
     await safeFill(page, 'input[name="telefono"]', phone, slog, DAC_STEPS.STEP3_FILL_PHONE, 'telefono (fallback)');
   }
@@ -255,59 +448,146 @@ export async function createShipment(
     }
   }
 
-  // Address
-  const addrFilled = await safeFill(page, 'input[name="DirD"]', addr.address1, slog, DAC_STEPS.STEP3_FILL_ADDRESS, 'DirD (address)');
+  // BUG FIX 2+3 (ADDRESS): Merge address1 + address2 into single delivery address
+  // This ensures door numbers, apt info, and "Centro" are in the address field, not observations
+  const { fullAddress, extraObs } = mergeAddress(addr.address1, addr.address2);
+  slog.info(DAC_STEPS.STEP3_FILL_ADDRESS, `Merged address: "${fullAddress}"`, {
+    address1: addr.address1, address2: addr.address2 ?? '', extraObs,
+  });
+
+  const addrFilled = await safeFill(page, 'input[name="DirD"]', fullAddress, slog, DAC_STEPS.STEP3_FILL_ADDRESS, 'DirD (address)');
   if (!addrFilled) {
-    await safeFill(page, '#DirD', addr.address1, slog, DAC_STEPS.STEP3_FILL_ADDRESS, 'DirD by id (fallback)');
+    await safeFill(page, '#DirD', fullAddress, slog, DAC_STEPS.STEP3_FILL_ADDRESS, 'DirD by id (fallback)');
   }
 
-  // Department (select)
-  if (addr.province) {
-    slog.info(DAC_STEPS.STEP3_SELECT_DEPT, `Selecting department: ${addr.province}`);
-    const deptMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, addr.province);
-    if (deptMatch) {
-      await safeSelect(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, deptMatch, slog, DAC_STEPS.STEP3_SELECT_DEPT, 'K_Estado (department)');
-      // Wait for city dropdown to populate after department change
-      slog.info(DAC_STEPS.STEP3_WAIT_CITIES, 'Waiting for cities to load after department change');
-      await page.waitForTimeout(1500);
-    } else {
-      slog.warn(DAC_STEPS.STEP3_SELECT_DEPT, `No department match for: ${addr.province}`);
-    }
-  }
+  // ── CROSS-VALIDATION: Resolve correct department from city using Uruguay geo DB ──
+  // Shopify customers often put wrong department or use barrio as city.
+  // We trust the CITY name and look up the real department from our geo database.
+  let resolvedDept = addr.province ?? '';
+  let resolvedCity = addr.city ?? '';
+  let resolvedBarrioHint: string | null = null;
 
-  // City (select)
   if (addr.city) {
-    slog.info(DAC_STEPS.STEP3_SELECT_CITY, `Selecting city: ${addr.city}`);
-    const cityMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, addr.city);
-    if (cityMatch) {
-      await safeSelect(page, DAC_SELECTORS.RECIPIENT_CITY, cityMatch, slog, DAC_STEPS.STEP3_SELECT_CITY, 'K_Ciudad (city)');
-      await page.waitForTimeout(800);
+    const geoDept = getDepartmentForCity(addr.city);
+    if (geoDept) {
+      // City found in our geo DB — use the correct department
+      if (normalize(geoDept) !== normalize(resolvedDept)) {
+        slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+          `GEO CORRECTION: City "${addr.city}" belongs to "${geoDept}" but Shopify says "${addr.province}" — using "${geoDept}"`,
+          { shopifyProvince: addr.province, correctedDept: geoDept, city: addr.city }
+        );
+        resolvedDept = geoDept;
+      } else {
+        slog.info(DAC_STEPS.STEP3_SELECT_DEPT, `GEO VERIFIED: City "${addr.city}" correctly in "${geoDept}"`);
+      }
+      // If geo resolved to Montevideo and the city name is a barrio, set the hint
+      if (normalize(geoDept) === 'montevideo') {
+        const barrio = detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
+        if (barrio) {
+          resolvedBarrioHint = barrio;
+          resolvedCity = 'Montevideo';
+          slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
+            `City "${addr.city}" is a Montevideo barrio "${barrio}" — will use "Montevideo" as city`);
+        }
+      }
     } else {
-      // Pick first non-empty option as fallback
-      slog.warn(DAC_STEPS.STEP3_SELECT_CITY, `No city match for: ${addr.city}, using first option`);
-      const firstOpt = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_CITY} option`,
-        (opts: any[]) => { const v = opts.filter(o => o.value && o.value !== '0'); return v[0]?.value || null; });
-      if (firstOpt) {
-        await safeSelect(page, DAC_SELECTORS.RECIPIENT_CITY, firstOpt, slog, DAC_STEPS.STEP3_SELECT_CITY, 'K_Ciudad (first option)');
+      // City not in geo DB — check if it's a Montevideo barrio
+      const detectedBarrio = detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
+      if (detectedBarrio) {
+        slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
+          `City "${addr.city}" not in geo DB but detected as Montevideo barrio "${detectedBarrio}" — using Montevideo`,
+          { detectedBarrio }
+        );
+        resolvedDept = 'Montevideo';
+        resolvedCity = 'Montevideo';
+        resolvedBarrioHint = detectedBarrio;
+      } else {
+        slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+          `City "${addr.city}" not found in geo DB and not a known barrio — using Shopify province "${addr.province}" as-is`,
+          { city: addr.city, province: addr.province }
+        );
       }
     }
   }
 
-  // Barrio (select, optional)
+  // Department (select) — using resolved (possibly corrected) department
+  if (resolvedDept) {
+    slog.info(DAC_STEPS.STEP3_SELECT_DEPT, `Selecting department: ${resolvedDept}`);
+    const deptMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, resolvedDept);
+    if (deptMatch) {
+      await safeSelect(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, deptMatch, slog, DAC_STEPS.STEP3_SELECT_DEPT, 'K_Estado (department)');
+      slog.info(DAC_STEPS.STEP3_WAIT_CITIES, 'Waiting for cities to load after department change');
+      await page.waitForTimeout(1500);
+    } else {
+      slog.warn(DAC_STEPS.STEP3_SELECT_DEPT, `No department match in DAC dropdown for: ${resolvedDept}`);
+    }
+  }
+
+  // City (select) — using resolved city (may differ from Shopify if barrio was detected)
+  if (resolvedCity) {
+    slog.info(DAC_STEPS.STEP3_SELECT_CITY, `Selecting city: ${resolvedCity}`);
+    const cityMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, resolvedCity);
+    if (cityMatch) {
+      await safeSelect(page, DAC_SELECTORS.RECIPIENT_CITY, cityMatch, slog, DAC_STEPS.STEP3_SELECT_CITY, 'K_Ciudad (city)');
+      await page.waitForTimeout(800);
+    } else {
+      // City not found in DAC dropdown for this department — try barrio fallback
+      const detectedBarrio = resolvedBarrioHint ||
+        (normalize(resolvedDept) === 'montevideo' ? detectBarrio(resolvedCity, addr.address1, addr.address2 ?? '') : null);
+      if (detectedBarrio) {
+        slog.info(DAC_STEPS.STEP3_SELECT_CITY, `City "${resolvedCity}" not in dropdown, detected barrio "${detectedBarrio}", trying "Montevideo"`);
+        const mvdMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, 'Montevideo');
+        if (mvdMatch) {
+          await safeSelect(page, DAC_SELECTORS.RECIPIENT_CITY, mvdMatch, slog, DAC_STEPS.STEP3_SELECT_CITY, 'K_Ciudad (Montevideo fallback)');
+          await page.waitForTimeout(800);
+        }
+      } else {
+        slog.warn(DAC_STEPS.STEP3_SELECT_CITY, `No city match for "${resolvedCity}" and no barrio detected — city field left empty`, {
+          city: resolvedCity, province: resolvedDept,
+        });
+      }
+    }
+  }
+
+  // BUG FIX 1 (BARRIO): Intelligent barrio detection instead of picking first option
+  // Detect barrio from city name, address1, and address2
+  const detectedBarrioName = detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
   try {
     const barrioEl = await page.$(DAC_SELECTORS.RECIPIENT_BARRIO);
     if (barrioEl) {
-      const firstBarrio = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
-        (opts: any[]) => { const v = opts.filter(o => o.value && o.value !== '0' && o.value !== ''); return v[0]?.value || null; });
-      if (firstBarrio) {
-        await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, firstBarrio, slog, DAC_STEPS.STEP3_SELECT_BARRIO, 'K_Barrio');
+      await page.waitForTimeout(500); // Wait for barrio dropdown to populate after city
+      if (detectedBarrioName) {
+        // Try intelligent match
+        const barrioMatch = await findBarrioMatch(page, DAC_SELECTORS.RECIPIENT_BARRIO, detectedBarrioName);
+        if (barrioMatch) {
+          await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, barrioMatch, slog, DAC_STEPS.STEP3_SELECT_BARRIO, `K_Barrio (${detectedBarrioName})`);
+          slog.info(DAC_STEPS.STEP3_SELECT_BARRIO, `Barrio matched: "${detectedBarrioName}"`, { matchedValue: barrioMatch });
+        } else {
+          // Detected a barrio name but couldn't find it in dropdown — select first option as safe fallback
+          slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO, `Barrio "${detectedBarrioName}" detected but not in dropdown, using first option`);
+          const firstBarrio = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
+            (opts: any[]) => { const v = opts.filter(o => o.value && o.value !== '0' && o.value !== ''); return v[0]?.value || null; });
+          if (firstBarrio) {
+            await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, firstBarrio, slog, DAC_STEPS.STEP3_SELECT_BARRIO, 'K_Barrio (first fallback)');
+          }
+        }
+      } else {
+        // No barrio detected — still select first option to avoid DAC validation issues
+        const firstBarrio = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
+          (opts: any[]) => { const v = opts.filter(o => o.value && o.value !== '0' && o.value !== ''); return v[0]?.value || null; });
+        if (firstBarrio) {
+          await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, firstBarrio, slog, DAC_STEPS.STEP3_SELECT_BARRIO, 'K_Barrio (no barrio detected, first option)');
+        }
       }
     }
   } catch {
     slog.info(DAC_STEPS.STEP3_SELECT_BARRIO, 'Barrio field not available (optional)');
   }
 
-  slog.info(DAC_STEPS.STEP3_OK, 'Step 3 recipient data complete', { name: fullName, phone, city: addr.city, province: addr.province });
+  slog.info(DAC_STEPS.STEP3_OK, 'Step 3 recipient data complete', {
+    name: fullName, phone, city: addr.city, province: addr.province,
+    fullAddress, detectedBarrio: detectedBarrioName ?? 'none',
+  });
   await dacBrowser.screenshot(page, `step3-complete-${order.name.replace('#', '')}`);
 
   // ===== BYPASS Step 3 Siguiente (BUG A: silent validation blocks advance) =====
@@ -442,9 +722,11 @@ export async function createShipment(
 
   slog.info(DAC_STEPS.STEP4_OK, 'Item added to cart');
 
-  // ===== FILL OBSERVACIONES (address2 + order notes) =====
+  // ===== FILL OBSERVACIONES (extra obs from address merge + order notes) =====
+  // NOTE: address2 is now merged into fullAddress (DirD field) via mergeAddress().
+  // Only extraObs (non-address info) goes here to avoid duplication.
   const observations: string[] = [];
-  if (addr.address2) observations.push(addr.address2);
+  if (extraObs) observations.push(extraObs);
   if (order.note) observations.push(order.note);
   if (order.note_attributes && Array.isArray(order.note_attributes)) {
     for (const attr of order.note_attributes) {
@@ -516,50 +798,130 @@ export async function createShipment(
   slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Extracting guia number');
 
   const GUIA_REGEX = /\b88\d{10,}\b/;
+  const excludeGuias = usedGuias ? Array.from(usedGuias) : [];
   let guia: string = '';
+  let trackingUrl: string | undefined;
 
-  // Method 1: Search CURRENT page first (confirmation page or wherever we are)
-  let pageGuia = await page.evaluate((regexStr: string) => {
-    const regex = new RegExp(regexStr, 'g');
-    const text = document.body?.textContent ?? '';
-    const matches = text.match(regex);
-    if (matches && matches.length > 0) return matches[matches.length - 1];
-    return null;
-  }, GUIA_REGEX.source);
+  /**
+   * Extract guia numbers AND their href links from <a> elements on the page.
+   * Returns array of { guia, href } objects.
+   */
+  async function extractGuiasWithLinks(pg: Page): Promise<{ guia: string; href: string | null }[]> {
+    return pg.evaluate((regexStr: string) => {
+      const regex = new RegExp(regexStr);
+      const results: { guia: string; href: string | null }[] = [];
+      const seen = new Set<string>();
 
-  if (pageGuia) {
-    guia = pageGuia;
-    slog.success(DAC_STEPS.SUBMIT_OK, `Guia found on current page: ${guia}`, { guia, orderName: order.name, url: currentUrl });
+      // First: extract from <a> elements (these have the real tracking URLs)
+      const links = Array.from(document.querySelectorAll('a'));
+      for (const a of links) {
+        const text = a.textContent?.trim() ?? '';
+        if (regex.test(text)) {
+          const g = text.match(new RegExp(regexStr))?.[0];
+          if (g && !seen.has(g)) {
+            seen.add(g);
+            results.push({ guia: g, href: a.href || null });
+          }
+        }
+      }
+
+      // Second: extract from full page text (catches guias not in links)
+      const allMatches = (document.body?.textContent ?? '').match(new RegExp(regexStr, 'g')) ?? [];
+      for (const g of allMatches) {
+        if (!seen.has(g)) {
+          seen.add(g);
+          results.push({ guia: g, href: null });
+        }
+      }
+
+      return results;
+    }, GUIA_REGEX.source);
   }
 
-  // Method 2: If not found, navigate to mis envios/historial and search there
+  // Method 0: Try to extract guia from confirmation page URL
+  // DAC redirects to /envios/guiacreada/XXXXX — page content should have the 88... guia
+  if (currentUrl.includes('guiacreada')) {
+    // Wait extra for confirmation page content to fully render
+    await page.waitForTimeout(2000);
+    // Log page text for debugging
+    const pagePreview = await page.evaluate(() => document.body?.textContent?.substring(0, 500) ?? '');
+    slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Confirmation page content preview: "${pagePreview.substring(0, 200)}"`);
+  }
+
+  // Method 1: Search CURRENT page for guia + href, excluding already-assigned ones
+  let pageResults = await extractGuiasWithLinks(page);
+  let newResults = pageResults.filter(r => !excludeGuias.includes(r.guia));
+
+  // Log what was found vs excluded for debugging
+  if (pageResults.length > 0) {
+    slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Current page: ${pageResults.length} guias found, ${pageResults.length - newResults.length} excluded (already in DB)`, {
+      found: pageResults.map(r => r.guia),
+      excluded: pageResults.filter(r => excludeGuias.includes(r.guia)).map(r => r.guia),
+      new: newResults.map(r => r.guia),
+    });
+  }
+
+  if (newResults.length > 0) {
+    const picked = newResults[newResults.length - 1]; // Last = most recently created
+    guia = picked.guia;
+    trackingUrl = picked.href || undefined;
+    slog.success(DAC_STEPS.SUBMIT_OK, `Guia found on current page: ${guia}`, {
+      guia, trackingUrl: trackingUrl ?? 'none', orderName: order.name, url: currentUrl,
+      totalOnPage: pageResults.length, excluded: excludeGuias.length,
+    });
+  }
+
+  // Method 2: If not found, navigate to historial and find the NEW guia + href
   if (!guia) {
     slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Guia not on current page — checking mis envios');
     await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'domcontentloaded', timeout: 15_000 });
     await page.waitForTimeout(3000);
 
-    // Search the historial page for the latest guia
-    pageGuia = await page.evaluate((regexStr: string) => {
-      const regex = new RegExp(regexStr, 'g');
-      const text = document.body?.textContent ?? '';
-      const matches = text.match(regex);
-      // Return the LAST match (most recent guia at bottom of list)
-      if (matches && matches.length > 0) return matches[matches.length - 1];
-      return null;
-    }, GUIA_REGEX.source);
+    pageResults = await extractGuiasWithLinks(page);
+    newResults = pageResults.filter(r => !excludeGuias.includes(r.guia));
 
-    if (pageGuia) {
-      guia = pageGuia;
-      slog.success(DAC_STEPS.SUBMIT_OK, `Guia found in historial: ${guia}`, { guia, orderName: order.name });
+    if (newResults.length > 0) {
+      const picked = newResults[newResults.length - 1]; // LAST = most recent (historial is chronological, oldest first)
+      guia = picked.guia;
+      trackingUrl = picked.href || undefined;
+      slog.success(DAC_STEPS.SUBMIT_OK, `Guia found in historial: ${guia}`, {
+        guia, trackingUrl: trackingUrl ?? 'none', orderName: order.name,
+        totalOnPage: pageResults.length, excluded: excludeGuias.length,
+        newGuiasAvailable: newResults.length,
+      });
+    } else if (pageResults.length > 0) {
+      slog.error(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `All ${pageResults.length} guias on historial are already assigned to other orders in this batch`, {
+        orderName: order.name, excludedGuias: excludeGuias,
+      });
     }
   }
 
-  // Method 3: Still not found — use PENDING as last resort
+  // Method 3: If we have guia but no trackingUrl, try to find the link in historial
+  if (guia && !trackingUrl && !guia.startsWith('PENDING-')) {
+    slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Have guia ${guia} but no tracking URL, checking historial for link`);
+    if (!page.url().includes('/envios')) {
+      await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'domcontentloaded', timeout: 15_000 });
+      await page.waitForTimeout(3000);
+    }
+    const linkHref = await page.evaluate((g: string) => {
+      const links = Array.from(document.querySelectorAll('a'));
+      for (const a of links) {
+        if (a.textContent?.trim().includes(g)) return a.href || null;
+      }
+      return null;
+    }, guia);
+    if (linkHref) {
+      trackingUrl = linkHref;
+      slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Found tracking URL for guia in historial`, { guia, trackingUrl });
+    }
+  }
+
+  // Method 4: Still no guia — use PENDING as last resort
   if (!guia) {
     guia = `PENDING-${Date.now()}`;
     slog.warn(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Could not extract guia from any page', { orderName: order.name, url: page.url() });
     await dacBrowser.screenshot(page, `no-guia-found-${order.name.replace('#', '')}`);
   }
 
-  return { guia, screenshotPath: '' };
+  return { guia, trackingUrl, screenshotPath: '' };
 }

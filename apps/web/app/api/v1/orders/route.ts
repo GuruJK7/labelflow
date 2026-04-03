@@ -22,6 +22,12 @@ export async function GET(req: NextRequest) {
     where.status = status.toUpperCase();
   }
 
+  // Filter to only labels that have a PDF available
+  const hasPdf = searchParams.get('hasPdf');
+  if (hasPdf === 'true') {
+    where.pdfPath = { not: null };
+  }
+
   const [labels, total] = await Promise.all([
     db.label.findMany({
       where,

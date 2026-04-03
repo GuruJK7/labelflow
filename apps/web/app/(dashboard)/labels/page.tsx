@@ -7,11 +7,8 @@ import {
   Calendar,
   Search,
   RefreshCw,
-  Printer,
   FolderOpen,
   CheckCircle,
-  XCircle,
-  Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
@@ -38,7 +35,7 @@ export default function LabelsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: '50', status: 'COMPLETED' });
+      const params = new URLSearchParams({ limit: '50', status: 'COMPLETED', hasPdf: 'true' });
       if (search) params.set('search', search);
       if (dateFilter) params.set('date', dateFilter);
       const res = await fetch(`/api/v1/orders?${params}`);
@@ -63,8 +60,6 @@ export default function LabelsPage() {
     return acc;
   }, {});
 
-  const completedCount = labels.filter((l) => l.pdfPath).length;
-
   return (
     <div className="animate-fade-in">
       {/* Header */}
@@ -75,7 +70,7 @@ export default function LabelsPage() {
             <span className="text-[11px] font-medium text-cyan-400 uppercase tracking-wider">Archivos</span>
           </div>
           <h1 className="text-2xl font-bold text-white">Etiquetas PDF</h1>
-          <p className="text-zinc-500 text-sm mt-0.5">{completedCount} etiquetas descargables</p>
+          <p className="text-zinc-500 text-sm mt-0.5">{total} etiquetas descargables</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -104,22 +99,14 @@ export default function LabelsPage() {
       </div>
 
       {/* Stats bar */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {[
-          { label: 'Total generadas', value: total, icon: FileText, color: 'text-cyan-400' },
-          { label: 'Con PDF', value: completedCount, icon: Download, color: 'text-emerald-400' },
-          { label: 'Sin PDF', value: total - completedCount, icon: Clock, color: 'text-amber-400' },
-        ].map((stat) => (
-          <div key={stat.label} className="glass rounded-xl p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[11px] text-zinc-500 uppercase tracking-wide">{stat.label}</p>
-                <p className="text-xl font-bold text-white mt-1">{stat.value}</p>
-              </div>
-              <stat.icon className={cn('w-5 h-5', stat.color)} />
-            </div>
+      <div className="glass rounded-xl p-4 mb-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[11px] text-zinc-500 uppercase tracking-wide">Etiquetas disponibles</p>
+            <p className="text-xl font-bold text-white mt-1">{total}</p>
           </div>
-        ))}
+          <Download className="w-5 h-5 text-cyan-400" />
+        </div>
       </div>
 
       {/* Labels grouped by date */}
@@ -156,22 +143,15 @@ export default function LabelsPage() {
                   >
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <div className={cn(
-                          'w-8 h-8 rounded-lg flex items-center justify-center',
-                          label.pdfPath ? 'bg-cyan-500/10' : 'bg-zinc-500/10'
-                        )}>
-                          <FileText className={cn('w-4 h-4', label.pdfPath ? 'text-cyan-400' : 'text-zinc-600')} />
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-cyan-500/10">
+                          <FileText className="w-4 h-4 text-cyan-400" />
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-white">{label.shopifyOrderName}</p>
                           <p className="text-[11px] text-zinc-500">{label.customerName}</p>
                         </div>
                       </div>
-                      {label.pdfPath ? (
-                        <CheckCircle className="w-4 h-4 text-emerald-400" />
-                      ) : (
-                        <XCircle className="w-4 h-4 text-zinc-600" />
-                      )}
+                      <CheckCircle className="w-4 h-4 text-emerald-400" />
                     </div>
 
                     <div className="flex items-center gap-3 mb-3 text-[11px] text-zinc-500">
@@ -181,22 +161,15 @@ export default function LabelsPage() {
                       <span>{label.city}</span>
                     </div>
 
-                    {label.pdfPath ? (
-                      <a
-                        href={`/api/v1/labels/${label.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-cyan-600/10 border border-cyan-500/20 text-cyan-400 text-xs font-medium hover:bg-cyan-600/20 transition-colors"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        Descargar PDF
-                      </a>
-                    ) : (
-                      <div className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-zinc-500/5 border border-white/[0.04] text-zinc-600 text-xs">
-                        <Clock className="w-3.5 h-3.5" />
-                        PDF no disponible
-                      </div>
-                    )}
+                    <a
+                      href={`/api/v1/labels/${label.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-cyan-600/10 border border-cyan-500/20 text-cyan-400 text-xs font-medium hover:bg-cyan-600/20 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Descargar PDF
+                    </a>
                   </div>
                 ))}
               </div>

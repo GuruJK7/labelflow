@@ -18,6 +18,7 @@ const updateSchema = z.object({
   emailFrom: z.string().min(1).optional(),
   storeName: z.string().max(100).optional(),
   paymentThreshold: z.number().min(0).max(1000000).optional(),
+  paymentRuleEnabled: z.boolean().optional(),
   cronSchedule: z.string()
     .regex(/^(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)$/, 'Invalid cron expression')
     .refine((val) => {
@@ -28,6 +29,10 @@ const updateSchema = z.object({
     }, 'Minimum interval is 15 minutes')
     .optional(),
   maxOrdersPerRun: z.number().min(1).max(50).optional(),
+  scheduleSlots: z.array(z.object({
+    time: z.string().regex(/^\d{2}:\d{2}$/),
+    maxOrders: z.number().min(0).max(50),
+  })).max(10).optional(),
 }).partial();
 
 export async function GET() {
@@ -48,8 +53,10 @@ export async function GET() {
       emailFrom: true,
       storeName: true,
       paymentThreshold: true,
+      paymentRuleEnabled: true,
       cronSchedule: true,
       maxOrdersPerRun: true,
+      scheduleSlots: true,
       isActive: true,
       subscriptionStatus: true,
       stripePriceId: true,
@@ -57,11 +64,26 @@ export async function GET() {
       currentPeriodEnd: true,
       labelsThisMonth: true,
       labelsTotal: true,
+      lastRunAt: true,
       apiKey: true,
     },
   });
 
   if (!tenant) return apiError('Tenant no encontrado', 404);
+
+  // Calculate real label counts from Label table
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const [labelsThisMonthReal, labelsTodayReal] = await Promise.all([
+    db.label.count({
+      where: { tenantId: auth.tenantId, createdAt: { gte: startOfMonth } },
+    }),
+    db.label.count({
+      where: { tenantId: auth.tenantId, createdAt: { gte: startOfDay } },
+    }),
+  ]);
 
   // Never return encrypted values, return booleans instead
   return apiSuccess({
@@ -76,15 +98,19 @@ export async function GET() {
     emailFrom: tenant.emailFrom,
     storeName: tenant.storeName,
     paymentThreshold: tenant.paymentThreshold,
+    paymentRuleEnabled: tenant.paymentRuleEnabled,
     cronSchedule: tenant.cronSchedule,
     maxOrdersPerRun: tenant.maxOrdersPerRun,
+    scheduleSlots: tenant.scheduleSlots,
     isActive: tenant.isActive,
     subscriptionStatus: tenant.subscriptionStatus,
     stripePriceId: tenant.stripePriceId,
     stripeSubscriptionId: tenant.stripeSubscriptionId,
     currentPeriodEnd: tenant.currentPeriodEnd,
-    labelsThisMonth: tenant.labelsThisMonth,
+    labelsThisMonth: labelsThisMonthReal,
+    labelsToday: labelsTodayReal,
     labelsTotal: tenant.labelsTotal,
+    lastRunAt: tenant.lastRunAt,
     apiKey: tenant.apiKey,
   });
 }
@@ -111,8 +137,10 @@ export async function PUT(req: NextRequest) {
   if (input.emailFrom !== undefined) data.emailFrom = input.emailFrom;
   if (input.storeName !== undefined) data.storeName = input.storeName;
   if (input.paymentThreshold !== undefined) data.paymentThreshold = input.paymentThreshold;
+  if (input.paymentRuleEnabled !== undefined) data.paymentRuleEnabled = input.paymentRuleEnabled;
   if (input.cronSchedule !== undefined) data.cronSchedule = input.cronSchedule;
   if (input.maxOrdersPerRun !== undefined) data.maxOrdersPerRun = input.maxOrdersPerRun;
+  if (input.scheduleSlots !== undefined) data.scheduleSlots = input.scheduleSlots;
 
   // Encrypted fields
   if (input.shopifyToken !== undefined) data.shopifyToken = encryptIfPresent(input.shopifyToken);
