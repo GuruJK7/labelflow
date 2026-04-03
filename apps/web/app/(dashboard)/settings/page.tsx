@@ -2,6 +2,7 @@
 
 import { useEffect, useState, FormEvent, useCallback } from 'react';
 import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar } from 'lucide-react';
+import { PrinterSetup } from '@/components/printing/PrinterSetup';
 
 interface ScheduleSlot {
   time: string;   // "HH:MM"
@@ -25,6 +26,8 @@ interface SettingsData {
   scheduleSlots: ScheduleSlot[] | null;
   maxOrdersPerRun: number;
   apiKey: string;
+  defaultPrinter?: string | null;
+  autoPrintEnabled?: boolean;
 }
 
 export default function SettingsPage() {
@@ -434,6 +437,21 @@ export default function SettingsPage() {
             {saving === 'schedule' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar programacion
           </button>
           <InlineMessage section="schedule" />
+        </div>
+
+        {/* Impresion */}
+        <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-base">🖨️</span>
+            <h2 className="text-sm font-semibold text-white">Impresion</h2>
+          </div>
+          <PrinterSetup
+            defaultPrinter={settings?.defaultPrinter}
+            autoPrintEnabled={settings?.autoPrintEnabled}
+            onSave={async (data) => {
+              await saveSection('printing', data);
+            }}
+          />
         </div>
 
         {/* API Key */}

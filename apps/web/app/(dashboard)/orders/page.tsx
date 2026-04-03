@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { PrintButton } from '@/components/printing/PrintButton';
 import {
   Package,
   Download,
@@ -245,16 +246,21 @@ export default function OrdersPage() {
                                 <Mail className="w-3.5 h-3.5 text-emerald-500/60" />
                               )}
                               {label.pdfPath ? (
-                                <a
-                                  href={`/api/v1/labels/${label.id}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="p-1.5 rounded-lg hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 transition-colors"
-                                  title="Descargar PDF"
-                                >
-                                  <Download className="w-4 h-4" />
-                                </a>
+                                <>
+                                  <a
+                                    href={`/api/v1/labels/${label.id}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="p-1.5 rounded-lg hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 transition-colors"
+                                    title="Descargar PDF"
+                                  >
+                                    <Download className="w-4 h-4" />
+                                  </a>
+                                  <span onClick={(e) => e.stopPropagation()}>
+                                    <PrintButton labelId={label.id} pdfPath={label.pdfPath} />
+                                  </span>
+                                </>
                               ) : (
                                 <span className="w-4" />
                               )}

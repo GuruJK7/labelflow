@@ -33,6 +33,8 @@ const updateSchema = z.object({
     time: z.string().regex(/^\d{2}:\d{2}$/),
     maxOrders: z.number().min(0).max(50),
   })).max(10).optional(),
+  defaultPrinter: z.string().max(200).optional(),
+  autoPrintEnabled: z.boolean().optional(),
 }).partial();
 
 export async function GET() {
@@ -66,6 +68,8 @@ export async function GET() {
       labelsTotal: true,
       lastRunAt: true,
       apiKey: true,
+      defaultPrinter: true,
+      autoPrintEnabled: true,
     },
   });
 
@@ -112,6 +116,8 @@ export async function GET() {
     labelsTotal: tenant.labelsTotal,
     lastRunAt: tenant.lastRunAt,
     apiKey: tenant.apiKey,
+    defaultPrinter: tenant.defaultPrinter,
+    autoPrintEnabled: tenant.autoPrintEnabled,
   });
 }
 
@@ -141,6 +147,8 @@ export async function PUT(req: NextRequest) {
   if (input.cronSchedule !== undefined) data.cronSchedule = input.cronSchedule;
   if (input.maxOrdersPerRun !== undefined) data.maxOrdersPerRun = input.maxOrdersPerRun;
   if (input.scheduleSlots !== undefined) data.scheduleSlots = input.scheduleSlots;
+  if (input.defaultPrinter !== undefined) data.defaultPrinter = input.defaultPrinter;
+  if (input.autoPrintEnabled !== undefined) data.autoPrintEnabled = input.autoPrintEnabled;
 
   // Encrypted fields
   if (input.shopifyToken !== undefined) data.shopifyToken = encryptIfPresent(input.shopifyToken);

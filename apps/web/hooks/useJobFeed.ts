@@ -1,5 +1,6 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { buildOrderTracks, type OrderTrack } from '@/lib/log-messages';
 
 export interface FeedLog {
   id: string;
@@ -25,7 +26,7 @@ export function useJobFeed(activeJobId: string | null) {
 
   const fetchLogs = useCallback(async () => {
     if (!activeJobId) return;
-    const params = new URLSearchParams({ jobId: activeJobId, limit: '50' });
+    const params = new URLSearchParams({ jobId: activeJobId, limit: '200' });
     if (lastSince) params.set('since', lastSince);
 
     const res = await fetch(`/api/v1/logs?${params}`);
@@ -58,5 +59,8 @@ export function useJobFeed(activeJobId: string | null) {
 
   const isRunning = job?.status === 'RUNNING' || job?.status === 'PENDING';
 
-  return { logs, job, isRunning };
+  // Build order tracking from logs
+  const orderTracks = useMemo(() => buildOrderTracks(logs), [logs]);
+
+  return { logs, job, isRunning, orderTracks };
 }

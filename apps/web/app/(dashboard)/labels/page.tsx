@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { PrintButton } from '@/components/printing/PrintButton';
 import {
   FileText,
   Download,
@@ -161,15 +162,25 @@ export default function LabelsPage() {
                       <span>{label.city}</span>
                     </div>
 
-                    <a
-                      href={`/api/v1/labels/${label.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-cyan-600/10 border border-cyan-500/20 text-cyan-400 text-xs font-medium hover:bg-cyan-600/20 transition-colors"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Descargar PDF
-                    </a>
+                    {label.pdfPath ? (
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`/api/v1/labels/${label.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-center gap-2 flex-1 py-2 rounded-lg bg-cyan-600/10 border border-cyan-500/20 text-cyan-400 text-xs font-medium hover:bg-cyan-600/20 transition-colors"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Descargar
+                        </a>
+                        <PrintButton labelId={label.id} pdfPath={label.pdfPath} size="md" />
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-zinc-500/5 border border-white/[0.04] text-zinc-600 text-xs">
+                        <Clock className="w-3.5 h-3.5" />
+                        PDF no disponible
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

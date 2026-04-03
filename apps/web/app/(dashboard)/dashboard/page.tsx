@@ -105,6 +105,16 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
+  // Auto-detect active job on page load and when jobs change
+  useEffect(() => {
+    if (!activeJobId && jobs.length > 0) {
+      const runningJob = jobs.find(j => j.status === 'RUNNING' || j.status === 'PENDING');
+      if (runningJob) {
+        setActiveJobId(runningJob.id);
+      }
+    }
+  }, [jobs, activeJobId]);
+
   async function handleTrigger() {
     setTriggering(true);
     setError('');
