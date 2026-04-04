@@ -4,8 +4,9 @@ import { decryptIfPresent } from '@/lib/encryption';
 
 /**
  * POST /api/v1/products/scan
- * Fetches all products from Shopify, builds product_id→product_type map,
- * caches it in tenant.productTypeCache, returns unique product types.
+ * Scans Shopify to build a product_id→product_type map.
+ * Strategy 1: Products API (needs read_products scope) — uses product_type field.
+ * Strategy 2: Orders API fallback (always works) — extracts unique titles from line_items.
  */
 export async function POST() {
   const auth = await getAuthenticatedTenant();
@@ -23,35 +24,28 @@ export async function POST() {
   const token = decryptIfPresent(tenant.shopifyToken);
   if (!token) return apiError('Token de Shopify invalido', 400);
 
+  const baseUrl = `https://${tenant.shopifyStoreUrl}/admin/api/2024-01`;
+  const headers = {
+    'X-Shopify-Access-Token': token,
+    'Content-Type': 'application/json',
+  };
+
   try {
-    const productTypeMap: Record<string, string> = {};
-    let url: string | null = `https://${tenant.shopifyStoreUrl}/admin/api/2024-01/products.json?fields=id,product_type,title&limit=250`;
+    let productTypeMap: Record<string, string> = {};
+    let source: 'products' | 'orders' = 'products';
 
-    while (url) {
-      const res = await fetch(url, {
-        headers: {
-          'X-Shopify-Access-Token': token,
-          'Content-Type': 'application/json',
-        },
-      });
+    // ── Strategy 1: Try Products API ──
+    const productsOk = await tryProductsApi(baseUrl, headers, productTypeMap);
 
-      if (!res.ok) {
-        const errText = await res.text();
-        return apiError(`Shopify API error: ${res.status} - ${errText}`, 502);
-      }
+    // ── Strategy 2: Fallback to Orders API ──
+    if (!productsOk) {
+      source = 'orders';
+      productTypeMap = {};
+      await tryOrdersApi(baseUrl, headers, productTypeMap);
+    }
 
-      const data = await res.json();
-      const products: Array<{ id: number; product_type: string; title: string }> = data.products ?? [];
-
-      for (const product of products) {
-        // Use product_type if set, otherwise use "Sin tipo" as fallback
-        const pType = (product.product_type || '').trim();
-        productTypeMap[String(product.id)] = pType || 'Sin tipo';
-      }
-
-      // Follow pagination via Link header
-      const linkHeader = res.headers.get('link');
-      url = parsePaginationNext(linkHeader);
+    if (Object.keys(productTypeMap).length === 0) {
+      return apiError('No se encontraron productos en Shopify. Verifica que tu tienda tenga productos publicados.', 404);
     }
 
     // Extract unique product types
@@ -66,10 +60,83 @@ export async function POST() {
     return apiSuccess({
       productTypes: uniqueTypes,
       totalProducts: Object.keys(productTypeMap).length,
+      source,
       scannedAt: new Date().toISOString(),
     });
   } catch (err) {
-    return apiError(`Error escaneando productos: ${(err as Error).message}`, 500);
+    return apiError(`Error escaneando: ${(err as Error).message}`, 500);
+  }
+}
+
+/**
+ * Try fetching products from the Products API.
+ * Returns true if successful, false if access denied or failed.
+ */
+async function tryProductsApi(
+  baseUrl: string,
+  headers: Record<string, string>,
+  map: Record<string, string>,
+): Promise<boolean> {
+  try {
+    let url: string | null = `${baseUrl}/products.json?fields=id,product_type,title,vendor&limit=250`;
+
+    while (url) {
+      const res = await fetch(url, { headers });
+
+      if (res.status === 403 || res.status === 401) {
+        // Scope read_products not available — fall back
+        return false;
+      }
+
+      if (!res.ok) return false;
+
+      const data = await res.json();
+      const products: Array<{ id: number; product_type: string; title: string; vendor: string }> = data.products ?? [];
+
+      if (products.length === 0 && Object.keys(map).length === 0) return false;
+
+      for (const product of products) {
+        const pType = (product.product_type || '').trim();
+        const vendor = (product.vendor || '').trim();
+        // Priority: product_type > vendor > "Sin tipo"
+        map[String(product.id)] = pType || vendor || 'Sin tipo';
+      }
+
+      url = parsePaginationNext(res.headers.get('link'));
+    }
+
+    return Object.keys(map).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fallback: extract product types from recent orders' line_items.
+ * Uses title as the product identifier (always available).
+ */
+async function tryOrdersApi(
+  baseUrl: string,
+  headers: Record<string, string>,
+  map: Record<string, string>,
+): Promise<void> {
+  // Fetch last 250 orders to get a good sample of products
+  const url = `${baseUrl}/orders.json?limit=250&status=any&fields=line_items`;
+  const res = await fetch(url, { headers });
+
+  if (!res.ok) return;
+
+  const data = await res.json();
+  const orders: Array<{ line_items: Array<{ product_id: number; title: string; vendor?: string }> }> = data.orders ?? [];
+
+  for (const order of orders) {
+    for (const item of order.line_items ?? []) {
+      if (!item.product_id) continue;
+      const key = String(item.product_id);
+      if (map[key]) continue; // Already mapped
+      const vendor = (item.vendor || '').trim();
+      map[key] = vendor || item.title || 'Sin tipo';
+    }
   }
 }
 
