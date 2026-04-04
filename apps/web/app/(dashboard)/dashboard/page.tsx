@@ -299,13 +299,21 @@ export default function DashboardPage() {
               <button
                 onClick={async () => {
                   setScanning(true);
+                  setError('');
                   try {
                     const res = await fetch('/api/v1/products/scan', { method: 'POST' });
-                    if (res.ok) {
-                      const { data } = await res.json();
-                      setAvailableProductTypes(data.productTypes ?? []);
+                    const json = await res.json();
+                    if (res.ok && json.data) {
+                      setAvailableProductTypes(json.data.productTypes ?? []);
+                      if ((json.data.productTypes ?? []).length === 0) {
+                        setError('No se encontraron tipos de producto en Shopify');
+                      }
+                    } else {
+                      setError(json.error ?? 'Error escaneando productos');
                     }
-                  } catch { /* silent */ }
+                  } catch (err) {
+                    setError('Error de conexion al escanear');
+                  }
                   setScanning(false);
                 }}
                 disabled={scanning}

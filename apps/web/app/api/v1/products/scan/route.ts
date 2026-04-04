@@ -44,10 +44,9 @@ export async function POST() {
       const products: Array<{ id: number; product_type: string; title: string }> = data.products ?? [];
 
       for (const product of products) {
+        // Use product_type if set, otherwise use "Sin tipo" as fallback
         const pType = (product.product_type || '').trim();
-        if (pType) {
-          productTypeMap[String(product.id)] = pType;
-        }
+        productTypeMap[String(product.id)] = pType || 'Sin tipo';
       }
 
       // Follow pagination via Link header
