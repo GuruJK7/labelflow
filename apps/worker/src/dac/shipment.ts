@@ -7,7 +7,7 @@ import { dacBrowser } from './browser';
 import { DAC_STEPS } from './steps';
 import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
-import { getDepartmentForCity } from './uruguay-geo';
+import { getDepartmentForCity, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet } from './uruguay-geo';
 
 // ---- Helpers ----
 
@@ -106,6 +106,64 @@ function detectBarrio(city: string, address1: string, address2: string): string 
     }
   }
   return null;
+}
+
+interface IntelligentCityResult {
+  barrio: string | null;
+  department: string | null;
+  source: 'zip' | 'street' | 'alias' | 'none';
+  confidence: 'high' | 'medium' | 'low';
+}
+
+/**
+ * Intelligent city/barrio detection using multiple strategies:
+ * 1. ZIP code (highest priority, most reliable)
+ * 2. Street name (medium priority)
+ * 3. Barrio alias from address text (lower priority)
+ * 4. Fallback: department from ZIP only
+ */
+function detectCityIntelligent(
+  city: string,
+  address1: string,
+  address2: string,
+  zip: string,
+): IntelligentCityResult {
+  const aliasBarrio = detectBarrio(city, address1, address2);
+  const zipBarrios = getBarriosFromZip(zip);
+  const streetBarrios = getBarriosFromStreet(address1) ?? getBarriosFromStreet(address2);
+  const zipDept = getDepartmentFromZip(zip);
+
+  // Strategy 1: ZIP code — if alias result agrees with ZIP candidates, high confidence
+  if (zipBarrios && zipBarrios.length > 0) {
+    if (aliasBarrio && zipBarrios.includes(aliasBarrio)) {
+      return { barrio: aliasBarrio, department: zipDept, source: 'zip', confidence: 'high' };
+    }
+    // ZIP + street cross-reference
+    if (streetBarrios) {
+      const overlap = zipBarrios.filter(b => streetBarrios.includes(b));
+      if (overlap.length > 0) {
+        return { barrio: overlap[0], department: zipDept, source: 'zip', confidence: 'high' };
+      }
+    }
+    // ZIP alone — still high confidence, pick first candidate
+    return { barrio: zipBarrios[0], department: zipDept, source: 'zip', confidence: 'high' };
+  }
+
+  // Strategy 2: Street name detection
+  if (streetBarrios && streetBarrios.length > 0) {
+    if (aliasBarrio && streetBarrios.includes(aliasBarrio)) {
+      return { barrio: aliasBarrio, department: zipDept ?? 'Montevideo', source: 'street', confidence: 'medium' };
+    }
+    return { barrio: streetBarrios[0], department: zipDept ?? 'Montevideo', source: 'street', confidence: 'medium' };
+  }
+
+  // Strategy 3: Alias detection alone
+  if (aliasBarrio) {
+    return { barrio: aliasBarrio, department: zipDept ?? 'Montevideo', source: 'alias', confidence: 'medium' };
+  }
+
+  // Fallback: only department from ZIP
+  return { barrio: null, department: zipDept, source: 'none', confidence: 'low' };
 }
 
 /**
@@ -467,6 +525,15 @@ export async function createShipment(
   let resolvedCity = addr.city ?? '';
   let resolvedBarrioHint: string | null = null;
 
+  // Run intelligent city detection using ZIP, street, and alias strategies
+  const intelligent = detectCityIntelligent(
+    addr.city ?? '', addr.address1, addr.address2 ?? '', addr.zip ?? ''
+  );
+  slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
+    `Intelligent detection: barrio="${intelligent.barrio ?? 'none'}" dept="${intelligent.department ?? 'none'}" source=${intelligent.source} confidence=${intelligent.confidence}`,
+    { zip: addr.zip, city: addr.city, address1: addr.address1 }
+  );
+
   if (addr.city) {
     const geoDept = getDepartmentForCity(addr.city);
     if (geoDept) {
@@ -480,33 +547,60 @@ export async function createShipment(
       } else {
         slog.info(DAC_STEPS.STEP3_SELECT_DEPT, `GEO VERIFIED: City "${addr.city}" correctly in "${geoDept}"`);
       }
-      // If geo resolved to Montevideo and the city name is a barrio, set the hint
+      // If geo resolved to Montevideo, use intelligent barrio (better than basic alias)
       if (normalize(geoDept) === 'montevideo') {
-        const barrio = detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
+        const barrio = intelligent.barrio ?? detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
         if (barrio) {
           resolvedBarrioHint = barrio;
           resolvedCity = 'Montevideo';
           slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
-            `City "${addr.city}" is a Montevideo barrio "${barrio}" — will use "Montevideo" as city`);
+            `City "${addr.city}" is in Montevideo, barrio="${barrio}" (source: ${intelligent.source}) — will use "Montevideo" as city`);
         }
       }
     } else {
-      // City not in geo DB — check if it's a Montevideo barrio
-      const detectedBarrio = detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
-      if (detectedBarrio) {
+      // City not in geo DB — use intelligent detection
+      if (intelligent.barrio) {
         slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
-          `City "${addr.city}" not in geo DB but detected as Montevideo barrio "${detectedBarrio}" — using Montevideo`,
-          { detectedBarrio }
+          `City "${addr.city}" not in geo DB but intelligent detected barrio "${intelligent.barrio}" (source: ${intelligent.source}) — using ${intelligent.department ?? 'Montevideo'}`,
+          { detectedBarrio: intelligent.barrio, source: intelligent.source }
         );
-        resolvedDept = 'Montevideo';
-        resolvedCity = 'Montevideo';
-        resolvedBarrioHint = detectedBarrio;
+        resolvedDept = intelligent.department ?? 'Montevideo';
+        resolvedCity = intelligent.department ?? 'Montevideo';
+        resolvedBarrioHint = intelligent.barrio;
+      } else if (intelligent.department) {
+        slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+          `City "${addr.city}" not in geo DB, no barrio detected, but ZIP suggests dept "${intelligent.department}"`,
+          { city: addr.city, province: addr.province, zipDept: intelligent.department }
+        );
+        resolvedDept = intelligent.department;
       } else {
         slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
-          `City "${addr.city}" not found in geo DB and not a known barrio — using Shopify province "${addr.province}" as-is`,
-          { city: addr.city, province: addr.province }
+          `City "${addr.city}" not found in geo DB and no intelligent match — using Shopify province "${addr.province}" as-is`,
+          { city: addr.city, province: addr.province, zip: addr.zip }
         );
       }
+    }
+  } else {
+    // City is EMPTY — use intelligent detection to fill in what we can
+    if (intelligent.barrio) {
+      resolvedDept = intelligent.department ?? addr.province ?? 'Montevideo';
+      resolvedCity = intelligent.department ?? 'Montevideo';
+      resolvedBarrioHint = intelligent.barrio;
+      slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
+        `City empty — intelligent detected barrio "${intelligent.barrio}" in "${resolvedDept}" (source: ${intelligent.source}, confidence: ${intelligent.confidence})`,
+        { zip: addr.zip, address1: addr.address1 }
+      );
+    } else if (intelligent.department) {
+      resolvedDept = intelligent.department;
+      slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+        `City empty — no barrio detected, but ZIP suggests dept "${intelligent.department}"`,
+        { zip: addr.zip, province: addr.province }
+      );
+    } else {
+      slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+        `City empty and no intelligent detection possible — using Shopify province "${addr.province}" as-is`,
+        { province: addr.province, zip: addr.zip }
+      );
     }
   }
 
@@ -549,9 +643,8 @@ export async function createShipment(
     }
   }
 
-  // BUG FIX 1 (BARRIO): Intelligent barrio detection instead of picking first option
-  // Detect barrio from city name, address1, and address2
-  const detectedBarrioName = detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
+  // Barrio selection — use pre-computed intelligent result (ZIP + street + alias)
+  const detectedBarrioName = resolvedBarrioHint ?? intelligent.barrio;
   try {
     const barrioEl = await page.$(DAC_SELECTORS.RECIPIENT_BARRIO);
     if (barrioEl) {
@@ -561,10 +654,10 @@ export async function createShipment(
         const barrioMatch = await findBarrioMatch(page, DAC_SELECTORS.RECIPIENT_BARRIO, detectedBarrioName);
         if (barrioMatch) {
           await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, barrioMatch, slog, DAC_STEPS.STEP3_SELECT_BARRIO, `K_Barrio (${detectedBarrioName})`);
-          slog.info(DAC_STEPS.STEP3_SELECT_BARRIO, `Barrio matched: "${detectedBarrioName}"`, { matchedValue: barrioMatch });
+          slog.info(DAC_STEPS.STEP3_SELECT_BARRIO, `Barrio matched: "${detectedBarrioName}" (source: ${intelligent.source})`, { matchedValue: barrioMatch });
         } else {
           // Detected a barrio name but couldn't find it in dropdown — select first option as safe fallback
-          slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO, `Barrio "${detectedBarrioName}" detected but not in dropdown, using first option`);
+          slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO, `Barrio "${detectedBarrioName}" detected (${intelligent.source}) but not in dropdown, using first option`);
           const firstBarrio = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
             (opts: any[]) => { const v = opts.filter(o => o.value && o.value !== '0' && o.value !== ''); return v[0]?.value || null; });
           if (firstBarrio) {
@@ -572,11 +665,15 @@ export async function createShipment(
           }
         }
       } else {
-        // No barrio detected — still select first option to avoid DAC validation issues
+        // No barrio detected by any strategy — select first option as last resort
+        slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO,
+          `No barrio detected by any strategy (zip=${addr.zip ?? 'none'}, city=${addr.city ?? 'none'}, source=${intelligent.source}) �� using first option`,
+          { zip: addr.zip, city: addr.city, address1: addr.address1, intelligentSource: intelligent.source }
+        );
         const firstBarrio = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
           (opts: any[]) => { const v = opts.filter(o => o.value && o.value !== '0' && o.value !== ''); return v[0]?.value || null; });
         if (firstBarrio) {
-          await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, firstBarrio, slog, DAC_STEPS.STEP3_SELECT_BARRIO, 'K_Barrio (no barrio detected, first option)');
+          await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, firstBarrio, slog, DAC_STEPS.STEP3_SELECT_BARRIO, 'K_Barrio (last resort first option)');
         }
       }
     }
@@ -587,6 +684,7 @@ export async function createShipment(
   slog.info(DAC_STEPS.STEP3_OK, 'Step 3 recipient data complete', {
     name: fullName, phone, city: addr.city, province: addr.province,
     fullAddress, detectedBarrio: detectedBarrioName ?? 'none',
+    intelligentSource: intelligent.source, intelligentConfidence: intelligent.confidence,
   });
   await dacBrowser.screenshot(page, `step3-complete-${order.name.replace('#', '')}`);
 

@@ -5,13 +5,17 @@ import logger from '../logger';
 const PROCESSED_TAG = 'RASTREO ENVIADO';
 const GUIA_NOTE_PREFIX = 'LabelFlow-GUIA:';
 
-export async function getUnfulfilledOrders(client: AxiosInstance): Promise<ShopifyOrder[]> {
+export async function getUnfulfilledOrders(
+  client: AxiosInstance,
+  sortDirection: 'oldest_first' | 'newest_first' = 'oldest_first',
+): Promise<ShopifyOrder[]> {
   const { data } = await client.get('/orders.json', {
     params: {
       financial_status: 'paid',
       fulfillment_status: 'unfulfilled',
       status: 'open',
       limit: 250,
+      order: sortDirection === 'newest_first' ? 'created_at desc' : 'created_at asc',
     },
   });
 

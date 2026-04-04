@@ -102,11 +102,12 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
 
     slog.info('start', 'Starting order processing cycle');
 
-    // STEP 2: Get Shopify orders
+    // STEP 2: Get Shopify orders (with sort direction from tenant settings)
     const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken);
-    let orders = await getUnfulfilledOrders(shopifyClient);
+    const orderSortDirection = (tenant.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first';
+    let orders = await getUnfulfilledOrders(shopifyClient, orderSortDirection);
 
-    slog.info('shopify', `Fetched ${orders.length} unfulfilled orders from Shopify`);
+    slog.info('shopify', `Fetched ${orders.length} unfulfilled orders from Shopify (sort: ${orderSortDirection})`);
 
     // BUG FIX 5: Filter out orders with existing CREATED/COMPLETED labels
     // BUT allow retry of FAILED labels (previously blocked by unique constraint)
@@ -123,6 +124,26 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     const filteredOut = beforeFilter - orders.length;
     if (filteredOut > 0) {
       slog.info('filter', `Filtered out ${filteredOut} orders with existing CREATED/COMPLETED labels`);
+    }
+
+    // Product type filter: only process orders containing allowed product types
+    const allowedProductTypes = tenant.allowedProductTypes as string[] | null;
+    const productTypeCache = tenant.productTypeCache as Record<string, string> | null;
+    if (allowedProductTypes && allowedProductTypes.length > 0 && productTypeCache) {
+      const beforeProductFilter = orders.length;
+      const allowedSet = new Set(allowedProductTypes.map(t => t.toLowerCase()));
+      orders = orders.filter(order => {
+        return order.line_items.some(item => {
+          if (!item.product_id) return false;
+          const pType = productTypeCache[String(item.product_id)];
+          if (!pType) return false;
+          return allowedSet.has(pType.toLowerCase());
+        });
+      });
+      const productFiltered = beforeProductFilter - orders.length;
+      if (productFiltered > 0) {
+        slog.info('filter', `Product type filter: excluded ${productFiltered} orders (allowed: ${allowedProductTypes.join(', ')})`);
+      }
     }
 
     totalOrders = orders.length;

@@ -28,6 +28,9 @@ interface SettingsData {
   apiKey: string;
   defaultPrinter?: string | null;
   autoPrintEnabled?: boolean;
+  orderSortDirection?: string;
+  allowedProductTypes?: string[] | null;
+  productTypeCache?: Record<string, string> | null;
 }
 
 export default function SettingsPage() {
@@ -47,6 +50,10 @@ export default function SettingsPage() {
   const [cronSchedule, setCronSchedule] = useState('*/15 * * * *');
   const [scheduleSlots, setScheduleSlots] = useState<ScheduleSlot[]>([{ time: '09:00', maxOrders: 0 }]);
   const [scheduleDays, setScheduleDays] = useState<number[]>([1, 2, 3, 4, 5]); // Mon-Fri
+  const [orderSort, setOrderSort] = useState<'oldest_first' | 'newest_first'>('oldest_first');
+  const [allowedProductTypes, setAllowedProductTypes] = useState<string[]>([]);
+  const [availableProductTypes, setAvailableProductTypes] = useState<string[]>([]);
+  const [scanning, setScanning] = useState(false);
 
   const DAYS = [
     { value: 0, label: 'Dom', short: 'D' },
@@ -151,6 +158,12 @@ export default function SettingsPage() {
           const cron = data.cronSchedule ?? '*/15 * * * *';
           setCronSchedule(cron);
           parseCronToSchedule(cron, data.scheduleSlots);
+          setOrderSort(data.orderSortDirection ?? 'oldest_first');
+          setAllowedProductTypes(data.allowedProductTypes ?? []);
+          if (data.productTypeCache) {
+            const types = [...new Set(Object.values(data.productTypeCache) as string[])].sort();
+            setAvailableProductTypes(types);
+          }
         }
       })
       .catch(() => {});
@@ -303,6 +316,106 @@ export default function SettingsPage() {
             {saving === 'threshold' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar regla
           </button>
           <InlineMessage section="threshold" />
+        </div>
+
+        {/* Procesamiento de pedidos */}
+        <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
+          <h2 className="text-sm font-semibold text-white mb-4">Procesamiento de pedidos</h2>
+
+          {/* Sort direction */}
+          <div className="mb-5">
+            <label className={labelClass}>Orden de procesamiento</label>
+            <div className="flex gap-2 mt-1">
+              {([
+                { value: 'oldest_first' as const, label: 'Mas antiguos primero' },
+                { value: 'newest_first' as const, label: 'Mas recientes primero' },
+              ]).map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setOrderSort(opt.value)}
+                  className={`px-4 py-2.5 rounded-lg text-xs font-medium border transition-all ${
+                    orderSort === opt.value
+                      ? 'bg-cyan-600 border-cyan-500 text-white'
+                      : 'bg-zinc-800/50 border-white/[0.06] text-zinc-400 hover:text-white hover:border-white/[0.15]'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Product type filter */}
+          <div className="mb-5">
+            <div className="flex items-center justify-between mb-1">
+              <label className={labelClass + ' mb-0'}>Filtrar por tipo de producto</label>
+              <button
+                onClick={async () => {
+                  setScanning(true);
+                  try {
+                    const res = await fetch('/api/v1/products/scan', { method: 'POST' });
+                    if (res.ok) {
+                      const { data } = await res.json();
+                      setAvailableProductTypes(data.productTypes ?? []);
+                    }
+                  } catch { /* silent */ }
+                  setScanning(false);
+                }}
+                disabled={scanning}
+                className="inline-flex items-center gap-1.5 text-[11px] text-cyan-400 hover:text-cyan-300 transition-colors disabled:opacity-50"
+              >
+                {scanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <ExternalLink className="w-3 h-3" />}
+                {scanning ? 'Escaneando...' : 'Escanear productos'}
+              </button>
+            </div>
+
+            {availableProductTypes.length === 0 ? (
+              <div className="bg-zinc-800/20 border border-dashed border-white/[0.08] rounded-lg p-4 text-center mt-1">
+                <p className="text-xs text-zinc-500">No hay tipos de producto cargados</p>
+                <p className="text-[10px] text-zinc-600 mt-1">Hace click en &quot;Escanear productos&quot; para cargar los tipos desde Shopify</p>
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {availableProductTypes.map((pType) => {
+                  const isSelected = allowedProductTypes.includes(pType);
+                  return (
+                    <button
+                      key={pType}
+                      onClick={() => {
+                        setAllowedProductTypes(prev =>
+                          isSelected ? prev.filter(t => t !== pType) : [...prev, pType]
+                        );
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                        isSelected
+                          ? 'bg-cyan-600/20 text-cyan-400 border-cyan-500/30'
+                          : 'bg-zinc-800/50 text-zinc-500 border-white/[0.06] hover:text-zinc-300 hover:border-white/[0.15]'
+                      }`}
+                    >
+                      {pType}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-[10px] text-zinc-600 mt-2">
+              {allowedProductTypes.length === 0
+                ? 'Sin filtro — se procesan todos los tipos de producto'
+                : `Solo se procesan pedidos con: ${allowedProductTypes.join(', ')}`}
+            </p>
+          </div>
+
+          <button
+            onClick={() => saveSection('orderProcessing', {
+              orderSortDirection: orderSort,
+              allowedProductTypes: allowedProductTypes.length > 0 ? allowedProductTypes : null,
+            })}
+            disabled={saving === 'orderProcessing'}
+            className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+          >
+            {saving === 'orderProcessing' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar procesamiento
+          </button>
+          <InlineMessage section="orderProcessing" />
         </div>
 
         {/* Programacion de horarios */}

@@ -545,3 +545,158 @@ export function getDepartmentForCity(cityName: string): string | undefined {
     .replace(/[\u0300-\u036f]/g, '');
   return CITY_TO_DEPARTMENT[normalized];
 }
+
+// ── ZIP Code → Barrio mapping (Montevideo) ──
+
+/**
+ * Maps Montevideo ZIP code prefixes (first 3-5 digits) to candidate barrios.
+ * Keys are normalized to the nearest hundred for broad matching.
+ * Barrio names are lowercase, matching MONTEVIDEO_BARRIO_ALIASES keys in shipment.ts.
+ */
+export const MONTEVIDEO_ZIP_TO_BARRIOS: Record<string, string[]> = {
+  '11000': ['ciudad vieja', 'centro'],
+  '11100': ['centro', 'cordon', 'barrio sur'],
+  '11200': ['cordon', 'parque rodo', 'palermo'],
+  '11300': ['tres cruces', 'la comercial', 'la figurita', 'jacinto vera'],
+  '11400': ['la blanqueada', 'goes', 'reducto', 'brazo oriental'],
+  '11500': ['pocitos', 'punta carretas', 'parque batlle'],
+  '11600': ['buceo', 'malvin', 'malvin norte'],
+  '11700': ['union', 'maronas', 'flor de maronas', 'las canteras'],
+  '11800': ['punta gorda', 'carrasco', 'carrasco norte'],
+  '11900': ['cerro', 'la teja', 'paso de la arena', 'casabo'],
+  '12000': ['colon', 'lezica', 'sayago'],
+  '12100': ['prado', 'capurro', 'belvedere', 'nuevo paris'],
+  '12200': ['aires puros', 'casavalle', 'piedras blancas'],
+  '12300': ['manga', 'punta de rieles', 'villa garcia'],
+  '12400': ['atahualpa', 'mercado modelo', 'villa dolores'],
+  '12500': ['aguada'],
+  '12600': ['pocitos nuevo', 'villa española'],
+  '12700': ['tres ombues', 'villa muñoz'],
+  '12800': ['cerrito'],
+};
+
+/**
+ * Maps first 2 digits of Uruguayan ZIP to department name.
+ */
+export const DEPARTMENT_ZIP_PREFIX: Record<string, string> = {
+  '11': 'Montevideo',
+  '12': 'Montevideo',
+  '15': 'Canelones',
+  '16': 'Canelones',
+  '17': 'Canelones',
+  '20': 'Maldonado',
+  '21': 'Maldonado',
+  '25': 'Rocha',
+  '27': 'Treinta y Tres',
+  '30': 'Cerro Largo',
+  '33': 'Rivera',
+  '35': 'Artigas',
+  '37': 'Salto',
+  '40': 'Paysandu',
+  '45': 'Rio Negro',
+  '47': 'Soriano',
+  '50': 'Colonia',
+  '60': 'San Jose',
+  '65': 'Flores',
+  '70': 'Florida',
+  '75': 'Durazno',
+  '80': 'Lavalleja',
+  '85': 'Tacuarembo',
+  '90': 'Treinta y Tres',
+  '91': 'Cerro Largo',
+};
+
+/**
+ * Maps major Montevideo street/avenue names to candidate barrios.
+ * Keys are lowercase, accent-stripped fragments to match against address1.
+ */
+export const MONTEVIDEO_STREET_TO_BARRIOS: Record<string, string[]> = {
+  '18 de julio': ['centro', 'cordon', 'tres cruces'],
+  'bvar artigas': ['tres cruces', 'parque batlle', 'goes'],
+  'boulevard artigas': ['tres cruces', 'parque batlle', 'goes'],
+  'av italia': ['buceo', 'union', 'malvin', 'malvin norte'],
+  'avenida italia': ['buceo', 'union', 'malvin', 'malvin norte'],
+  'rambla': ['ciudad vieja', 'centro', 'palermo', 'parque rodo', 'pocitos', 'punta carretas', 'buceo', 'malvin', 'punta gorda', 'carrasco'],
+  '8 de octubre': ['goes', 'union', 'la blanqueada', 'malvin norte'],
+  'av rivera': ['pocitos', 'buceo', 'parque batlle'],
+  'avenida rivera': ['pocitos', 'buceo', 'parque batlle'],
+  'camino maldonado': ['union', 'maronas', 'manga'],
+  'av millan': ['reducto', 'prado', 'la teja'],
+  'avenida millan': ['reducto', 'prado', 'la teja'],
+  'general flores': ['goes', 'sayago', 'colon', 'belvedere'],
+  'gral flores': ['goes', 'sayago', 'colon', 'belvedere'],
+  'camino carrasco': ['carrasco', 'carrasco norte', 'punta gorda'],
+  'luis a de herrera': ['la blanqueada', 'tres cruces', 'parque batlle'],
+  'herrera y obes': ['centro', 'cordon'],
+  'camino centenario': ['aires puros', 'casavalle'],
+  'bvar batlle y ordonez': ['goes', 'union', 'flor de maronas'],
+  'av agraciada': ['aguada', 'goes', 'reducto'],
+  'avenida agraciada': ['aguada', 'goes', 'reducto'],
+  'constituyente': ['cordon', 'parque rodo', 'pocitos'],
+  'bvar espana': ['parque rodo', 'pocitos', 'punta carretas'],
+  'boulevard espana': ['parque rodo', 'pocitos', 'punta carretas'],
+  '21 de setiembre': ['pocitos', 'punta carretas'],
+  'ellauri': ['pocitos', 'punta carretas'],
+  'av brasil': ['pocitos', 'buceo'],
+  'avenida brasil': ['pocitos', 'buceo'],
+  'dr luis piera': ['parque rodo', 'palermo'],
+  'av libertador': ['tres cruces', 'parque batlle'],
+  'av gianattasio': ['carrasco', 'carrasco norte'],
+  'av instrucciones': ['prado', 'aires puros', 'sayago'],
+};
+
+// ── Helper functions ──
+
+function normalizeGeo(s: string): string {
+  return s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+/**
+ * Get candidate barrios from a Montevideo ZIP code.
+ * Tries exact 5-digit match, then rounds to nearest hundred.
+ */
+export function getBarriosFromZip(zip: string | null | undefined): string[] | null {
+  if (!zip) return null;
+  const digits = zip.replace(/\D/g, '');
+  if (digits.length < 4) return null;
+
+  // Exact match
+  if (MONTEVIDEO_ZIP_TO_BARRIOS[digits]) return MONTEVIDEO_ZIP_TO_BARRIOS[digits];
+
+  // Round to nearest hundred (e.g., 11345 -> 11300)
+  const rounded = digits.substring(0, 3) + '00';
+  if (MONTEVIDEO_ZIP_TO_BARRIOS[rounded]) return MONTEVIDEO_ZIP_TO_BARRIOS[rounded];
+
+  // Try first 4 digits + 0 (e.g., 11500)
+  if (digits.length >= 4) {
+    const fourDigit = digits.substring(0, 4) + '0';
+    if (MONTEVIDEO_ZIP_TO_BARRIOS[fourDigit]) return MONTEVIDEO_ZIP_TO_BARRIOS[fourDigit];
+  }
+
+  return null;
+}
+
+/**
+ * Get department name from ZIP code prefix (first 2 digits).
+ */
+export function getDepartmentFromZip(zip: string | null | undefined): string | null {
+  if (!zip) return null;
+  const digits = zip.replace(/\D/g, '');
+  if (digits.length < 2) return null;
+  return DEPARTMENT_ZIP_PREFIX[digits.substring(0, 2)] ?? null;
+}
+
+/**
+ * Get candidate barrios from a Montevideo street address.
+ * Checks major avenue/street names in the address text.
+ */
+export function getBarriosFromStreet(address: string | null | undefined): string[] | null {
+  if (!address) return null;
+  const norm = normalizeGeo(address);
+  if (norm.length < 3) return null;
+
+  for (const [street, barrios] of Object.entries(MONTEVIDEO_STREET_TO_BARRIOS)) {
+    if (norm.includes(street)) return barrios;
+  }
+  return null;
+}

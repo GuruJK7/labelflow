@@ -35,6 +35,8 @@ const updateSchema = z.object({
   })).max(10).optional(),
   defaultPrinter: z.string().max(200).optional(),
   autoPrintEnabled: z.boolean().optional(),
+  orderSortDirection: z.enum(['oldest_first', 'newest_first']).optional(),
+  allowedProductTypes: z.array(z.string().min(1).max(100)).max(50).nullable().optional(),
 }).partial();
 
 export async function GET() {
@@ -70,6 +72,9 @@ export async function GET() {
       apiKey: true,
       defaultPrinter: true,
       autoPrintEnabled: true,
+      orderSortDirection: true,
+      allowedProductTypes: true,
+      productTypeCache: true,
     },
   });
 
@@ -118,6 +123,9 @@ export async function GET() {
     apiKey: tenant.apiKey,
     defaultPrinter: tenant.defaultPrinter,
     autoPrintEnabled: tenant.autoPrintEnabled,
+    orderSortDirection: tenant.orderSortDirection,
+    allowedProductTypes: tenant.allowedProductTypes,
+    productTypeCache: tenant.productTypeCache,
   });
 }
 
@@ -149,6 +157,8 @@ export async function PUT(req: NextRequest) {
   if (input.scheduleSlots !== undefined) data.scheduleSlots = input.scheduleSlots;
   if (input.defaultPrinter !== undefined) data.defaultPrinter = input.defaultPrinter;
   if (input.autoPrintEnabled !== undefined) data.autoPrintEnabled = input.autoPrintEnabled;
+  if (input.orderSortDirection !== undefined) data.orderSortDirection = input.orderSortDirection;
+  if (input.allowedProductTypes !== undefined) data.allowedProductTypes = input.allowedProductTypes;
 
   // Encrypted fields
   if (input.shopifyToken !== undefined) data.shopifyToken = encryptIfPresent(input.shopifyToken);

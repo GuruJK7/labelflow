@@ -88,6 +88,11 @@ model Tenant {
   maxOrdersPerRun     Int     @default(20)
   isActive            Boolean @default(false)
 
+  // Order processing
+  orderSortDirection  String  @default("oldest_first")
+  allowedProductTypes Json?
+  productTypeCache    Json?
+
   // Stripe Billing
   stripeCustomerId     String?            @unique
   stripeSubscriptionId String?            @unique

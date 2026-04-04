@@ -16,7 +16,7 @@ export interface ShopifyOrder {
     zip: string;
     country: string;
   } | null;
-  line_items: Array<{ title: string; quantity: number; price: string }>;
+  line_items: Array<{ title: string; quantity: number; price: string; product_id: number | null }>;
   note: string | null;
   note_attributes: Array<{ name: string; value: string }> | null;
 }
