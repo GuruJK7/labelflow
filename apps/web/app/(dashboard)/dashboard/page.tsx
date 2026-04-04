@@ -13,6 +13,9 @@ import {
   AlertTriangle,
   Zap,
   Activity,
+  ArrowUpDown,
+  Filter,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { JobFeedPanel } from '@/components/JobFeedPanel';
@@ -54,6 +57,11 @@ export default function DashboardPage() {
   const [error, setError] = useState('');
   const [orderCount, setOrderCount] = useState(1);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [orderSort, setOrderSort] = useState<'oldest_first' | 'newest_first'>('oldest_first');
+  const [allowedProductTypes, setAllowedProductTypes] = useState<string[]>([]);
+  const [availableProductTypes, setAvailableProductTypes] = useState<string[]>([]);
+  const [scanning, setScanning] = useState(false);
+  const [savingSort, setSavingSort] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -94,6 +102,14 @@ export default function DashboardPage() {
         cronSchedule: (settingsData?.cronSchedule as string | null) ?? null,
         isActive: !!(settingsData?.isActive),
       });
+
+      // Order processing settings
+      setOrderSort((settingsData?.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first');
+      setAllowedProductTypes((settingsData?.allowedProductTypes as string[]) ?? []);
+      if (settingsData?.productTypeCache) {
+        const types = [...new Set(Object.values(settingsData.productTypeCache as Record<string, string>))].sort();
+        setAvailableProductTypes(types);
+      }
     } catch {
       // Silent
     }
@@ -232,6 +248,129 @@ export default function DashboardPage() {
           {error}
         </div>
       )}
+
+      {/* Order Processing Controls */}
+      <div className="glass rounded-2xl p-4 mb-6 animate-fade-in delay-150">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          {/* Sort direction */}
+          <div className="flex items-center gap-2">
+            <ArrowUpDown className="w-3.5 h-3.5 text-zinc-500" />
+            <span className="text-xs text-zinc-500">Orden:</span>
+            <div className="flex items-center gap-1">
+              {([
+                { value: 'oldest_first' as const, label: 'Antiguos primero' },
+                { value: 'newest_first' as const, label: 'Recientes primero' },
+              ]).map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={async () => {
+                    setOrderSort(opt.value);
+                    setSavingSort(true);
+                    try {
+                      await fetch('/api/v1/settings', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ orderSortDirection: opt.value }),
+                      });
+                    } catch { /* silent */ }
+                    setSavingSort(false);
+                  }}
+                  disabled={savingSort}
+                  className={cn(
+                    'px-3 py-1.5 rounded-lg text-[11px] font-medium border transition-all',
+                    orderSort === opt.value
+                      ? 'bg-cyan-600/20 text-cyan-400 border-cyan-500/30'
+                      : 'bg-white/[0.02] text-zinc-500 border-white/[0.04] hover:text-zinc-300 hover:border-white/[0.1]'
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="w-px h-6 bg-white/[0.06] hidden sm:block" />
+
+          {/* Product type filter */}
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <Filter className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
+            <span className="text-xs text-zinc-500 flex-shrink-0">Productos:</span>
+            {availableProductTypes.length === 0 ? (
+              <button
+                onClick={async () => {
+                  setScanning(true);
+                  try {
+                    const res = await fetch('/api/v1/products/scan', { method: 'POST' });
+                    if (res.ok) {
+                      const { data } = await res.json();
+                      setAvailableProductTypes(data.productTypes ?? []);
+                    }
+                  } catch { /* silent */ }
+                  setScanning(false);
+                }}
+                disabled={scanning}
+                className="inline-flex items-center gap-1 text-[11px] text-cyan-400/70 hover:text-cyan-400 transition-colors disabled:opacity-50"
+              >
+                {scanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                {scanning ? 'Escaneando...' : 'Escanear Shopify'}
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {availableProductTypes.map((pType) => {
+                  const isSelected = allowedProductTypes.includes(pType);
+                  return (
+                    <button
+                      key={pType}
+                      onClick={async () => {
+                        const newTypes = isSelected
+                          ? allowedProductTypes.filter(t => t !== pType)
+                          : [...allowedProductTypes, pType];
+                        setAllowedProductTypes(newTypes);
+                        try {
+                          await fetch('/api/v1/settings', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ allowedProductTypes: newTypes.length > 0 ? newTypes : null }),
+                          });
+                        } catch { /* silent */ }
+                      }}
+                      className={cn(
+                        'px-2 py-1 rounded text-[10px] font-medium border transition-all',
+                        isSelected
+                          ? 'bg-cyan-600/20 text-cyan-400 border-cyan-500/30'
+                          : 'bg-white/[0.02] text-zinc-600 border-white/[0.04] hover:text-zinc-400'
+                      )}
+                    >
+                      {pType}
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={async () => {
+                    setScanning(true);
+                    try {
+                      const res = await fetch('/api/v1/products/scan', { method: 'POST' });
+                      if (res.ok) {
+                        const { data } = await res.json();
+                        setAvailableProductTypes(data.productTypes ?? []);
+                      }
+                    } catch { /* silent */ }
+                    setScanning(false);
+                  }}
+                  disabled={scanning}
+                  className="p-1 rounded text-zinc-600 hover:text-cyan-400 transition-colors disabled:opacity-50"
+                  title="Re-escanear productos"
+                >
+                  <RefreshCw className={cn('w-3 h-3', scanning && 'animate-spin')} />
+                </button>
+              </div>
+            )}
+            {allowedProductTypes.length === 0 && availableProductTypes.length > 0 && (
+              <span className="text-[10px] text-zinc-600 ml-1">Todos</span>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* Job Feed Panel — appears when a job is active */}
       <JobFeedPanel
