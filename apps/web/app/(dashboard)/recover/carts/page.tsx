@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Filter,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { RecoverCart, CartStatus } from '@/types/recover';
@@ -70,6 +71,7 @@ export default function RecoverCartsPage() {
   const [pages, setPages] = useState(1);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [statusFilter, setStatusFilter] = useState<CartStatus | 'all'>('all');
 
   const LIMIT = 20;
@@ -109,11 +111,28 @@ export default function RecoverCartsPage() {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-white">Carritos abandonados</h1>
-        <p className="text-zinc-500 text-sm mt-1">
-          {total} carrito{total !== 1 ? 's' : ''} registrado{total !== 1 ? 's' : ''}
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Carritos abandonados</h1>
+          <p className="text-zinc-500 text-sm mt-1">
+            {total} carrito{total !== 1 ? 's' : ''} registrado{total !== 1 ? 's' : ''}
+          </p>
+        </div>
+        <button
+          onClick={async () => {
+            setSyncing(true);
+            try {
+              await fetch('/api/recover/sync', { method: 'POST' });
+              fetchCarts();
+            } catch { /* silent */ }
+            setSyncing(false);
+          }}
+          disabled={syncing}
+          className="flex items-center gap-2 px-3 py-1.5 bg-cyan-500/10 border border-cyan-500/20 rounded-lg text-cyan-400 text-xs font-medium hover:bg-cyan-500/20 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={cn('w-3.5 h-3.5', syncing && 'animate-spin')} />
+          {syncing ? 'Sincronizando...' : 'Sincronizar Shopify'}
+        </button>
       </div>
 
       {/* Filters */}

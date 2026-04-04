@@ -52,6 +52,8 @@ export default function RecoverPage() {
   const [recentCarts, setRecentCarts] = useState<RecoverCart[]>([]);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
   const [period, setPeriod] = useState<'7d' | '30d' | 'all'>('30d');
 
   const fetchData = useCallback(async () => {
@@ -84,6 +86,25 @@ export default function RecoverPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  async function handleSync() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch('/api/recover/sync', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setSyncResult(`${data.data.created} nuevos, ${data.data.updated} actualizados`);
+        fetchData();
+      } else {
+        setSyncResult(data.error || 'Error al sincronizar');
+      }
+    } catch {
+      setSyncResult('Error de conexion');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function handleToggleActive() {
     if (!config || config.subscriptionStatus !== 'ACTIVE') return;
@@ -134,6 +155,17 @@ export default function RecoverPage() {
           </span>
         </div>
 
+        {/* Actions */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="flex items-center gap-2 px-3 py-1.5 bg-cyan-500/10 border border-cyan-500/20 rounded-lg text-cyan-400 text-xs font-medium hover:bg-cyan-500/20 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={cn('w-3.5 h-3.5', syncing && 'animate-spin')} />
+            {syncing ? 'Sincronizando...' : 'Sincronizar Shopify'}
+          </button>
+
         {/* Period selector */}
         <div className="flex items-center gap-1 bg-white/[0.03] border border-white/[0.06] rounded-lg p-1">
           {(['7d', '30d', 'all'] as const).map((p) => (
@@ -151,7 +183,18 @@ export default function RecoverPage() {
             </button>
           ))}
         </div>
+        </div>
       </div>
+
+      {/* Sync result */}
+      {syncResult && (
+        <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-lg px-4 py-2.5 flex items-center justify-between">
+          <p className="text-cyan-400 text-xs font-medium">{syncResult}</p>
+          <button onClick={() => setSyncResult(null)} className="text-zinc-500 hover:text-zinc-300 text-xs">
+            Cerrar
+          </button>
+        </div>
+      )}
 
       {/* Activation banner */}
       {!isSubscribed && (
