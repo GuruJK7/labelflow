@@ -62,6 +62,8 @@ export default function DashboardPage() {
   const [availableProductTypes, setAvailableProductTypes] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
   const [savingSort, setSavingSort] = useState(false);
+  const [autoFulfill, setAutoFulfill] = useState(true);
+  const [savingFulfill, setSavingFulfill] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -105,6 +107,7 @@ export default function DashboardPage() {
 
       // Order processing settings
       setOrderSort((settingsData?.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first');
+      setAutoFulfill((settingsData?.autoFulfillEnabled as boolean) ?? true);
       setAllowedProductTypes((settingsData?.allowedProductTypes as string[]) ?? []);
       if (settingsData?.productTypeCache) {
         const types = [...new Set(Object.values(settingsData.productTypeCache as Record<string, string>))].sort();
@@ -287,6 +290,44 @@ export default function DashboardPage() {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="w-px h-6 bg-white/[0.06] hidden sm:block" />
+
+          {/* Auto-fulfill toggle */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-zinc-500">Marcar preparado:</span>
+            <button
+              onClick={async () => {
+                const newVal = !autoFulfill;
+                setAutoFulfill(newVal);
+                setSavingFulfill(true);
+                try {
+                  await fetch('/api/v1/settings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ autoFulfillEnabled: newVal }),
+                  });
+                } catch { /* silent */ }
+                setSavingFulfill(false);
+              }}
+              disabled={savingFulfill}
+              className={cn(
+                'relative w-10 h-5 rounded-full transition-colors',
+                autoFulfill ? 'bg-emerald-500' : 'bg-zinc-700'
+              )}
+              title={autoFulfill ? 'Los pedidos se marcan como Preparado en Shopify automaticamente' : 'Los pedidos NO se marcan como Preparado — solo se crea el envio en DAC'}
+            >
+              <span
+                className={cn(
+                  'absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm',
+                  autoFulfill ? 'left-5' : 'left-0.5'
+                )}
+              />
+            </button>
+            <span className={cn('text-[11px] font-medium', autoFulfill ? 'text-emerald-400' : 'text-zinc-500')}>
+              {autoFulfill ? 'Si' : 'No'}
+            </span>
           </div>
 
           <div className="w-px h-6 bg-white/[0.06] hidden sm:block" />

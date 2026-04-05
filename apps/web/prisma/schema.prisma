@@ -109,6 +109,9 @@ model Tenant {
   labelsTotal     Int       @default(0)
   lastRunAt       DateTime?
 
+  // Fulfillment
+  autoFulfillEnabled Boolean @default(true) // Mark orders as "Preparado" in Shopify after DAC shipment
+
   // Printing
   defaultPrinter   String?
   autoPrintEnabled Boolean @default(false)

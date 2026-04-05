@@ -321,7 +321,10 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         }
 
         // e) Fulfill order in Shopify with DAC tracking + notify customer
-        if (!testMode && result.guia && !result.guia.startsWith('PENDING-')) {
+        //    Respects tenant.autoFulfillEnabled — when false, creates DAC shipment
+        //    and downloads the PDF but does NOT mark the order as "Preparado" in Shopify.
+        const autoFulfill = tenant.autoFulfillEnabled ?? true;
+        if (!testMode && autoFulfill && result.guia && !result.guia.startsWith('PENDING-')) {
           try {
             slog.info('order-fulfill', `Marking order ${order.name} as Prepared in Shopify with tracking...`, { trackingUrl: result.trackingUrl ?? 'fallback' });
             await fulfillOrderWithTracking(shopifyClient, order.id, result.guia, result.trackingUrl);
@@ -331,6 +334,8 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           }
         } else if (testMode) {
           slog.info('order-fulfill', `TEST MODE: Skipping Shopify fulfillment for ${order.name}`);
+        } else if (!autoFulfill) {
+          slog.info('order-fulfill', `Auto-fulfill DISABLED: Order ${order.name} NOT marked as Prepared (guia: ${result.guia})`);
         }
 
         // f) Mark order as processed in Shopify — tag + note (skip in testMode)

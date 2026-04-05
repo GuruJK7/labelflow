@@ -104,6 +104,13 @@ model Tenant {
   signupIp      String?
   tosAcceptedAt DateTime?
 
+  // Fulfillment
+  autoFulfillEnabled Boolean @default(true) // Mark orders as "Preparado" in Shopify after DAC shipment
+
+  // Printing
+  defaultPrinter   String?
+  autoPrintEnabled Boolean @default(false)
+
   // Usage
   labelsThisMonth Int      @default(0)
   labelsTotal     Int      @default(0)
@@ -116,6 +123,9 @@ model Tenant {
 
   // Meta Ads
   metaAdAccount MetaAdAccount?
+
+  // Recover (WhatsApp cart recovery)
+  recoverConfig RecoverConfig?
 
   @@index([slug])
   @@index([stripeCustomerId])
