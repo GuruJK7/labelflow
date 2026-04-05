@@ -145,9 +145,6 @@ function checkRateLimit(tenantId: string): boolean {
   return true;
 }
 
-// Max request body size: 64KB
-export const config = { api: { bodyParser: { sizeLimit: '64kb' } } };
-
 export async function POST(req: NextRequest) {
   const auth = await getAuthenticatedTenant();
   if (!auth) return apiError('No autorizado', 401);
