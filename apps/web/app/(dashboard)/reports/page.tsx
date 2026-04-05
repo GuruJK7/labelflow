@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 
 interface Report {
   id: string;
+  tenantId: string;
   level: string;
   message: string;
   meta: {
@@ -13,6 +14,8 @@ interface Report {
     summary: string;
     conversation: string;
     reportedAt: string;
+    tenantName?: string;
+    shopifyStore?: string;
   } | null;
   createdAt: string;
 }
@@ -140,12 +143,19 @@ export default function ReportsPage() {
                   })()}
                 </div>
 
+                {selected.meta?.tenantName && (
+                  <div className="mb-4 bg-white/[0.03] rounded-lg px-3 py-2">
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-wide mb-1">Tenant</p>
+                    <p className="text-xs text-zinc-300">{selected.meta.tenantName} {selected.meta.shopifyStore ? `(${selected.meta.shopifyStore})` : ''}</p>
+                  </div>
+                )}
+
                 <div className="mb-4">
                   <p className="text-[10px] text-zinc-500 uppercase tracking-wide mb-1">Resumen</p>
                   <p className="text-sm text-white">{selected.meta?.summary ?? selected.message}</p>
                 </div>
 
-                {selected.meta?.conversation && (
+                {selected.meta?.conversation && typeof selected.meta.conversation === 'string' && (
                   <div>
                     <p className="text-[10px] text-zinc-500 uppercase tracking-wide mb-2">Conversacion</p>
                     <div className="space-y-2 max-h-[400px] overflow-y-auto text-xs">

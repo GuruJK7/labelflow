@@ -43,24 +43,27 @@ export function ChatWidget() {
     }
   }, [isOpen]);
 
+  // Cleanup: abort any in-flight stream when component unmounts
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
+
   async function handleSend() {
     const text = input.trim();
     if (!text || isStreaming) return;
 
     const userMessage: Message = {
-      id: `user-${Date.now()}`,
+      id: `user-${crypto.randomUUID()}`,
       role: 'user',
       content: text,
     };
+    const assistantId = `assistant-${crypto.randomUUID()}`;
 
+    // Single setMessages call to avoid race condition
     const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
+    setMessages([...newMessages, { id: assistantId, role: 'assistant', content: '' }]);
     setInput('');
     setIsStreaming(true);
-
-    // Create placeholder for assistant response
-    const assistantId = `assistant-${Date.now()}`;
-    setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '' }]);
 
     try {
       const controller = new AbortController();
@@ -93,8 +96,9 @@ export function ChatWidget() {
 
       const decoder = new TextDecoder();
       let buffer = '';
+      let streamDone = false;
 
-      while (true) {
+      while (!streamDone) {
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -105,7 +109,7 @@ export function ChatWidget() {
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6);
-          if (data === '[DONE]') break;
+          if (data === '[DONE]') { streamDone = true; break; }
 
           try {
             const parsed = JSON.parse(data);
@@ -116,7 +120,7 @@ export function ChatWidget() {
             }
             if (parsed.error) {
               setMessages((prev) =>
-                prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + `\n\nError: ${parsed.error}` } : m))
+                prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + `\n\n${parsed.error}` } : m))
               );
             }
           } catch {
@@ -124,6 +128,8 @@ export function ChatWidget() {
           }
         }
       }
+      // Release the reader when done
+      reader.cancel().catch(() => {});
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
         setMessages((prev) =>
@@ -166,10 +172,11 @@ export function ChatWidget() {
 
       if (res.ok) {
         setReportSent(true);
+        setTimeout(() => setReportSent(false), 5000);
         setMessages((prev) => [
           ...prev,
           {
-            id: `system-${Date.now()}`,
+            id: `system-${crypto.randomUUID()}`,
             role: 'assistant',
             content: type === 'bug'
               ? 'Reporte de bug enviado al equipo. Lo vamos a revisar lo antes posible. Gracias!'

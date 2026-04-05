@@ -117,11 +117,24 @@ Cuando el usuario da feedback o sugiere funcionalidades:
 
 IMPORTANTE: No digas que vas a enviar el reporte vos. El usuario tiene que clickear el boton "Enviar reporte" en la interfaz del chat para que nos llegue por email.`;
 
-// Simple in-memory rate limit
+// Rate limit with automatic cleanup (bounded Map, max 1000 entries, 60s TTL)
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(tenantId: string): boolean {
   const now = Date.now();
+
+  // Periodic cleanup: remove expired entries (run every ~100 calls)
+  if (rateLimitMap.size > 50 && Math.random() < 0.1) {
+    for (const [key, val] of rateLimitMap) {
+      if (now > val.resetAt) rateLimitMap.delete(key);
+    }
+  }
+  // Hard cap: evict oldest if map exceeds 1000 entries
+  if (rateLimitMap.size > 1000) {
+    const firstKey = rateLimitMap.keys().next().value;
+    if (firstKey) rateLimitMap.delete(firstKey);
+  }
+
   const entry = rateLimitMap.get(tenantId);
   if (!entry || now > entry.resetAt) {
     rateLimitMap.set(tenantId, { count: 1, resetAt: now + 60_000 });
@@ -132,9 +145,17 @@ function checkRateLimit(tenantId: string): boolean {
   return true;
 }
 
+// Max request body size: 64KB
+export const config = { api: { bodyParser: { sizeLimit: '64kb' } } };
+
 export async function POST(req: NextRequest) {
   const auth = await getAuthenticatedTenant();
   if (!auth) return apiError('No autorizado', 401);
+
+  // Check subscription is active
+  if (!auth.isActive) {
+    return apiError('Suscripcion inactiva. Activa tu plan para usar el chat.', 403);
+  }
 
   if (!checkRateLimit(auth.tenantId)) {
     return apiError('Demasiados mensajes. Espera un momento antes de enviar otro.', 429);
@@ -156,7 +177,7 @@ export async function POST(req: NextRequest) {
     return apiError('Mensajes requeridos', 400);
   }
 
-  // Sanitize messages — only allow user/assistant roles, max 50 messages
+  // Sanitize messages — only allow user/assistant roles, max 50 messages, 2000 chars each
   const messages = body.messages
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .slice(-50)
@@ -179,7 +200,6 @@ export async function POST(req: NextRequest) {
       messages,
     });
 
-    // Create a ReadableStream from the Anthropic stream
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
       async start(controller) {
@@ -192,7 +212,9 @@ export async function POST(req: NextRequest) {
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           controller.close();
         } catch (err) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`));
+          // Never expose internal error details to client
+          console.error('Chat stream error:', (err as Error).message);
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: 'Error procesando la respuesta. Intenta de nuevo.' })}\n\n`));
           controller.close();
         }
       },
@@ -206,6 +228,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err) {
-    return apiError(`Error del asistente: ${(err as Error).message}`, 500);
+    console.error('Chat API error:', (err as Error).message);
+    return apiError('Error del asistente. Intenta de nuevo.', 500);
   }
 }
