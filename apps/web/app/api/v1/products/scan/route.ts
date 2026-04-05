@@ -121,7 +121,8 @@ async function tryOrdersApi(
   map: Record<string, string>,
 ): Promise<void> {
   // Fetch last 250 orders to get a good sample of products
-  const url = `${baseUrl}/orders.json?limit=250&status=any&fields=line_items`;
+  // Fetch recent orders — don't filter fields so we get full line_items data
+  const url = `${baseUrl}/orders.json?limit=250&status=any`;
   const res = await fetch(url, { headers });
 
   if (!res.ok) return;
@@ -134,8 +135,8 @@ async function tryOrdersApi(
       if (!item.product_id) continue;
       const key = String(item.product_id);
       if (map[key]) continue; // Already mapped
-      const vendor = (item.vendor || '').trim();
-      map[key] = vendor || item.title || 'Sin tipo';
+      // Use title as the product identifier (always available in orders)
+      map[key] = item.title || 'Sin tipo';
     }
   }
 }

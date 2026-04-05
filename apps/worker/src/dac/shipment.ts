@@ -560,12 +560,15 @@ export async function createShipment(
     } else {
       // City not in geo DB — use intelligent detection
       if (intelligent.barrio) {
+        const iDept = intelligent.department ?? 'Montevideo';
         slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
-          `City "${addr.city}" not in geo DB but intelligent detected barrio "${intelligent.barrio}" (source: ${intelligent.source}) — using ${intelligent.department ?? 'Montevideo'}`,
+          `City "${addr.city}" not in geo DB but intelligent detected barrio "${intelligent.barrio}" (source: ${intelligent.source}) — using ${iDept}`,
           { detectedBarrio: intelligent.barrio, source: intelligent.source }
         );
-        resolvedDept = intelligent.department ?? 'Montevideo';
-        resolvedCity = intelligent.department ?? 'Montevideo';
+        resolvedDept = iDept;
+        // For Montevideo, use "Montevideo" as city (barrio handles the rest).
+        // For other departments, keep Shopify's city to try matching in the dropdown.
+        resolvedCity = iDept === 'Montevideo' ? 'Montevideo' : (addr.city ?? iDept);
         resolvedBarrioHint = intelligent.barrio;
       } else if (intelligent.department) {
         slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
@@ -583,8 +586,10 @@ export async function createShipment(
   } else {
     // City is EMPTY — use intelligent detection to fill in what we can
     if (intelligent.barrio) {
-      resolvedDept = intelligent.department ?? addr.province ?? 'Montevideo';
-      resolvedCity = intelligent.department ?? 'Montevideo';
+      const iDept = intelligent.department ?? addr.province ?? 'Montevideo';
+      resolvedDept = iDept;
+      // For Montevideo, use "Montevideo" as city. For other depts, use dept name as city (capital).
+      resolvedCity = iDept === 'Montevideo' ? 'Montevideo' : iDept;
       resolvedBarrioHint = intelligent.barrio;
       slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
         `City empty — intelligent detected barrio "${intelligent.barrio}" in "${resolvedDept}" (source: ${intelligent.source}, confidence: ${intelligent.confidence})`,

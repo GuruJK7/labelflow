@@ -129,6 +129,9 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     // Product type filter: only process orders containing allowed product types
     const allowedProductTypes = tenant.allowedProductTypes as string[] | null;
     const productTypeCache = tenant.productTypeCache as Record<string, string> | null;
+    if (allowedProductTypes && allowedProductTypes.length > 0 && !productTypeCache) {
+      slog.warn('filter', `Product type filter configured (${allowedProductTypes.join(', ')}) but no product cache — run "Escanear Shopify" first. Processing ALL orders.`);
+    }
     if (allowedProductTypes && allowedProductTypes.length > 0 && productTypeCache) {
       const beforeProductFilter = orders.length;
       const allowedSet = new Set(allowedProductTypes.map(t => t.toLowerCase()));
@@ -377,8 +380,6 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         const isDacGuiaConstraint = errorMsg.includes('Unique constraint') && errorMsg.includes('dacGuia');
 
         if (isDacGuiaConstraint) {
-          // Extract guia from the error context if possible
-          const guiaMatch = errorMsg.match(/dacGuia/);
           slog.warn('order-fail', `Order ${order.name}: guia already assigned to another order, skipping`, {
             orderId: order.id,
             orderName: order.name,

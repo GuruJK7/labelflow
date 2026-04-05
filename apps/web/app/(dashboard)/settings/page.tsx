@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, FormEvent, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar } from 'lucide-react';
 import { PrinterSetup } from '@/components/printing/PrinterSetup';
 

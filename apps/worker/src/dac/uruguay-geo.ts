@@ -660,18 +660,12 @@ export function getBarriosFromZip(zip: string | null | undefined): string[] | nu
   const digits = zip.replace(/\D/g, '');
   if (digits.length < 4) return null;
 
-  // Exact match
+  // Exact match (e.g., "11500")
   if (MONTEVIDEO_ZIP_TO_BARRIOS[digits]) return MONTEVIDEO_ZIP_TO_BARRIOS[digits];
 
-  // Round to nearest hundred (e.g., 11345 -> 11300)
+  // Round to nearest hundred (e.g., 11345 -> "11300")
   const rounded = digits.substring(0, 3) + '00';
   if (MONTEVIDEO_ZIP_TO_BARRIOS[rounded]) return MONTEVIDEO_ZIP_TO_BARRIOS[rounded];
-
-  // Try first 4 digits + 0 (e.g., 11500)
-  if (digits.length >= 4) {
-    const fourDigit = digits.substring(0, 4) + '0';
-    if (MONTEVIDEO_ZIP_TO_BARRIOS[fourDigit]) return MONTEVIDEO_ZIP_TO_BARRIOS[fourDigit];
-  }
 
   return null;
 }

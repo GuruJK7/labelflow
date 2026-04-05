@@ -311,7 +311,7 @@ export default function DashboardPage() {
                     } else {
                       setError(json.error ?? 'Error escaneando productos');
                     }
-                  } catch (err) {
+                  } catch {
                     setError('Error de conexion al escanear');
                   }
                   setScanning(false);
@@ -413,7 +413,6 @@ export default function DashboardPage() {
                 <p className={cn('font-bold text-white', card.isText ? 'text-lg' : 'text-3xl animate-count-up')}>
                   {card.value}
                 </p>
-{}
               </div>
             </div>
           </div>
