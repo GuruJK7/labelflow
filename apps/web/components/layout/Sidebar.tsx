@@ -21,6 +21,7 @@ import {
   SlidersHorizontal,
   MessageSquare,
   ShoppingCart,
+  Flag,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useState } from 'react';
@@ -55,6 +56,7 @@ const navSections = [
     label: 'Sistema',
     items: [
       { href: '/logs', label: 'Logs', icon: FileText },
+      { href: '/reports', label: 'Reportes', icon: Flag },
       { href: '/settings', label: 'Configuracion', icon: Settings },
       { href: '/settings/billing', label: 'Facturacion', icon: CreditCard },
     ],
