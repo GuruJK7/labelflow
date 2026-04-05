@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { MessageCircle, X, Send, Loader2, Bot, User, Minimize2 } from 'lucide-react';
+import { MessageCircle, X, Send, Loader2, Bot, User, Minimize2, Flag, CheckCircle } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 interface Message {
@@ -22,6 +22,8 @@ export function ChatWidget() {
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
+  const [reportSending, setReportSending] = useState(false);
+  const [reportSent, setReportSent] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -141,6 +143,47 @@ export function ChatWidget() {
     }
   }
 
+  async function handleSendReport(type: 'bug' | 'feedback') {
+    if (reportSending || messages.length <= 1) return;
+    setReportSending(true);
+
+    // Build summary from the last few user messages
+    const userMessages = messages.filter((m) => m.role === 'user');
+    const summary = userMessages.map((m) => m.content).join(' | ');
+
+    try {
+      const res = await fetch('/api/v1/chat/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type,
+          summary: summary.slice(0, 500),
+          conversation: messages
+            .filter((m) => m.id !== 'welcome')
+            .map((m) => ({ role: m.role, content: m.content })),
+        }),
+      });
+
+      if (res.ok) {
+        setReportSent(true);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `system-${Date.now()}`,
+            role: 'assistant',
+            content: type === 'bug'
+              ? 'Reporte de bug enviado al equipo. Lo vamos a revisar lo antes posible. Gracias!'
+              : 'Feedback enviado al equipo. Gracias por ayudarnos a mejorar!',
+          },
+        ]);
+        setTimeout(() => setReportSent(false), 5000);
+      }
+    } catch {
+      // Silent
+    }
+    setReportSending(false);
+  }
+
   // Auto-resize textarea
   function handleInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setInput(e.target.value);
@@ -256,6 +299,35 @@ export function ChatWidget() {
             ))}
             <div ref={messagesEndRef} />
           </div>
+
+          {/* Report buttons */}
+          {messages.length > 2 && !reportSent && (
+            <div className="px-4 py-2 border-t border-white/[0.06] flex items-center gap-2">
+              <span className="text-[10px] text-zinc-600 mr-1">Enviar al equipo:</span>
+              <button
+                onClick={() => handleSendReport('bug')}
+                disabled={reportSending}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors disabled:opacity-50"
+              >
+                {reportSending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Flag className="w-3 h-3" />}
+                Bug
+              </button>
+              <button
+                onClick={() => handleSendReport('feedback')}
+                disabled={reportSending}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 transition-colors disabled:opacity-50"
+              >
+                {reportSending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                Feedback
+              </button>
+            </div>
+          )}
+          {reportSent && (
+            <div className="px-4 py-2 border-t border-white/[0.06] flex items-center gap-2">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-[10px] text-emerald-400 font-medium">Enviado al equipo</span>
+            </div>
+          )}
 
           {/* Input */}
           <div className="px-4 py-3 border-t border-white/[0.06] bg-[#0a0a0b]">
