@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import nodemailer from 'nodemailer';
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 
@@ -71,9 +72,6 @@ export async function POST(req: NextRequest) {
 
   // Try sending via tenant's SMTP (if configured), otherwise use a simple fetch to a mail service
   try {
-    // Use nodemailer dynamically
-    const nodemailer = await import('nodemailer');
-
     // Use tenant's SMTP if available, otherwise try app-level SMTP
     const smtpHost = tenant?.emailHost ?? process.env.SMTP_HOST;
     const smtpUser = tenant?.emailUser ?? process.env.SMTP_USER;
