@@ -373,6 +373,26 @@ export default function DashboardPage() {
               </button>
             ) : (
               <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  onClick={async () => {
+                    setAllowedProductTypes([]);
+                    try {
+                      await fetch('/api/v1/settings', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ allowedProductTypes: null }),
+                      });
+                    } catch { /* silent */ }
+                  }}
+                  className={cn(
+                    'px-2 py-1 rounded text-[10px] font-medium border transition-all',
+                    allowedProductTypes.length === 0
+                      ? 'bg-cyan-600/20 text-cyan-400 border-cyan-500/30'
+                      : 'bg-white/[0.02] text-zinc-600 border-white/[0.04] hover:text-zinc-400'
+                  )}
+                >
+                  Todos
+                </button>
                 {availableProductTypes.map((pType) => {
                   const isSelected = allowedProductTypes.includes(pType);
                   return (
@@ -421,9 +441,6 @@ export default function DashboardPage() {
                   <RefreshCw className={cn('w-3 h-3', scanning && 'animate-spin')} />
                 </button>
               </div>
-            )}
-            {allowedProductTypes.length === 0 && availableProductTypes.length > 0 && (
-              <span className="text-[10px] text-zinc-600 ml-1">Todos</span>
             )}
           </div>
         </div>
