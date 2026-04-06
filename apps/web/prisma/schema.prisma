@@ -111,6 +111,7 @@ model Tenant {
 
   // Fulfillment
   autoFulfillEnabled Boolean @default(true) // Mark orders as "Preparado" in Shopify after DAC shipment
+  fulfillMode        String  @default("on") // "off" | "on" | "always" — always = force fulfill regardless of product/status
 
   // Printing
   defaultPrinter   String?

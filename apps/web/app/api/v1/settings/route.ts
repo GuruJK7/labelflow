@@ -34,6 +34,7 @@ const updateSchema = z.object({
     maxOrders: z.number().min(0).max(50),
   })).max(10).optional(),
   autoFulfillEnabled: z.boolean().optional(),
+  fulfillMode: z.enum(['off', 'on', 'always']).optional(),
   defaultPrinter: z.string().max(200).optional(),
   autoPrintEnabled: z.boolean().optional(),
   orderSortDirection: z.enum(['oldest_first', 'newest_first']).optional(),
@@ -72,6 +73,7 @@ export async function GET() {
       lastRunAt: true,
       apiKey: true,
       autoFulfillEnabled: true,
+      fulfillMode: true,
       defaultPrinter: true,
       autoPrintEnabled: true,
       orderSortDirection: true,
@@ -114,6 +116,7 @@ export async function GET() {
     maxOrdersPerRun: tenant.maxOrdersPerRun,
     scheduleSlots: tenant.scheduleSlots,
     autoFulfillEnabled: tenant.autoFulfillEnabled,
+    fulfillMode: tenant.fulfillMode,
     isActive: tenant.isActive,
     subscriptionStatus: tenant.subscriptionStatus,
     stripePriceId: tenant.stripePriceId,
@@ -159,6 +162,11 @@ export async function PUT(req: NextRequest) {
   if (input.maxOrdersPerRun !== undefined) data.maxOrdersPerRun = input.maxOrdersPerRun;
   if (input.scheduleSlots !== undefined) data.scheduleSlots = input.scheduleSlots;
   if (input.autoFulfillEnabled !== undefined) data.autoFulfillEnabled = input.autoFulfillEnabled;
+  if (input.fulfillMode !== undefined) {
+    data.fulfillMode = input.fulfillMode;
+    // Sync legacy boolean field
+    data.autoFulfillEnabled = input.fulfillMode !== 'off';
+  }
   if (input.defaultPrinter !== undefined) data.defaultPrinter = input.defaultPrinter;
   if (input.autoPrintEnabled !== undefined) data.autoPrintEnabled = input.autoPrintEnabled;
   if (input.orderSortDirection !== undefined) data.orderSortDirection = input.orderSortDirection;
