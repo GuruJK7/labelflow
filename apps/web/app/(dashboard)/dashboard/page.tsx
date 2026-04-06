@@ -109,10 +109,16 @@ export default function DashboardPage() {
       setOrderSort((settingsData?.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first');
       const mode = settingsData?.fulfillMode as string | undefined;
       setFulfillMode(mode === 'off' || mode === 'on' || mode === 'always' ? mode : (settingsData?.autoFulfillEnabled ? 'on' : 'off'));
-      setAllowedProductTypes((settingsData?.allowedProductTypes as string[]) ?? []);
+      const storedAllowed = (settingsData?.allowedProductTypes as string[]) ?? [];
+      setAllowedProductTypes(storedAllowed);
       if (settingsData?.productTypeCache) {
-        const types = [...new Set(Object.values(settingsData.productTypeCache as Record<string, string>))].sort();
-        setAvailableProductTypes(types);
+        const cacheTypes = [...new Set(Object.values(settingsData.productTypeCache as Record<string, string>))].sort();
+        // Merge: include any stored filter types not in cache so they're visible and removable
+        const merged = [...new Set([...cacheTypes, ...storedAllowed])].sort();
+        setAvailableProductTypes(merged);
+      } else if (storedAllowed.length > 0) {
+        // No cache but filters exist — show them so user can remove them
+        setAvailableProductTypes(storedAllowed);
       }
     } catch {
       // Silent
