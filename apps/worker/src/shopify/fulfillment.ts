@@ -4,22 +4,28 @@ import logger from '../logger';
 const DAC_TRACKING_BASE_URL = 'https://www.dac.com.uy/envios/rastrear';
 
 /**
- * Gets all open fulfillment order IDs for a Shopify order.
- * Orders with multiple locations will have multiple fulfillment orders.
+ * Gets fulfillment order IDs for a Shopify order.
+ * When forceAll is true, includes all non-cancelled fulfillment orders (not just "open").
+ * This allows fulfilling orders regardless of their product/fulfillment status.
  */
-async function getOpenFulfillmentOrderIds(client: AxiosInstance, orderId: number): Promise<number[]> {
+async function getFulfillmentOrderIds(client: AxiosInstance, orderId: number, forceAll = false): Promise<number[]> {
   const { data } = await client.get(`/orders/${orderId}/fulfillment_orders.json`);
   const fulfillmentOrders = data.fulfillment_orders ?? [];
 
-  const openOrders = fulfillmentOrders.filter(
-    (fo: { id: number; status: string }) => fo.status === 'open'
+  const eligibleStatuses = forceAll
+    ? ['open', 'in_progress', 'on_hold']
+    : ['open'];
+
+  const filtered = fulfillmentOrders.filter(
+    (fo: { id: number; status: string }) => eligibleStatuses.includes(fo.status)
   );
 
-  if (openOrders.length === 0) {
-    throw new Error(`No open fulfillment orders found for order ${orderId}`);
+  if (filtered.length === 0) {
+    const allStatuses = fulfillmentOrders.map((fo: { status: string }) => fo.status).join(', ');
+    throw new Error(`No fulfillable orders found for order ${orderId} (statuses: ${allStatuses || 'none'})`);
   }
 
-  return openOrders.map((fo: { id: number }) => fo.id);
+  return filtered.map((fo: { id: number }) => fo.id);
 }
 
 /**
@@ -36,12 +42,13 @@ export async function fulfillOrderWithTracking(
   orderId: number,
   guia: string,
   dacTrackingUrl?: string,
+  forceAll = false,
 ): Promise<void> {
   if (!guia || guia.startsWith('PENDING-')) {
     throw new Error(`Cannot fulfill order ${orderId}: invalid guia "${guia}"`);
   }
 
-  const fulfillmentOrderIds = await getOpenFulfillmentOrderIds(client, orderId);
+  const fulfillmentOrderIds = await getFulfillmentOrderIds(client, orderId, forceAll);
   // Use the real DAC tracking URL if available, otherwise construct fallback
   const trackingUrl = dacTrackingUrl || `${DAC_TRACKING_BASE_URL}?guia=${encodeURIComponent(guia)}`;
 

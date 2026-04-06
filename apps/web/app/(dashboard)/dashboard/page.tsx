@@ -62,7 +62,7 @@ export default function DashboardPage() {
   const [availableProductTypes, setAvailableProductTypes] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
   const [savingSort, setSavingSort] = useState(false);
-  const [autoFulfill, setAutoFulfill] = useState(true);
+  const [fulfillMode, setFulfillMode] = useState<'off' | 'on' | 'always'>('on');
   const [savingFulfill, setSavingFulfill] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -107,7 +107,8 @@ export default function DashboardPage() {
 
       // Order processing settings
       setOrderSort((settingsData?.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first');
-      setAutoFulfill((settingsData?.autoFulfillEnabled as boolean) ?? true);
+      const mode = settingsData?.fulfillMode as string | undefined;
+      setFulfillMode(mode === 'off' || mode === 'on' || mode === 'always' ? mode : (settingsData?.autoFulfillEnabled ? 'on' : 'off'));
       setAllowedProductTypes((settingsData?.allowedProductTypes as string[]) ?? []);
       if (settingsData?.productTypeCache) {
         const types = [...new Set(Object.values(settingsData.productTypeCache as Record<string, string>))].sort();
@@ -294,40 +295,47 @@ export default function DashboardPage() {
 
           <div className="w-px h-6 bg-white/[0.06] hidden sm:block" />
 
-          {/* Auto-fulfill toggle */}
+          {/* Fulfill mode selector */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500">Marcar preparado:</span>
-            <button
-              onClick={async () => {
-                const newVal = !autoFulfill;
-                setAutoFulfill(newVal);
-                setSavingFulfill(true);
-                try {
-                  await fetch('/api/v1/settings', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ autoFulfillEnabled: newVal }),
-                  });
-                } catch { /* silent */ }
-                setSavingFulfill(false);
-              }}
-              disabled={savingFulfill}
-              className={cn(
-                'relative w-10 h-5 rounded-full transition-colors',
-                autoFulfill ? 'bg-emerald-500' : 'bg-zinc-700'
-              )}
-              title={autoFulfill ? 'Los pedidos se marcan como Preparado en Shopify automaticamente' : 'Los pedidos NO se marcan como Preparado — solo se crea el envio en DAC'}
-            >
-              <span
-                className={cn(
-                  'absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm',
-                  autoFulfill ? 'left-5' : 'left-0.5'
-                )}
-              />
-            </button>
-            <span className={cn('text-[11px] font-medium', autoFulfill ? 'text-emerald-400' : 'text-zinc-500')}>
-              {autoFulfill ? 'Si' : 'No'}
-            </span>
+            <span className="text-xs text-zinc-500">Preparado:</span>
+            <div className="flex rounded-lg overflow-hidden border border-white/[0.06]">
+              {([
+                { value: 'off' as const, label: 'No', title: 'No marcar como Preparado — solo crea el envio en DAC' },
+                { value: 'on' as const, label: 'Si', title: 'Marcar como Preparado si el pedido tiene fulfillment abierto' },
+                { value: 'always' as const, label: 'Siempre', title: 'Forzar Preparado siempre, sin importar el producto o estado del pedido' },
+              ]).map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={async () => {
+                    if (opt.value === fulfillMode) return;
+                    setFulfillMode(opt.value);
+                    setSavingFulfill(true);
+                    try {
+                      await fetch('/api/v1/settings', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fulfillMode: opt.value }),
+                      });
+                    } catch { /* silent */ }
+                    setSavingFulfill(false);
+                  }}
+                  disabled={savingFulfill}
+                  title={opt.title}
+                  className={cn(
+                    'px-2.5 py-1 text-[11px] font-medium transition-colors',
+                    fulfillMode === opt.value
+                      ? opt.value === 'off'
+                        ? 'bg-zinc-600 text-white'
+                        : opt.value === 'on'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-amber-600 text-white'
+                      : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="w-px h-6 bg-white/[0.06] hidden sm:block" />

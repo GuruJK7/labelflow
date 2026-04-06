@@ -321,21 +321,26 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         }
 
         // e) Fulfill order in Shopify with DAC tracking + notify customer
-        //    Respects tenant.autoFulfillEnabled — when false, creates DAC shipment
-        //    and downloads the PDF but does NOT mark the order as "Preparado" in Shopify.
-        const autoFulfill = tenant.autoFulfillEnabled ?? true;
-        if (!testMode && autoFulfill && result.guia && !result.guia.startsWith('PENDING-')) {
+        //    fulfillMode: "off" = skip, "on" = normal (open only), "always" = force (all statuses)
+        const fulfillMode = (tenant as Record<string, unknown>).fulfillMode as string ?? 'on';
+        const shouldFulfill = fulfillMode !== 'off';
+        const forceAll = fulfillMode === 'always';
+        if (!testMode && shouldFulfill && result.guia && !result.guia.startsWith('PENDING-')) {
           try {
-            slog.info('order-fulfill', `Marking order ${order.name} as Prepared in Shopify with tracking...`, { trackingUrl: result.trackingUrl ?? 'fallback' });
-            await fulfillOrderWithTracking(shopifyClient, order.id, result.guia, result.trackingUrl);
+            slog.info('order-fulfill', `Marking order ${order.name} as Prepared in Shopify (mode: ${fulfillMode})...`, { trackingUrl: result.trackingUrl ?? 'fallback' });
+            await fulfillOrderWithTracking(shopifyClient, order.id, result.guia, result.trackingUrl, forceAll);
             slog.success('order-fulfill', `Order ${order.name} fulfilled in Shopify — tracking sent to customer`, { guia: result.guia, trackingUrl: result.trackingUrl ?? 'fallback' });
           } catch (fulfillErr) {
-            slog.warn('order-fulfill', `Shopify fulfillment failed (non-fatal): ${(fulfillErr as Error).message}`, { guia: result.guia });
+            if (forceAll) {
+              slog.error('order-fulfill', `Shopify fulfillment FAILED (force mode): ${(fulfillErr as Error).message}`, { guia: result.guia });
+            } else {
+              slog.warn('order-fulfill', `Shopify fulfillment failed (non-fatal): ${(fulfillErr as Error).message}`, { guia: result.guia });
+            }
           }
         } else if (testMode) {
           slog.info('order-fulfill', `TEST MODE: Skipping Shopify fulfillment for ${order.name}`);
-        } else if (!autoFulfill) {
-          slog.info('order-fulfill', `Auto-fulfill DISABLED: Order ${order.name} NOT marked as Prepared (guia: ${result.guia})`);
+        } else if (!shouldFulfill) {
+          slog.info('order-fulfill', `Fulfill DISABLED: Order ${order.name} NOT marked as Prepared (guia: ${result.guia})`);
         }
 
         // f) Mark order as processed in Shopify — tag + note (skip in testMode)
