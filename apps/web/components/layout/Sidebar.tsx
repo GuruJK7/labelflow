@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useState } from 'react';
-import { isFeatureEnabled, SECTION_FLAGS } from '@/lib/feature-flags';
+import { isFeatureEnabled, SECTION_FLAGS, ITEM_FLAGS } from '@/lib/feature-flags';
 
 const navSections = [
   {
@@ -125,7 +125,11 @@ export function Sidebar() {
                     (item.href === '/dashboard' && pathname === '/dashboard') ||
                     (item.href !== '/dashboard' && pathname?.startsWith(item.href));
 
-                  if (!sectionEnabled) {
+                  // Check per-item flag (for items in enabled sections)
+                  const itemFlag = ITEM_FLAGS[item.href];
+                  const itemDisabled = itemFlag ? !isFeatureEnabled(itemFlag) : false;
+
+                  if (!sectionEnabled || itemDisabled) {
                     return (
                       <div
                         key={item.href}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar } from 'lucide-react';
+import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar, Printer } from 'lucide-react';
 import { PrinterSetup } from '@/components/printing/PrinterSetup';
 
 interface ScheduleSlot {
@@ -555,7 +555,7 @@ export default function SettingsPage() {
         {/* Impresion */}
         <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
           <div className="flex items-center gap-2 mb-4">
-            <span className="text-base">🖨️</span>
+            <Printer className="w-4 h-4 text-zinc-400" />
             <h2 className="text-sm font-semibold text-white">Impresion</h2>
           </div>
           <PrinterSetup

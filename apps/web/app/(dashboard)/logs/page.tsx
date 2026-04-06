@@ -54,6 +54,7 @@ export default function LogsPage() {
   const [testRunning, setTestRunning] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [orderCount, setOrderCount] = useState(1);
+  const [error, setError] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
   const lastFetchRef = useRef<string | null>(null);
 
@@ -98,10 +99,10 @@ export default function LogsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error ?? 'Error al crear job');
+        setError(data.error ?? 'Error al crear job');
       }
     } catch {
-      alert('Error de conexion');
+      setError('Error de conexion');
     }
     setTestRunning(false);
   };
@@ -171,6 +172,14 @@ export default function LogsPage() {
           Ejecutar {orderCount === 1 ? '1 pedido' : `${orderCount} pedidos`}
         </button>
       </div>
+
+      {/* Error toast */}
+      {error && (
+        <div className="flex items-center justify-between px-4 py-2.5 rounded-xl mb-3 border border-red-500/20 bg-red-500/5 flex-shrink-0">
+          <span className="text-sm text-red-400">{error}</span>
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300 text-xs ml-4">Cerrar</button>
+        </div>
+      )}
 
       {/* Active job status bar */}
       {activeJob && (
