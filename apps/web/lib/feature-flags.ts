@@ -9,9 +9,9 @@
  * If not set, defaults to all features enabled (dev mode).
  */
 
-export type FeatureFlag = 'dac' | 'ads' | 'recover' | 'billing';
+export type FeatureFlag = 'dac' | 'ads' | 'recover' | 'billing' | 'reports' | 'chat';
 
-const ALL_FLAGS: FeatureFlag[] = ['dac', 'ads', 'recover', 'billing'];
+const ALL_FLAGS: FeatureFlag[] = ['dac', 'ads', 'recover', 'billing', 'reports', 'chat'];
 
 let cachedFlags: Set<FeatureFlag> | null = null;
 
@@ -55,4 +55,12 @@ export function getEnabledFeatures(): FeatureFlag[] {
 export const SECTION_FLAGS: Record<string, FeatureFlag> = {
   'META ADS': 'ads',
   'RECOVER': 'recover',
+};
+
+/**
+ * Map of individual sidebar item hrefs to their required feature flag.
+ * Used for items inside sections that are otherwise enabled.
+ */
+export const ITEM_FLAGS: Record<string, FeatureFlag> = {
+  '/reports': 'reports',
 };

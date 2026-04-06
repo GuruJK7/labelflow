@@ -7,8 +7,8 @@ dist/
 apps/web/.env
 apps/worker/.env
 etiquetas/
-logs/
-!apps/web/app/api/v1/logs/
+/logs/
+!apps/web/app/**/logs/
 dac-screenshots/
 *.pdf
 .turbo/
