@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useState } from 'react';
+import { isFeatureEnabled, SECTION_FLAGS } from '@/lib/feature-flags';
 
 const navSections = [
   {
@@ -100,48 +101,81 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-6 overflow-y-auto">
-        {navSections.map((section) => (
-          <div key={section.label}>
-            {!collapsed && (
-              <p className="px-3 mb-2 text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">
-                {section.label}
-              </p>
-            )}
-            <div className="space-y-0.5">
-              {section.items.map((item) => {
-                const isActive =
-                  (item.href === '/dashboard' && pathname === '/dashboard') ||
-                  (item.href !== '/dashboard' && pathname?.startsWith(item.href));
+        {navSections.map((section) => {
+          const requiredFlag = SECTION_FLAGS[section.label];
+          const sectionEnabled = !requiredFlag || isFeatureEnabled(requiredFlag);
 
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setMobileOpen(false)}
-                    className={cn(
-                      'flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-all duration-150 group relative',
-                      collapsed ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5',
-                      isActive
-                        ? 'bg-cyan-500/10 text-cyan-400'
-                        : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.03]'
-                    )}
-                  >
-                    {isActive && (
-                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-cyan-500 rounded-r-full" />
-                    )}
-                    <item.icon className={cn('w-[18px] h-[18px] flex-shrink-0', isActive && 'drop-shadow-[0_0_4px_rgba(6,182,212,0.4)]')} />
-                    {!collapsed && <span>{item.label}</span>}
-                    {collapsed && (
-                      <div className="absolute left-full ml-2 px-2.5 py-1.5 bg-zinc-800 text-zinc-200 text-xs rounded-md shadow-xl opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 border border-white/[0.08]">
-                        {item.label}
+          return (
+            <div key={section.label}>
+              {!collapsed && (
+                <div className="flex items-center gap-2 px-3 mb-2">
+                  <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">
+                    {section.label}
+                  </p>
+                  {!sectionEnabled && (
+                    <span className="text-[9px] font-medium text-amber-400/80 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/20">
+                      Soon
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="space-y-0.5">
+                {section.items.map((item) => {
+                  const isActive =
+                    (item.href === '/dashboard' && pathname === '/dashboard') ||
+                    (item.href !== '/dashboard' && pathname?.startsWith(item.href));
+
+                  if (!sectionEnabled) {
+                    return (
+                      <div
+                        key={item.href}
+                        className={cn(
+                          'flex items-center gap-2.5 rounded-lg text-[13px] font-medium opacity-40 cursor-not-allowed group relative',
+                          collapsed ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5',
+                          'text-zinc-600'
+                        )}
+                      >
+                        <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
+                        {!collapsed && <span>{item.label}</span>}
+                        {collapsed && (
+                          <div className="absolute left-full ml-2 px-2.5 py-1.5 bg-zinc-800 text-zinc-200 text-xs rounded-md shadow-xl opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 border border-white/[0.08]">
+                            {item.label} (Coming Soon)
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </Link>
-                );
-              })}
+                    );
+                  }
+
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setMobileOpen(false)}
+                      className={cn(
+                        'flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-all duration-150 group relative',
+                        collapsed ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5',
+                        isActive
+                          ? 'bg-cyan-500/10 text-cyan-400'
+                          : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.03]'
+                      )}
+                    >
+                      {isActive && (
+                        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-cyan-500 rounded-r-full" />
+                      )}
+                      <item.icon className={cn('w-[18px] h-[18px] flex-shrink-0', isActive && 'drop-shadow-[0_0_4px_rgba(6,182,212,0.4)]')} />
+                      {!collapsed && <span>{item.label}</span>}
+                      {collapsed && (
+                        <div className="absolute left-full ml-2 px-2.5 py-1.5 bg-zinc-800 text-zinc-200 text-xs rounded-md shadow-xl opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 border border-white/[0.08]">
+                          {item.label}
+                        </div>
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Bottom */}
