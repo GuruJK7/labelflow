@@ -18,23 +18,32 @@ export async function GET(req: NextRequest) {
     afterDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   }
 
-  const carts = await db.recoverCart.findMany({
-    where: {
-      tenantId: auth.tenantId,
-      ...(afterDate ? { createdAt: { gte: afterDate } } : {}),
-    },
-    select: { status: true, cartTotal: true },
-  });
+  const dateFilter = afterDate ? { createdAt: { gte: afterDate } } : {};
+  const baseWhere = { tenantId: auth.tenantId, ...dateFilter };
 
-  const totalDetected = carts.length;
-  const totalSent = carts.filter((c) =>
-    ['MESSAGE_1_SENT', 'MESSAGE_2_SENT', 'RECOVERED'].includes(c.status)
-  ).length;
-  const totalRecovered = carts.filter((c) => c.status === 'RECOVERED').length;
-  const totalOptedOut = carts.filter((c) => c.status === 'OPTED_OUT').length;
-  const revenueRecovered = carts
-    .filter((c) => c.status === 'RECOVERED')
-    .reduce((sum, c) => sum + (c.cartTotal ?? 0), 0);
+  // Use DB-level aggregation instead of loading all rows into memory
+  const [statusCounts, revenueAgg] = await Promise.all([
+    db.recoverCart.groupBy({
+      by: ['status'],
+      where: baseWhere,
+      _count: { status: true },
+    }),
+    db.recoverCart.aggregate({
+      where: { ...baseWhere, status: 'RECOVERED' },
+      _sum: { cartTotal: true },
+    }),
+  ]);
+
+  const countByStatus = (statuses: string[]) =>
+    statusCounts
+      .filter((g) => statuses.includes(g.status))
+      .reduce((sum, g) => sum + g._count.status, 0);
+
+  const totalDetected = statusCounts.reduce((sum, g) => sum + g._count.status, 0);
+  const totalSent = countByStatus(['MESSAGE_1_SENT', 'MESSAGE_2_SENT', 'RECOVERED']);
+  const totalRecovered = countByStatus(['RECOVERED']);
+  const totalOptedOut = countByStatus(['OPTED_OUT']);
+  const revenueRecovered = revenueAgg._sum.cartTotal ?? 0;
   const recoveryRate = totalSent > 0 ? (totalRecovered / totalSent) * 100 : 0;
 
   const stats: RecoverStats = {

@@ -42,6 +42,20 @@ export const authOptions: NextAuthOptions = {
       : []),
   ],
   session: { strategy: 'jwt', maxAge: 7 * 24 * 60 * 60 }, // 7 days instead of 30
+  cookies: {
+    sessionToken: {
+      name: process.env.NODE_ENV === 'production'
+        ? '__Secure-next-auth.session-token'
+        : 'next-auth.session-token',
+      options: {
+        httpOnly: true,
+        sameSite: 'lax' as const,
+        path: '/',
+        secure: process.env.NODE_ENV === 'production',
+        domain: process.env.NODE_ENV === 'production' ? '.autoenvia.com' : undefined,
+      },
+    },
+  },
   pages: {
     signIn: '/login',
     newUser: '/onboarding',
@@ -51,7 +65,9 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id;
       }
-      if (token.id) {
+      // Only query DB when token is first minted (no tenantId yet)
+      // or on refresh (every 15 min) to pick up subscription changes
+      if (token.id && !token.tenantId) {
         const tenant = await db.tenant.findUnique({
           where: { userId: token.id as string },
           select: { id: true, slug: true, isActive: true, subscriptionStatus: true },

@@ -56,6 +56,10 @@ export async function sendWhatsAppMessage({
   const url = `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${phoneNumberId}/messages`;
 
   try {
+    // 15-second timeout to prevent worker stalling on hung Meta API
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15_000);
+
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -69,7 +73,10 @@ export async function sendWhatsAppMessage({
         type: 'text',
         text: { preview_url: true, body },
       }),
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     const data = (await res.json()) as {
       messages?: Array<{ id: string }>;

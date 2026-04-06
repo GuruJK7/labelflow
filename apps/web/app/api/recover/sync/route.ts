@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { decryptIfPresent } from '@/lib/encryption';
+import { normalizePhone } from '@/lib/recover-utils';
 
 /**
  * POST /api/recover/sync
@@ -198,26 +199,4 @@ function parsePaginationNext(linkHeader: string | null): string {
   return '';
 }
 
-function normalizePhone(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const digits = raw.replace(/\D/g, '');
-  if (digits.length === 0) return null;
-
-  // Uruguay: 09XXXXXXX → +59809XXXXXXX
-  if (digits.length === 9 && digits.startsWith('09')) {
-    return `+598${digits}`;
-  }
-  // Already with country code: 598XXXXXXXXX
-  if (digits.length === 12 && digits.startsWith('598')) {
-    return `+${digits}`;
-  }
-  // 8 digits (no leading 0): 9XXXXXXX → +5989XXXXXXX
-  if (digits.length === 8 && digits.startsWith('9')) {
-    return `+5980${digits}`;
-  }
-  // Already E.164
-  if (raw.startsWith('+')) return raw;
-
-  // Return cleaned but not normalized
-  return digits.length >= 8 ? `+${digits}` : null;
-}
+// normalizePhone imported from @/lib/recover-utils (single source of truth)

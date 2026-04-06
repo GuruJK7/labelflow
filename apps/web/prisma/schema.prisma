@@ -544,6 +544,7 @@ model RecoverMessageLog {
 
   @@index([cartId])
   @@index([whatsappMessageId])
+  @@index([tenantId, createdAt(sort: Desc)])
 }
 
 model RecoverOptOut {
@@ -564,6 +565,7 @@ model RecoverJob {
   tenantId  String
   cartId    String
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   messageNumber Int
   status        JobStatus @default(PENDING)
@@ -574,6 +576,7 @@ model RecoverJob {
 
   cart RecoverCart @relation(fields: [cartId], references: [id], onDelete: Cascade)
 
+  @@unique([cartId, messageNumber])
   @@index([status, scheduledFor])
   @@index([tenantId])
   @@index([cartId])

@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { db } from '@/lib/db'
-import { decrypt } from '@/lib/encryption'
+import { decryptIfPresent } from '@/lib/encryption'
 import { normalizePhone, buildCheckoutUrl, maskPhone } from '@/lib/recover-utils'
 import type { CartItem } from '@/types/recover'
-
 function verifyHmac(body: string, hmacHeader: string, secret: string): boolean {
   const digest = crypto
     .createHmac('sha256', secret)
@@ -35,6 +34,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
+  // Parse body early inside try/catch to avoid unhandled 500
+  let checkout: Record<string, unknown>
+  try {
+    checkout = JSON.parse(body) as Record<string, unknown>
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+
   // Find tenant with active recover module
   const tenant = await db.tenant.findFirst({
     where: {
@@ -63,8 +70,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  // Verify HMAC
-  const shopifySecret = decrypt(tenant.shopifyToken)
+  // Verify HMAC with safe decryption
+  const shopifySecret = decryptIfPresent(tenant.shopifyToken)
+  if (!shopifySecret) {
+    console.error('[Recover Webhook] Failed to decrypt shopifyToken for tenant', tenant.id)
+    return NextResponse.json({ ok: true })
+  }
   if (!verifyHmac(body, hmacHeader, shopifySecret)) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
@@ -74,8 +85,6 @@ export async function POST(req: NextRequest) {
   if (!config || !config.isActive || config.subscriptionStatus !== 'ACTIVE') {
     return NextResponse.json({ ok: true })
   }
-
-  const checkout = JSON.parse(body)
 
   try {
     await processCheckout(checkout, tenant, config, shopDomain)
@@ -220,6 +229,7 @@ async function processCheckout(
       where: { id: cart.id },
       data: { status: 'NO_PHONE' },
     })
+    cart.status = 'NO_PHONE'
   }
 
   // Only schedule messages for carts that are now PENDING with a phone number
@@ -236,17 +246,24 @@ async function processCheckout(
     return
   }
 
-  // Schedule message 1
+  // Schedule message 1 — upsert to prevent duplicates from concurrent webhooks
   const delay1Ms = config.delayMinutes * 60 * 1000
   const scheduledFor1 = new Date(Date.now() + delay1Ms)
 
-  await db.recoverJob.create({
-    data: {
+  await db.recoverJob.upsert({
+    where: {
+      cartId_messageNumber: {
+        cartId: cart.id,
+        messageNumber: 1,
+      },
+    },
+    create: {
       tenantId: tenant.id,
       cartId: cart.id,
       messageNumber: 1,
       scheduledFor: scheduledFor1,
     },
+    update: {}, // Already exists — no-op
   })
 
   // Schedule message 2 if enabled
@@ -254,15 +271,22 @@ async function processCheckout(
     const delay2Ms = (config.delayMinutes + config.secondMessageDelayMinutes) * 60 * 1000
     const scheduledFor2 = new Date(Date.now() + delay2Ms)
 
-    await db.recoverJob.create({
-      data: {
+    await db.recoverJob.upsert({
+      where: {
+        cartId_messageNumber: {
+          cartId: cart.id,
+          messageNumber: 2,
+        },
+      },
+      create: {
         tenantId: tenant.id,
         cartId: cart.id,
         messageNumber: 2,
         scheduledFor: scheduledFor2,
       },
+      update: {},
     })
   }
 
-  console.warn(`[Recover] Scheduled recovery for cart ${cart.id}, phone ${maskPhone(phone)}`)
+  console.info(`[Recover] Scheduled recovery for cart ${cart.id}, phone ${maskPhone(phone)}`)
 }

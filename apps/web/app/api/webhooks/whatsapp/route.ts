@@ -26,9 +26,16 @@ export async function GET(req: NextRequest) {
   const token = searchParams.get('hub.verify_token');
   const challenge = searchParams.get('hub.challenge');
 
+  const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+  const tokenBuf = token ? Buffer.from(token) : Buffer.alloc(0);
+  const expectedBuf = verifyToken ? Buffer.from(verifyToken) : Buffer.alloc(0);
+  const tokensMatch = tokenBuf.length === expectedBuf.length &&
+    tokenBuf.length > 0 &&
+    crypto.timingSafeEqual(tokenBuf, expectedBuf);
+
   if (
     mode === 'subscribe' &&
-    token === process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN &&
+    tokensMatch &&
     challenge
   ) {
     return new NextResponse(challenge, { status: 200 });
@@ -41,10 +48,15 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
 
-  // Verify Meta signature when WHATSAPP_APP_SECRET is configured.
-  // Always verify in production; skip only when secret is absent (local dev).
+  // Verify Meta signature — REQUIRED in production.
   const appSecret = process.env.WHATSAPP_APP_SECRET;
-  if (appSecret) {
+  if (!appSecret) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[WhatsApp Webhook] WHATSAPP_APP_SECRET not set in production — rejecting');
+      return NextResponse.json({ error: 'Server misconfiguration' }, { status: 500 });
+    }
+    // Local dev: skip verification
+  } else {
     const signatureHeader = req.headers.get('x-hub-signature-256');
     if (!verifyMetaSignature(rawBody, signatureHeader, appSecret)) {
       console.warn('[WhatsApp Webhook] Invalid Meta signature — rejecting request');

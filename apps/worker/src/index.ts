@@ -60,7 +60,20 @@ async function pollForAdUploadJobs(): Promise<void> {
     data: { status: 'RUNNING', startedAt: new Date() },
   });
 
-  await processAdUploadJob(pendingJob.id, pendingJob.metaAdAccountId);
+  try {
+    await processAdUploadJob(pendingJob.id, pendingJob.metaAdAccountId);
+  } catch (err) {
+    logger.error(
+      { jobId: pendingJob.id, error: (err as Error).message },
+      'Unhandled error in ad upload job — marking FAILED'
+    );
+    await db.adUploadJob
+      .update({
+        where: { id: pendingJob.id },
+        data: { status: 'FAILED', finishedAt: new Date(), errorMessage: ((err as Error).message ?? 'Unhandled error').slice(0, 500) },
+      })
+      .catch(() => {});
+  }
 }
 
 /**
@@ -130,7 +143,20 @@ async function pollForAdMonitorJobs(): Promise<void> {
     data: { status: 'RUNNING', startedAt: new Date() },
   });
 
-  await processAdMonitorJob(pendingJob.id, pendingJob.metaAdAccountId);
+  try {
+    await processAdMonitorJob(pendingJob.id, pendingJob.metaAdAccountId);
+  } catch (err) {
+    logger.error(
+      { jobId: pendingJob.id, error: (err as Error).message },
+      'Unhandled error in ad monitor job — marking FAILED'
+    );
+    await db.adMonitorQueue
+      .update({
+        where: { id: pendingJob.id },
+        data: { status: 'FAILED', finishedAt: new Date(), errorMessage: ((err as Error).message ?? 'Unhandled error').slice(0, 500) },
+      })
+      .catch(() => {});
+  }
 }
 
 async function main(): Promise<void> {
@@ -148,7 +174,11 @@ async function main(): Promise<void> {
   // Poll loop — DAC jobs
   const poll = async () => {
     while (true) {
-      await pollForJobs();
+      try {
+        await pollForJobs();
+      } catch (err) {
+        logger.error({ error: (err as Error).message }, 'Unhandled error in DAC poll cycle');
+      }
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
   };
