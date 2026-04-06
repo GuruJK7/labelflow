@@ -127,8 +127,20 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     }
 
     // Product type filter: only process orders containing allowed product types
-    const allowedProductTypes = tenant.allowedProductTypes as string[] | null;
-    const productTypeCache = tenant.productTypeCache as Record<string, string> | null;
+    // Read fresh from DB to avoid stale Prisma client cache
+    let allowedProductTypes: string[] | null = tenant.allowedProductTypes as string[] | null;
+    let productTypeCache: Record<string, string> | null = tenant.productTypeCache as Record<string, string> | null;
+    try {
+      const fresh = await db.$queryRaw<{allowedProductTypes: string | null; productTypeCache: string | null}[]>`
+        SELECT "allowedProductTypes"::text, "productTypeCache"::text FROM "Tenant" WHERE id = ${tenantId}
+      `;
+      if (fresh[0]) {
+        allowedProductTypes = fresh[0].allowedProductTypes ? JSON.parse(fresh[0].allowedProductTypes) : null;
+        productTypeCache = fresh[0].productTypeCache ? JSON.parse(fresh[0].productTypeCache) : null;
+      }
+    } catch { /* fallback to tenant object values */ }
+    slog.info('filter', `Product filter: ${allowedProductTypes && allowedProductTypes.length > 0 ? allowedProductTypes.join(', ') : 'ALL (no filter)'}`);
+
     if (allowedProductTypes && allowedProductTypes.length > 0 && !productTypeCache) {
       slog.warn('filter', `Product type filter configured (${allowedProductTypes.join(', ')}) but no product cache — run "Escanear Shopify" first. Processing ALL orders.`);
     }
@@ -322,7 +334,12 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
 
         // e) Fulfill order in Shopify with DAC tracking + notify customer
         //    fulfillMode: "off" = skip, "on" = normal (open only), "always" = force (all statuses)
-        const fulfillMode = (tenant as Record<string, unknown>).fulfillMode as string ?? 'on';
+        //    Read fulfillMode via raw query to avoid stale Prisma client issues
+        let fulfillMode = 'on';
+        try {
+          const raw = await db.$queryRaw<{fulfillMode: string}[]>`SELECT "fulfillMode" FROM "Tenant" WHERE id = ${tenantId}`;
+          if (raw[0]?.fulfillMode) fulfillMode = raw[0].fulfillMode;
+        } catch { /* fallback to 'on' */ }
         const shouldFulfill = fulfillMode !== 'off';
         const forceAll = fulfillMode === 'always';
         if (!testMode && shouldFulfill && result.guia && !result.guia.startsWith('PENDING-')) {

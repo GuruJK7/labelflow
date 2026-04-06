@@ -12,8 +12,14 @@ async function getFulfillmentOrderIds(client: AxiosInstance, orderId: number, fo
   const { data } = await client.get(`/orders/${orderId}/fulfillment_orders.json`);
   const fulfillmentOrders = data.fulfillment_orders ?? [];
 
+  logger.info(
+    { orderId, count: fulfillmentOrders.length, statuses: fulfillmentOrders.map((fo: { id: number; status: string }) => `${fo.id}:${fo.status}`) },
+    'Fulfillment orders found'
+  );
+
+  // In "always" mode, accept any non-cancelled/non-closed status
   const eligibleStatuses = forceAll
-    ? ['open', 'in_progress', 'on_hold']
+    ? ['open', 'in_progress', 'on_hold', 'scheduled', 'incomplete']
     : ['open'];
 
   const filtered = fulfillmentOrders.filter(
@@ -22,7 +28,7 @@ async function getFulfillmentOrderIds(client: AxiosInstance, orderId: number, fo
 
   if (filtered.length === 0) {
     const allStatuses = fulfillmentOrders.map((fo: { status: string }) => fo.status).join(', ');
-    throw new Error(`No fulfillable orders found for order ${orderId} (statuses: ${allStatuses || 'none'})`);
+    throw new Error(`No fulfillable orders for ${orderId} (found: [${allStatuses || 'none'}], accepted: [${eligibleStatuses.join(',')}])`);
   }
 
   return filtered.map((fo: { id: number }) => fo.id);
