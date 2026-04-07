@@ -173,6 +173,7 @@ model Job {
 enum JobType {
   PROCESS_ORDERS
   RETRY_FAILED
+  TEST_DAC
 }
 
 enum JobStatus {
@@ -188,6 +189,7 @@ enum JobTrigger {
   WEBHOOK
   MANUAL
   MCP
+  TEST
 }
 
 // --- LABELS ---

@@ -31,6 +31,25 @@ export async function getUnfulfilledOrders(
   });
 }
 
+/**
+ * Fetches the most recent N orders regardless of fulfillment status.
+ * Used for TEST mode only — does not filter by tags or status.
+ */
+export async function getRecentOrders(
+  client: AxiosInstance,
+  limit: number = 5,
+): Promise<ShopifyOrder[]> {
+  const { data } = await client.get('/orders.json', {
+    params: {
+      status: 'any',
+      limit,
+      order: 'created_at desc',
+    },
+  });
+
+  return data.orders ?? [];
+}
+
 export async function addOrderTag(client: AxiosInstance, orderId: number, tag: string): Promise<void> {
   // Replace ALL existing tags with only the specified tag
   await client.put(`/orders/${orderId}.json`, {

@@ -1,5 +1,6 @@
 import { getConfig } from './config';
 import { processOrdersJob } from './jobs/process-orders.job';
+import { testDacJob } from './jobs/test-dac.job';
 import { startScheduler } from './jobs/scheduler';
 import { dacBrowser } from './dac/browser';
 import { db } from './db';
@@ -27,14 +28,13 @@ async function pollForJobs(): Promise<void> {
       'Found pending job, processing...'
     );
 
-    // Mark as RUNNING
-    await db.job.update({
-      where: { id: pendingJob.id },
-      data: { status: 'RUNNING', startedAt: new Date() },
-    });
-
-    // Process
-    await processOrdersJob(pendingJob.tenantId, pendingJob.id);
+    // Route to correct processor based on job type
+    if (pendingJob.type === 'TEST_DAC') {
+      logger.info({ jobId: pendingJob.id }, 'Routing to TEST_DAC processor');
+      await testDacJob(pendingJob.tenantId, pendingJob.id);
+    } else {
+      await processOrdersJob(pendingJob.tenantId, pendingJob.id);
+    }
 
     logger.info({ jobId: pendingJob.id }, 'Job completed');
   } catch (err) {

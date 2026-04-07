@@ -172,6 +172,7 @@ model Job {
 enum JobType {
   PROCESS_ORDERS
   RETRY_FAILED
+  TEST_DAC
 }
 
 enum JobStatus {
@@ -187,6 +188,7 @@ enum JobTrigger {
   WEBHOOK
   MANUAL
   MCP
+  TEST
 }
 
 // --- LABELS ---
@@ -427,4 +429,140 @@ model AdMonitorQueue {
 
   @@index([metaAdAccountId, createdAt(sort: Desc)])
   @@index([status])
+}
+
+// --- RECOVER (WhatsApp Cart Recovery) ---
+
+enum RecoverSubscriptionStatus {
+  INACTIVE
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+enum CartStatus {
+  PENDING
+  MESSAGE_1_SENT
+  MESSAGE_2_SENT
+  RECOVERED
+  OPTED_OUT
+  NO_PHONE
+  FAILED
+}
+
+enum RecoverMessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+model RecoverConfig {
+  id        String   @id @default(cuid())
+  tenantId  String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptionId     String?
+  subscriptionStatus RecoverSubscriptionStatus @default(INACTIVE)
+  isActive           Boolean                   @default(false)
+
+  delayMinutes              Int     @default(60)
+  secondMessageEnabled      Boolean @default(false)
+  secondMessageDelayMinutes Int     @default(1440)
+
+  messageTemplate1 String @default("Hola {{1}}, notamos que dejaste {{2}} en tu carrito. Necesitas ayuda para completar tu compra? {{3}}")
+  messageTemplate2 String @default("Ultimo aviso! Tu carrito con {{2}} todavia te espera {{3}}")
+
+  optOutKeyword String @default("STOP")
+
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  carts     RecoverCart[]
+  optOuts   RecoverOptOut[]
+}
+
+model RecoverCart {
+  id        String   @id @default(cuid())
+  tenantId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shopifyCheckoutId    String
+  shopifyCheckoutToken String
+  customerPhone        String?
+  customerName         String?
+  customerEmail        String?
+  cartTotal            Float?
+  currency             String  @default("UYU")
+  cartItems            Json    @default("[]")
+  checkoutUrl          String?
+
+  status           CartStatus @default(PENDING)
+  recoveredAt      DateTime?
+  recoveredOrderId String?
+
+  recoverConfigId String
+  recoverConfig   RecoverConfig      @relation(fields: [recoverConfigId], references: [id], onDelete: Cascade)
+  messages        RecoverMessageLog[]
+  jobs            RecoverJob[]
+
+  @@unique([tenantId, shopifyCheckoutId])
+  @@index([tenantId, status])
+  @@index([recoverConfigId])
+}
+
+model RecoverMessageLog {
+  id        String   @id @default(cuid())
+  cartId    String
+  tenantId  String
+  createdAt DateTime @default(now())
+
+  messageNumber     Int
+  phone             String
+  messageBody       String
+  whatsappMessageId String?
+  status            RecoverMessageStatus @default(SENT)
+  metaErrorCode     String?
+  metaErrorMessage  String?
+
+  cart RecoverCart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  @@index([cartId])
+  @@index([whatsappMessageId])
+  @@index([tenantId, createdAt(sort: Desc)])
+}
+
+model RecoverOptOut {
+  id        String   @id @default(cuid())
+  tenantId  String
+  phone     String
+  createdAt DateTime @default(now())
+
+  recoverConfigId String
+  recoverConfig   RecoverConfig @relation(fields: [recoverConfigId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, phone])
+}
+
+model RecoverJob {
+  id        String   @id @default(cuid())
+  tenantId  String
+  cartId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messageNumber Int
+  status        JobStatus @default(PENDING)
+  scheduledFor  DateTime
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  errorMessage  String?
+
+  cart RecoverCart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  @@unique([cartId, messageNumber])
+  @@index([status, scheduledFor])
+  @@index([tenantId])
+  @@index([cartId])
 }
