@@ -889,7 +889,15 @@ export async function createShipment(
   // Only extraObs (non-address info) goes here to avoid duplication.
   const observations: string[] = [];
   if (extraObs) observations.push(extraObs);
-  if (order.note) observations.push(order.note);
+  if (order.note) {
+    // Filter out LabelFlow metadata notes (e.g. "LabelFlow-GUIA: 882277947687 | 2026-04-06T18:45:52.353Z")
+    const cleanNote = order.note
+      .split('\n')
+      .filter(line => !line.includes('LabelFlow-GUIA:') && !line.includes('LabelFlow ERROR:'))
+      .join('\n')
+      .trim();
+    if (cleanNote) observations.push(cleanNote);
+  }
   if (order.note_attributes && Array.isArray(order.note_attributes)) {
     for (const attr of order.note_attributes) {
       if (attr.value) observations.push(`${attr.name}: ${attr.value}`);
