@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { PrintButton } from '@/components/printing/PrintButton';
+import { BulkActionBar } from '@/components/labels/BulkActionBar';
 import {
   FileText,
   Download,
@@ -9,8 +10,9 @@ import {
   Search,
   RefreshCw,
   FolderOpen,
-  CheckCircle,
   Clock,
+  Check,
+  Minus,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
@@ -33,9 +35,12 @@ export default function LabelsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [dateFilter, setDateFilter] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState<'print' | 'download' | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setSelectedIds(new Set());
     try {
       const params = new URLSearchParams({ limit: '50', status: 'COMPLETED', hasPdf: 'true' });
       if (search) params.set('search', search);
@@ -54,16 +59,121 @@ export default function LabelsPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Keyboard shortcuts: Ctrl+A to select all, Escape to clear
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
+      if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+        e.preventDefault();
+        const allWithPdf = labels.filter((l) => l.pdfPath).map((l) => l.id);
+        setSelectedIds(new Set(allWithPdf));
+      }
+      if (e.key === 'Escape') {
+        setSelectedIds(new Set());
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [labels]);
+
+  // Selection helpers
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectGroup = (ids: string[]) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      const allSelected = ids.every((id) => next.has(id));
+      if (allSelected) {
+        ids.forEach((id) => next.delete(id));
+      } else {
+        ids.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const getGroupState = (ids: string[]): 'none' | 'some' | 'all' => {
+    if (ids.length === 0) return 'none';
+    const selectedInGroup = ids.filter((id) => selectedIds.has(id)).length;
+    if (selectedInGroup === 0) return 'none';
+    if (selectedInGroup === ids.length) return 'all';
+    return 'some';
+  };
+
+  // Bulk actions
+  const handleBulk = async (mode: 'print' | 'download') => {
+    if (selectedIds.size === 0) return;
+    setBulkLoading(mode);
+    try {
+      const downloadParam = mode === 'download' ? '?download=true' : '';
+      const res = await fetch(`/api/v1/labels/bulk${downloadParam}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedIds) }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Error desconocido' }));
+        alert(err.error ?? 'Error al procesar etiquetas');
+        return;
+      }
+
+      const failedHeader = res.headers.get('X-Labels-Failed');
+      if (failedHeader && parseInt(failedHeader) > 0) {
+        console.warn(`${failedHeader} etiquetas fallaron al procesar`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
+      if (mode === 'print') {
+        const win = window.open(url, '_blank');
+        if (win) {
+          win.addEventListener('load', () => {
+            setTimeout(() => win.print(), 500);
+          });
+        }
+      } else {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'etiquetas.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } catch (err) {
+      console.error('Bulk action error:', err);
+      alert('Error de conexion al procesar etiquetas');
+    } finally {
+      setBulkLoading(null);
+    }
+  };
+
   // Group labels by date
   const grouped = labels.reduce<Record<string, LabelFile[]>>((acc, label) => {
-    const date = new Date(label.createdAt).toLocaleDateString('es-UY', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const date = new Date(label.createdAt).toLocaleDateString('es-UY', {
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    });
     if (!acc[date]) acc[date] = [];
     acc[date].push(label);
     return acc;
   }, {});
 
   return (
-    <div className="animate-fade-in">
+    <div className={cn('animate-fade-in', selectedIds.size > 0 && 'pb-24')}>
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
         <div>
@@ -71,7 +181,14 @@ export default function LabelsPage() {
             <FileText className="w-4 h-4 text-cyan-400" />
             <span className="text-[11px] font-medium text-cyan-400 uppercase tracking-wider">Archivos</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">Etiquetas PDF</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-white">Etiquetas PDF</h1>
+            {selectedIds.size > 0 && (
+              <span className="px-2 py-0.5 bg-cyan-500/10 border border-cyan-500/20 rounded-lg text-xs font-medium text-cyan-400">
+                {selectedIds.size} seleccionada{selectedIds.size !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
           <p className="text-zinc-500 text-sm mt-0.5">{total} etiquetas descargables</p>
         </div>
 
@@ -127,68 +244,129 @@ export default function LabelsPage() {
         </div>
       ) : (
         <div className="space-y-6">
-          {Object.entries(grouped).map(([date, items]) => (
-            <div key={date}>
-              <div className="flex items-center gap-2 mb-3">
-                <Calendar className="w-3.5 h-3.5 text-zinc-600" />
-                <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wide capitalize">{date}</h3>
-                <span className="text-[10px] text-zinc-700 bg-white/[0.03] px-1.5 py-0.5 rounded">{items.length}</span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {items.map((label, i) => (
-                  <div
-                    key={label.id}
+          {Object.entries(grouped).map(([date, items]) => {
+            const selectableIds = items.filter((l) => l.pdfPath).map((l) => l.id);
+            const groupState = getGroupState(selectableIds);
+
+            return (
+              <div key={date}>
+                <div className="flex items-center gap-2 mb-3">
+                  {/* Group select checkbox */}
+                  <button
+                    onClick={() => toggleSelectGroup(selectableIds)}
                     className={cn(
-                      'glass rounded-xl p-4 group hover:border-cyan-500/20 transition-all duration-200',
-                      `animate-fade-in-up delay-${Math.min(i * 50, 200)}`
+                      'w-5 h-5 rounded-md border flex items-center justify-center transition-all flex-shrink-0',
+                      groupState === 'all'
+                        ? 'bg-cyan-500 border-cyan-500'
+                        : groupState === 'some'
+                          ? 'bg-cyan-500/30 border-cyan-500/50'
+                          : 'border-white/10 hover:border-white/20'
                     )}
                   >
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-cyan-500/10">
-                          <FileText className="w-4 h-4 text-cyan-400" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-white">{label.shopifyOrderName}</p>
-                          <p className="text-[11px] text-zinc-500">{label.customerName}</p>
-                        </div>
-                      </div>
-                      <CheckCircle className="w-4 h-4 text-emerald-400" />
-                    </div>
+                    {groupState === 'all' && <Check className="w-3 h-3 text-white" />}
+                    {groupState === 'some' && <Minus className="w-3 h-3 text-cyan-300" />}
+                  </button>
+                  <Calendar className="w-3.5 h-3.5 text-zinc-600" />
+                  <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wide capitalize">{date}</h3>
+                  <span className="text-[10px] text-zinc-700 bg-white/[0.03] px-1.5 py-0.5 rounded">{items.length}</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {items.map((label, i) => {
+                    const isSelected = selectedIds.has(label.id);
+                    const hasPdf = !!label.pdfPath;
 
-                    <div className="flex items-center gap-3 mb-3 text-[11px] text-zinc-500">
-                      {label.dacGuia && (
-                        <span className="font-mono text-cyan-400/80">DAC-{label.dacGuia}</span>
-                      )}
-                      <span>{label.city}</span>
-                    </div>
+                    return (
+                      <div
+                        key={label.id}
+                        className={cn(
+                          'glass rounded-xl p-4 group transition-all duration-200 cursor-pointer',
+                          isSelected
+                            ? 'border-cyan-500/30 bg-cyan-500/[0.03]'
+                            : 'hover:border-cyan-500/20',
+                          `animate-fade-in-up delay-${Math.min(i * 50, 200)}`
+                        )}
+                        onClick={(e) => {
+                          // Don't toggle when clicking buttons or links
+                          const target = e.target as HTMLElement;
+                          if (target.closest('a') || target.closest('button')) return;
+                          if (hasPdf) toggleSelect(label.id);
+                        }}
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-cyan-500/10">
+                              <FileText className="w-4 h-4 text-cyan-400" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-semibold text-white">{label.shopifyOrderName}</p>
+                              <p className="text-[11px] text-zinc-500">{label.customerName}</p>
+                            </div>
+                          </div>
+                          {/* Checkbox */}
+                          {hasPdf ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleSelect(label.id);
+                              }}
+                              className={cn(
+                                'w-5 h-5 rounded-md border flex items-center justify-center transition-all flex-shrink-0',
+                                isSelected
+                                  ? 'bg-cyan-500 border-cyan-500'
+                                  : 'border-white/10 hover:border-white/20'
+                              )}
+                            >
+                              {isSelected && <Check className="w-3 h-3 text-white" />}
+                            </button>
+                          ) : (
+                            <Clock className="w-4 h-4 text-zinc-600" />
+                          )}
+                        </div>
 
-                    {label.pdfPath ? (
-                      <div className="flex items-center gap-2">
-                        <a
-                          href={`/api/v1/labels/${label.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center justify-center gap-2 flex-1 py-2 rounded-lg bg-cyan-600/10 border border-cyan-500/20 text-cyan-400 text-xs font-medium hover:bg-cyan-600/20 transition-colors"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          Descargar
-                        </a>
-                        <PrintButton labelId={label.id} pdfPath={label.pdfPath} size="md" />
+                        <div className="flex items-center gap-3 mb-3 text-[11px] text-zinc-500">
+                          {label.dacGuia && (
+                            <span className="font-mono text-cyan-400/80">DAC-{label.dacGuia}</span>
+                          )}
+                          <span>{label.city}</span>
+                        </div>
+
+                        {label.pdfPath ? (
+                          <div className="flex items-center gap-2">
+                            <a
+                              href={`/api/v1/labels/${label.id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center justify-center gap-2 flex-1 py-2 rounded-lg bg-cyan-600/10 border border-cyan-500/20 text-cyan-400 text-xs font-medium hover:bg-cyan-600/20 transition-colors"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Descargar
+                            </a>
+                            <PrintButton labelId={label.id} pdfPath={label.pdfPath} size="md" />
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-zinc-500/5 border border-white/[0.04] text-zinc-600 text-xs">
+                            <Clock className="w-3.5 h-3.5" />
+                            PDF no disponible
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-zinc-500/5 border border-white/[0.04] text-zinc-600 text-xs">
-                        <Clock className="w-3.5 h-3.5" />
-                        PDF no disponible
-                      </div>
-                    )}
-                  </div>
-                ))}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
+
+      {/* Bulk action bar */}
+      <BulkActionBar
+        selectedCount={selectedIds.size}
+        onPrint={() => handleBulk('print')}
+        onDownload={() => handleBulk('download')}
+        onClear={() => setSelectedIds(new Set())}
+        loading={bulkLoading}
+      />
     </div>
   );
 }
