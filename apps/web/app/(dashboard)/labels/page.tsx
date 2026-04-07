@@ -173,6 +173,7 @@ export default function LabelsPage() {
   }, {});
 
   return (
+    <>
     <div className={cn('animate-fade-in', selectedIds.size > 0 && 'pb-24')}>
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
@@ -359,14 +360,16 @@ export default function LabelsPage() {
         </div>
       )}
 
-      {/* Bulk action bar */}
-      <BulkActionBar
-        selectedCount={selectedIds.size}
-        onPrint={() => handleBulk('print')}
-        onDownload={() => handleBulk('download')}
-        onClear={() => setSelectedIds(new Set())}
-        loading={bulkLoading}
-      />
     </div>
+
+    {/* Bulk action bar — outside animate-fade-in to avoid transform breaking fixed positioning */}
+    <BulkActionBar
+      selectedCount={selectedIds.size}
+      onPrint={() => handleBulk('print')}
+      onDownload={() => handleBulk('download')}
+      onClear={() => setSelectedIds(new Set())}
+      loading={bulkLoading}
+    />
+    </>
   );
 }
