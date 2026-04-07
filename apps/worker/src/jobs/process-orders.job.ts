@@ -6,7 +6,8 @@ import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopi
 import { fulfillOrderWithTracking } from '../shopify/fulfillment';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
-import { createShipment } from '../dac/shipment';
+import { createShipment, mergeAddress } from '../dac/shipment';
+import { getDepartmentForCity } from '../dac/uruguay-geo';
 import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
 import { sendShipmentNotification } from '../notifier/email';
@@ -275,6 +276,8 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         slog.success('order-shipment', `DAC shipment created for ${order.name}`, { guia: result.guia });
 
         // c) Create or update label record in DB (upsert to handle retries of FAILED labels)
+        const { fullAddress: mergedAddr } = mergeAddress(addr.address1, addr.address2);
+        const resolvedDept = getDepartmentForCity(addr.city) ?? addr.province;
         const labelRecord = await db.label.upsert({
           where: {
             tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
@@ -286,9 +289,9 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             customerName,
             customerEmail: order.email,
             customerPhone: addr.phone,
-            deliveryAddress: addr.address1,
+            deliveryAddress: mergedAddr,
             city: addr.city,
-            department: addr.province,
+            department: resolvedDept,
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType,
             dacGuia: result.guia,
@@ -421,6 +424,8 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           ? 'Guia already assigned to another order'
           : errorMsg.substring(0, 500);
 
+        const { fullAddress: mergedAddrErr } = mergeAddress(addr.address1, addr.address2);
+        const resolvedDeptErr = getDepartmentForCity(addr.city) ?? addr.province;
         await db.label.upsert({
           where: {
             tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
@@ -431,9 +436,9 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             shopifyOrderName: order.name,
             customerName,
             customerEmail: order.email,
-            deliveryAddress: addr.address1,
+            deliveryAddress: mergedAddrErr,
             city: addr.city,
-            department: addr.province,
+            department: resolvedDeptErr,
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType: 'DESTINATARIO',
             status: 'FAILED',
