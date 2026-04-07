@@ -23,7 +23,7 @@ export function BulkActionBar({
   return (
     <div
       className={cn(
-        'fixed bottom-6 left-1/2 -translate-x-1/2 z-50',
+        'fixed bottom-20 left-1/2 -translate-x-1/2 z-[9999]',
         'flex items-center gap-3 px-5 py-3',
         'bg-zinc-900/95 backdrop-blur-xl border border-cyan-500/20 rounded-2xl shadow-2xl shadow-cyan-500/10',
         'animate-fade-in-up'
