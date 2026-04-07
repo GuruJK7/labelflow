@@ -183,35 +183,54 @@ function mergeAddress(address1: string, address2: string | undefined | null): { 
 
   if (!a2) return { fullAddress: a1, extraObs: '' };
 
-  // Patterns that indicate address2 is part of the delivery address (NOT observations)
-  const isDoorNumber = /^\d{1,6}$/.test(a2); // Just a number: "1234"
-  const isAptFloor = /^(apto?\.?\s*\d|piso\s*\d|depto?\.?\s*\d|esc\.?\s*\d|torre\s*\d|block\s*\d|bloque\s*\d|unidad\s*\d|puerta\s*\d|casa\s*\d|local\s*\d|of\.?\s*\d|oficina\s*\d)/i.test(a2);
-  const isShortAddressPart = /^\d{1,6}\s*[a-z]/i.test(a2); // "1234 bis", "502A"
-  const startsWithNumber = /^\d/.test(a2);
-  const isAddressContinuation = a2.length < 30 && (isDoorNumber || isAptFloor || isShortAddressPart || startsWithNumber);
+  // Detect apartment/floor/unit info — ALWAYS goes to Observaciones too
+  const aptPattern = /^(apto?\.?\s*\d|piso\s*\d|depto?\.?\s*\d|esc\.?\s*\d|torre\s*\d|block\s*\d|bloque\s*\d|unidad\s*\d|puerta\s*\d|casa\s*\d|local\s*\d|of\.?\s*\d|oficina\s*\d)/i;
+  const isAptFloor = aptPattern.test(a2);
+
+  // Detect "1502B" or "502 A" pattern — door+apt combined, needs separation
+  // Pattern: 3-4 digit number followed by letter (possibly with space)
+  const doorAptCombined = /^(\d{3,5})\s*([A-Za-z]\d{0,2})$/.exec(a2);
+
+  // Pure door number: "1234"
+  const isDoorNumber = /^\d{1,6}$/.test(a2);
+
+  // Direction references
+  const isDirectionRef = /^(esq|entre|frente|al lado|cerca|junto|casi|a metros|esquina)/i.test(a2);
 
   if (isDoorNumber) {
-    // Pure door number: append directly
+    // Pure door number: append directly, no observations needed
     return { fullAddress: `${a1} ${a2}`, extraObs: '' };
   }
 
-  if (isAptFloor || isShortAddressPart) {
-    // Apartment/floor info: append to address
-    return { fullAddress: `${a1} ${a2}`, extraObs: '' };
+  if (doorAptCombined) {
+    // "1502B" -> door "1502", apt "B" — separate them
+    const doorNum = doorAptCombined[1];
+    const aptPart = doorAptCombined[2];
+    const obsText = `Apto ${aptPart}`;
+    return { fullAddress: `${a1} ${doorNum} ${aptPart}`, extraObs: obsText };
   }
 
-  if (isAddressContinuation) {
-    // Starts with a number and is short — likely part of address
-    return { fullAddress: `${a1} ${a2}`, extraObs: '' };
+  if (isAptFloor) {
+    // "Apto 5B", "Piso 3" — append to address AND copy to observations
+    return { fullAddress: `${a1} ${a2}`, extraObs: a2 };
   }
-
-  // Otherwise: address2 is extra info, still include in address but also keep in obs
-  // This handles cases like "esquina Av. Italia" or "entre X y Y"
-  const lowerA2 = a2.toLowerCase();
-  const isDirectionRef = /^(esq|entre|frente|al lado|cerca|junto|casi|a metros|esquina)/i.test(a2);
 
   if (isDirectionRef) {
     return { fullAddress: `${a1} ${a2}`, extraObs: '' };
+  }
+
+  // Short number+text like "bis", "1234 bis" — likely part of address
+  const isShortAddressPart = /^\d{1,6}\s+(bis|esq)/i.test(a2);
+  if (isShortAddressPart) {
+    return { fullAddress: `${a1} ${a2}`, extraObs: '' };
+  }
+
+  // Short continuation starting with number
+  const startsWithNumber = /^\d/.test(a2);
+  if (a2.length < 30 && startsWithNumber) {
+    // Could contain apt info — check if there are letters after digits
+    const hasAptLetter = /\d+\s*[A-Za-z]/.test(a2);
+    return { fullAddress: `${a1} ${a2}`, extraObs: hasAptLetter ? `Apto/Puerta: ${a2}` : '' };
   }
 
   // Default: put in both fullAddress and observations for safety
@@ -618,14 +637,24 @@ export async function createShipment(
       slog.info(DAC_STEPS.STEP3_WAIT_CITIES, 'Waiting for cities to load after department change');
       await page.waitForTimeout(1500);
     } else {
-      slog.warn(DAC_STEPS.STEP3_SELECT_DEPT, `No department match in DAC dropdown for: ${resolvedDept}`);
+      // Log available options for debugging
+      const deptOptions = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_DEPARTMENT} option`,
+        (opts: any[]) => opts.filter(o => o.value && o.value !== '0').map((o: any) => o.textContent?.trim()).slice(0, 20));
+      slog.warn(DAC_STEPS.STEP3_SELECT_DEPT, `No department match in DAC dropdown for: ${resolvedDept}`, { availableOptions: deptOptions });
     }
   }
 
   // City (select) — using resolved city (may differ from Shopify if barrio was detected)
   if (resolvedCity) {
     slog.info(DAC_STEPS.STEP3_SELECT_CITY, `Selecting city: ${resolvedCity}`);
-    const cityMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, resolvedCity);
+    let cityMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, resolvedCity);
+
+    // If resolved city didn't match and it differs from Shopify city, try the original
+    if (!cityMatch && addr.city && normalize(addr.city) !== normalize(resolvedCity)) {
+      slog.info(DAC_STEPS.STEP3_SELECT_CITY, `Resolved city "${resolvedCity}" not in dropdown, trying original Shopify city "${addr.city}"`);
+      cityMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, addr.city);
+    }
+
     if (cityMatch) {
       await safeSelect(page, DAC_SELECTORS.RECIPIENT_CITY, cityMatch, slog, DAC_STEPS.STEP3_SELECT_CITY, 'K_Ciudad (city)');
       await page.waitForTimeout(800);
@@ -641,8 +670,10 @@ export async function createShipment(
           await page.waitForTimeout(800);
         }
       } else {
+        const cityOptions = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_CITY} option`,
+          (opts: any[]) => opts.filter(o => o.value && o.value !== '0').map((o: any) => o.textContent?.trim()).slice(0, 30));
         slog.warn(DAC_STEPS.STEP3_SELECT_CITY, `No city match for "${resolvedCity}" and no barrio detected — city field left empty`, {
-          city: resolvedCity, province: resolvedDept,
+          city: resolvedCity, province: resolvedDept, shopifyCity: addr.city, availableCities: cityOptions,
         });
       }
     }
@@ -661,12 +692,17 @@ export async function createShipment(
           await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, barrioMatch, slog, DAC_STEPS.STEP3_SELECT_BARRIO, `K_Barrio (${detectedBarrioName})`);
           slog.info(DAC_STEPS.STEP3_SELECT_BARRIO, `Barrio matched: "${detectedBarrioName}" (source: ${intelligent.source})`, { matchedValue: barrioMatch });
         } else {
-          // Detected a barrio name but couldn't find it in dropdown — select first option as safe fallback
-          slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO, `Barrio "${detectedBarrioName}" detected (${intelligent.source}) but not in dropdown, using first option`);
-          const firstBarrio = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
-            (opts: any[]) => { const v = opts.filter(o => o.value && o.value !== '0' && o.value !== ''); return v[0]?.value || null; });
-          if (firstBarrio) {
-            await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, firstBarrio, slog, DAC_STEPS.STEP3_SELECT_BARRIO, 'K_Barrio (first fallback)');
+          // Detected a barrio name but couldn't find it in dropdown — log available options for debugging
+          const barrioOptions = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
+            (opts: any[]) => opts.filter(o => o.value && o.value !== '0' && o.value !== '').map((o: any) => ({ value: o.value, text: o.textContent?.trim() })).slice(0, 30));
+          slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO, `Barrio "${detectedBarrioName}" detected (${intelligent.source}) but not in dropdown`, { availableBarrios: barrioOptions.map(b => b.text) });
+          // Try partial match with first word of detected barrio
+          const firstWord = normalize(detectedBarrioName).split(/\s+/)[0];
+          const partialMatch = barrioOptions.find(b => normalize(b.text).includes(firstWord) && firstWord.length > 3);
+          if (partialMatch) {
+            await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, partialMatch.value, slog, DAC_STEPS.STEP3_SELECT_BARRIO, `K_Barrio (partial match: ${partialMatch.text})`);
+          } else if (barrioOptions.length > 0) {
+            await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, barrioOptions[0].value, slog, DAC_STEPS.STEP3_SELECT_BARRIO, `K_Barrio (first fallback: ${barrioOptions[0].text})`);
           }
         }
       } else {
