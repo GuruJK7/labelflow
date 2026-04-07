@@ -240,6 +240,11 @@ export function mergeAddress(address1: string, address2: string | undefined | nu
 
   // Short text starting with number
   if (a2.length < 30 && /^\d/.test(a2)) {
+    const a1EndsWithNum = /\d+\s*$/.test(a1);
+    // If address1 already has a door number, the leading number in address2 is likely apartment info
+    if (a1EndsWithNum) {
+      return { fullAddress: `${a1} ${a2}`, extraObs: a2 };
+    }
     const hasAptLetter = /\d+\s*[A-Za-z]/.test(a2);
     return { fullAddress: `${a1} ${a2}`, extraObs: hasAptLetter ? `Apto/Puerta: ${a2}` : '' };
   }
