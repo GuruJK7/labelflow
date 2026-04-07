@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar, Printer } from 'lucide-react';
+import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar, Printer, FlaskConical, Play } from 'lucide-react';
 import { PrinterSetup } from '@/components/printing/PrinterSetup';
 
 interface ScheduleSlot {
@@ -139,6 +139,13 @@ export default function SettingsPage() {
   }
   const [saving, setSaving] = useState('');
   const [message, setMessage] = useState({ type: '', text: '', section: '' });
+
+  // Test DAC
+  const [testDacUser, setTestDacUser] = useState('');
+  const [testDacPass, setTestDacPass] = useState('');
+  const [testMaxOrders, setTestMaxOrders] = useState(3);
+  const [testRunning, setTestRunning] = useState(false);
+  const [testResult, setTestResult] = useState<{ type: string; text: string } | null>(null);
 
   useEffect(() => {
     fetch('/api/v1/settings')
@@ -575,6 +582,72 @@ export default function SettingsPage() {
             <code className="block bg-zinc-800 px-4 py-2.5 rounded-lg text-cyan-400 text-xs font-mono break-all">{settings.apiKey}</code>
           </div>
         )}
+
+        {/* Test DAC */}
+        <div className="bg-zinc-900/50 border border-amber-500/20 rounded-xl p-6">
+          <div className="flex items-center gap-2 mb-1">
+            <FlaskConical className="w-4 h-4 text-amber-400" />
+            <h2 className="text-sm font-semibold text-white">Test DAC</h2>
+          </div>
+          <p className="text-xs text-zinc-500 mb-4">
+            Toma los ultimos pedidos de Shopify y los carga en DAC con una cuenta de prueba.
+            No modifica nada en Shopify (no fulfills, no tags). Labels guardados con prefijo [TEST].
+          </p>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelClass}>Usuario DAC (test)</label>
+                <input value={testDacUser} onChange={(e) => setTestDacUser(e.target.value)} className={inputClass} placeholder="CI / usuario DAC" />
+              </div>
+              <div>
+                <label className={labelClass}>Password DAC (test)</label>
+                <input type="password" value={testDacPass} onChange={(e) => setTestDacPass(e.target.value)} className={inputClass} placeholder="Password" />
+              </div>
+            </div>
+            <div>
+              <label className={labelClass}>Cantidad de pedidos</label>
+              <input type="number" min={1} max={20} value={testMaxOrders} onChange={(e) => setTestMaxOrders(Math.min(20, Math.max(1, parseInt(e.target.value) || 1)))} className={`${inputClass} w-24`} />
+              <span className="text-xs text-zinc-600 ml-2">max 20</span>
+            </div>
+            <button
+              onClick={async () => {
+                if (!testDacUser || !testDacPass) {
+                  setTestResult({ type: 'error', text: 'Ingresa usuario y password DAC' });
+                  return;
+                }
+                setTestRunning(true);
+                setTestResult(null);
+                try {
+                  const res = await fetch('/api/v1/jobs/test-dac', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dacUsername: testDacUser, dacPassword: testDacPass, maxOrders: testMaxOrders }),
+                  });
+                  const data = await res.json();
+                  if (res.ok) {
+                    setTestResult({ type: 'success', text: `Job creado (${data.data?.jobId?.slice(-6)}). Revisa la seccion de etiquetas en unos minutos.` });
+                  } else {
+                    setTestResult({ type: 'error', text: data.error ?? 'Error al crear test job' });
+                  }
+                } catch {
+                  setTestResult({ type: 'error', text: 'Error de conexion' });
+                }
+                setTestRunning(false);
+              }}
+              disabled={testRunning}
+              className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white px-5 py-2.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+            >
+              {testRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+              Ejecutar test ({testMaxOrders} {testMaxOrders === 1 ? 'pedido' : 'pedidos'})
+            </button>
+            {testResult && (
+              <p className={`text-xs font-medium ${testResult.type === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
+                {testResult.type === 'success' && <CheckCircle className="w-3.5 h-3.5 inline mr-1" />}
+                {testResult.text}
+              </p>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
