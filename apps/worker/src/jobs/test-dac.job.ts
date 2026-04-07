@@ -166,6 +166,9 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
 
         slog.success('order-shipment', `[TEST] DAC shipment created: guia=${result.guia}`, { trackingUrl: result.trackingUrl });
 
+        // Check if guia already exists (from original processing) — use TEST- prefix to avoid unique constraint
+        const testGuia = result.guia ? `TEST-${result.guia}` : null;
+
         // Save label with [TEST] prefix
         const labelRecord = await db.label.upsert({
           where: {
@@ -183,12 +186,12 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
             department: resolvedDept,
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType,
-            dacGuia: result.guia,
+            dacGuia: testGuia,
             status: 'CREATED',
           },
           update: {
             jobId,
-            dacGuia: result.guia,
+            dacGuia: testGuia,
             deliveryAddress: mergedAddr,
             department: resolvedDept,
             status: 'CREATED',
