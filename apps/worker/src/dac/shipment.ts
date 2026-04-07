@@ -177,18 +177,30 @@ function detectCityIntelligent(
  * - If address2 is a completely different address, combine them
  * - Strip leading/trailing whitespace and normalize separators
  */
-function mergeAddress(address1: string, address2: string | undefined | null): { fullAddress: string; extraObs: string } {
+export function mergeAddress(address1: string, address2: string | undefined | null): { fullAddress: string; extraObs: string } {
   const a1 = (address1 ?? '').trim();
   const a2 = (address2 ?? '').trim();
 
   if (!a2) return { fullAddress: a1, extraObs: '' };
+
+  // DEDUP: if address2 is already at the end of address1, skip it
+  // e.g. address1="18 De Julio 705", address2="705" → don't append again
+  if (a1.endsWith(a2)) {
+    return { fullAddress: a1, extraObs: '' };
+  }
+
+  // Detect "puerta/apto" pattern in address1: "3274/801" means door 3274, apt 801
+  // If address1 already has this pattern, put the apt part in observations
+  const slashApt = /(\d+)\s*\/\s*(\d+)\s*$/.exec(a1);
+  if (slashApt && !a2) {
+    return { fullAddress: a1, extraObs: `Apto ${slashApt[2]}` };
+  }
 
   // Detect apartment/floor/unit info — ALWAYS goes to Observaciones too
   const aptPattern = /^(apto?\.?\s*\d|piso\s*\d|depto?\.?\s*\d|esc\.?\s*\d|torre\s*\d|block\s*\d|bloque\s*\d|unidad\s*\d|puerta\s*\d|casa\s*\d|local\s*\d|of\.?\s*\d|oficina\s*\d)/i;
   const isAptFloor = aptPattern.test(a2);
 
   // Detect "1502B" or "502 A" pattern — door+apt combined, needs separation
-  // Pattern: 3-4 digit number followed by letter (possibly with space)
   const doorAptCombined = /^(\d{3,5})\s*([A-Za-z]\d{0,2})$/.exec(a2);
 
   // Pure door number: "1234"
@@ -198,20 +210,22 @@ function mergeAddress(address1: string, address2: string | undefined | null): { 
   const isDirectionRef = /^(esq|entre|frente|al lado|cerca|junto|casi|a metros|esquina)/i.test(a2);
 
   if (isDoorNumber) {
-    // Pure door number: append directly, no observations needed
+    // Check if address1 already ends with a number — if so, address2 might be apt number
+    const a1EndsWithNum = /\d+\s*$/.test(a1);
+    if (a1EndsWithNum) {
+      // address1 already has a door number, address2 is likely apartment
+      return { fullAddress: `${a1} Apto ${a2}`, extraObs: `Apto ${a2}` };
+    }
     return { fullAddress: `${a1} ${a2}`, extraObs: '' };
   }
 
   if (doorAptCombined) {
-    // "1502B" -> door "1502", apt "B" — separate them
     const doorNum = doorAptCombined[1];
     const aptPart = doorAptCombined[2];
-    const obsText = `Apto ${aptPart}`;
-    return { fullAddress: `${a1} ${doorNum} ${aptPart}`, extraObs: obsText };
+    return { fullAddress: `${a1} ${doorNum} ${aptPart}`, extraObs: `Apto ${aptPart}` };
   }
 
   if (isAptFloor) {
-    // "Apto 5B", "Piso 3" — append to address AND copy to observations
     return { fullAddress: `${a1} ${a2}`, extraObs: a2 };
   }
 
@@ -219,16 +233,13 @@ function mergeAddress(address1: string, address2: string | undefined | null): { 
     return { fullAddress: `${a1} ${a2}`, extraObs: '' };
   }
 
-  // Short number+text like "bis", "1234 bis" — likely part of address
-  const isShortAddressPart = /^\d{1,6}\s+(bis|esq)/i.test(a2);
-  if (isShortAddressPart) {
+  // Short number+text like "bis"
+  if (/^\d{1,6}\s+(bis|esq)/i.test(a2)) {
     return { fullAddress: `${a1} ${a2}`, extraObs: '' };
   }
 
-  // Short continuation starting with number
-  const startsWithNumber = /^\d/.test(a2);
-  if (a2.length < 30 && startsWithNumber) {
-    // Could contain apt info — check if there are letters after digits
+  // Short text starting with number
+  if (a2.length < 30 && /^\d/.test(a2)) {
     const hasAptLetter = /\d+\s*[A-Za-z]/.test(a2);
     return { fullAddress: `${a1} ${a2}`, extraObs: hasAptLetter ? `Apto/Puerta: ${a2}` : '' };
   }
@@ -527,7 +538,14 @@ export async function createShipment(
 
   // BUG FIX 2+3 (ADDRESS): Merge address1 + address2 into single delivery address
   // This ensures door numbers, apt info, and "Centro" are in the address field, not observations
-  const { fullAddress, extraObs } = mergeAddress(addr.address1, addr.address2);
+  let { fullAddress, extraObs } = mergeAddress(addr.address1, addr.address2);
+
+  // Post-merge: detect slash pattern "3274/801" in final address → extract apt to observations
+  const slashMatch = /(\d+)\s*\/\s*(\d+)\s*$/.exec(fullAddress);
+  if (slashMatch && !extraObs) {
+    extraObs = `Apto ${slashMatch[2]}`;
+    slog.info(DAC_STEPS.STEP3_FILL_ADDRESS, `Detected slash apt pattern: "${slashMatch[0]}" → obs: "${extraObs}"`);
+  }
   slog.info(DAC_STEPS.STEP3_FILL_ADDRESS, `Merged address: "${fullAddress}"`, {
     address1: addr.address1, address2: addr.address2 ?? '', extraObs,
   });
