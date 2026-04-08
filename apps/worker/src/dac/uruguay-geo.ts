@@ -638,6 +638,36 @@ export function getDepartmentForCity(cityName: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Async version: tries local DB first, then falls back to Nominatim geocoding.
+ * Use this in the main processing pipeline. The sync version above is for tests.
+ *
+ * When Nominatim resolves a city, it gets added to the in-memory map
+ * so subsequent orders with the same city are instant.
+ */
+export async function getDepartmentForCityAsync(cityName: string): Promise<string | undefined> {
+  // Fast path: local DB
+  const local = getDepartmentForCity(cityName);
+  if (local) return local;
+
+  // Slow path: geocoding fallback
+  try {
+    const { geocodeCityToDepartment } = await import('./geocode-fallback');
+    const dept = await geocodeCityToDepartment(cityName);
+    if (dept) {
+      // Learn: add to in-memory map so we never geocode this city again in this run
+      const normalized = cityName.trim().toLowerCase().normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '').replace(/[.]/g, ' ').replace(/\s+/g, ' ').trim();
+      CITY_TO_DEPARTMENT[normalized] = dept;
+      return dept;
+    }
+  } catch {
+    // Geocoding is best-effort — never crash the pipeline
+  }
+
+  return undefined;
+}
+
 // ── ZIP Code → Barrio mapping (Montevideo) ──
 
 /**

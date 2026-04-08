@@ -7,7 +7,7 @@ import { dacBrowser } from './browser';
 import { DAC_STEPS } from './steps';
 import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
-import { getDepartmentForCity, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet } from './uruguay-geo';
+import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet } from './uruguay-geo';
 
 // ---- Helpers ----
 
@@ -606,7 +606,7 @@ export async function createShipment(
   );
 
   if (addr.city) {
-    const geoDept = getDepartmentForCity(addr.city);
+    const geoDept = await getDepartmentForCityAsync(addr.city);
     if (geoDept) {
       // City found in our geo DB — use the correct department
       if (normalize(geoDept) !== normalize(resolvedDept)) {

@@ -8,6 +8,7 @@ import logger from './logger';
 import { processAdUploadJob } from './ads/upload-job';
 import { processAdMonitorJob } from './ads/monitor-job';
 import { processRecoverMessage } from './recover/process-message';
+import { startReconciliationLoop } from './jobs/reconcile.job';
 
 const RECOVER_POLL_INTERVAL_MS = 10_000; // Check for recover jobs every 10 seconds
 
@@ -220,6 +221,9 @@ async function main(): Promise<void> {
 
   // Start cron scheduler (checks every minute, validates all 5 cron fields)
   startScheduler();
+
+  // Start reconciliation loop (auto-fixes FAILED labels every 30 min)
+  startReconciliationLoop();
 
   logger.info('LabelFlow Worker ready and polling for jobs');
 

@@ -7,7 +7,7 @@ import { fulfillOrderWithTracking } from '../shopify/fulfillment';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress } from '../dac/shipment';
-import { getDepartmentForCity } from '../dac/uruguay-geo';
+import { getDepartmentForCity, getDepartmentForCityAsync } from '../dac/uruguay-geo';
 import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
 import { sendShipmentNotification } from '../notifier/email';
@@ -289,7 +289,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
 
         // c) Create or update label record in DB (upsert to handle retries of FAILED labels)
         const { fullAddress: mergedAddr } = mergeAddress(addr.address1, addr.address2);
-        const resolvedDept = getDepartmentForCity(addr.city) ?? addr.province;
+        const resolvedDept = (await getDepartmentForCityAsync(addr.city)) ?? addr.province;
         const labelRecord = await db.label.upsert({
           where: {
             tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
@@ -437,7 +437,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           : errorMsg.substring(0, 500);
 
         const { fullAddress: mergedAddrErr } = mergeAddress(addr.address1, addr.address2);
-        const resolvedDeptErr = getDepartmentForCity(addr.city) ?? addr.province;
+        const resolvedDeptErr = (await getDepartmentForCityAsync(addr.city)) ?? addr.province;
         await db.label.upsert({
           where: {
             tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
