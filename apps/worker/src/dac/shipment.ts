@@ -16,6 +16,8 @@ function normalize(s: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -750,15 +752,17 @@ export async function createShipment(
           }
         }
       } else {
-        // No barrio detected by any strategy — select first option as last resort
-        slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO,
-          `No barrio detected by any strategy (zip=${addr.zip ?? 'none'}, city=${addr.city ?? 'none'}, source=${intelligent.source}) �� using first option`,
-          { zip: addr.zip, city: addr.city, address1: addr.address1, intelligentSource: intelligent.source }
-        );
-        const firstBarrio = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
-          (opts: any[]) => { const v = opts.filter(o => o.value && o.value !== '0' && o.value !== ''); return v[0]?.value || null; });
-        if (firstBarrio) {
-          await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, firstBarrio, slog, DAC_STEPS.STEP3_SELECT_BARRIO, 'K_Barrio (last resort first option)');
+        // No barrio detected — try city name as barrio (e.g. city="Aguada" IS a valid barrio)
+        const cityAsBarrio = addr.city ? await findBarrioMatch(page, DAC_SELECTORS.RECIPIENT_BARRIO, addr.city) : null;
+        if (cityAsBarrio) {
+          await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, cityAsBarrio, slog, DAC_STEPS.STEP3_SELECT_BARRIO, `K_Barrio (city-as-barrio: ${addr.city})`);
+          slog.info(DAC_STEPS.STEP3_SELECT_BARRIO, `Used city name "${addr.city}" as barrio match`);
+        } else {
+          // DO NOT select first option — it causes wrong barrio (e.g. "Aguada" for everything)
+          slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO,
+            `No barrio detected (zip=${addr.zip ?? 'none'}, city=${addr.city ?? 'none'}) — leaving barrio at default`,
+            { zip: addr.zip, city: addr.city, address1: addr.address1, intelligentSource: intelligent.source }
+          );
         }
       }
     }
@@ -864,81 +868,10 @@ export async function createShipment(
 
   await page.waitForTimeout(500);
 
-  // ===== CLICK "Agregar" (adds to cart) =====
-  slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Clicking Agregar button via JS evaluate');
-
-  const agregarResult = await page.evaluate(() => {
-    // Ensure fieldset visible
-    const fs = document.getElementById('cargaEnvios');
-    if (fs) { fs.classList.remove('d-none'); fs.style.display = 'block'; }
-
-    const btn = document.querySelector('.btnAdd') as HTMLButtonElement;
-    if (btn) { btn.click(); return 'clicked .btnAdd'; }
-
-    const buttons = Array.from(document.querySelectorAll('button'));
-    for (const b of buttons) {
-      if (b.textContent?.toLowerCase().includes('agregar')) { b.click(); return 'clicked Agregar by text'; }
-    }
-    return 'no button found';
-  });
-
-  slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, `Agregar click result: ${agregarResult}`);
-  if (agregarResult === 'no button found') {
-    throw new Error('Agregar button not found in DOM');
-  }
-
-  // Wait for response — DAC may show address validation modal or add to cart
-  await page.waitForTimeout(3000);
-
-  // Handle address validation modal (BUG B: "No ha seleccionado una direccion validada")
-  // If the modal appears, we dismiss it — the item was still added to cart
-  const modalDismissed = await page.evaluate(() => {
-    // Check for Swal/Bootstrap modal with "Revisar" or "Cambiar"
-    const modal = document.querySelector('.modal.show, .swal2-container, [class*="modal"]');
-    if (modal) {
-      // Click any close/dismiss button
-      const closeBtn = modal.querySelector('button[data-dismiss="modal"], .close, button:last-child, .swal2-close') as HTMLButtonElement;
-      if (closeBtn) { closeBtn.click(); return 'modal dismissed'; }
-      // Try clicking the X
-      const xBtn = modal.querySelector('.btn-close, [aria-label="Close"]') as HTMLButtonElement;
-      if (xBtn) { xBtn.click(); return 'modal X clicked'; }
-    }
-    return 'no modal';
-  });
-  slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, `Modal check: ${modalDismissed}`);
-
-  // Check if item was added to cart (look for price summary or "Finalizar envio")
-  await page.waitForTimeout(1000);
-  const hasCartItem = await page.evaluate(() => {
-    const body = document.body?.textContent ?? '';
-    return body.includes('Finalizar') || body.includes('Total') || body.includes('Subtotal');
-  });
-
-  if (!hasCartItem) {
-    // Second attempt: click Agregar again (modal may have blocked first click)
-    slog.warn(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Cart item not detected, retrying Agregar click');
-    await page.evaluate(() => {
-      const btn = document.querySelector('.btnAdd') as HTMLButtonElement;
-      if (btn) btn.click();
-    });
-    await page.waitForTimeout(3000);
-    // Dismiss modal again if needed
-    await page.evaluate(() => {
-      const closeBtn = document.querySelector('.modal.show .close, .modal.show button, .swal2-close') as HTMLButtonElement;
-      if (closeBtn) closeBtn.click();
-    });
-    await page.waitForTimeout(1000);
-  }
-
-  slog.info(DAC_STEPS.STEP4_OK, 'Item added to cart');
-
-  // ===== FILL OBSERVACIONES (extra obs from address merge + order notes) =====
-  // NOTE: address2 is now merged into fullAddress (DirD field) via mergeAddress().
-  // Only extraObs (non-address info) goes here to avoid duplication.
+  // ===== FILL OBSERVACIONES BEFORE Agregar (must be set before submission) =====
   const observations: string[] = [];
   if (extraObs) observations.push(extraObs);
   if (order.note) {
-    // Filter out LabelFlow metadata notes (e.g. "LabelFlow-GUIA: 882277947687 | 2026-04-06T18:45:52.353Z")
     const cleanNote = order.note
       .split('\n')
       .filter(line => !line.includes('LabelFlow-GUIA:') && !line.includes('LabelFlow ERROR:'))
@@ -955,7 +888,6 @@ export async function createShipment(
   if (observations.length > 0) {
     const obsText = observations.join(' | ');
     const obsFilled = await page.evaluate((text: string) => {
-      // Try multiple selectors for the Observaciones textarea
       const selectors = [
         'textarea[name="Observaciones"]',
         'textarea[name="observaciones"]',
@@ -975,11 +907,72 @@ export async function createShipment(
     }, obsText);
 
     if (obsFilled) {
-      slog.info(DAC_STEPS.STEP4_OK, `Observaciones filled: "${obsText.substring(0, 80)}"`, { selector: obsFilled });
+      slog.info(DAC_STEPS.STEP4_OK, `Observaciones filled BEFORE Agregar: "${obsText.substring(0, 80)}"`, { selector: obsFilled });
     } else {
       slog.warn(DAC_STEPS.STEP4_OK, `Could not fill Observaciones field (text: "${obsText.substring(0, 50)}")`);
     }
   }
+
+  // ===== CLICK "Agregar" (adds to cart) =====
+  slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Clicking Agregar button via JS evaluate');
+
+  const agregarResult = await page.evaluate(() => {
+    const fs = document.getElementById('cargaEnvios');
+    if (fs) { fs.classList.remove('d-none'); fs.style.display = 'block'; }
+
+    const btn = document.querySelector('.btnAdd') as HTMLButtonElement;
+    if (btn) { btn.click(); return 'clicked .btnAdd'; }
+
+    const buttons = Array.from(document.querySelectorAll('button'));
+    for (const b of buttons) {
+      if (b.textContent?.toLowerCase().includes('agregar')) { b.click(); return 'clicked Agregar by text'; }
+    }
+    return 'no button found';
+  });
+
+  slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, `Agregar click result: ${agregarResult}`);
+  if (agregarResult === 'no button found') {
+    throw new Error('Agregar button not found in DOM');
+  }
+
+  // Wait for response
+  await page.waitForTimeout(3000);
+
+  // Handle address validation modal
+  const modalDismissed = await page.evaluate(() => {
+    const modal = document.querySelector('.modal.show, .swal2-container, [class*="modal"]');
+    if (modal) {
+      const closeBtn = modal.querySelector('button[data-dismiss="modal"], .close, button:last-child, .swal2-close') as HTMLButtonElement;
+      if (closeBtn) { closeBtn.click(); return 'modal dismissed'; }
+      const xBtn = modal.querySelector('.btn-close, [aria-label="Close"]') as HTMLButtonElement;
+      if (xBtn) { xBtn.click(); return 'modal X clicked'; }
+    }
+    return 'no modal';
+  });
+  slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, `Modal check: ${modalDismissed}`);
+
+  // Check if item was added to cart
+  await page.waitForTimeout(1000);
+  const hasCartItem = await page.evaluate(() => {
+    const body = document.body?.textContent ?? '';
+    return body.includes('Finalizar') || body.includes('Total') || body.includes('Subtotal');
+  });
+
+  if (!hasCartItem) {
+    slog.warn(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Cart item not detected, retrying Agregar click');
+    await page.evaluate(() => {
+      const btn = document.querySelector('.btnAdd') as HTMLButtonElement;
+      if (btn) btn.click();
+    });
+    await page.waitForTimeout(3000);
+    await page.evaluate(() => {
+      const closeBtn = document.querySelector('.modal.show .close, .modal.show button, .swal2-close') as HTMLButtonElement;
+      if (closeBtn) closeBtn.click();
+    });
+    await page.waitForTimeout(1000);
+  }
+
+  slog.info(DAC_STEPS.STEP4_OK, 'Item added to cart');
 
   // ===== CLICK "Finalizar envio" (BUG C: separate button after Agregar) =====
   slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, 'Looking for Finalizar envio button');
@@ -1012,134 +1005,174 @@ export async function createShipment(
 
   await dacBrowser.screenshot(page, `after-finalizar-${order.name.replace('#', '')}`);
 
-  // ===== EXTRACT GUIA =====
-  slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Extracting guia number');
+  // ===== EXTRACT GUIA (with built-in retry — NEVER re-submit the form) =====
+  const guiaResult = await extractGuiaWithRetry(page, slog, order.name, usedGuias);
 
+  return { guia: guiaResult.guia, trackingUrl: guiaResult.trackingUrl, screenshotPath: '' };
+}
+
+/**
+ * Extract guia numbers AND their href links from <a> elements on the page.
+ * Returns array of { guia, href } objects.
+ */
+async function extractGuiasWithLinks(pg: Page): Promise<{ guia: string; href: string | null }[]> {
   const GUIA_REGEX = /\b88\d{10,}\b/;
+  return pg.evaluate((regexStr: string) => {
+    const regex = new RegExp(regexStr);
+    const results: { guia: string; href: string | null }[] = [];
+    const seen = new Set<string>();
+
+    // First: extract from <a> elements (these have the real tracking URLs)
+    const links = Array.from(document.querySelectorAll('a'));
+    for (const a of links) {
+      const text = a.textContent?.trim() ?? '';
+      if (regex.test(text)) {
+        const g = text.match(new RegExp(regexStr))?.[0];
+        if (g && !seen.has(g)) {
+          seen.add(g);
+          results.push({ guia: g, href: a.href || null });
+        }
+      }
+    }
+
+    // Second: extract from full page text (catches guias not in links)
+    const allMatches = (document.body?.textContent ?? '').match(new RegExp(regexStr, 'g')) ?? [];
+    for (const g of allMatches) {
+      if (!seen.has(g)) {
+        seen.add(g);
+        results.push({ guia: g, href: null });
+      }
+    }
+
+    return results;
+  }, GUIA_REGEX.source);
+}
+
+/**
+ * Pick the HIGHEST numbered guia from results (highest = most recently created).
+ * This is more reliable than picking "last in DOM" which depends on page ordering.
+ */
+function pickHighestGuia(results: { guia: string; href: string | null }[]): { guia: string; href: string | null } {
+  return results.reduce((best, curr) => {
+    if (!best) return curr;
+    return BigInt(curr.guia) > BigInt(best.guia) ? curr : best;
+  }, results[0]);
+}
+
+/**
+ * Extracts guia with retry logic. ONLY retries the guia extraction navigation,
+ * NEVER re-submits the DAC form (the shipment is already created at this point).
+ */
+async function extractGuiaWithRetry(
+  page: Page,
+  slog: StepLogger,
+  orderName: string,
+  usedGuias?: Set<string>,
+  maxAttempts: number = 3,
+): Promise<{ guia: string; trackingUrl?: string }> {
   const excludeGuias = usedGuias ? Array.from(usedGuias) : [];
-  let guia: string = '';
+  let guia = '';
   let trackingUrl: string | undefined;
 
-  /**
-   * Extract guia numbers AND their href links from <a> elements on the page.
-   * Returns array of { guia, href } objects.
-   */
-  async function extractGuiasWithLinks(pg: Page): Promise<{ guia: string; href: string | null }[]> {
-    return pg.evaluate((regexStr: string) => {
-      const regex = new RegExp(regexStr);
-      const results: { guia: string; href: string | null }[] = [];
-      const seen = new Set<string>();
+  slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Extracting guia number');
 
-      // First: extract from <a> elements (these have the real tracking URLs)
-      const links = Array.from(document.querySelectorAll('a'));
-      for (const a of links) {
-        const text = a.textContent?.trim() ?? '';
-        if (regex.test(text)) {
-          const g = text.match(new RegExp(regexStr))?.[0];
-          if (g && !seen.has(g)) {
-            seen.add(g);
-            results.push({ guia: g, href: a.href || null });
-          }
-        }
-      }
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (attempt > 1) {
+      slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Guia extraction retry ${attempt}/${maxAttempts} (NOT re-submitting form)`);
+      await page.waitForTimeout(2000);
+    }
 
-      // Second: extract from full page text (catches guias not in links)
-      const allMatches = (document.body?.textContent ?? '').match(new RegExp(regexStr, 'g')) ?? [];
-      for (const g of allMatches) {
-        if (!seen.has(g)) {
-          seen.add(g);
-          results.push({ guia: g, href: null });
-        }
-      }
+    const currentUrl = page.url();
 
-      return results;
-    }, GUIA_REGEX.source);
-  }
+    // Method 0: Extract guia from confirmation page URL (/envios/guiacreada/XXXXX)
+    if (currentUrl.includes('guiacreada')) {
+      await page.waitForTimeout(2000);
+      const pagePreview = await page.evaluate(() => document.body?.textContent?.substring(0, 500) ?? '');
+      slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Confirmation page content preview: "${pagePreview.substring(0, 200)}"`);
+    }
 
-  // Method 0: Try to extract guia from confirmation page URL
-  // DAC redirects to /envios/guiacreada/XXXXX — page content should have the 88... guia
-  if (currentUrl.includes('guiacreada')) {
-    // Wait extra for confirmation page content to fully render
-    await page.waitForTimeout(2000);
-    // Log page text for debugging
-    const pagePreview = await page.evaluate(() => document.body?.textContent?.substring(0, 500) ?? '');
-    slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Confirmation page content preview: "${pagePreview.substring(0, 200)}"`);
-  }
+    // Method 1: Search CURRENT page for guia + href, excluding already-assigned ones
+    let pageResults = await extractGuiasWithLinks(page);
+    let newResults = pageResults.filter(r => !excludeGuias.includes(r.guia));
 
-  // Method 1: Search CURRENT page for guia + href, excluding already-assigned ones
-  let pageResults = await extractGuiasWithLinks(page);
-  let newResults = pageResults.filter(r => !excludeGuias.includes(r.guia));
-
-  // Log what was found vs excluded for debugging
-  if (pageResults.length > 0) {
-    slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Current page: ${pageResults.length} guias found, ${pageResults.length - newResults.length} excluded (already in DB)`, {
-      found: pageResults.map(r => r.guia),
-      excluded: pageResults.filter(r => excludeGuias.includes(r.guia)).map(r => r.guia),
-      new: newResults.map(r => r.guia),
-    });
-  }
-
-  if (newResults.length > 0) {
-    const picked = newResults[newResults.length - 1]; // Last = most recently created
-    guia = picked.guia;
-    trackingUrl = picked.href || undefined;
-    slog.success(DAC_STEPS.SUBMIT_OK, `Guia found on current page: ${guia}`, {
-      guia, trackingUrl: trackingUrl ?? 'none', orderName: order.name, url: currentUrl,
-      totalOnPage: pageResults.length, excluded: excludeGuias.length,
-    });
-  }
-
-  // Method 2: If not found, navigate to historial and find the NEW guia + href
-  if (!guia) {
-    slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Guia not on current page — checking mis envios');
-    await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'domcontentloaded', timeout: 15_000 });
-    await page.waitForTimeout(3000);
-
-    pageResults = await extractGuiasWithLinks(page);
-    newResults = pageResults.filter(r => !excludeGuias.includes(r.guia));
+    if (pageResults.length > 0) {
+      slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Current page: ${pageResults.length} guias found, ${pageResults.length - newResults.length} excluded (already in DB)`, {
+        found: pageResults.map(r => r.guia),
+        excluded: pageResults.filter(r => excludeGuias.includes(r.guia)).map(r => r.guia),
+        new: newResults.map(r => r.guia),
+      });
+    }
 
     if (newResults.length > 0) {
-      const picked = newResults[newResults.length - 1]; // LAST = most recent (historial is chronological, oldest first)
+      const picked = pickHighestGuia(newResults);
       guia = picked.guia;
       trackingUrl = picked.href || undefined;
-      slog.success(DAC_STEPS.SUBMIT_OK, `Guia found in historial: ${guia}`, {
-        guia, trackingUrl: trackingUrl ?? 'none', orderName: order.name,
+      slog.success(DAC_STEPS.SUBMIT_OK, `Guia found on current page: ${guia}`, {
+        guia, trackingUrl: trackingUrl ?? 'none', orderName, url: currentUrl,
         totalOnPage: pageResults.length, excluded: excludeGuias.length,
-        newGuiasAvailable: newResults.length,
       });
-    } else if (pageResults.length > 0) {
-      slog.error(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `All ${pageResults.length} guias on historial are already assigned to other orders in this batch`, {
-        orderName: order.name, excludedGuias: excludeGuias,
-      });
+      break;
+    }
+
+    // Method 2: Navigate to historial and find the NEW guia
+    try {
+      slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Guia not on current page — checking mis envios');
+      await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'domcontentloaded', timeout: 15_000 });
+      await page.waitForTimeout(3000);
+
+      pageResults = await extractGuiasWithLinks(page);
+      newResults = pageResults.filter(r => !excludeGuias.includes(r.guia));
+
+      if (newResults.length > 0) {
+        const picked = pickHighestGuia(newResults);
+        guia = picked.guia;
+        trackingUrl = picked.href || undefined;
+        slog.success(DAC_STEPS.SUBMIT_OK, `Guia found in historial: ${guia}`, {
+          guia, trackingUrl: trackingUrl ?? 'none', orderName,
+          totalOnPage: pageResults.length, excluded: excludeGuias.length,
+          newGuiasAvailable: newResults.length,
+        });
+        break;
+      } else if (pageResults.length > 0) {
+        slog.warn(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Attempt ${attempt}: All ${pageResults.length} guias on historial already assigned`, {
+          orderName,
+        });
+      }
+    } catch (navErr) {
+      slog.warn(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Attempt ${attempt}: Navigation to historial failed: ${(navErr as Error).message}`);
     }
   }
 
   // Method 3: If we have guia but no trackingUrl, try to find the link in historial
   if (guia && !trackingUrl && !guia.startsWith('PENDING-')) {
     slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Have guia ${guia} but no tracking URL, checking historial for link`);
-    if (!page.url().includes('/envios')) {
-      await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'domcontentloaded', timeout: 15_000 });
-      await page.waitForTimeout(3000);
-    }
-    const linkHref = await page.evaluate((g: string) => {
-      const links = Array.from(document.querySelectorAll('a'));
-      for (const a of links) {
-        if (a.textContent?.trim().includes(g)) return a.href || null;
+    try {
+      if (!page.url().includes('/envios')) {
+        await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'domcontentloaded', timeout: 15_000 });
+        await page.waitForTimeout(3000);
       }
-      return null;
-    }, guia);
-    if (linkHref) {
-      trackingUrl = linkHref;
-      slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Found tracking URL for guia in historial`, { guia, trackingUrl });
+      const linkHref = await page.evaluate((g: string) => {
+        const links = Array.from(document.querySelectorAll('a'));
+        for (const a of links) {
+          if (a.textContent?.trim().includes(g)) return a.href || null;
+        }
+        return null;
+      }, guia);
+      if (linkHref) {
+        trackingUrl = linkHref;
+        slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Found tracking URL for guia in historial`, { guia, trackingUrl });
+      }
+    } catch {
+      slog.warn(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Could not navigate to historial for tracking URL');
     }
   }
 
-  // Method 4: Still no guia — use PENDING as last resort
+  // Last resort: PENDING
   if (!guia) {
     guia = `PENDING-${Date.now()}`;
-    slog.warn(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Could not extract guia from any page', { orderName: order.name, url: page.url() });
-    await dacBrowser.screenshot(page, `no-guia-found-${order.name.replace('#', '')}`);
+    slog.warn(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Could not extract guia after ${maxAttempts} attempts`, { orderName, url: page.url() });
+    await dacBrowser.screenshot(page, `no-guia-found-${orderName.replace('#', '')}`);
   }
 
-  return { guia, trackingUrl, screenshotPath: '' };
+  return { guia, trackingUrl };
 }

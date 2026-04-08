@@ -260,13 +260,9 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         const paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
         slog.info('order-payment', `Payment type: ${paymentType}`, { orderName: order.name });
 
-        // b) Create shipment in DAC (with retry)
-        const result = await withRetry(
-          () => createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId, usedGuias),
-          MAX_RETRIES_PER_ORDER,
-          `DAC shipment for ${order.name}`,
-          slog
-        );
+        // b) Create shipment in DAC (NO full-form retry — guia extraction retries internally)
+        // Re-submitting the entire form on error creates DUPLICATE shipments in DAC
+        const result = await createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId, usedGuias);
 
         // Track this guia so it won't be assigned to another order in this batch
         if (result.guia && !result.guia.startsWith('PENDING-')) {
@@ -363,15 +359,17 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           slog.info('order-fulfill', `Fulfill DISABLED: Order ${order.name} NOT marked as Prepared (guia: ${result.guia})`);
         }
 
-        // f) Mark order as processed in Shopify — tag + note (skip in testMode)
-        if (!testMode) {
+        // f) Mark order as processed in Shopify — tag + note (skip in testMode, skip if PENDING guia)
+        if (!testMode && result.guia && !result.guia.startsWith('PENDING-')) {
           try {
             await markOrderProcessed(shopifyClient, order.id, result.guia);
             slog.info('order-shopify', `Order ${order.name} tagged in Shopify`);
           } catch (tagErr) {
             slog.warn('order-shopify', `Shopify tagging failed (non-fatal): ${(tagErr as Error).message}`);
           }
-        } else {
+        } else if (result.guia?.startsWith('PENDING-')) {
+          slog.warn('order-shopify', `PENDING guia — NOT tagging ${order.name} in Shopify to avoid marking incomplete orders`);
+        } else if (testMode) {
           slog.info('order-shopify', `TEST MODE: Skipping Shopify tag for ${order.name}`);
         }
 

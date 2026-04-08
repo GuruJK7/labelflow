@@ -542,7 +542,10 @@ export function getDepartmentForCity(cityName: string): string | undefined {
     .trim()
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.]/g, ' ')      // "La.paz" → "La paz"
+    .replace(/\s+/g, ' ')      // collapse multiple spaces
+    .trim();
   return CITY_TO_DEPARTMENT[normalized];
 }
 
@@ -562,7 +565,7 @@ export const MONTEVIDEO_ZIP_TO_BARRIOS: Record<string, string[]> = {
   '11500': ['pocitos', 'punta carretas', 'parque batlle'],
   '11600': ['buceo', 'malvin', 'malvin norte'],
   '11700': ['union', 'maronas', 'flor de maronas', 'las canteras'],
-  '11800': ['punta gorda', 'carrasco', 'carrasco norte'],
+  '11800': ['carrasco', 'carrasco norte', 'punta gorda'],
   '11900': ['cerro', 'la teja', 'paso de la arena', 'casabo'],
   '12000': ['colon', 'lezica', 'sayago'],
   '12100': ['prado', 'capurro', 'belvedere', 'nuevo paris'],
@@ -621,6 +624,7 @@ export const MONTEVIDEO_STREET_TO_BARRIOS: Record<string, string[]> = {
   'av rivera': ['pocitos', 'buceo', 'parque batlle'],
   'avenida rivera': ['pocitos', 'buceo', 'parque batlle'],
   'camino maldonado': ['union', 'maronas', 'manga'],
+  'millan': ['la blanqueada', 'reducto', 'prado', 'la teja'],
   'av millan': ['reducto', 'prado', 'la teja'],
   'avenida millan': ['reducto', 'prado', 'la teja'],
   'general flores': ['goes', 'sayago', 'colon', 'belvedere'],
@@ -643,12 +647,18 @@ export const MONTEVIDEO_STREET_TO_BARRIOS: Record<string, string[]> = {
   'av libertador': ['tres cruces', 'parque batlle'],
   'av gianattasio': ['carrasco', 'carrasco norte'],
   'av instrucciones': ['prado', 'aires puros', 'sayago'],
+  'colorado': ['goes', 'la comercial', 'la figurita'],
+  'gestido': ['pocitos', 'punta carretas'],
+  'fernandez crespo': ['goes', 'la blanqueada', 'reducto'],
+  'cubo del norte': ['aguada', 'reducto'],
+  'av san martin': ['goes', 'union'],
+  'avenida san martin': ['goes', 'union'],
 };
 
 // ── Helper functions ──
 
 function normalizeGeo(s: string): string {
-  return s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
