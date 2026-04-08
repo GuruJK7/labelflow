@@ -32,6 +32,7 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'colonia palma': 'Artigas',
   'cerro signorelli': 'Artigas',
   'paso farias': 'Artigas',
+  'sur': 'Artigas',
 
   // ─────────────────────────────────────────────
   // CANELONES (capital: Canelones)
@@ -60,6 +61,11 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'los cerrillos': 'Canelones',
   'montes': 'Canelones',
   'atlantida': 'Canelones',
+  'atlantida norte': 'Canelones',
+  'atlantida canelones': 'Canelones',
+  'shangrila': 'Canelones',
+  'shangri-la': 'Canelones',
+  'canada chica': 'Canelones',
   'parque del plata': 'Canelones',
   'salinas': 'Canelones',
   'marindia': 'Canelones',
@@ -75,7 +81,6 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'suarez': 'Canelones',
   'villa aeroparque': 'Canelones',
   'solymar': 'Canelones',
-  'shangri-la': 'Canelones',
   'lagomar': 'Canelones',
   'el pinar': 'Canelones',
   'lomas de solymar': 'Canelones',
@@ -159,6 +164,7 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'baygorria': 'Durazno',
   'pueblo de alvarez': 'Durazno',
   'feliciano': 'Durazno',
+  'las violetas': 'Durazno',
 
   // ─────────────────────────────────────────────
   // FLORES (capital: Trinidad)
@@ -239,6 +245,7 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'playa verde': 'Maldonado',
   'pueblo garzon': 'Maldonado',
   'playa hermosa': 'Maldonado',
+  'barrio elisa': 'Maldonado',
 
   // ─────────────────────────────────────────────
   // MONTEVIDEO (capital: Montevideo)
@@ -293,6 +300,25 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'lezica': 'Montevideo',
   'melilla': 'Montevideo',
   'villa garcia': 'Montevideo',
+  'bella vista': 'Montevideo',
+  'larranaga': 'Montevideo',
+  'flor de maronas': 'Montevideo',
+  'ituzaingo': 'Montevideo',
+  'punta carreta': 'Montevideo',
+  'parque carrasco': 'Montevideo',
+  'carrasco norte': 'Montevideo',
+  'carrasco sur': 'Montevideo',
+  'la figurita': 'Montevideo',
+  'barrio sur': 'Montevideo',
+  'las canteras': 'Montevideo',
+  'tres ombues': 'Montevideo',
+  'villa munoz': 'Montevideo',
+  'aires puros': 'Montevideo',
+  'cerrito': 'Montevideo',
+  'mercado modelo': 'Montevideo',
+  'pocitos nuevo': 'Montevideo',
+  'punta de rieles': 'Montevideo',
+  'paso de las duranas': 'Montevideo',
 
   // ─────────────────────────────────────────────
   // PAYSANDU (capital: Paysandu)
@@ -402,6 +428,8 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'laureles salto': 'Salto',
   'paso del parque': 'Salto',
   'dayman': 'Salto',
+  'gautron': 'Salto',
+  'sato': 'Salto',
 
   // ─────────────────────────────────────────────
   // SAN JOSE (capital: San Jose de Mayo)
@@ -422,6 +450,7 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'playa pascual': 'San Jose',
   'pueblo nuevo san jose': 'San Jose',
   'canada grande': 'San Jose',
+  'picada de las tunas': 'San Jose',
   'ituzaingo san jose': 'San Jose',
   'la boyada': 'San Jose',
   'villa maria san jose': 'San Jose',
@@ -448,6 +477,7 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'chacras de dolores': 'Soriano',
   'sacachispas': 'Soriano',
   'colonia concordia': 'Soriano',
+  'jardines del hum': 'Soriano',
 
   // ─────────────────────────────────────────────
   // TACUAREMBO (capital: Tacuarembo)
@@ -538,7 +568,7 @@ export function getCitiesByDepartment(department: string): string[] {
  * Normalizes input: trims, lowercases, strips accents.
  */
 export function getDepartmentForCity(cityName: string): string | undefined {
-  const normalized = cityName
+  let normalized = cityName
     .trim()
     .toLowerCase()
     .normalize('NFD')
@@ -546,7 +576,66 @@ export function getDepartmentForCity(cityName: string): string | undefined {
     .replace(/[.]/g, ' ')      // "La.paz" → "La paz"
     .replace(/\s+/g, ' ')      // collapse multiple spaces
     .trim();
-  return CITY_TO_DEPARTMENT[normalized];
+
+  // Direct match
+  if (CITY_TO_DEPARTMENT[normalized]) return CITY_TO_DEPARTMENT[normalized];
+
+  // Strip country suffix: "montevideo- URUGUAY" → "montevideo"
+  normalized = normalized.replace(/[-,]\s*uruguay$/i, '').trim();
+  if (CITY_TO_DEPARTMENT[normalized]) return CITY_TO_DEPARTMENT[normalized];
+
+  // Handle pipe separator: "2|montevideo" → try parts after pipe
+  if (normalized.includes('|')) {
+    const parts = normalized.split('|').map(p => p.trim());
+    for (const part of parts) {
+      if (CITY_TO_DEPARTMENT[part]) return CITY_TO_DEPARTMENT[part];
+    }
+  }
+
+  // Handle slash separator: "centro/Rivera" → try each part
+  if (normalized.includes('/')) {
+    const parts = normalized.split('/').map(p => p.trim());
+    for (const part of parts) {
+      if (CITY_TO_DEPARTMENT[part]) return CITY_TO_DEPARTMENT[part];
+    }
+  }
+
+  // Handle comma separator: "Barrio Espanol, Atlantida Norte" → try after comma, then before
+  if (normalized.includes(',')) {
+    const parts = normalized.split(',').map(p => p.trim());
+    // Try each part (after comma often more specific)
+    for (const part of [...parts].reverse()) {
+      if (CITY_TO_DEPARTMENT[part]) return CITY_TO_DEPARTMENT[part];
+    }
+  }
+
+  // Handle compound city: "Ciudad de la Costa solymar" → try progressive substrings
+  const words = normalized.split(' ');
+  if (words.length > 2) {
+    // Try removing last word progressively
+    for (let len = words.length - 1; len >= 2; len--) {
+      const sub = words.slice(0, len).join(' ');
+      if (CITY_TO_DEPARTMENT[sub]) return CITY_TO_DEPARTMENT[sub];
+    }
+    // Try last N words
+    for (let start = 1; start < words.length - 1; start++) {
+      const sub = words.slice(start).join(' ');
+      if (CITY_TO_DEPARTMENT[sub]) return CITY_TO_DEPARTMENT[sub];
+    }
+  }
+
+  // Handle "carrasco sur jardines de carrasco" → try first two words
+  if (words.length >= 2) {
+    const twoWords = words.slice(0, 2).join(' ');
+    if (CITY_TO_DEPARTMENT[twoWords]) return CITY_TO_DEPARTMENT[twoWords];
+  }
+
+  // Single word fallback (first word)
+  if (words.length > 1 && CITY_TO_DEPARTMENT[words[0]]) {
+    return CITY_TO_DEPARTMENT[words[0]];
+  }
+
+  return undefined;
 }
 
 // ── ZIP Code → Barrio mapping (Montevideo) ──
@@ -572,7 +661,7 @@ export const MONTEVIDEO_ZIP_TO_BARRIOS: Record<string, string[]> = {
   '12200': ['aires puros', 'casavalle', 'piedras blancas'],
   '12300': ['manga', 'punta de rieles', 'villa garcia'],
   '12400': ['atahualpa', 'mercado modelo', 'villa dolores'],
-  '12500': ['aguada'],
+  '12500': ['capurro', 'belvedere', 'aguada'],
   '12600': ['pocitos nuevo', 'villa española'],
   '12700': ['tres ombues', 'villa muñoz'],
   '12800': ['cerrito'],

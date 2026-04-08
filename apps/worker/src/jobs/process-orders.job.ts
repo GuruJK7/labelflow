@@ -260,13 +260,29 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         const paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
         slog.info('order-payment', `Payment type: ${paymentType}`, { orderName: order.name });
 
-        // b) Create shipment in DAC (NO full-form retry — guia extraction retries internally)
-        // Re-submitting the entire form on error creates DUPLICATE shipments in DAC
-        const result = await createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId, usedGuias);
+        // b) Check if this order already has a REAL guia from a previous failed attempt
+        //    This prevents creating DUPLICATE DAC shipments when the DB write failed before
+        const existingLabel = await db.label.findUnique({
+          where: { tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) } },
+          select: { dacGuia: true, status: true },
+        });
+        let result: { guia: string; trackingUrl?: string; screenshotPath?: string };
 
-        // Track this guia so it won't be assigned to another order in this batch
-        if (result.guia && !result.guia.startsWith('PENDING-')) {
+        if (existingLabel?.dacGuia && !existingLabel.dacGuia.startsWith('PENDING-') && existingLabel.status === 'FAILED') {
+          // This order already has a real DAC guia from a previous run that failed downstream.
+          // A human would NOT re-submit the DAC form — they would continue from where it failed.
+          slog.warn('order-shipment', `Order ${order.name} already has guia ${existingLabel.dacGuia} from a failed run — skipping DAC form, reusing guia`);
+          result = { guia: existingLabel.dacGuia };
           usedGuias.add(result.guia);
+        } else {
+          // Create shipment in DAC (NO full-form retry — guia extraction retries internally)
+          // Re-submitting the entire form on error creates DUPLICATE shipments in DAC
+          result = await createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId, usedGuias);
+
+          // Track this guia so it won't be assigned to another order in this batch
+          if (result.guia && !result.guia.startsWith('PENDING-')) {
+            usedGuias.add(result.guia);
+          }
         }
 
         slog.success('order-shipment', `DAC shipment created for ${order.name}`, { guia: result.guia });
@@ -324,11 +340,9 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             slog.warn('order-pdf', `PDF download failed (non-fatal): ${(downloadErr as Error).message}`, { guia: result.guia });
           }
         } else {
-          slog.warn('order-pdf', 'Guia is pending, skipping PDF download', { guia: result.guia });
-          await db.label.update({
-            where: { id: labelRecord.id },
-            data: { status: 'COMPLETED' },
-          });
+          slog.warn('order-pdf', 'Guia is pending, skipping PDF download — label stays as CREATED (not COMPLETED)', { guia: result.guia });
+          // DO NOT mark as COMPLETED — a PENDING guia is not a finished job.
+          // Keeping status as CREATED allows future reconciliation or manual review.
         }
 
         // e) Fulfill order in Shopify with DAC tracking + notify customer

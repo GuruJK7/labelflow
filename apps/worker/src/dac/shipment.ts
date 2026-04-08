@@ -27,7 +27,7 @@ function normalize(s: string): string {
  * "Pta Carretas", "Punta carretas" etc. to the right dropdown option.
  */
 const MONTEVIDEO_BARRIO_ALIASES: Record<string, string[]> = {
-  'aguada': ['aguada'],
+  'aguada': ['aguada', 'la aguada montevideo'],
   'aires puros': ['aires puros'],
   'atahualpa': ['atahualpa'],
   'barrio sur': ['barrio sur', 'bsur'],
@@ -67,7 +67,7 @@ const MONTEVIDEO_BARRIO_ALIASES: Record<string, string[]> = {
   'parque batlle': ['parque batlle', 'parque battle', 'parque batle'],
   'parque rodo': ['parque rodo'],
   'paso de la arena': ['paso de la arena', 'paso arena'],
-  'paso de las duranas': ['paso de las duranas'],
+  'paso de las duranas': ['paso de las duranas', 'paso duranas'],
   'peñarol': ['penarol'],
   'piedras blancas': ['piedras blancas'],
   'pocitos': ['pocitos'],
@@ -76,9 +76,9 @@ const MONTEVIDEO_BARRIO_ALIASES: Record<string, string[]> = {
   'punta carretas': ['punta carretas', 'pta carretas', 'punta carreta'],
   'punta de rieles': ['punta de rieles'],
   'punta gorda': ['punta gorda', 'pta gorda'],
-  'reducto': ['reducto'],
+  'reducto': ['reducto', 'el reducto'],
   'sayago': ['sayago'],
-  'sur': ['sur'],
+  'sur': ['barrio sur montevideo'],  // removed bare 'sur' — too short, conflicts with city "Sur" in Artigas. Use 'barrio sur' alias instead.
   'tres cruces': ['tres cruces', '3 cruces'],
   'tres ombues': ['tres ombues', '3 ombues'],
   'union': ['union', 'la union'],
@@ -95,16 +95,22 @@ const MONTEVIDEO_BARRIO_ALIASES: Record<string, string[]> = {
 function detectBarrio(city: string, address1: string, address2: string): string | null {
   const combined = normalize(`${city} ${address1} ${address2}`);
 
-  // Check each barrio and its aliases
+  // Build flat list of [canonical, alias] pairs sorted by alias length DESC
+  // This ensures "malvin norte" is checked before "malvin", "carrasco norte" before "carrasco", etc.
+  const allAliases: [string, string][] = [];
   for (const [canonical, aliases] of Object.entries(MONTEVIDEO_BARRIO_ALIASES)) {
     for (const alias of aliases) {
-      const normalizedAlias = normalize(alias);
-      // Word boundary check: ensure we match the whole barrio name, not partial
-      // e.g. "centro" should not match "concentrar"
-      const regex = new RegExp(`\\b${normalizedAlias.replace(/\s+/g, '\\s+')}\\b`);
-      if (regex.test(combined)) {
-        return canonical;
-      }
+      allAliases.push([canonical, normalize(alias)]);
+    }
+  }
+  allAliases.sort((a, b) => b[1].length - a[1].length);
+
+  for (const [canonical, normalizedAlias] of allAliases) {
+    // Word boundary check: ensure we match the whole barrio name, not partial
+    // e.g. "centro" should not match "concentrar"
+    const regex = new RegExp(`\\b${normalizedAlias.replace(/\s+/g, '\\s+')}\\b`);
+    if (regex.test(combined)) {
+      return canonical;
     }
   }
   return null;
@@ -742,13 +748,17 @@ export async function createShipment(
           const barrioOptions = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_BARRIO} option`,
             (opts: any[]) => opts.filter(o => o.value && o.value !== '0' && o.value !== '').map((o: any) => ({ value: o.value, text: o.textContent?.trim() })).slice(0, 30));
           slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO, `Barrio "${detectedBarrioName}" detected (${intelligent.source}) but not in dropdown`, { availableBarrios: barrioOptions.map(b => b.text) });
-          // Try partial match with first word of detected barrio
+          // Try partial match with first word of detected barrio (only if word is long enough to avoid false positives)
           const firstWord = normalize(detectedBarrioName).split(/\s+/)[0];
-          const partialMatch = barrioOptions.find(b => normalize(b.text).includes(firstWord) && firstWord.length > 3);
+          const partialMatch = barrioOptions.find(b => normalize(b.text).includes(firstWord) && firstWord.length > 4);
           if (partialMatch) {
             await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, partialMatch.value, slog, DAC_STEPS.STEP3_SELECT_BARRIO, `K_Barrio (partial match: ${partialMatch.text})`);
-          } else if (barrioOptions.length > 0) {
-            await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, barrioOptions[0].value, slog, DAC_STEPS.STEP3_SELECT_BARRIO, `K_Barrio (first fallback: ${barrioOptions[0].text})`);
+          } else {
+            // DO NOT pick first option blindly — a human would leave it empty rather than guess wrong
+            slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO,
+              `Barrio "${detectedBarrioName}" detected but not in dropdown and no partial match — leaving at default (a human would not guess)`,
+              { detected: detectedBarrioName, available: barrioOptions.map(b => b.text).slice(0, 10) }
+            );
           }
         }
       } else {

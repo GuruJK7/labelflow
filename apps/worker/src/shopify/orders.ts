@@ -51,9 +51,18 @@ export async function getRecentOrders(
 }
 
 export async function addOrderTag(client: AxiosInstance, orderId: number, tag: string): Promise<void> {
-  // Replace ALL existing tags with only the specified tag
+  // APPEND tag to existing tags (never destroy existing ones)
+  const { data } = await client.get(`/orders/${orderId}.json`);
+  const currentTags: string = data.order?.tags ?? '';
+  const tagList = currentTags.split(',').map((t: string) => t.trim()).filter(Boolean);
+
+  // Avoid duplicate tags
+  if (!tagList.some((t: string) => t.toLowerCase() === tag.toLowerCase())) {
+    tagList.push(tag);
+  }
+
   await client.put(`/orders/${orderId}.json`, {
-    order: { id: orderId, tags: tag },
+    order: { id: orderId, tags: tagList.join(', ') },
   });
 }
 

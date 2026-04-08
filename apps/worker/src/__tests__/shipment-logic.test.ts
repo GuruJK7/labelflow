@@ -1,0 +1,689 @@
+/**
+ * Comprehensive test suite for LabelFlow shipment processing logic.
+ * 100+ tests covering every function in the DAC/Shopify pipeline
+ * using real Uruguay addresses and Shopify order patterns.
+ */
+import { describe, it, expect } from 'vitest';
+import { mergeAddress } from '../dac/shipment';
+import {
+  getDepartmentForCity,
+  getBarriosFromZip,
+  getDepartmentFromZip,
+  getBarriosFromStreet,
+  CITY_TO_DEPARTMENT,
+} from '../dac/uruguay-geo';
+import { determinePaymentType } from '../rules/payment';
+
+// Helper to create minimal ShopifyOrder for payment tests
+function mockOrder(totalPrice: string, currency = 'UYU'): any {
+  return { id: 9999, name: '#TEST', total_price: totalPrice, currency };
+}
+
+// ============================================================
+// SECTION 1: getDepartmentForCity — 40 tests
+// Every department capital + edge cases
+// ============================================================
+describe('getDepartmentForCity', () => {
+  // --- All 19 department capitals must resolve ---
+  it.each([
+    ['Artigas', 'Artigas'],
+    ['Canelones', 'Canelones'],
+    ['Melo', 'Cerro Largo'],
+    ['Colonia del Sacramento', 'Colonia'],
+    ['Durazno', 'Durazno'],
+    ['Trinidad', 'Flores'],
+    ['Florida', 'Florida'],
+    ['Minas', 'Lavalleja'],
+    ['Maldonado', 'Maldonado'],
+    ['Montevideo', 'Montevideo'],
+    ['Paysandu', 'Paysandu'],
+    ['Fray Bentos', 'Rio Negro'],
+    ['Rivera', 'Rivera'],
+    ['Rocha', 'Rocha'],
+    ['Salto', 'Salto'],
+    ['San Jose de Mayo', 'San Jose'],
+    ['Mercedes', 'Soriano'],
+    ['Tacuarembo', 'Tacuarembo'],
+    ['Treinta y Tres', 'Treinta y Tres'],
+  ])('capital "%s" → %s', (city, expected) => {
+    expect(getDepartmentForCity(city)).toBe(expected);
+  });
+
+  // --- Common Montevideo barrios used as city ---
+  it.each([
+    ['Pocitos', 'Montevideo'],
+    ['Carrasco', 'Montevideo'],
+    ['Punta Carretas', 'Montevideo'],
+    ['Buceo', 'Montevideo'],
+    ['Centro', 'Montevideo'],
+    ['Malvin', 'Montevideo'],
+    ['Union', 'Montevideo'],
+    ['Cordon', 'Montevideo'],
+    ['Goes', 'Montevideo'],
+    ['Prado', 'Montevideo'],
+    ['La Blanqueada', 'Montevideo'],
+    ['Tres Cruces', 'Montevideo'],
+    ['Aguada', 'Montevideo'],
+    ['Bella Vista', 'Montevideo'],
+    ['Aires Puros', 'Montevideo'],
+    ['Cerrito', 'Montevideo'],
+    ['Mercado Modelo', 'Montevideo'],
+    ['Pocitos Nuevo', 'Montevideo'],
+    ['Punta Gorda', 'Montevideo'],
+    ['Carrasco Norte', 'Montevideo'],
+    ['Flor de Maronas', 'Montevideo'],
+    ['La Figurita', 'Montevideo'],
+    ['Barrio Sur', 'Montevideo'],
+    ['Villa Munoz', 'Montevideo'],
+    ['Paso de las Duranas', 'Montevideo'],
+  ])('barrio "%s" → Montevideo', (city, expected) => {
+    expect(getDepartmentForCity(city)).toBe(expected);
+  });
+
+  // --- Ciudad de la Costa and Canelones suburbs ---
+  it.each([
+    ['Ciudad de la Costa', 'Canelones'],
+    ['Solymar', 'Canelones'],
+    ['Lagomar', 'Canelones'],
+    ['El Pinar', 'Canelones'],
+    ['Shangri-la', 'Canelones'],
+    ['Atlantida', 'Canelones'],
+    ['Las Piedras', 'Canelones'],
+    ['Pando', 'Canelones'],
+    ['Barros Blancos', 'Canelones'],
+    ['Paso Carrasco', 'Canelones'],
+    ['La Paz', 'Canelones'],
+  ])('Canelones suburb "%s" → Canelones', (city, expected) => {
+    expect(getDepartmentForCity(city)).toBe(expected);
+  });
+
+  // --- Smart parsing edge cases ---
+  it('handles dot in city: "La.paz" → Canelones', () => {
+    expect(getDepartmentForCity('La.paz')).toBe('Canelones');
+  });
+
+  it('handles country suffix: "montevideo- URUGUAY" → Montevideo', () => {
+    expect(getDepartmentForCity('montevideo- URUGUAY')).toBe('Montevideo');
+  });
+
+  it('handles pipe separator: "2|montevideo" → Montevideo', () => {
+    expect(getDepartmentForCity('2|montevideo')).toBe('Montevideo');
+  });
+
+  it('handles slash separator: "centro/Rivera" → Centro(Montevideo) or Rivera', () => {
+    const result = getDepartmentForCity('centro/Rivera');
+    // Should find "centro" first (Montevideo) or "rivera" (Rivera) — either is a valid city
+    expect(result).toBeDefined();
+    expect(['Montevideo', 'Rivera']).toContain(result);
+  });
+
+  it('handles comma separator: "Barrio Espanol, Atlantida Norte" → Canelones', () => {
+    expect(getDepartmentForCity('Barrio Espanol, Atlantida Norte')).toBe('Canelones');
+  });
+
+  it('handles compound city: "Ciudad de la Costa solymar" → Canelones', () => {
+    expect(getDepartmentForCity('Ciudad de la Costa solymar')).toBe('Canelones');
+  });
+
+  it('handles accented input: "Paysandu" (no accent) → Paysandu', () => {
+    expect(getDepartmentForCity('Paysandu')).toBe('Paysandu');
+  });
+
+  it('handles accented input: "Paysandu" (with accent) → Paysandu', () => {
+    expect(getDepartmentForCity('Paysand\u00fa')).toBe('Paysandu');
+  });
+
+  it('handles extra spaces: "  Pocitos  " → Montevideo', () => {
+    expect(getDepartmentForCity('  Pocitos  ')).toBe('Montevideo');
+  });
+
+  it('handles ALL CAPS: "MONTEVIDEO" → Montevideo', () => {
+    expect(getDepartmentForCity('MONTEVIDEO')).toBe('Montevideo');
+  });
+
+  it('returns undefined for garbage input', () => {
+    expect(getDepartmentForCity('asdfghjkl')).toBeUndefined();
+  });
+
+  it('returns undefined for empty string', () => {
+    expect(getDepartmentForCity('')).toBeUndefined();
+  });
+
+  // --- Cities that were missing and got added ---
+  it.each([
+    ['Shangrila', 'Canelones'],
+    ['Canada Chica', 'Canelones'],
+    ['Atlantida Norte', 'Canelones'],
+    ['Gautron', 'Salto'],
+    ['Las Violetas', 'Durazno'],
+    ['Picada de las Tunas', 'San Jose'],
+    ['Jardines del Hum', 'Soriano'],
+    ['Barrio Elisa', 'Maldonado'],
+  ])('newly added city "%s" → %s', (city, expected) => {
+    expect(getDepartmentForCity(city)).toBe(expected);
+  });
+});
+
+// ============================================================
+// SECTION 2: getBarriosFromZip — 15 tests
+// ============================================================
+describe('getBarriosFromZip', () => {
+  it.each([
+    ['11000', ['ciudad vieja', 'centro']],
+    ['11100', ['centro', 'cordon', 'barrio sur']],
+    ['11500', ['pocitos', 'punta carretas', 'parque batlle']],
+    ['11600', ['buceo', 'malvin', 'malvin norte']],
+    ['11800', ['carrasco', 'carrasco norte', 'punta gorda']],
+    ['11900', ['cerro', 'la teja', 'paso de la arena', 'casabo']],
+    ['12100', ['prado', 'capurro', 'belvedere', 'nuevo paris']],
+    ['12500', ['capurro', 'belvedere', 'aguada']],
+  ])('ZIP %s → %j', (zip, expected) => {
+    expect(getBarriosFromZip(zip)).toEqual(expected);
+  });
+
+  it('rounds 11345 to 11300', () => {
+    expect(getBarriosFromZip('11345')).toEqual(['tres cruces', 'la comercial', 'la figurita', 'jacinto vera']);
+  });
+
+  it('returns null for non-Montevideo ZIP', () => {
+    expect(getBarriosFromZip('20000')).toBeNull();
+  });
+
+  it('returns null for null input', () => {
+    expect(getBarriosFromZip(null)).toBeNull();
+  });
+
+  it('returns null for undefined input', () => {
+    expect(getBarriosFromZip(undefined)).toBeNull();
+  });
+
+  it('returns null for too-short ZIP', () => {
+    expect(getBarriosFromZip('11')).toBeNull();
+  });
+
+  it('strips non-digits from ZIP', () => {
+    expect(getBarriosFromZip('11-500')).toEqual(['pocitos', 'punta carretas', 'parque batlle']);
+  });
+});
+
+// ============================================================
+// SECTION 3: getDepartmentFromZip — 10 tests
+// ============================================================
+describe('getDepartmentFromZip', () => {
+  it.each([
+    ['11000', 'Montevideo'],
+    ['12500', 'Montevideo'],
+    ['15000', 'Canelones'],
+    ['20000', 'Maldonado'],
+    ['25000', 'Rocha'],
+    ['37000', 'Salto'],
+    ['40000', 'Paysandu'],
+    ['50000', 'Colonia'],
+    ['60000', 'San Jose'],
+    ['85000', 'Tacuarembo'],
+  ])('ZIP %s → %s', (zip, expected) => {
+    expect(getDepartmentFromZip(zip)).toBe(expected);
+  });
+
+  it('returns null for null', () => {
+    expect(getDepartmentFromZip(null)).toBeNull();
+  });
+
+  it('returns null for unknown prefix', () => {
+    expect(getDepartmentFromZip('99000')).toBeNull();
+  });
+});
+
+// ============================================================
+// SECTION 4: getBarriosFromStreet — 12 tests
+// ============================================================
+describe('getBarriosFromStreet', () => {
+  it('detects 18 de julio', () => {
+    const result = getBarriosFromStreet('18 de Julio 1234');
+    expect(result).toContain('centro');
+    expect(result).toContain('cordon');
+  });
+
+  it('detects Av Italia', () => {
+    const result = getBarriosFromStreet('Av Italia 3500');
+    expect(result).toContain('buceo');
+  });
+
+  it('detects Avenida Italia (full)', () => {
+    const result = getBarriosFromStreet('Avenida Italia 2800');
+    expect(result).toContain('buceo');
+  });
+
+  it('detects Boulevard Artigas', () => {
+    const result = getBarriosFromStreet('Boulevard Artigas 1100');
+    expect(result).toContain('tres cruces');
+  });
+
+  it('detects Colorado street → Goes', () => {
+    const result = getBarriosFromStreet('Colorado 1850');
+    expect(result).toContain('goes');
+  });
+
+  it('detects Millan → Blanqueada/Reducto', () => {
+    const result = getBarriosFromStreet('Millan 3200');
+    expect(result).toContain('la blanqueada');
+  });
+
+  it('detects Camino Carrasco', () => {
+    const result = getBarriosFromStreet('Camino Carrasco 5400');
+    expect(result).toContain('carrasco');
+  });
+
+  it('detects Ellauri → Pocitos', () => {
+    const result = getBarriosFromStreet('Ellauri 980');
+    expect(result).toContain('pocitos');
+  });
+
+  it('detects 21 de setiembre → Pocitos', () => {
+    const result = getBarriosFromStreet('21 de Setiembre 2900');
+    expect(result).toContain('pocitos');
+  });
+
+  it('returns null for unknown street', () => {
+    expect(getBarriosFromStreet('Calle Inventada 1234')).toBeNull();
+  });
+
+  it('returns null for null input', () => {
+    expect(getBarriosFromStreet(null)).toBeNull();
+  });
+
+  it('returns null for empty string', () => {
+    expect(getBarriosFromStreet('')).toBeNull();
+  });
+});
+
+// ============================================================
+// SECTION 5: mergeAddress — 30 tests
+// Real Shopify address patterns from Uruguay stores
+// ============================================================
+describe('mergeAddress', () => {
+  // --- Basic cases ---
+  it('address1 only, no address2', () => {
+    expect(mergeAddress('18 de Julio 1234', null)).toEqual({ fullAddress: '18 de Julio 1234', extraObs: '' });
+  });
+
+  it('address1 only, empty address2', () => {
+    expect(mergeAddress('Rivera 2500', '')).toEqual({ fullAddress: 'Rivera 2500', extraObs: '' });
+  });
+
+  it('address1 only, undefined address2', () => {
+    expect(mergeAddress('Bvar Artigas 1100', undefined)).toEqual({ fullAddress: 'Bvar Artigas 1100', extraObs: '' });
+  });
+
+  // --- Door number in address2 ---
+  it('address2 is door number: "705"', () => {
+    expect(mergeAddress('18 De Julio', '705')).toEqual({ fullAddress: '18 De Julio 705', extraObs: '' });
+  });
+
+  it('address2 is door number but address1 already has one', () => {
+    const result = mergeAddress('18 de Julio 1234', '502');
+    expect(result.fullAddress).toBe('18 de Julio 1234 Apto 502');
+    expect(result.extraObs).toBe('Apto 502');
+  });
+
+  // --- Apartment info ---
+  it('address2 is "Apto 301"', () => {
+    const result = mergeAddress('Bvar Artigas 1100', 'Apto 301');
+    expect(result.fullAddress).toBe('Bvar Artigas 1100 Apto 301');
+    expect(result.extraObs).toBe('Apto 301');
+  });
+
+  it('address2 is "Piso 3"', () => {
+    const result = mergeAddress('18 de Julio 999', 'Piso 3');
+    expect(result.fullAddress).toBe('18 de Julio 999 Piso 3');
+    expect(result.extraObs).toBe('Piso 3');
+  });
+
+  it('address2 is "Torre 2 Apto 1401"', () => {
+    const result = mergeAddress('Rambla Republica de Mexico 5805', 'Torre 2 Apto 1401');
+    expect(result.fullAddress).toContain('Torre 2 Apto 1401');
+    expect(result.extraObs).toBe('Torre 2 Apto 1401');
+  });
+
+  it('address2 is "Casa 5"', () => {
+    const result = mergeAddress('Camino Carrasco 1500', 'Casa 5');
+    expect(result.fullAddress).toContain('Casa 5');
+    expect(result.extraObs).toBe('Casa 5');
+  });
+
+  // --- Phone number in address2 (should be ignored) ---
+  it('address2 is phone: "099680230"', () => {
+    expect(mergeAddress('Colorado 1850', '099680230')).toEqual({ fullAddress: 'Colorado 1850', extraObs: '' });
+  });
+
+  it('address2 is phone with dash: "099-680-230"', () => {
+    expect(mergeAddress('Rivera 3500', '099-680-230')).toEqual({ fullAddress: 'Rivera 3500', extraObs: '' });
+  });
+
+  it('address2 is phone with country code: "+59899680230"', () => {
+    expect(mergeAddress('Ellauri 900', '+59899680230')).toEqual({ fullAddress: 'Ellauri 900', extraObs: '' });
+  });
+
+  // --- City/department in address2 (should be ignored) ---
+  it('address2 is "Montevideo"', () => {
+    expect(mergeAddress('Rivera 2500', 'Montevideo')).toEqual({ fullAddress: 'Rivera 2500', extraObs: '' });
+  });
+
+  it('address2 is "Pocitos"', () => {
+    expect(mergeAddress('21 de Setiembre 2800', 'Pocitos')).toEqual({ fullAddress: '21 de Setiembre 2800', extraObs: '' });
+  });
+
+  it('address2 is "Canelones"', () => {
+    expect(mergeAddress('Av. Giannattasio km 22', 'Canelones')).toEqual({ fullAddress: 'Av. Giannattasio km 22', extraObs: '' });
+  });
+
+  // --- Duplicate detection ---
+  it('address2 already at end of address1: "18 De Julio 705" + "705"', () => {
+    expect(mergeAddress('18 De Julio 705', '705')).toEqual({ fullAddress: '18 De Julio 705', extraObs: '' });
+  });
+
+  // --- Direction references ---
+  it('address2 is "esq. Av Italia"', () => {
+    const result = mergeAddress('Rivera 2500', 'esq. Av Italia');
+    expect(result.fullAddress).toBe('Rivera 2500 esq. Av Italia');
+    expect(result.extraObs).toBe('');
+  });
+
+  it('address2 is "entre Colonia y Soriano"', () => {
+    const result = mergeAddress('18 de Julio 1200', 'entre Colonia y Soriano');
+    expect(result.fullAddress).toContain('entre Colonia y Soriano');
+    expect(result.extraObs).toBe('');
+  });
+
+  // --- Combined door + apt: "1502B" ---
+  it('address2 is "1502B" (door+apt combined)', () => {
+    const result = mergeAddress('Av Italia', '1502B');
+    expect(result.fullAddress).toContain('1502');
+    expect(result.fullAddress).toContain('B');
+    expect(result.extraObs).toContain('B');
+  });
+
+  // --- Slash pattern: "3274/801" ---
+  it('address2 is "3274/801" (slash apt pattern)', () => {
+    const result = mergeAddress('Bvar Artigas', '3274/801');
+    // Should handle as short text starting with number
+    expect(result.fullAddress).toContain('3274/801');
+  });
+
+  // --- Bis pattern ---
+  it('address2 is "1234 bis"', () => {
+    const result = mergeAddress('Av Rivera', '1234 bis');
+    expect(result.fullAddress).toBe('Av Rivera 1234 bis');
+    expect(result.extraObs).toBe('');
+  });
+
+  // --- Long descriptive address2 ---
+  it('address2 is long text → goes to both address and obs', () => {
+    const result = mergeAddress('Rambla 5000', 'Edificio Torre Azul entrada por costado norte');
+    expect(result.fullAddress).toContain('Edificio Torre Azul');
+    expect(result.extraObs).toBe('Edificio Torre Azul entrada por costado norte');
+  });
+
+  // --- Empty/null address1 ---
+  it('address1 is empty, address2 has data', () => {
+    const result = mergeAddress('', 'Apto 301');
+    expect(result.fullAddress).toContain('Apto 301');
+  });
+
+  // --- Real problem cases from production ---
+  it('real case: "Av Italia 3456" + "Apto 12"', () => {
+    const result = mergeAddress('Av Italia 3456', 'Apto 12');
+    expect(result.fullAddress).toBe('Av Italia 3456 Apto 12');
+    expect(result.extraObs).toBe('Apto 12');
+  });
+
+  it('real case: "Colorado" + "1850"', () => {
+    const result = mergeAddress('Colorado', '1850');
+    expect(result.fullAddress).toBe('Colorado 1850');
+    expect(result.extraObs).toBe('');
+  });
+
+  it('real case: "Bvar Artigas 1100" + "Local 3"', () => {
+    const result = mergeAddress('Bvar Artigas 1100', 'Local 3');
+    expect(result.fullAddress).toContain('Local 3');
+    expect(result.extraObs).toBe('Local 3');
+  });
+
+  it('real case: "Camino Maldonado 5890" + "Ciudad de la Costa"', () => {
+    const result = mergeAddress('Camino Maldonado 5890', 'Ciudad de la Costa');
+    expect(result.fullAddress).toBe('Camino Maldonado 5890');
+    expect(result.extraObs).toBe('');
+  });
+
+  it('real case: address1 has slash apt "Rivera 3274/801"', () => {
+    const result = mergeAddress('Rivera 3274/801', null);
+    // The slash pattern is only detected in the post-merge step of createShipment, not in mergeAddress itself
+    expect(result.fullAddress).toBe('Rivera 3274/801');
+  });
+});
+
+// ============================================================
+// SECTION 6: determinePaymentType — 20 tests
+// ============================================================
+describe('determinePaymentType', () => {
+  const THRESHOLD = 3900;
+
+  // --- Basic flow ---
+  it('above threshold → REMITENTE', () => {
+    expect(determinePaymentType(mockOrder('5000'), THRESHOLD, true)).toBe('REMITENTE');
+  });
+
+  it('below threshold → DESTINATARIO', () => {
+    expect(determinePaymentType(mockOrder('2000'), THRESHOLD, true)).toBe('DESTINATARIO');
+  });
+
+  it('exactly at threshold → DESTINATARIO (<=)', () => {
+    expect(determinePaymentType(mockOrder('3900'), THRESHOLD, true)).toBe('DESTINATARIO');
+  });
+
+  it('just above threshold → REMITENTE', () => {
+    expect(determinePaymentType(mockOrder('3901'), THRESHOLD, true)).toBe('REMITENTE');
+  });
+
+  // --- Rule disabled ---
+  it('paymentRuleEnabled=false → always DESTINATARIO regardless of amount', () => {
+    expect(determinePaymentType(mockOrder('999999'), THRESHOLD, false)).toBe('DESTINATARIO');
+  });
+
+  it('paymentRuleEnabled defaults to false', () => {
+    expect(determinePaymentType(mockOrder('999999'), THRESHOLD)).toBe('DESTINATARIO');
+  });
+
+  // --- Invalid inputs ---
+  it('NaN total → DESTINATARIO', () => {
+    expect(determinePaymentType(mockOrder('abc'), THRESHOLD, true)).toBe('DESTINATARIO');
+  });
+
+  it('empty string total → DESTINATARIO', () => {
+    expect(determinePaymentType(mockOrder(''), THRESHOLD, true)).toBe('DESTINATARIO');
+  });
+
+  it('negative total → DESTINATARIO', () => {
+    expect(determinePaymentType(mockOrder('-500'), THRESHOLD, true)).toBe('DESTINATARIO');
+  });
+
+  it('zero total → DESTINATARIO', () => {
+    expect(determinePaymentType(mockOrder('0'), THRESHOLD, true)).toBe('DESTINATARIO');
+  });
+
+  // --- Currency conversion ---
+  it('USD 100 at rate 43 = 4300 UYU → REMITENTE', () => {
+    expect(determinePaymentType(mockOrder('100', 'USD'), THRESHOLD, true)).toBe('REMITENTE');
+  });
+
+  it('USD 50 at rate 43 = 2150 UYU → DESTINATARIO', () => {
+    expect(determinePaymentType(mockOrder('50', 'USD'), THRESHOLD, true)).toBe('DESTINATARIO');
+  });
+
+  it('EUR 100 at rate 47 = 4700 UYU → REMITENTE', () => {
+    expect(determinePaymentType(mockOrder('100', 'EUR'), THRESHOLD, true)).toBe('REMITENTE');
+  });
+
+  it('EUR 50 at rate 47 = 2350 UYU → DESTINATARIO', () => {
+    expect(determinePaymentType(mockOrder('50', 'EUR'), THRESHOLD, true)).toBe('DESTINATARIO');
+  });
+
+  it('BRL 500 at rate 8 = 4000 UYU → REMITENTE', () => {
+    expect(determinePaymentType(mockOrder('500', 'BRL'), THRESHOLD, true)).toBe('REMITENTE');
+  });
+
+  it('unknown currency GBP → DESTINATARIO (safe default)', () => {
+    expect(determinePaymentType(mockOrder('5000', 'GBP'), THRESHOLD, true)).toBe('DESTINATARIO');
+  });
+
+  // --- Threshold edge cases ---
+  it('threshold=0 → DESTINATARIO (guard against misconfiguration)', () => {
+    expect(determinePaymentType(mockOrder('100'), 0, true)).toBe('DESTINATARIO');
+  });
+
+  it('threshold=-1 → DESTINATARIO (invalid threshold)', () => {
+    expect(determinePaymentType(mockOrder('100'), -1, true)).toBe('DESTINATARIO');
+  });
+
+  it('threshold=NaN → DESTINATARIO', () => {
+    expect(determinePaymentType(mockOrder('100'), NaN, true)).toBe('DESTINATARIO');
+  });
+
+  it('very high threshold 1000000, order 500000 → DESTINATARIO', () => {
+    expect(determinePaymentType(mockOrder('500000'), 1000000, true)).toBe('DESTINATARIO');
+  });
+});
+
+// ============================================================
+// SECTION 7: Geo DB completeness — verify no gaps in coverage
+// ============================================================
+describe('Geo DB completeness', () => {
+  it('has all 19 department capitals', () => {
+    const capitals = [
+      'artigas', 'canelones', 'melo', 'colonia del sacramento', 'durazno',
+      'trinidad', 'florida', 'minas', 'maldonado', 'montevideo',
+      'paysandu', 'fray bentos', 'rivera', 'rocha', 'salto',
+      'san jose de mayo', 'mercedes', 'tacuarembo', 'treinta y tres',
+    ];
+    for (const cap of capitals) {
+      expect(CITY_TO_DEPARTMENT[cap]).toBeDefined();
+    }
+  });
+
+  it('Punta del Este → Maldonado', () => {
+    expect(CITY_TO_DEPARTMENT['punta del este']).toBe('Maldonado');
+  });
+
+  it('Ciudad del Plata → San Jose', () => {
+    expect(CITY_TO_DEPARTMENT['ciudad del plata']).toBe('San Jose');
+  });
+
+  it('Paso de los Toros → Tacuarembo', () => {
+    expect(CITY_TO_DEPARTMENT['paso de los toros']).toBe('Tacuarembo');
+  });
+
+  it('Chuy → Rocha', () => {
+    expect(CITY_TO_DEPARTMENT['chuy']).toBe('Rocha');
+  });
+
+  it('Young → Rio Negro', () => {
+    expect(CITY_TO_DEPARTMENT['young']).toBe('Rio Negro');
+  });
+
+  it('Bella Union → Artigas', () => {
+    expect(CITY_TO_DEPARTMENT['bella union']).toBe('Artigas');
+  });
+
+  it('Carmelo → Colonia', () => {
+    expect(CITY_TO_DEPARTMENT['carmelo']).toBe('Colonia');
+  });
+
+  it('Piriapolis → Maldonado', () => {
+    expect(CITY_TO_DEPARTMENT['piriapolis']).toBe('Maldonado');
+  });
+});
+
+// ============================================================
+// SECTION 8: Integration-style tests — full address resolution
+// Simulates what happens with a real Shopify order address
+// ============================================================
+describe('Full address resolution (integration)', () => {
+  function resolveAddress(city: string, address1: string, address2: string | null, zip: string) {
+    const dept = getDepartmentForCity(city);
+    const zipBarrios = getBarriosFromZip(zip);
+    const streetBarrios = getBarriosFromStreet(address1);
+    const zipDept = getDepartmentFromZip(zip);
+    const { fullAddress, extraObs } = mergeAddress(address1, address2);
+    return { dept, zipBarrios, streetBarrios, zipDept, fullAddress, extraObs };
+  }
+
+  it('Pocitos order: Colorado 1850, ZIP 11300', () => {
+    const r = resolveAddress('Pocitos', 'Colorado 1850', null, '11300');
+    expect(r.dept).toBe('Montevideo');
+    expect(r.zipBarrios).toContain('la figurita');
+    expect(r.streetBarrios).toContain('goes');
+    expect(r.fullAddress).toBe('Colorado 1850');
+  });
+
+  it('Carrasco order: Camino Carrasco 5400 Apto 12, ZIP 11800', () => {
+    const r = resolveAddress('Carrasco', 'Camino Carrasco 5400', 'Apto 12', '11800');
+    expect(r.dept).toBe('Montevideo');
+    expect(r.zipBarrios).toContain('carrasco');
+    expect(r.streetBarrios).toContain('carrasco');
+    expect(r.fullAddress).toBe('Camino Carrasco 5400 Apto 12');
+    expect(r.extraObs).toBe('Apto 12');
+  });
+
+  it('Interior order: Salto city, ZIP 37000', () => {
+    const r = resolveAddress('Salto', 'Uruguay 340', null, '37000');
+    expect(r.dept).toBe('Salto');
+    expect(r.zipDept).toBe('Salto');
+    expect(r.zipBarrios).toBeNull(); // Not Montevideo
+    expect(r.fullAddress).toBe('Uruguay 340');
+  });
+
+  it('Wrong dept from Shopify: city=Solymar but province=Montevideo', () => {
+    const r = resolveAddress('Solymar', 'Av Giannattasio km 20', null, '15000');
+    expect(r.dept).toBe('Canelones'); // Corrected!
+    expect(r.zipDept).toBe('Canelones');
+  });
+
+  it('Barrio as city: city=Buceo, ZIP 11600', () => {
+    const r = resolveAddress('Buceo', 'Av Italia 2800', null, '11600');
+    expect(r.dept).toBe('Montevideo');
+    expect(r.zipBarrios).toContain('buceo');
+    expect(r.streetBarrios).toContain('buceo');
+  });
+
+  it('La Paz with dot: city=La.paz, ZIP 15000', () => {
+    const r = resolveAddress('La.paz', 'Ruta 1 km 30', null, '15000');
+    expect(r.dept).toBe('Canelones');
+  });
+
+  it('Punta del Este: ZIP 20000', () => {
+    const r = resolveAddress('Punta del Este', 'Gorlero 900', null, '20000');
+    expect(r.dept).toBe('Maldonado');
+    expect(r.zipDept).toBe('Maldonado');
+  });
+
+  it('Ciudad de la Costa: ZIP 15000', () => {
+    const r = resolveAddress('Ciudad de la Costa', 'Av Giannattasio km 24', 'Casa 15', '15000');
+    expect(r.dept).toBe('Canelones');
+    expect(r.fullAddress).toContain('Casa 15');
+    expect(r.extraObs).toBe('Casa 15');
+  });
+
+  it('Rivera city: ZIP 33000', () => {
+    const r = resolveAddress('Rivera', 'Sarandi 500', null, '33000');
+    expect(r.dept).toBe('Rivera');
+    expect(r.zipDept).toBe('Rivera');
+  });
+
+  it('Order with no city, ZIP 11500 → should get Montevideo from ZIP', () => {
+    const r = resolveAddress('', '21 de Setiembre 2900', null, '11500');
+    expect(r.dept).toBeUndefined(); // getDepartmentForCity('') returns undefined
+    expect(r.zipDept).toBe('Montevideo');
+    expect(r.zipBarrios).toContain('pocitos');
+    expect(r.streetBarrios).toContain('pocitos');
+  });
+});
