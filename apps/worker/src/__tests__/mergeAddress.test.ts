@@ -180,4 +180,50 @@ describe('mergeAddress', () => {
     expect(result.fullAddress).toContain('oficina 302');
     expect(result.extraObs).toContain('oficina');
   });
+
+  // ====== PHONE NUMBER FILTERING ======
+
+  it('filters out phone number "099680230" from address2', () => {
+    const result = mergeAddress('Canelones 1450', '099680230');
+    expect(result.fullAddress).toBe('Canelones 1450');
+    expect(result.extraObs).toBe('');
+  });
+
+  it('filters out phone number "09X" pattern', () => {
+    const result = mergeAddress('Av Italia 3000', '091234567');
+    expect(result.fullAddress).toBe('Av Italia 3000');
+    expect(result.extraObs).toBe('');
+  });
+
+  it('filters out phone number with country code', () => {
+    const result = mergeAddress('Colonia 1234', '+59899123456');
+    expect(result.fullAddress).toBe('Colonia 1234');
+    expect(result.extraObs).toBe('');
+  });
+
+  // ====== CITY/DEPARTMENT FILTERING ======
+
+  it('filters out "Montevideo" as city name in address2', () => {
+    const result = mergeAddress('Luis Bonavita 1266 WTC', 'Montevideo');
+    expect(result.fullAddress).toBe('Luis Bonavita 1266 WTC');
+    expect(result.extraObs).toBe('');
+  });
+
+  it('filters out "Canelones" as department name', () => {
+    const result = mergeAddress('Ruta 8 km 30', 'Canelones');
+    expect(result.fullAddress).toBe('Ruta 8 km 30');
+    expect(result.extraObs).toBe('');
+  });
+
+  it('filters out "Pocitos" as barrio name', () => {
+    const result = mergeAddress('Dr Puyol 1687', 'Pocitos');
+    expect(result.fullAddress).toBe('Dr Puyol 1687');
+    expect(result.extraObs).toBe('');
+  });
+
+  it('does NOT filter real address that happens to contain city name', () => {
+    const result = mergeAddress('Av Rivera', 'Apto 5 Montevideo 1234');
+    expect(result.fullAddress).toContain('Apto 5');
+    expect(result.extraObs).toContain('Apto 5');
+  });
 });

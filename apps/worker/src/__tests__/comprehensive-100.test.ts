@@ -303,10 +303,10 @@ describe('mergeAddress — comprehensive (50 tests)', () => {
     expect(r.extraObs).toContain('Complejo');
   });
 
-  it('T47: "Montevideo" (city name repeated) goes to default', () => {
+  it('T47: "Montevideo" (city name) is filtered out — handled by DAC dropdown', () => {
     const r = mergeAddress('Luis Bonavita 1266 WTC', 'Montevideo');
-    expect(r.fullAddress).toContain('Montevideo');
-    expect(r.extraObs).toBe('Montevideo');
+    expect(r.fullAddress).toBe('Luis Bonavita 1266 WTC');
+    expect(r.extraObs).toBe('');
   });
 
   it('T48: "Casa portones blancos" goes to default with obs', () => {

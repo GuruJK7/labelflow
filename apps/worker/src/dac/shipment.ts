@@ -183,6 +183,27 @@ export function mergeAddress(address1: string, address2: string | undefined | nu
 
   if (!a2) return { fullAddress: a1, extraObs: '' };
 
+  // PHONE NUMBER: address2 is a phone number (starts with 0, 9+ digits, or matches UY pattern)
+  // e.g. "099680230" — should NOT go into address, ignore it
+  if (/^0\d{7,}$/.test(a2.replace(/[\s-]/g, '')) || /^(\+?598|09[0-9])\d{5,}$/.test(a2.replace(/[\s-]/g, ''))) {
+    return { fullAddress: a1, extraObs: '' };
+  }
+
+  // CITY/DEPARTMENT: address2 is just a city or department name — ignore it
+  // (the city/dept are handled by separate DAC dropdowns, not the address field)
+  const KNOWN_PLACES = [
+    'montevideo', 'canelones', 'maldonado', 'salto', 'paysandu', 'rivera', 'tacuarembo',
+    'colonia', 'soriano', 'rocha', 'florida', 'durazno', 'artigas', 'treinta y tres',
+    'cerro largo', 'lavalleja', 'san jose', 'flores', 'rio negro', 'pocitos', 'buceo',
+    'carrasco', 'punta carretas', 'centro', 'cordon', 'parque rodo', 'malvin', 'union',
+    'la blanqueada', 'tres cruces', 'prado', 'lagomar', 'la floresta', 'las piedras',
+    'ciudad de la costa', 'pando', 'barros blancos', 'piriapolis', 'punta del este',
+    'minas', 'fray bentos', 'mercedes', 'nueva palmira', 'young', 'carmelo',
+  ];
+  if (KNOWN_PLACES.includes(a2.toLowerCase())) {
+    return { fullAddress: a1, extraObs: '' };
+  }
+
   // DEDUP: if address2 is already at the end of address1, skip it
   // e.g. address1="18 De Julio 705", address2="705" → don't append again
   if (a1.endsWith(a2)) {
@@ -767,11 +788,38 @@ export async function createShipment(
       fieldset.classList.remove('d-none');
       fieldset.style.display = 'block';
     }
-    // Set fake lat/lng for Juan Lacaze area (BUG B: address validation requires geocoding)
+    // Set approximate lat/lng based on department for geocoding validation
     const lat = document.querySelector('[name="latitude"]') as HTMLInputElement;
     const lng = document.querySelector('[name="longitude"]') as HTMLInputElement;
-    if (lat) lat.value = '-34.4565';
-    if (lng) lng.value = '-57.4506';
+    if (lat && lng) {
+      // Use department center coordinates (set by outer scope)
+      const deptEl = document.querySelector('[name="K_Estado"]') as HTMLSelectElement;
+      const deptText = deptEl?.options[deptEl.selectedIndex]?.text?.toLowerCase() ?? '';
+      const coords: Record<string, [string, string]> = {
+        'montevideo': ['-34.9011', '-56.1645'],
+        'canelones': ['-34.5229', '-56.2817'],
+        'maldonado': ['-34.9093', '-54.9588'],
+        'colonia': ['-34.4625', '-57.8399'],
+        'salto': ['-31.3883', '-57.9609'],
+        'paysandu': ['-32.3213', '-58.0756'],
+        'rivera': ['-30.9053', '-55.5508'],
+        'tacuarembo': ['-31.7110', '-55.9834'],
+        'rocha': ['-34.4833', '-54.2220'],
+        'florida': ['-34.0994', '-56.2144'],
+        'durazno': ['-33.3794', '-56.5227'],
+        'lavalleja': ['-34.3519', '-55.2331'],
+        'san jose': ['-34.3369', '-56.7133'],
+        'soriano': ['-33.5098', '-57.7524'],
+        'rio negro': ['-33.1195', '-58.3025'],
+        'flores': ['-33.5239', '-56.8919'],
+        'artigas': ['-30.4006', '-56.4674'],
+        'cerro largo': ['-32.3739', '-54.1784'],
+        'treinta y tres': ['-33.2305', '-54.3836'],
+      };
+      const c = coords[deptText] ?? coords['montevideo'];
+      lat.value = c[0];
+      lng.value = c[1];
+    }
   });
   slog.info(DAC_STEPS.STEP3_SIGUIENTE, 'Forced cargaEnvios visible + set lat/lng for geocoding bypass');
 

@@ -327,11 +327,10 @@ describe('Real Orders Audit — Last 20 Aura Orders', () => {
       // The real fix would be phone validation before address merge
     });
 
-    it('#1136 — address2="Montevideo" is city name repeated', () => {
+    it('#1136 — address2="Montevideo" is city name — ignored (handled by DAC dropdown)', () => {
       const r = mergeAddress('Luis Bonavita 1266 tore 4 WTC', 'Montevideo');
-      expect(r.fullAddress).toContain('Luis Bonavita 1266 tore 4 WTC');
-      // "Montevideo" is not a number, not apt, not direction → goes to default branch
-      expect(r.fullAddress).toContain('Montevideo');
+      expect(r.fullAddress).toBe('Luis Bonavita 1266 tore 4 WTC');
+      expect(r.extraObs).toBe('');
     });
 
     it('#1135 — no address2, clean address', () => {
