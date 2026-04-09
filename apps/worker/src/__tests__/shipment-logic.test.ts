@@ -727,3 +727,45 @@ describe('detectCityIntelligent — Shopify barrio priority over ZIP', () => {
     expect(result.source).toBe('zip');
   });
 });
+
+// ============================================================
+// SECTION 10: Real-order regressions — Shopify barrio must NOT be overridden by ZIP
+// Each case: customer named a valid barrio; a wrong/imprecise ZIP would map elsewhere.
+// ============================================================
+describe('detectCityIntelligent — real-order ZIP-override regressions', () => {
+  it('Pocitos + ZIP 11300 (tres cruces zone) → stays pocitos', () => {
+    const result = detectCityIntelligent('Pocitos', 'Ellauri 1200', '', '11300');
+    expect(result.barrio).toBe('pocitos');
+    expect(result.department).toBe('Montevideo');
+  });
+
+  it('Carrasco Norte + ZIP 11300 (tres cruces zone) → stays carrasco norte', () => {
+    const result = detectCityIntelligent('Carrasco Norte', 'Av Italia 5800', '', '11300');
+    expect(result.barrio).toBe('carrasco norte');
+    expect(result.department).toBe('Montevideo');
+  });
+
+  it('Belvedere + ZIP 11900 (cerro zone) → stays belvedere', () => {
+    const result = detectCityIntelligent('Belvedere', 'Carlos Maria Ramirez 2500', '', '11900');
+    expect(result.barrio).toBe('belvedere');
+    expect(result.department).toBe('Montevideo');
+  });
+
+  it('Reducto + ZIP 11800 (carrasco zone) → stays reducto', () => {
+    const result = detectCityIntelligent('Reducto', 'Gral Flores 3200', '', '11800');
+    expect(result.barrio).toBe('reducto');
+    expect(result.department).toBe('Montevideo');
+  });
+
+  it('Las Acacias + ZIP 11900 (cerro zone) → stays las acacias', () => {
+    const result = detectCityIntelligent('Las Acacias', 'Instrucciones del Año XIII 1800', '', '11900');
+    expect(result.barrio).toBe('las acacias');
+    expect(result.department).toBe('Montevideo');
+  });
+
+  it('Cordón + ZIP 11800 (carrasco zone) → stays cordon', () => {
+    const result = detectCityIntelligent('Cordón', 'Yi 1500', '', '11800');
+    expect(result.barrio).toBe('cordon');
+    expect(result.department).toBe('Montevideo');
+  });
+});
