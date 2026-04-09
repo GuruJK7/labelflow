@@ -45,8 +45,9 @@ export const DAC_SELECTORS = {
   PACKAGE_TYPE: 'select[name="TipoEnvio"]',
   PACKAGE_VALUE_PAQUETE: '1',
 
-  /** Tipo de entrega: 2=Domicilio */
+  /** Tipo de entrega: 1=Agencia/Sucursal, 2=Domicilio */
   DELIVERY_TYPE: 'select[name="TipoEntrega"]',
+  DELIVERY_VALUE_AGENCIA: '1',
   DELIVERY_VALUE_DOMICILIO: '2',
 
   // ========== STEP 3: RECIPIENT ==========

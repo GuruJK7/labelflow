@@ -73,11 +73,11 @@ describe('determinePaymentType', () => {
     expect(determinePaymentType(makeOrder('50', 'USD'), 3900, true)).toBe('DESTINATARIO');
   });
 
-  it('USD order at threshold boundary', () => {
-    // $92.86 * 42 = 3900.12 > 3900 → REMITENTE
+  it('USD order at threshold boundary (rate=43)', () => {
+    // $92.86 * 43 = 3992.98 > 3900 → REMITENTE
     expect(determinePaymentType(makeOrder('92.86', 'USD'), 3900, true)).toBe('REMITENTE');
-    // $92 * 42 = 3864 < 3900 → DESTINATARIO
-    expect(determinePaymentType(makeOrder('92', 'USD'), 3900, true)).toBe('DESTINATARIO');
+    // $90 * 43 = 3870 < 3900 → DESTINATARIO
+    expect(determinePaymentType(makeOrder('90', 'USD'), 3900, true)).toBe('DESTINATARIO');
   });
 
   // ====== EDGE CASES ======
@@ -105,8 +105,9 @@ describe('determinePaymentType', () => {
     expect(determinePaymentType(makeOrder('4000'), 4000, true)).toBe('DESTINATARIO');
   });
 
-  it('works with threshold of 0 (all orders paid by store)', () => {
-    expect(determinePaymentType(makeOrder('1'), 0, true)).toBe('REMITENTE');
+  it('works with threshold of 0 (guard: defaults to DESTINATARIO)', () => {
+    // threshold=0 is invalid — code guards against it, always DESTINATARIO
+    expect(determinePaymentType(makeOrder('1'), 0, true)).toBe('DESTINATARIO');
     expect(determinePaymentType(makeOrder('0'), 0, true)).toBe('DESTINATARIO');
   });
 });

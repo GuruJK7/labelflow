@@ -52,7 +52,7 @@ describe('mergeAddress — comprehensive (50 tests)', () => {
 
   it('T06: address1 empty, address2 has apt', () => {
     const r = mergeAddress('', 'Apto 5');
-    expect(r.fullAddress.trim()).toBe('Apto 5');
+    expect(r.fullAddress).toBe('');
     expect(r.extraObs).toBe('Apto 5');
   });
 
@@ -85,62 +85,62 @@ describe('mergeAddress — comprehensive (50 tests)', () => {
 
   it('T11: "Apto 5B" detected as apartment', () => {
     const r = mergeAddress('Rio Negro 1323', 'Apto 5B');
-    expect(r.fullAddress).toBe('Rio Negro 1323 Apto 5B');
+    expect(r.fullAddress).toBe('Rio Negro 1323');
     expect(r.extraObs).toBe('Apto 5B');
   });
 
   it('T12: "apto 201" lowercase detected', () => {
     const r = mergeAddress('Agraciada 3069', 'apto 201');
-    expect(r.fullAddress).toBe('Agraciada 3069 apto 201');
+    expect(r.fullAddress).toBe('Agraciada 3069');
     expect(r.extraObs).toBe('apto 201');
   });
 
   it('T13: "Apt 10" without "o" detected', () => {
     const r = mergeAddress('Scoseria 2459', 'Apt 10');
-    expect(r.fullAddress).toBe('Scoseria 2459 Apt 10');
+    expect(r.fullAddress).toBe('Scoseria 2459');
     expect(r.extraObs).toBe('Apt 10');
   });
 
   it('T14: "Apt. 3" with period detected', () => {
     const r = mergeAddress('Colonia 800', 'Apt. 3');
-    expect(r.fullAddress).toBe('Colonia 800 Apt. 3');
+    expect(r.fullAddress).toBe('Colonia 800');
     expect(r.extraObs).toBe('Apt. 3');
   });
 
   it('T15: "Piso 3" detected', () => {
     const r = mergeAddress('Av Italia 500', 'Piso 3');
-    expect(r.fullAddress).toBe('Av Italia 500 Piso 3');
+    expect(r.fullAddress).toBe('Av Italia 500');
     expect(r.extraObs).toBe('Piso 3');
   });
 
   it('T16: "Depto 2A" detected', () => {
     const r = mergeAddress('Colonia 1234', 'Depto 2A');
-    expect(r.fullAddress).toBe('Colonia 1234 Depto 2A');
+    expect(r.fullAddress).toBe('Colonia 1234');
     expect(r.extraObs).toBe('Depto 2A');
   });
 
   it('T17: "Torre 2 Apto 5" detected', () => {
     const r = mergeAddress('Av Brasil 2500', 'Torre 2 Apto 5');
-    expect(r.fullAddress).toContain('Torre 2 Apto 5');
-    expect(r.extraObs).toContain('Torre');
+    expect(r.fullAddress).toBe('Av Brasil 2500');
+    expect(r.extraObs).toBe('Torre 2 Apto 5');
   });
 
   it('T18: "local 5" detected', () => {
     const r = mergeAddress('18 de Julio 1000', 'local 5');
-    expect(r.fullAddress).toContain('local 5');
-    expect(r.extraObs).toContain('local 5');
+    expect(r.fullAddress).toBe('18 de Julio 1000');
+    expect(r.extraObs).toBe('local 5');
   });
 
   it('T19: "oficina 302" detected', () => {
     const r = mergeAddress('Plaza Independencia 800', 'oficina 302');
-    expect(r.fullAddress).toContain('oficina 302');
-    expect(r.extraObs).toContain('oficina');
+    expect(r.fullAddress).toBe('Plaza Independencia 800');
+    expect(r.extraObs).toBe('oficina 302');
   });
 
   it('T20: "puerta 3" detected', () => {
     const r = mergeAddress('Av Brasil 2500', 'puerta 3');
-    expect(r.fullAddress).toContain('puerta 3');
-    expect(r.extraObs).toContain('puerta');
+    expect(r.fullAddress).toBe('Av Brasil 2500');
+    expect(r.extraObs).toBe('puerta 3');
   });
 
   it('T21: "Esc 2" (escalera) detected', () => {
@@ -167,26 +167,29 @@ describe('mergeAddress — comprehensive (50 tests)', () => {
 
   it('T25: "1502B" splits into door + apt', () => {
     const r = mergeAddress('Av Rivera', '1502B');
-    expect(r.fullAddress).toBe('Av Rivera 1502 B');
+    // address1 has no number: door part appended, apt letter to obs
+    expect(r.fullAddress).toBe('Av Rivera 1502');
     expect(r.extraObs).toBe('Apto B');
   });
 
-  it('T26: "304A" splits into door + apt', () => {
+  it('T26: "304A" — address1 already has number, all goes to obs', () => {
     const r = mergeAddress('Canelones 1234', '304A');
-    expect(r.fullAddress).toBe('Canelones 1234 304 A');
-    expect(r.extraObs).toBe('Apto A');
+    expect(r.fullAddress).toBe('Canelones 1234');
+    expect(r.extraObs).toBe('Apto 304A');
   });
 
   it('T27: "2500C2" splits with apt letter+number', () => {
     const r = mergeAddress('Ejido', '2500C2');
-    expect(r.fullAddress).toBe('Ejido 2500 C2');
+    // address1 has no number: door part appended, apt part to obs
+    expect(r.fullAddress).toBe('Ejido 2500');
     expect(r.extraObs).toBe('Apto C2');
   });
 
   it('T28: "12345Z" 5-digit door + letter', () => {
     const r = mergeAddress('Ruta 1', '12345Z');
-    expect(r.fullAddress).toBe('Ruta 1 12345 Z');
-    expect(r.extraObs).toBe('Apto Z');
+    // address1 ends with "1" (a number), so address1 already has door
+    expect(r.fullAddress).toBe('Ruta 1');
+    expect(r.extraObs).toBe('Apto 12345Z');
   });
 
   // ── 5. Pure door number ──
@@ -199,8 +202,8 @@ describe('mergeAddress — comprehensive (50 tests)', () => {
 
   it('T30: pure door becomes apt when address1 already has number', () => {
     const r = mergeAddress('Salto 1032', '4');
-    expect(r.fullAddress).toContain('Apto 4');
-    expect(r.extraObs).toContain('Apto 4');
+    expect(r.fullAddress).toBe('Salto 1032');
+    expect(r.extraObs).toBe('Apto 4');
   });
 
   it('T31: 3-digit number becomes apt when address1 has number', () => {
@@ -267,9 +270,9 @@ describe('mergeAddress — comprehensive (50 tests)', () => {
 
   // ── 8. Short text starting with number ──
 
-  it('T41: "103 (Susana De Haedo)" with address1 having number → obs', () => {
+  it('T41: "103 (Susana De Haedo)" with address1 having number → obs only', () => {
     const r = mergeAddress('Liorna 6518', '103 ( Susana De Haedo)');
-    expect(r.fullAddress).toContain('103');
+    expect(r.fullAddress).toBe('Liorna 6518');
     expect(r.extraObs).toBe('103 ( Susana De Haedo)');
   });
 
@@ -283,24 +286,25 @@ describe('mergeAddress — comprehensive (50 tests)', () => {
     expect(r.extraObs).toBe('5 timbre roto');
   });
 
-  it('T44: short number+text without address1 number → checks apt letter', () => {
+  it('T44: short number+text without address1 number → goes to obs', () => {
     const r = mergeAddress('Rondeau', '5A edificio azul');
-    // address1 has no number, a2 starts with digit, has apt letter pattern
-    expect(r.extraObs).toContain('Apto/Puerta');
+    // Falls through to catch-all: fullAddress = a1, extraObs = a2
+    expect(r.fullAddress).toBe('Rondeau');
+    expect(r.extraObs).toBe('5A edificio azul');
   });
 
   // ── 9. Default branch — long/unrecognized text ──
 
-  it('T45: "Casa sin rejas" goes to default branch with obs', () => {
+  it('T45: "Casa sin rejas" goes to default branch with obs only', () => {
     const r = mergeAddress('Emilio de Franco m34', 'Casa sin rejas');
-    expect(r.fullAddress).toContain('Casa sin rejas');
+    expect(r.fullAddress).toBe('Emilio de Franco m34');
     expect(r.extraObs).toBe('Casa sin rejas');
   });
 
-  it('T46: "Complejo America. Senda 4" goes to default with obs', () => {
+  it('T46: "Complejo America. Senda 4" goes to default with obs only', () => {
     const r = mergeAddress('Andres y Yegros', 'Complejo America. Senda 4');
-    expect(r.fullAddress).toContain('Complejo');
-    expect(r.extraObs).toContain('Complejo');
+    expect(r.fullAddress).toBe('Andres y Yegros');
+    expect(r.extraObs).toBe('Complejo America. Senda 4');
   });
 
   it('T47: "Montevideo" (city name) is filtered out — handled by DAC dropdown', () => {
@@ -323,7 +327,7 @@ describe('mergeAddress — comprehensive (50 tests)', () => {
 
   it('T50: address2 with leading/trailing spaces trimmed', () => {
     const r = mergeAddress('Colonia 1234', '  Apto 5  ');
-    expect(r.fullAddress).toBe('Colonia 1234 Apto 5');
+    expect(r.fullAddress).toBe('Colonia 1234');
     expect(r.extraObs).toBe('Apto 5');
   });
 });
@@ -435,12 +439,12 @@ describe('getDepartmentForCity — comprehensive (25 tests)', () => {
 
   // ── Edge cases that return undefined ──
 
-  it('T74: "Centro/Montevideo" not found (slash in name)', () => {
-    expect(getDepartmentForCity('Centro/Montevideo')).toBeUndefined();
+  it('T74: "Centro/Montevideo" — slash normalized, finds montevideo', () => {
+    expect(getDepartmentForCity('Centro/Montevideo')).toBe('Montevideo');
   });
 
-  it('T75: "2|montevideo" not found (garbage prefix)', () => {
-    expect(getDepartmentForCity('2|montevideo')).toBeUndefined();
+  it('T75: "2|montevideo" — pipe normalized, finds montevideo', () => {
+    expect(getDepartmentForCity('2|montevideo')).toBe('Montevideo');
   });
 });
 
@@ -562,7 +566,7 @@ describe('determinePaymentType — comprehensive (10 tests)', () => {
     expect(determinePaymentType(makeOrder('-500'), 3900, true)).toBe('DESTINATARIO');
   });
 
-  it('T100: threshold 0 with any positive amount → REMITENTE', () => {
-    expect(determinePaymentType(makeOrder('1'), 0, true)).toBe('REMITENTE');
+  it('T100: threshold 0 → DESTINATARIO (guard against invalid threshold)', () => {
+    expect(determinePaymentType(makeOrder('1'), 0, true)).toBe('DESTINATARIO');
   });
 });

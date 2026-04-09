@@ -175,30 +175,37 @@ function detectCityIntelligent(
 }
 
 /**
- * Merge address1 + address2 into a single clean delivery address.
- * Handles cases where the door number is in address2, or address2
- * contains supplementary info like apartment/floor.
+ * Merge address1 + address2 into a clean delivery address + observaciones.
  *
- * RULES:
- * - If address2 looks like just a number (door number), append to address1
- * - If address2 looks like apt/floor/block info, append to address1
- * - If address2 is a completely different address, combine them
- * - Strip leading/trailing whitespace and normalize separators
+ * PHILOSOPHY (v2 — April 2026):
+ *   - fullAddress = ONLY the street + door number (what DAC needs for delivery)
+ *   - extraObs = EVERYTHING else (apt, floor, delivery notes, pickup info)
+ *   - address2 almost NEVER goes into fullAddress — it goes to observaciones
+ *   - Only exception: address2 is a pure door number that address1 is missing
+ *
+ * This ensures DAC gets a clean short address, and all extra info (apartment,
+ * delivery hours, "dejar en porteria", etc.) goes to Observaciones where the
+ * courier actually reads it.
  */
 export function mergeAddress(address1: string, address2: string | undefined | null): { fullAddress: string; extraObs: string } {
   const a1 = (address1 ?? '').trim();
   const a2 = (address2 ?? '').trim();
 
-  if (!a2) return { fullAddress: a1, extraObs: '' };
+  if (!a2) {
+    // Even with no address2, check if address1 has a slash pattern like "3274/801"
+    const slashApt = /(\d+)\s*\/\s*(\d+)\s*$/.exec(a1);
+    if (slashApt) {
+      return { fullAddress: a1, extraObs: `Apto ${slashApt[2]}` };
+    }
+    return { fullAddress: a1, extraObs: '' };
+  }
 
-  // PHONE NUMBER: address2 is a phone number (starts with 0, 9+ digits, or matches UY pattern)
-  // e.g. "099680230" — should NOT go into address, ignore it
+  // PHONE NUMBER: address2 is a phone number — discard entirely
   if (/^0\d{7,}$/.test(a2.replace(/[\s-]/g, '')) || /^(\+?598|09[0-9])\d{5,}$/.test(a2.replace(/[\s-]/g, ''))) {
     return { fullAddress: a1, extraObs: '' };
   }
 
-  // CITY/DEPARTMENT: address2 is just a city or department name — ignore it
-  // (the city/dept are handled by separate DAC dropdowns, not the address field)
+  // CITY/DEPARTMENT: address2 is just a city or department name — discard
   const KNOWN_PLACES = [
     'montevideo', 'canelones', 'maldonado', 'salto', 'paysandu', 'rivera', 'tacuarembo',
     'colonia', 'soriano', 'rocha', 'florida', 'durazno', 'artigas', 'treinta y tres',
@@ -207,79 +214,74 @@ export function mergeAddress(address1: string, address2: string | undefined | nu
     'la blanqueada', 'tres cruces', 'prado', 'lagomar', 'la floresta', 'las piedras',
     'ciudad de la costa', 'pando', 'barros blancos', 'piriapolis', 'punta del este',
     'minas', 'fray bentos', 'mercedes', 'nueva palmira', 'young', 'carmelo',
+    'el pinar', 'solymar', 'atlantida', 'parque del plata', 'sauce', 'progreso',
+    'la paz', 'delta del tigre', 'san carlos', 'pan de azucar',
   ];
-  if (KNOWN_PLACES.includes(a2.toLowerCase())) {
+  if (KNOWN_PLACES.includes(a2.toLowerCase().trim())) {
     return { fullAddress: a1, extraObs: '' };
   }
 
-  // DEDUP: if address2 is already at the end of address1, skip it
-  // e.g. address1="18 De Julio 705", address2="705" → don't append again
-  if (a1.endsWith(a2)) {
+  // DEDUP: if address2 is already contained in address1 (or is essentially the same info), don't append
+  // BUT preserve the info in extraObs if it looks like apartment/unit info
+  // Uses substring match + word-overlap (80%+) to handle "Retiro dac maldonado" vs "Retiro en DAC Maldonado"
+  const a1Norm = normalize(a1);
+  const a2Norm = normalize(a2);
+  const a2Words = a2Norm.split(/\s+/).filter(w => w.length > 1);
+  const a1Words = new Set(a1Norm.split(/\s+/));
+  const wordOverlap = a2Words.length > 0 ? a2Words.filter(w => a1Words.has(w)).length / a2Words.length : 0;
+  const isDuplicate = a1.toLowerCase().includes(a2.toLowerCase()) || a1.endsWith(a2)
+    || a1Norm.includes(a2Norm) || a2Norm.includes(a1Norm)
+    || (a2Words.length >= 2 && wordOverlap >= 0.8);
+  if (isDuplicate) {
+    // Even though it's a duplicate, if it looks like an apt number, preserve in obs
+    if (/^\d{1,5}$/.test(a2)) {
+      return { fullAddress: a1, extraObs: `Apto ${a2}` };
+    }
+    if (/apto|piso|oficina|depto|of\.|local|torre/i.test(a2)) {
+      return { fullAddress: a1, extraObs: a2 };
+    }
     return { fullAddress: a1, extraObs: '' };
   }
 
-  // Detect "puerta/apto" pattern in address1: "3274/801" means door 3274, apt 801
-  // If address1 already has this pattern, put the apt part in observations
-  const slashApt = /(\d+)\s*\/\s*(\d+)\s*$/.exec(a1);
-  if (slashApt && !a2) {
-    return { fullAddress: a1, extraObs: `Apto ${slashApt[2]}` };
-  }
-
-  // Detect apartment/floor/unit info — ALWAYS goes to Observaciones too
-  const aptPattern = /^(apto?\.?\s*\d|piso\s*\d|depto?\.?\s*\d|esc\.?\s*\d|torre\s*\d|block\s*\d|bloque\s*\d|unidad\s*\d|puerta\s*\d|casa\s*\d|local\s*\d|of\.?\s*\d|oficina\s*\d)/i;
-  const isAptFloor = aptPattern.test(a2);
-
-  // Detect "1502B" or "502 A" pattern — door+apt combined, needs separation
-  const doorAptCombined = /^(\d{3,5})\s*([A-Za-z]\d{0,2})$/.exec(a2);
-
-  // Pure door number: "1234"
-  const isDoorNumber = /^\d{1,6}$/.test(a2);
-
-  // Direction references
-  const isDirectionRef = /^(esq|entre|frente|al lado|cerca|junto|casi|a metros|esquina)/i.test(a2);
-
-  if (isDoorNumber) {
-    // Check if address1 already ends with a number — if so, address2 might be apt number
+  // PURE DOOR NUMBER: address2 is just digits (e.g. "1607")
+  if (/^\d{1,6}$/.test(a2)) {
     const a1EndsWithNum = /\d+\s*$/.test(a1);
     if (a1EndsWithNum) {
-      // address1 already has a door number, address2 is likely apartment
-      return { fullAddress: `${a1} Apto ${a2}`, extraObs: `Apto ${a2}` };
+      // address1 already has a number — address2 is likely apartment
+      return { fullAddress: a1, extraObs: `Apto ${a2}` };
     }
+    // address1 has no number — address2 is the door number, append it
     return { fullAddress: `${a1} ${a2}`, extraObs: '' };
   }
 
+  // DOOR+APT combined: "1502B" or "502 A"
+  const doorAptCombined = /^(\d{3,5})\s*([A-Za-z]\d{0,2})$/.exec(a2);
   if (doorAptCombined) {
-    const doorNum = doorAptCombined[1];
-    const aptPart = doorAptCombined[2];
-    return { fullAddress: `${a1} ${doorNum} ${aptPart}`, extraObs: `Apto ${aptPart}` };
+    const a1EndsWithNum = /\d+\s*$/.test(a1);
+    if (a1EndsWithNum) {
+      // address1 already has door — this is apartment info
+      return { fullAddress: a1, extraObs: `Apto ${a2}` };
+    }
+    return { fullAddress: `${a1} ${doorAptCombined[1]}`, extraObs: `Apto ${doorAptCombined[2]}` };
   }
 
-  if (isAptFloor) {
-    return { fullAddress: `${a1} ${a2}`, extraObs: a2 };
-  }
-
-  if (isDirectionRef) {
+  // DIRECTION REFERENCE: "esq Av Italia", "entre Colonia y Maldonado"
+  // These go to BOTH address and obs (useful for courier navigation)
+  // Word boundary (\b) prevents "Entregar" from matching "entre"
+  if (/^(esq\b|entre\b|frente\b|al lado\b|cerca\b|junto\b|casi\b|a metros\b|esquina\b)/i.test(a2)) {
     return { fullAddress: `${a1} ${a2}`, extraObs: '' };
   }
 
-  // Short number+text like "bis"
+  // NUMBER+BIS: "1234 bis"
   if (/^\d{1,6}\s+(bis|esq)/i.test(a2)) {
     return { fullAddress: `${a1} ${a2}`, extraObs: '' };
   }
 
-  // Short text starting with number
-  if (a2.length < 30 && /^\d/.test(a2)) {
-    const a1EndsWithNum = /\d+\s*$/.test(a1);
-    // If address1 already has a door number, the leading number in address2 is likely apartment info
-    if (a1EndsWithNum) {
-      return { fullAddress: `${a1} ${a2}`, extraObs: a2 };
-    }
-    const hasAptLetter = /\d+\s*[A-Za-z]/.test(a2);
-    return { fullAddress: `${a1} ${a2}`, extraObs: hasAptLetter ? `Apto/Puerta: ${a2}` : '' };
-  }
-
-  // Default: put in both fullAddress and observations for safety
-  return { fullAddress: `${a1} - ${a2}`, extraObs: a2 };
+  // EVERYTHING ELSE: apartment info, delivery notes, pickup instructions, etc.
+  // ALL goes to extraObs ONLY — keep fullAddress clean
+  // Examples: "303 apto", "Lunes a viernes 9-16", "Casa con cerco de polines",
+  //   "oficina 1209 dejar en porteria", "804. Dejar en porteria con Foxys"
+  return { fullAddress: a1, extraObs: a2 };
 }
 
 async function findBestOptionMatch(
@@ -472,6 +474,17 @@ export async function createShipment(
     throw new Error('DAC shipment form did not load (TipoServicio not found)');
   }
 
+  // ===== DETECT RETIRO EN AGENCIA =====
+  // If the customer wrote "retiro en DAC" / "retiro en agencia" / "retiro en sucursal"
+  // in their address, this is a pickup at DAC branch — not home delivery.
+  const combinedAddrText = `${addr.address1 ?? ''} ${addr.address2 ?? ''}`.toLowerCase();
+  const isRetiroEnAgencia = /retiro\s+(en\s+)?(dac|agencia|sucursal|local|oficina)/i.test(combinedAddrText)
+    || /^retiro\b/i.test((addr.address1 ?? '').trim());
+
+  if (isRetiroEnAgencia) {
+    slog.info(DAC_STEPS.STEP1_START, `RETIRO EN AGENCIA detected — address: "${addr.address1}", will use TipoEntrega=Agencia`);
+  }
+
   // ===== STEP 1: Shipment Type =====
   slog.info(DAC_STEPS.STEP1_START, 'Filling Step 1: shipment type fields');
 
@@ -480,7 +493,9 @@ export async function createShipment(
     ? DAC_SELECTORS.PAYMENT_VALUE_REMITENTE
     : DAC_SELECTORS.PAYMENT_VALUE_DESTINATARIO;
   const packageVal = DAC_SELECTORS.PACKAGE_VALUE_PAQUETE;
-  const deliveryVal = DAC_SELECTORS.DELIVERY_VALUE_DOMICILIO;
+  const deliveryVal = isRetiroEnAgencia
+    ? DAC_SELECTORS.DELIVERY_VALUE_AGENCIA
+    : DAC_SELECTORS.DELIVERY_VALUE_DOMICILIO;
 
   await safeSelect(page, 'select[name="TipoServicio"]', pickupVal, slog, DAC_STEPS.STEP1_TIPO_SERVICIO, 'TipoServicio');
   await page.waitForTimeout(300);
@@ -879,6 +894,7 @@ export async function createShipment(
   await page.waitForTimeout(500);
 
   // ===== FILL OBSERVACIONES BEFORE Agregar (must be set before submission) =====
+  // Build observations from: extraObs (apt/delivery notes) + order notes + note_attributes
   const observations: string[] = [];
   if (extraObs) observations.push(extraObs);
   if (order.note) {
@@ -897,30 +913,81 @@ export async function createShipment(
 
   if (observations.length > 0) {
     const obsText = observations.join(' | ');
-    const obsFilled = await page.evaluate((text: string) => {
-      const selectors = [
-        'textarea[name="Observaciones"]',
-        'textarea[name="observaciones"]',
-        'textarea[placeholder*="bservacion"]',
-        'textarea',
-      ];
-      for (const sel of selectors) {
-        const el = document.querySelector(sel) as HTMLTextAreaElement;
-        if (el && el.offsetParent !== null) {
-          el.value = text;
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-          return sel;
-        }
-      }
-      return null;
-    }, obsText);
+    slog.info(DAC_STEPS.STEP4_OK, `Will fill Observaciones: "${obsText.substring(0, 120)}"`, { fullText: obsText });
 
-    if (obsFilled) {
-      slog.info(DAC_STEPS.STEP4_OK, `Observaciones filled BEFORE Agregar: "${obsText.substring(0, 80)}"`, { selector: obsFilled });
-    } else {
-      slog.warn(DAC_STEPS.STEP4_OK, `Could not fill Observaciones field (text: "${obsText.substring(0, 50)}")`);
+    // Use Playwright's native page.fill() — much more reliable than el.value assignment
+    // Try multiple selectors in order of specificity
+    const obsSelectors = [
+      'textarea[name="Observaciones"]',
+      'textarea[name="observaciones"]',
+      'textarea[placeholder*="bservacion"]',
+      '#cargaEnvios textarea',
+      'fieldset textarea',
+      'textarea',
+    ];
+
+    let obsFilled = false;
+    for (const sel of obsSelectors) {
+      try {
+        const el = await page.$(sel);
+        if (!el) continue;
+
+        // Ensure the textarea is visible (force it if needed)
+        await page.evaluate((s: string) => {
+          const textarea = document.querySelector(s) as HTMLTextAreaElement;
+          if (textarea) {
+            textarea.style.display = 'block';
+            textarea.style.visibility = 'visible';
+            textarea.removeAttribute('hidden');
+            textarea.removeAttribute('disabled');
+            textarea.removeAttribute('readonly');
+          }
+        }, sel);
+        await page.waitForTimeout(200);
+
+        // Use Playwright fill (triggers proper input/change events)
+        await page.fill(sel, obsText);
+
+        // Verify the value was actually written
+        const written = await page.$eval(sel, (el: any) => el.value).catch(() => '');
+        if (written && written.length > 0) {
+          obsFilled = true;
+          slog.info(DAC_STEPS.STEP4_OK, `Observaciones filled via page.fill(): "${written.substring(0, 80)}"`, { selector: sel, length: written.length });
+          break;
+        } else {
+          slog.warn(DAC_STEPS.STEP4_OK, `page.fill() on ${sel} did not persist — trying next selector`);
+        }
+      } catch {
+        // Selector didn't work, try next
+        continue;
+      }
     }
+
+    if (!obsFilled) {
+      // Last resort: force fill ALL textareas via evaluate + manual events
+      slog.warn(DAC_STEPS.STEP4_OK, 'All page.fill() attempts failed — using evaluate fallback');
+      await page.evaluate((text: string) => {
+        const textareas = document.querySelectorAll('textarea');
+        for (const ta of textareas) {
+          (ta as HTMLTextAreaElement).value = text;
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          ta.dispatchEvent(new Event('change', { bubbles: true }));
+          ta.dispatchEvent(new Event('blur', { bubbles: true }));
+        }
+      }, obsText);
+      // Verify
+      const verifyObs = await page.evaluate(() => {
+        const ta = document.querySelector('textarea') as HTMLTextAreaElement;
+        return ta?.value ?? '';
+      });
+      if (verifyObs && verifyObs.length > 0) {
+        slog.info(DAC_STEPS.STEP4_OK, `Observaciones filled via evaluate fallback: "${verifyObs.substring(0, 80)}"`);
+      } else {
+        slog.error(DAC_STEPS.STEP4_OK, `CRITICAL: Could not fill Observaciones field. Text was: "${obsText.substring(0, 80)}"`);
+      }
+    }
+  } else {
+    slog.info(DAC_STEPS.STEP4_OK, 'No observations to fill (extraObs empty, no order notes)');
   }
 
   // ===== CLICK "Agregar" (adds to cart) =====

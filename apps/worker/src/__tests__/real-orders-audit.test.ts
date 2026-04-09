@@ -265,12 +265,10 @@ describe('Real Orders Audit — Last 20 Aura Orders', () => {
       expect(r.extraObs).toBe('');
     });
 
-    it('#1145 — address2="Casa sin rejas" goes to observations', () => {
+    it('#1145 — address2="Casa sin rejas" goes to observations only', () => {
       const r = mergeAddress('Emilio de Franco m34 s17A entre Becú y Río de Janeiro', 'Casa sin rejas');
-      expect(r.fullAddress).toContain('Emilio de Franco');
-      expect(r.fullAddress).toContain('Casa sin rejas');
-      // "Casa sin rejas" is extra context, should go to observations
-      expect(r.extraObs).toContain('Casa sin rejas');
+      expect(r.fullAddress).toBe('Emilio de Franco m34 s17A entre Becú y Río de Janeiro');
+      expect(r.extraObs).toBe('Casa sin rejas');
     });
 
     it('#1144 — address2="Casa rejas grises..." goes to observations', () => {
@@ -296,24 +294,22 @@ describe('Real Orders Audit — Last 20 Aura Orders', () => {
       expect(r.fullAddress).toBe('Lavalleja 444');
     });
 
-    it('#1140 — address2="Apto 102" goes to both address and observations', () => {
+    it('#1140 — address2="Apto 102" goes to observations only', () => {
       const r = mergeAddress('18 De Julio 319 o 405', 'Apto 102');
-      expect(r.fullAddress).toBe('18 De Julio 319 o 405 Apto 102');
+      expect(r.fullAddress).toBe('18 De Julio 319 o 405');
       expect(r.extraObs).toBe('Apto 102');
     });
 
-    it('#1139 — address2="apto 201" goes to both address and observations', () => {
+    it('#1139 — address2="apto 201" goes to observations only', () => {
       const r = mergeAddress('Av.Agraciada 3069', 'apto 201');
-      expect(r.fullAddress).toBe('Av.Agraciada 3069 apto 201');
+      expect(r.fullAddress).toBe('Av.Agraciada 3069');
       expect(r.extraObs).toBe('apto 201');
     });
 
-    it('#1138 — address2="103 ( Susana De Haedo)" treated as apt + reference', () => {
+    it('#1138 — address2="103 ( Susana De Haedo)" goes to observations only', () => {
       const r = mergeAddress('Liorna 6518', '103 ( Susana De Haedo)');
-      expect(r.fullAddress).toContain('Liorna 6518');
-      expect(r.fullAddress).toContain('103');
-      // Has door number (6518) + address2 starts with number → apt
-      expect(r.extraObs).toContain('103');
+      expect(r.fullAddress).toBe('Liorna 6518');
+      expect(r.extraObs).toBe('103 ( Susana De Haedo)');
     });
 
     it('#1137 — address2="099680230" is a PHONE NUMBER, not address', () => {
@@ -375,9 +371,9 @@ describe('Real Orders Audit — Last 20 Aura Orders', () => {
       expect(r.extraObs).toContain('Apto 002');
     });
 
-    it('#1129 — address2="apto 602" goes to both address and observations', () => {
+    it('#1129 — address2="apto 602" goes to observations only', () => {
       const r = mergeAddress('Pedro Fco. Berro 785', 'apto 602');
-      expect(r.fullAddress).toBe('Pedro Fco. Berro 785 apto 602');
+      expect(r.fullAddress).toBe('Pedro Fco. Berro 785');
       expect(r.extraObs).toBe('apto 602');
     });
 

@@ -46,49 +46,48 @@ describe('mergeAddress', () => {
 
   // ====== BUG: APARTMENT NOT IN OBSERVATIONS (real cases #11022, #11023) ======
 
-  it('puts apartment info (Apto 5B) in BOTH address and observations', () => {
+  it('puts apartment info (Apto 5B) in observations only', () => {
     const result = mergeAddress('Río Negro 1323', 'Apto 5B');
-    expect(result.fullAddress).toBe('Río Negro 1323 Apto 5B');
+    expect(result.fullAddress).toBe('Río Negro 1323');
     expect(result.extraObs).toBe('Apto 5B');
   });
 
-  it('puts "Piso 3" in both address and observations', () => {
+  it('puts "Piso 3" in observations only', () => {
     const result = mergeAddress('Av Italia 500', 'Piso 3');
-    expect(result.fullAddress).toBe('Av Italia 500 Piso 3');
+    expect(result.fullAddress).toBe('Av Italia 500');
     expect(result.extraObs).toBe('Piso 3');
   });
 
-  it('puts "Depto 2A" in both address and observations', () => {
+  it('puts "Depto 2A" in observations only', () => {
     const result = mergeAddress('Colonia 1234', 'Depto 2A');
-    expect(result.fullAddress).toBe('Colonia 1234 Depto 2A');
+    expect(result.fullAddress).toBe('Colonia 1234');
     expect(result.extraObs).toBe('Depto 2A');
   });
 
-  it('puts "Apt 10" in both address and observations', () => {
+  it('puts "Apt 10" in observations only', () => {
     const result = mergeAddress('Scoseria 2459', 'Apt 10');
-    expect(result.fullAddress).toBe('Scoseria 2459 Apt 10');
+    expect(result.fullAddress).toBe('Scoseria 2459');
     expect(result.extraObs).toBe('Apt 10');
   });
 
-  it('puts "Torre 2 Apto 5" in both address and observations', () => {
+  it('puts "Torre 2 Apto 5" in observations only', () => {
     const result = mergeAddress('Av Brasil 2500', 'Torre 2 Apto 5');
-    // starts with "torre" so matches aptPattern
-    expect(result.fullAddress).toContain('Torre 2');
-    expect(result.extraObs).toContain('Torre');
+    expect(result.fullAddress).toBe('Av Brasil 2500');
+    expect(result.extraObs).toBe('Torre 2 Apto 5');
   });
 
   // ====== BUG: COMBINED DOOR+APT (e.g., "1502B") ======
 
   it('separates "1502B" into door and apt with observations', () => {
     const result = mergeAddress('Av Rivera', '1502B');
-    expect(result.fullAddress).toBe('Av Rivera 1502 B');
+    expect(result.fullAddress).toBe('Av Rivera 1502');
     expect(result.extraObs).toBe('Apto B');
   });
 
-  it('separates "304A" into door and apt', () => {
+  it('separates "304A" — address1 already has number, so all goes to obs', () => {
     const result = mergeAddress('Canelones 1234', '304A');
-    expect(result.fullAddress).toBe('Canelones 1234 304 A');
-    expect(result.extraObs).toBe('Apto A');
+    expect(result.fullAddress).toBe('Canelones 1234');
+    expect(result.extraObs).toBe('Apto 304A');
   });
 
   // ====== PURE DOOR NUMBER ======
@@ -130,10 +129,9 @@ describe('mergeAddress', () => {
   // ====== COMPLEX REAL-WORLD CASES ======
 
   it('handles "Complejo América. Senda 4" in address2 (real case #11027)', () => {
-    // Non-standard address continuation — should go to both
+    // Non-standard address continuation — goes to extraObs only
     const result = mergeAddress('Andres y Yegros', 'Complejo América. Senda 4');
-    expect(result.fullAddress).toContain('Andres y Yegros');
-    expect(result.fullAddress).toContain('Complejo');
+    expect(result.fullAddress).toBe('Andres y Yegros');
     expect(result.extraObs).toContain('Complejo');
   });
 
@@ -148,7 +146,7 @@ describe('mergeAddress', () => {
 
   it('handles empty address1', () => {
     const result = mergeAddress('', 'Apto 5');
-    expect(result.fullAddress.trim()).toBe('Apto 5');
+    expect(result.fullAddress).toBe('');
     expect(result.extraObs).toBe('Apto 5');
   });
 
@@ -165,20 +163,20 @@ describe('mergeAddress', () => {
 
   it('handles "puerta" keyword', () => {
     const result = mergeAddress('Av Brasil 2500', 'puerta 3');
-    expect(result.fullAddress).toContain('puerta 3');
-    expect(result.extraObs).toContain('puerta');
+    expect(result.fullAddress).toBe('Av Brasil 2500');
+    expect(result.extraObs).toBe('puerta 3');
   });
 
   it('handles "local" keyword', () => {
     const result = mergeAddress('18 de Julio 1000', 'local 5');
-    expect(result.fullAddress).toContain('local 5');
-    expect(result.extraObs).toContain('local');
+    expect(result.fullAddress).toBe('18 de Julio 1000');
+    expect(result.extraObs).toBe('local 5');
   });
 
   it('handles "oficina" keyword', () => {
     const result = mergeAddress('Plaza Independencia 800', 'oficina 302');
-    expect(result.fullAddress).toContain('oficina 302');
-    expect(result.extraObs).toContain('oficina');
+    expect(result.fullAddress).toBe('Plaza Independencia 800');
+    expect(result.extraObs).toBe('oficina 302');
   });
 
   // ====== PHONE NUMBER FILTERING ======
@@ -223,7 +221,7 @@ describe('mergeAddress', () => {
 
   it('does NOT filter real address that happens to contain city name', () => {
     const result = mergeAddress('Av Rivera', 'Apto 5 Montevideo 1234');
-    expect(result.fullAddress).toContain('Apto 5');
-    expect(result.extraObs).toContain('Apto 5');
+    expect(result.fullAddress).toBe('Av Rivera');
+    expect(result.extraObs).toBe('Apto 5 Montevideo 1234');
   });
 });

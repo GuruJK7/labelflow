@@ -322,32 +322,32 @@ describe('mergeAddress', () => {
 
   it('address2 is door number but address1 already has one', () => {
     const result = mergeAddress('18 de Julio 1234', '502');
-    expect(result.fullAddress).toBe('18 de Julio 1234 Apto 502');
+    expect(result.fullAddress).toBe('18 de Julio 1234');
     expect(result.extraObs).toBe('Apto 502');
   });
 
   // --- Apartment info ---
   it('address2 is "Apto 301"', () => {
     const result = mergeAddress('Bvar Artigas 1100', 'Apto 301');
-    expect(result.fullAddress).toBe('Bvar Artigas 1100 Apto 301');
+    expect(result.fullAddress).toBe('Bvar Artigas 1100');
     expect(result.extraObs).toBe('Apto 301');
   });
 
   it('address2 is "Piso 3"', () => {
     const result = mergeAddress('18 de Julio 999', 'Piso 3');
-    expect(result.fullAddress).toBe('18 de Julio 999 Piso 3');
+    expect(result.fullAddress).toBe('18 de Julio 999');
     expect(result.extraObs).toBe('Piso 3');
   });
 
   it('address2 is "Torre 2 Apto 1401"', () => {
     const result = mergeAddress('Rambla Republica de Mexico 5805', 'Torre 2 Apto 1401');
-    expect(result.fullAddress).toContain('Torre 2 Apto 1401');
+    expect(result.fullAddress).toBe('Rambla Republica de Mexico 5805');
     expect(result.extraObs).toBe('Torre 2 Apto 1401');
   });
 
   it('address2 is "Casa 5"', () => {
     const result = mergeAddress('Camino Carrasco 1500', 'Casa 5');
-    expect(result.fullAddress).toContain('Casa 5');
+    expect(result.fullAddress).toBe('Camino Carrasco 1500');
     expect(result.extraObs).toBe('Casa 5');
   });
 
@@ -379,7 +379,10 @@ describe('mergeAddress', () => {
 
   // --- Duplicate detection ---
   it('address2 already at end of address1: "18 De Julio 705" + "705"', () => {
-    expect(mergeAddress('18 De Julio 705', '705')).toEqual({ fullAddress: '18 De Julio 705', extraObs: '' });
+    // Duplicate number detected; since it looks like an apt number, preserve in obs
+    const result = mergeAddress('18 De Julio 705', '705');
+    expect(result.fullAddress).toBe('18 De Julio 705');
+    expect(result.extraObs).toBe('Apto 705');
   });
 
   // --- Direction references ---
@@ -398,16 +401,17 @@ describe('mergeAddress', () => {
   // --- Combined door + apt: "1502B" ---
   it('address2 is "1502B" (door+apt combined)', () => {
     const result = mergeAddress('Av Italia', '1502B');
-    expect(result.fullAddress).toContain('1502');
-    expect(result.fullAddress).toContain('B');
-    expect(result.extraObs).toContain('B');
+    // address1 has no number, so door part goes to fullAddress, apt letter to obs
+    expect(result.fullAddress).toBe('Av Italia 1502');
+    expect(result.extraObs).toBe('Apto B');
   });
 
   // --- Slash pattern: "3274/801" ---
   it('address2 is "3274/801" (slash apt pattern)', () => {
     const result = mergeAddress('Bvar Artigas', '3274/801');
-    // Should handle as short text starting with number
-    expect(result.fullAddress).toContain('3274/801');
+    // Unrecognized pattern goes to extraObs only
+    expect(result.fullAddress).toBe('Bvar Artigas');
+    expect(result.extraObs).toBe('3274/801');
   });
 
   // --- Bis pattern ---
@@ -418,22 +422,23 @@ describe('mergeAddress', () => {
   });
 
   // --- Long descriptive address2 ---
-  it('address2 is long text → goes to both address and obs', () => {
+  it('address2 is long text → goes to obs only', () => {
     const result = mergeAddress('Rambla 5000', 'Edificio Torre Azul entrada por costado norte');
-    expect(result.fullAddress).toContain('Edificio Torre Azul');
+    expect(result.fullAddress).toBe('Rambla 5000');
     expect(result.extraObs).toBe('Edificio Torre Azul entrada por costado norte');
   });
 
   // --- Empty/null address1 ---
   it('address1 is empty, address2 has data', () => {
     const result = mergeAddress('', 'Apto 301');
-    expect(result.fullAddress).toContain('Apto 301');
+    expect(result.fullAddress).toBe('');
+    expect(result.extraObs).toBe('Apto 301');
   });
 
   // --- Real problem cases from production ---
   it('real case: "Av Italia 3456" + "Apto 12"', () => {
     const result = mergeAddress('Av Italia 3456', 'Apto 12');
-    expect(result.fullAddress).toBe('Av Italia 3456 Apto 12');
+    expect(result.fullAddress).toBe('Av Italia 3456');
     expect(result.extraObs).toBe('Apto 12');
   });
 
@@ -445,7 +450,7 @@ describe('mergeAddress', () => {
 
   it('real case: "Bvar Artigas 1100" + "Local 3"', () => {
     const result = mergeAddress('Bvar Artigas 1100', 'Local 3');
-    expect(result.fullAddress).toContain('Local 3');
+    expect(result.fullAddress).toBe('Bvar Artigas 1100');
     expect(result.extraObs).toBe('Local 3');
   });
 
@@ -630,7 +635,7 @@ describe('Full address resolution (integration)', () => {
     expect(r.dept).toBe('Montevideo');
     expect(r.zipBarrios).toContain('carrasco');
     expect(r.streetBarrios).toContain('carrasco');
-    expect(r.fullAddress).toBe('Camino Carrasco 5400 Apto 12');
+    expect(r.fullAddress).toBe('Camino Carrasco 5400');
     expect(r.extraObs).toBe('Apto 12');
   });
 
@@ -669,7 +674,7 @@ describe('Full address resolution (integration)', () => {
   it('Ciudad de la Costa: ZIP 15000', () => {
     const r = resolveAddress('Ciudad de la Costa', 'Av Giannattasio km 24', 'Casa 15', '15000');
     expect(r.dept).toBe('Canelones');
-    expect(r.fullAddress).toContain('Casa 15');
+    expect(r.fullAddress).toBe('Av Giannattasio km 24');
     expect(r.extraObs).toBe('Casa 15');
   });
 
