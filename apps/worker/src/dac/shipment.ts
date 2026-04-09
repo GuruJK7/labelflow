@@ -200,9 +200,10 @@ export function mergeAddress(address1: string, address2: string | undefined | nu
     return { fullAddress: a1, extraObs: '' };
   }
 
-  // PHONE NUMBER: address2 is a phone number — discard entirely
-  if (/^0\d{7,}$/.test(a2.replace(/[\s-]/g, '')) || /^(\+?598|09[0-9])\d{5,}$/.test(a2.replace(/[\s-]/g, ''))) {
-    return { fullAddress: a1, extraObs: '' };
+  // PHONE NUMBER: address2 is a phone number — move to observations, not address
+  const a2Digits = a2.replace(/[\s-]/g, '');
+  if (/^0\d{7,}$/.test(a2Digits) || /^(\+?598|09[0-9])\d{5,}$/.test(a2Digits) || /^\d{8,}$/.test(a2Digits)) {
+    return { fullAddress: a1, extraObs: a2 };
   }
 
   // CITY/DEPARTMENT: address2 is just a city or department name — discard
@@ -237,7 +238,7 @@ export function mergeAddress(address1: string, address2: string | undefined | nu
     if (/^\d{1,5}$/.test(a2)) {
       return { fullAddress: a1, extraObs: `Apto ${a2}` };
     }
-    if (/apto|piso|oficina|depto|of\.|local|torre/i.test(a2)) {
+    if (/apto|apt\b|piso|oficina|depto|of\.|local|torre|int\b|interior/i.test(a2)) {
       return { fullAddress: a1, extraObs: a2 };
     }
     return { fullAddress: a1, extraObs: '' };
@@ -477,9 +478,10 @@ export async function createShipment(
   // ===== DETECT RETIRO EN AGENCIA =====
   // If the customer wrote "retiro en DAC" / "retiro en agencia" / "retiro en sucursal"
   // in their address, this is a pickup at DAC branch — not home delivery.
-  const combinedAddrText = `${addr.address1 ?? ''} ${addr.address2 ?? ''}`.toLowerCase();
+  const combinedAddrText = `${addr.address1 ?? ''} ${addr.address2 ?? ''} ${order.note ?? ''}`.toLowerCase();
   const isRetiroEnAgencia = /retiro\s+(en\s+)?(dac|agencia|sucursal|local|oficina)/i.test(combinedAddrText)
-    || /^retiro\b/i.test((addr.address1 ?? '').trim());
+    || /^retiro\b/i.test((addr.address1 ?? '').trim())
+    || /retiro\s+en\s+(dac|agencia)|pickup/i.test(order.note ?? '');
 
   if (isRetiroEnAgencia) {
     slog.info(DAC_STEPS.STEP1_START, `RETIRO EN AGENCIA detected — address: "${addr.address1}", will use TipoEntrega=Agencia`);
@@ -1037,6 +1039,28 @@ export async function createShipment(
 
   if (!hasCartItem) {
     slog.warn(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Cart item not detected, retrying Agregar click');
+    // Re-fill observations before retry in case the form was reset
+    if (observations.length > 0) {
+      const retryObsText = observations.join(' | ');
+      try {
+        const obsSelRetry = [
+          'textarea[name="Observaciones"]',
+          'textarea[name="observaciones"]',
+          'textarea[placeholder*="bservacion"]',
+          'fieldset textarea',
+          'textarea',
+        ];
+        for (const sel of obsSelRetry) {
+          const el = await page.$(sel);
+          if (!el) continue;
+          await page.fill(sel, retryObsText).catch(() => {});
+          break;
+        }
+        slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Re-filled observations before retry');
+      } catch {
+        // best-effort
+      }
+    }
     await page.evaluate(() => {
       const btn = document.querySelector('.btnAdd') as HTMLButtonElement;
       if (btn) btn.click();

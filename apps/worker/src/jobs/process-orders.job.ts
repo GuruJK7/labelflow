@@ -255,6 +255,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         continue;
       }
 
+      let result: { guia: string; trackingUrl?: string; screenshotPath?: string } | undefined;
       try {
         // a) Determine payment type (respects paymentRuleEnabled toggle)
         const paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
@@ -266,7 +267,6 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           where: { tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) } },
           select: { dacGuia: true, status: true },
         });
-        let result: { guia: string; trackingUrl?: string; screenshotPath?: string };
 
         if (existingLabel?.dacGuia && !existingLabel.dacGuia.startsWith('PENDING-') && existingLabel.status === 'FAILED') {
           // This order already has a real DAC guia from a previous run that failed downstream.
@@ -418,6 +418,12 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         });
         successCount++;
       } catch (err) {
+        // If DAC created a shipment but we failed downstream, track the guia so it
+        // isn't reused for the next order in this batch (orphan guia protection)
+        if (result?.guia && !result.guia.startsWith('PENDING-')) {
+          usedGuias.add(result.guia);
+        }
+
         const errorMsg = (err as Error).message;
         const isDacGuiaConstraint = errorMsg.includes('Unique constraint') && errorMsg.includes('dacGuia');
 
