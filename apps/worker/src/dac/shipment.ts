@@ -125,12 +125,18 @@ interface IntelligentCityResult {
 
 /**
  * Intelligent city/barrio detection using multiple strategies:
- * 1. ZIP code (highest priority, most reliable)
- * 2. Street name (medium priority)
- * 3. Barrio alias from address text (lower priority)
- * 4. Fallback: department from ZIP only
+ * 1. ZIP confirms alias  — highest confidence (ZIP + Shopify agree)
+ * 2. Shopify alias alone — customer explicitly named a barrio; trust it over inference
+ * 3. ZIP + street cross-reference — no explicit barrio, two signals agree
+ * 4. ZIP alone           — single signal fallback
+ * 5. Street name alone
+ * 6. Department from ZIP only
+ *
+ * IMPORTANT: Shopify alias (from city/address fields) always wins over ZIP-only
+ * inference. ZIP codes in Uruguay are imprecise and map to multiple barrios; the
+ * customer's own barrio name is more specific and should not be overridden.
  */
-function detectCityIntelligent(
+export function detectCityIntelligent(
   city: string,
   address1: string,
   address2: string,
@@ -141,33 +147,32 @@ function detectCityIntelligent(
   const streetBarrios = getBarriosFromStreet(address1) ?? getBarriosFromStreet(address2);
   const zipDept = getDepartmentFromZip(zip);
 
-  // Strategy 1: ZIP code — if alias result agrees with ZIP candidates, high confidence
+  // Strategy 1: ZIP confirms the alias — both signals agree, highest confidence
+  if (zipBarrios && aliasBarrio && zipBarrios.includes(aliasBarrio)) {
+    return { barrio: aliasBarrio, department: zipDept, source: 'zip', confidence: 'high' };
+  }
+
+  // Strategy 2: Shopify explicitly named a barrio — trust it over ZIP/street inference.
+  // ZIP maps to multiple candidates; the customer's own city name is more specific.
+  if (aliasBarrio) {
+    return { barrio: aliasBarrio, department: zipDept ?? 'Montevideo', source: 'alias', confidence: 'medium' };
+  }
+
+  // Strategy 3: ZIP + street cross-reference (no explicit Shopify barrio)
   if (zipBarrios && zipBarrios.length > 0) {
-    if (aliasBarrio && zipBarrios.includes(aliasBarrio)) {
-      return { barrio: aliasBarrio, department: zipDept, source: 'zip', confidence: 'high' };
-    }
-    // ZIP + street cross-reference
     if (streetBarrios) {
       const overlap = zipBarrios.filter(b => streetBarrios.includes(b));
       if (overlap.length > 0) {
         return { barrio: overlap[0], department: zipDept, source: 'zip', confidence: 'high' };
       }
     }
-    // ZIP alone — still high confidence, pick first candidate
+    // ZIP alone — single signal, pick first candidate
     return { barrio: zipBarrios[0], department: zipDept, source: 'zip', confidence: 'high' };
   }
 
-  // Strategy 2: Street name detection
+  // Strategy 4: Street name detection alone
   if (streetBarrios && streetBarrios.length > 0) {
-    if (aliasBarrio && streetBarrios.includes(aliasBarrio)) {
-      return { barrio: aliasBarrio, department: zipDept ?? 'Montevideo', source: 'street', confidence: 'medium' };
-    }
     return { barrio: streetBarrios[0], department: zipDept ?? 'Montevideo', source: 'street', confidence: 'medium' };
-  }
-
-  // Strategy 3: Alias detection alone
-  if (aliasBarrio) {
-    return { barrio: aliasBarrio, department: zipDept ?? 'Montevideo', source: 'alias', confidence: 'medium' };
   }
 
   // Fallback: only department from ZIP

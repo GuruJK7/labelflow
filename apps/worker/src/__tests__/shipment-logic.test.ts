@@ -4,7 +4,7 @@
  * using real Uruguay addresses and Shopify order patterns.
  */
 import { describe, it, expect } from 'vitest';
-import { mergeAddress } from '../dac/shipment';
+import { mergeAddress, detectCityIntelligent } from '../dac/shipment';
 import {
   getDepartmentForCity,
   getBarriosFromZip,
@@ -690,5 +690,40 @@ describe('Full address resolution (integration)', () => {
     expect(r.zipDept).toBe('Montevideo');
     expect(r.zipBarrios).toContain('pocitos');
     expect(r.streetBarrios).toContain('pocitos');
+  });
+});
+
+// ============================================================
+// SECTION 9: detectCityIntelligent — ZIP must not override Shopify barrio
+// ============================================================
+describe('detectCityIntelligent — Shopify barrio priority over ZIP', () => {
+  it('Shopify city=Pocitos, ZIP 11300 (maps to tres cruces/figurita) → returns pocitos, not tres cruces', () => {
+    const result = detectCityIntelligent('Pocitos', 'Colorado 1850', '', '11300');
+    expect(result.barrio).toBe('pocitos');
+    expect(result.department).toBe('Montevideo');
+  });
+
+  it('Shopify city=Punta Carretas, ZIP 11300 → returns punta carretas, not tres cruces', () => {
+    const result = detectCityIntelligent('Punta Carretas', 'Ellauri 500', '', '11300');
+    expect(result.barrio).toBe('punta carretas');
+    expect(result.department).toBe('Montevideo');
+  });
+
+  it('Shopify city=Carrasco, ZIP 11800 (agrees) → returns carrasco (ZIP confirms)', () => {
+    const result = detectCityIntelligent('Carrasco', 'Camino Carrasco 5400', '', '11800');
+    expect(result.barrio).toBe('carrasco');
+    expect(result.source).toBe('zip'); // ZIP confirms the alias — high confidence
+  });
+
+  it('No alias barrio from Shopify, ZIP 11300 → uses ZIP candidate (tres cruces)', () => {
+    const result = detectCityIntelligent('Montevideo', 'Calle X 100', '', '11300');
+    expect(result.barrio).toBe('tres cruces');
+    expect(result.source).toBe('zip');
+  });
+
+  it('Empty city, ZIP 11500 → falls back to ZIP barrio', () => {
+    const result = detectCityIntelligent('', '21 de Setiembre 2900', '', '11500');
+    expect(result.barrio).toBe('pocitos');
+    expect(result.source).toBe('zip');
   });
 });
