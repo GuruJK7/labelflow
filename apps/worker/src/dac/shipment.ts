@@ -200,10 +200,10 @@ export function mergeAddress(address1: string, address2: string | undefined | nu
     return { fullAddress: a1, extraObs: '' };
   }
 
-  // PHONE NUMBER: address2 is a phone number — move to observations, not address
+  // PHONE NUMBER: address2 is a phone number — discard entirely
   const a2Digits = a2.replace(/[\s-]/g, '');
   if (/^0\d{7,}$/.test(a2Digits) || /^(\+?598|09[0-9])\d{5,}$/.test(a2Digits) || /^\d{8,}$/.test(a2Digits)) {
-    return { fullAddress: a1, extraObs: a2 };
+    return { fullAddress: a1, extraObs: '' };
   }
 
   // CITY/DEPARTMENT: address2 is just a city or department name — discard

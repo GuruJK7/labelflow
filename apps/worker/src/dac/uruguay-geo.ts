@@ -32,6 +32,7 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'colonia palma': 'Artigas',
   'cerro signorelli': 'Artigas',
   'paso farias': 'Artigas',
+  'sur': 'Artigas',
 
   // ─────────────────────────────────────────────
   // CANELONES (capital: Canelones)
@@ -476,7 +477,7 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'chacras de dolores': 'Soriano',
   'sacachispas': 'Soriano',
   'colonia concordia': 'Soriano',
-  'jardines del hum': 'Montevideo',
+  'jardines del hum': 'Soriano',
 
   // ─────────────────────────────────────────────
   // TACUAREMBO (capital: Tacuarembo)
