@@ -255,6 +255,10 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         continue;
       }
 
+      // Track the guia obtained for this order so the catch block can protect usedGuias
+      // even if an error fires after createShipment returns (e.g. DB write failure).
+      let orderGuia: string | null = null;
+
       try {
         // a) Determine payment type (respects paymentRuleEnabled toggle)
         const paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
@@ -274,6 +278,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           slog.warn('order-shipment', `Order ${order.name} already has guia ${existingLabel.dacGuia} from a failed run — skipping DAC form, reusing guia`);
           result = { guia: existingLabel.dacGuia };
           usedGuias.add(result.guia);
+          orderGuia = result.guia;
         } else {
           // Create shipment in DAC (NO full-form retry — guia extraction retries internally)
           // Re-submitting the entire form on error creates DUPLICATE shipments in DAC
@@ -282,6 +287,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           // Track this guia so it won't be assigned to another order in this batch
           if (result.guia && !result.guia.startsWith('PENDING-')) {
             usedGuias.add(result.guia);
+            orderGuia = result.guia;
           }
         }
 
@@ -418,6 +424,13 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         });
         successCount++;
       } catch (err) {
+        // Protect usedGuias: if createShipment returned a real guia before the error,
+        // ensure it stays in usedGuias so the next order in this batch won't steal it.
+        if (orderGuia && !usedGuias.has(orderGuia)) {
+          usedGuias.add(orderGuia);
+          slog.info('guia-protection', `Orphan guia ${orderGuia} added to usedGuias after error`);
+        }
+
         const errorMsg = (err as Error).message;
         const isDacGuiaConstraint = errorMsg.includes('Unique constraint') && errorMsg.includes('dacGuia');
 

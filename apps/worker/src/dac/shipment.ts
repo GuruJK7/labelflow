@@ -200,9 +200,12 @@ export function mergeAddress(address1: string, address2: string | undefined | nu
     return { fullAddress: a1, extraObs: '' };
   }
 
-  // PHONE NUMBER: address2 is a phone number — discard entirely
-  if (/^0\d{7,}$/.test(a2.replace(/[\s-]/g, '')) || /^(\+?598|09[0-9])\d{5,}$/.test(a2.replace(/[\s-]/g, ''))) {
-    return { fullAddress: a1, extraObs: '' };
+  // PHONE NUMBER: address2 is a phone number — move to observations (useful for courier contact)
+  // Matches: plain 8+ digit strings, Uruguayan landlines (0XXXXXXX), mobiles (09X...), +598...
+  if (/^\d{8,}$/.test(a2.replace(/[\s-]/g, ''))
+    || /^0\d{7,}$/.test(a2.replace(/[\s-]/g, ''))
+    || /^(\+?598|09[0-9])\d{5,}$/.test(a2.replace(/[\s-]/g, ''))) {
+    return { fullAddress: a1, extraObs: `Tel: ${a2}` };
   }
 
   // CITY/DEPARTMENT: address2 is just a city or department name — discard
@@ -237,7 +240,7 @@ export function mergeAddress(address1: string, address2: string | undefined | nu
     if (/^\d{1,5}$/.test(a2)) {
       return { fullAddress: a1, extraObs: `Apto ${a2}` };
     }
-    if (/apto|piso|oficina|depto|of\.|local|torre/i.test(a2)) {
+    if (/apto|apt\b|piso|oficina|depto|of\.|local|torre|int\b|interior/i.test(a2)) {
       return { fullAddress: a1, extraObs: a2 };
     }
     return { fullAddress: a1, extraObs: '' };
@@ -911,8 +914,9 @@ export async function createShipment(
     }
   }
 
-  if (observations.length > 0) {
-    const obsText = observations.join(' | ');
+  // Build obsText at this scope so the Agregar retry block can re-fill if needed
+  const obsText = observations.join(' | ');
+  if (obsText) {
     slog.info(DAC_STEPS.STEP4_OK, `Will fill Observaciones: "${obsText.substring(0, 120)}"`, { fullText: obsText });
 
     // Use Playwright's native page.fill() — much more reliable than el.value assignment
@@ -1037,6 +1041,29 @@ export async function createShipment(
 
   if (!hasCartItem) {
     slog.warn(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Cart item not detected, retrying Agregar click');
+
+    // Re-fill observations before retry — the modal or form reset may have cleared the textarea
+    if (obsText) {
+      try {
+        await page.evaluate((text: string) => {
+          const ta = document.querySelector('textarea[name="Observaciones"], textarea[name="observaciones"], textarea') as HTMLTextAreaElement;
+          if (ta) {
+            ta.style.display = 'block';
+            ta.style.visibility = 'visible';
+            ta.removeAttribute('hidden');
+            ta.removeAttribute('disabled');
+            ta.removeAttribute('readonly');
+            ta.value = text;
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            ta.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }, obsText);
+        slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, `Re-filled Observaciones before retry: "${obsText.substring(0, 80)}"`);
+      } catch {
+        slog.warn(DAC_STEPS.STEP4_CLICK_SUBMIT, 'Could not re-fill Observaciones before retry');
+      }
+    }
+
     await page.evaluate(() => {
       const btn = document.querySelector('.btnAdd') as HTMLButtonElement;
       if (btn) btn.click();

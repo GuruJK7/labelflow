@@ -32,7 +32,9 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'colonia palma': 'Artigas',
   'cerro signorelli': 'Artigas',
   'paso farias': 'Artigas',
-  'sur': 'Artigas',
+  // NOTE: 'sur' removed — it was wrong (mapped to Artigas). "Sur" alone is ambiguous;
+  // 'barrio sur' (Montevideo) is handled separately below. The Artigas locality
+  // named "Sur" is too rare to justify the false-positive risk on Montevideo orders.
 
   // ─────────────────────────────────────────────
   // CANELONES (capital: Canelones)
