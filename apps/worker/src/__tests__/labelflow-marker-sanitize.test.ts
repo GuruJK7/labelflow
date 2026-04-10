@@ -83,6 +83,37 @@ describe('LABELFLOW_MARKER_RE — marker detection regex', () => {
     expect(LABELFLOW_MARKER_RE.test(leakedText)).toBe(true);
   });
 
+  // ── REVERSED-ORDER VARIANTS (Guía labelflow: ...) ──
+  // Reported 2026-04-10 in a second screenshot after the first fix.
+  // The v1 regex only matched labelflow→guia; the v2 regex adds a branch
+  // for guia→labelflow order.
+
+  it('matches "Guía labelflow: N" (reversed order, Spanish accent)', () => {
+    expect(LABELFLOW_MARKER_RE.test('Guía labelflow: 882277908035')).toBe(true);
+  });
+
+  it('matches "guia labelflow" (reversed order, lowercase, no accent)', () => {
+    expect(LABELFLOW_MARKER_RE.test('guia labelflow: 123')).toBe(true);
+  });
+
+  it('matches "GUÍA LABELFLOW" (reversed order, uppercase accent)', () => {
+    expect(LABELFLOW_MARKER_RE.test('GUÍA LABELFLOW: 456')).toBe(true);
+  });
+
+  it('matches "guía-labelflow" (reversed order, hyphen separator)', () => {
+    expect(LABELFLOW_MARKER_RE.test('guía-labelflow: 789')).toBe(true);
+  });
+
+  it('matches "guía_labelflow" (reversed order, underscore separator)', () => {
+    expect(LABELFLOW_MARKER_RE.test('guía_labelflow: 789')).toBe(true);
+  });
+
+  it('matches reversed marker when embedded in real observation text', () => {
+    // Direct copy from row 8 of the DAC screenshot on 2026-04-10
+    const leaked = 'Guía labelflow: 882277908035';
+    expect(LABELFLOW_MARKER_RE.test(leaked)).toBe(true);
+  });
+
   // ───────────────────────────────────────────────────────────────────────
   // NEGATIVE cases — these must NOT match (legitimate content)
   // ───────────────────────────────────────────────────────────────────────
@@ -166,10 +197,9 @@ describe('sanitizeObservationLine — strips markers from combined observation t
     expect(sanitizeObservationLine(dirty)).toBe('Apto 5 Portero');
   });
 
-  it('handles the exact real-world leak pattern from the DAC screenshot', () => {
-    // This is the exact text that was observed leaking into DAC historial on
-    // 2026-04-10 for order #1144 Pablo Rodríguez. The bug was reported with a
-    // screenshot showing this text in the DAC observations field.
+  it('handles the exact real-world leak pattern from the DAC screenshot (row 3 — labelflow-guia)', () => {
+    // Exact text from row 3 of the 2026-04-10 DAC historial screenshot for
+    // order #1144 Pablo Rodríguez.
     const dirty =
       'Casa rejas grises pegado a pizeria "la barra" | casa con rejas grises pegado a pizzería "la barra". labelflow-guia: 882277945994';
     const clean = sanitizeObservationLine(dirty);
@@ -179,6 +209,23 @@ describe('sanitizeObservationLine — strips markers from combined observation t
     // Sanity: the legitimate parts should still be there
     expect(clean).toContain('Casa rejas grises');
     expect(clean).toContain('pizeria');
+  });
+
+  it('handles the reversed-order leak (row 8 of the 2026-04-10 screenshot — Guía labelflow)', () => {
+    // Row 8: Marcelo perez / Otilia schultze 668bis. The observation was just
+    // the bare marker with reversed word order, so the entire content must be
+    // stripped to the empty string.
+    const dirty = 'Guía labelflow: 882277908035';
+    expect(sanitizeObservationLine(dirty)).toBe('');
+  });
+
+  it('handles the reversed-order leak embedded in legitimate text', () => {
+    const dirty = 'Portero: Juan | Guía labelflow: 882277908035 | Apto 3';
+    const clean = sanitizeObservationLine(dirty);
+    expect(clean).not.toContain('labelflow');
+    expect(clean).not.toContain('882277908035');
+    expect(clean).toContain('Portero: Juan');
+    expect(clean).toContain('Apto 3');
   });
 
   it('is idempotent (sanitizing twice gives the same result)', () => {

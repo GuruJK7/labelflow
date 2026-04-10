@@ -14,12 +14,21 @@ import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 
 /**
  * Matches any LabelFlow-internal marker that must NEVER leak into DAC observations.
- * Covers: "LabelFlow-GUIA:", "labelflow-guia", "labelflow_guia", "labelflow guia",
- * "LabelFlow ERROR", accented "guía" variants, etc.
+ * Covers ALL observed formats in the wild, in any word order:
+ *   - "LabelFlow-GUIA:" / "labelflow-guia" / "LABELFLOW-GUIA" (labelflow → guia)
+ *   - "labelflow_guia" / "labelflow guia" / "labelflowguia" (separators)
+ *   - "labelflow-guía" / "LABELFLOW-GUÍA" (Spanish accent)
+ *   - "Guía labelflow:" / "guia labelflow" (REVERSED order — reported 2026-04-10)
+ *   - "LabelFlow ERROR:" / "labelflow-error" (error prefix)
  *
  * Exported so the sanitizer can be unit-tested in isolation.
+ *
+ * History:
+ *   v1: /labelflow[-_ ]?(guia|error|gu[ií]a)/i  ← missed "Guía labelflow"
+ *   v2: adds reversed-order branch gu[ií]a[-_ ]?labelflow
  */
-export const LABELFLOW_MARKER_RE = /labelflow[-_ ]?(guia|error|gu[ií]a)/i;
+export const LABELFLOW_MARKER_RE =
+  /labelflow[-_ ]?(guia|gu[ií]a|error)|gu[ií]a[-_ ]?labelflow/i;
 
 /**
  * Strip any piece of text (split by newlines or pipe separators) that contains a
