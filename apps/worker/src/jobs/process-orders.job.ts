@@ -7,6 +7,7 @@ import { fulfillOrderWithTracking } from '../shopify/fulfillment';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress } from '../dac/shipment';
+import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { getDepartmentForCity, getDepartmentForCityAsync } from '../dac/uruguay-geo';
 import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
@@ -438,6 +439,18 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         slog.success('order-complete', `Order ${order.name} processed successfully`, {
           guia: result.guia, paymentType, emailSent,
         });
+
+        // AI resolver feedback: if this order used AI to resolve its address,
+        // mark the resolution as accepted so it gets reinforced in the cache.
+        if (result.aiResolutionHash) {
+          await markAddressResolutionFeedback(
+            tenantId,
+            result.aiResolutionHash,
+            true,
+            result.guia,
+          );
+        }
+
         successCount++;
       } catch (err) {
         // If DAC created a shipment but we failed downstream, track the guia so it
@@ -447,6 +460,19 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         }
 
         const errorMsg = (err as Error).message;
+
+        // AI resolver feedback: if this order used AI and failed, mark the
+        // resolution as rejected so future calls re-resolve instead of cache-hitting.
+        if (result?.aiResolutionHash) {
+          await markAddressResolutionFeedback(
+            tenantId,
+            result.aiResolutionHash,
+            false,
+            undefined,
+            errorMsg.slice(0, 500),
+          );
+        }
+
         const isDacGuiaConstraint = errorMsg.includes('Unique constraint') && errorMsg.includes('dacGuia');
 
         if (isDacGuiaConstraint) {

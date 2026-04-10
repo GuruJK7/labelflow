@@ -121,6 +121,12 @@ model Tenant {
   defaultPrinter   String?
   autoPrintEnabled Boolean @default(false)
 
+  // AI Address Resolver — fallback for ambiguous deterministic resolutions
+  aiResolverEnabled    Boolean @default(false) // opt-in per tenant
+  aiResolverDailyLimit Int     @default(100)   // max AI calls per day
+  aiResolverDailyUsed  Int     @default(0)     // reset daily at midnight UY
+  aiResolverLastReset  DateTime?               // last time daily counter was reset
+
   user    User     @relation(fields: [userId], references: [id])
   jobs    Job[]
   labels  Label[]
@@ -131,6 +137,9 @@ model Tenant {
 
   // Recover (WhatsApp cart recovery)
   recoverConfig RecoverConfig?
+
+  // AI Address Resolutions
+  addressResolutions AddressResolution[]
 
   @@index([slug])
   @@index([stripeCustomerId])
@@ -587,4 +596,65 @@ model RecoverJob {
   @@index([status, scheduledFor])
   @@index([tenantId])
   @@index([cartId])
+}
+
+// --- AI ADDRESS RESOLVER ---
+// Cache + audit log for AI-resolved ambiguous delivery addresses.
+// Populated when deterministic rules in shipment.ts cannot resolve with high confidence.
+
+enum ResolutionSource {
+  DETERMINISTIC
+  AI
+  CACHE
+}
+
+enum ResolutionConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+model AddressResolution {
+  id       String @id @default(cuid())
+  tenantId String
+
+  // Cache key: sha256(normalized city + address1 + address2 + zip), first 16 chars
+  inputHash String
+
+  // Raw inputs (for debugging and prompt tuning)
+  rawCity     String
+  rawAddress1 String
+  rawAddress2 String?
+  rawZip      String?
+  rawProvince String?
+
+  // Resolved output used by DAC form filler
+  resolvedBarrio          String? // null if not Montevideo or not detectable
+  resolvedCity            String
+  resolvedDepartment      String
+  resolvedDeliveryAddress String  // clean street + number, no extras
+  resolvedObs             String  @default("") // apto, piso, references, etc.
+
+  // Metadata
+  source      ResolutionSource
+  confidence  ResolutionConfidence
+  aiModel     String? // e.g. "claude-haiku-4-5-20251001"
+  aiReasoning String? // AI's own explanation for audit
+  aiCostUsd   Float?  // cost of this single call
+
+  // Feedback from DAC processing (updated post-label)
+  dacAccepted Boolean? // null=pending, true=worked, false=rejected
+  dacGuia     String?  // guia if successful
+  dacError    String?  // error if rejected
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, inputHash])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([inputHash])
+  @@index([dacAccepted])
+  @@index([source])
 }

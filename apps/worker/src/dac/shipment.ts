@@ -8,6 +8,7 @@ import { DAC_STEPS } from './steps';
 import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
 import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet } from './uruguay-geo';
+import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 
 // ---- Helpers ----
 
@@ -633,7 +634,72 @@ export async function createShipment(
     { zip: addr.zip, city: addr.city, address1: addr.address1 }
   );
 
-  if (addr.city) {
+  // ── AI FALLBACK ──
+  // When deterministic rules cannot resolve the address with high confidence,
+  // ask Claude Haiku to resolve it using structured tool use. The AI result
+  // overrides the deterministic result for dept/city/barrio/address/obs.
+  // See apps/worker/src/dac/ai-resolver.ts for the full implementation.
+  let aiResolution: AIResolverResult | null = null;
+  const needsAI =
+    intelligent.confidence === 'low' ||
+    (intelligent.confidence === 'medium' && !intelligent.barrio) ||
+    (!intelligent.barrio && !intelligent.department);
+
+  if (needsAI) {
+    slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
+      `Deterministic confidence ${intelligent.confidence} — invoking AI resolver fallback`,
+      { city: addr.city, address1: addr.address1, zip: addr.zip }
+    );
+    try {
+      aiResolution = await resolveAddressWithAI({
+        tenantId,
+        city: addr.city ?? '',
+        address1: addr.address1,
+        address2: addr.address2 ?? '',
+        zip: addr.zip ?? '',
+        province: addr.province ?? '',
+        orderNotes: order.note ?? '',
+      });
+      if (aiResolution) {
+        slog.success(DAC_STEPS.STEP3_SELECT_DEPT,
+          `AI resolved: dept="${aiResolution.department}" city="${aiResolution.city}" barrio="${aiResolution.barrio ?? 'none'}" confidence=${aiResolution.confidence} source=${aiResolution.source}`,
+          { reasoning: aiResolution.reasoning, costUsd: aiResolution.aiCostUsd }
+        );
+        // Override the deterministic merged address with AI's cleaner version
+        if (aiResolution.deliveryAddress && aiResolution.deliveryAddress.trim().length > 0) {
+          fullAddress = aiResolution.deliveryAddress;
+          // Merge AI extra obs with existing extraObs (from mergeAddress)
+          if (aiResolution.extraObservations && aiResolution.extraObservations.trim().length > 0) {
+            extraObs = extraObs
+              ? `${extraObs} | ${aiResolution.extraObservations}`
+              : aiResolution.extraObservations;
+          }
+          // Re-fill the address field with the AI-cleaned version
+          await safeFill(page, 'input[name="DirD"]', fullAddress, slog, DAC_STEPS.STEP3_FILL_ADDRESS, 'DirD (AI-cleaned)');
+        }
+      } else {
+        slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+          'AI resolver unavailable or returned null — falling back to deterministic rules'
+        );
+      }
+    } catch (err) {
+      slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+        `AI resolver threw — falling back to deterministic rules: ${(err as Error).message}`
+      );
+    }
+  }
+
+  // AI SHORT-CIRCUIT: If AI returned a high/medium confidence resolution, use it
+  // directly instead of running the deterministic chain below. AI output is already
+  // validated against department + barrio whitelists in ai-resolver.ts.
+  if (aiResolution && (aiResolution.confidence === 'high' || aiResolution.confidence === 'medium')) {
+    resolvedDept = aiResolution.department;
+    resolvedCity = aiResolution.city;
+    resolvedBarrioHint = aiResolution.barrio;
+    slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
+      `Using AI resolution directly: dept="${resolvedDept}" city="${resolvedCity}" barrio="${resolvedBarrioHint ?? 'none'}"`
+    );
+  } else if (addr.city) {
     const geoDept = await getDepartmentForCityAsync(addr.city);
     if (geoDept) {
       // City found in our geo DB — use the correct department
@@ -1132,7 +1198,13 @@ export async function createShipment(
   // ===== EXTRACT GUIA (with built-in retry — NEVER re-submit the form) =====
   const guiaResult = await extractGuiaWithRetry(page, slog, order.name, usedGuias);
 
-  return { guia: guiaResult.guia, trackingUrl: guiaResult.trackingUrl, screenshotPath: '' };
+  return {
+    guia: guiaResult.guia,
+    trackingUrl: guiaResult.trackingUrl,
+    screenshotPath: '',
+    // Pass the AI resolution hash back to the job runner for feedback recording
+    aiResolutionHash: aiResolution?.inputHash,
+  };
 }
 
 /**

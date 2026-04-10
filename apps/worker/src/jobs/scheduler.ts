@@ -1,5 +1,6 @@
 import { db } from '../db';
 import logger from '../logger';
+import { resetAllDailyQuotas } from '../dac/ai-resolver';
 
 /**
  * Converts a UTC Date to a Date-like object in a given IANA timezone.
@@ -102,11 +103,34 @@ function fieldMatches(field: string, value: number, min: number, max: number): b
 /**
  * Runs every minute. For each active tenant, checks if their cronSchedule
  * matches the current time (all 5 fields), and if so, creates a PENDING job.
+ * Also performs the daily AI resolver quota reset at midnight UY time.
  */
 export function startScheduler(): void {
+  // Track last AI quota reset date (YYYY-MM-DD in UY timezone) to prevent duplicate resets
+  let lastAiQuotaResetDate: string | null = null;
+
   // Check every 60 seconds (no node-cron dependency to avoid regex bugs)
   setInterval(async () => {
     try {
+      // ── AI Resolver daily quota reset ──
+      // Fires once per day at 00:xx in America/Montevideo. Using the minute-based
+      // scheduler already in place means we run the check every minute, but the
+      // date guard ensures the reset fires only once per calendar day.
+      const nowForReset = new Date();
+      const tzNow = toTimezone(nowForReset, 'America/Montevideo');
+      if (tzNow.hours === 0) {
+        const todayKey = `${nowForReset.getUTCFullYear()}-${tzNow.month}-${tzNow.date}`;
+        if (lastAiQuotaResetDate !== todayKey) {
+          try {
+            const count = await resetAllDailyQuotas();
+            lastAiQuotaResetDate = todayKey;
+            logger.info({ tenantsReset: count, date: todayKey }, 'Daily AI quota reset completed');
+          } catch (resetErr) {
+            logger.error({ error: (resetErr as Error).message }, 'Failed to reset AI quotas');
+          }
+        }
+      }
+
       const tenants = await db.tenant.findMany({
         where: {
           isActive: true,
