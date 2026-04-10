@@ -13,32 +13,93 @@ import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 // ---- Helpers ----
 
 /**
- * Matches any LabelFlow-internal marker that must NEVER leak into DAC observations.
- * Covers ALL observed formats in the wild, in any word order:
- *   - "LabelFlow-GUIA:" / "labelflow-guia" / "LABELFLOW-GUIA" (labelflow → guia)
- *   - "labelflow_guia" / "labelflow guia" / "labelflowguia" (separators)
- *   - "labelflow-guía" / "LABELFLOW-GUÍA" (Spanish accent)
- *   - "Guía labelflow:" / "guia labelflow" (REVERSED order — reported 2026-04-10)
- *   - "LabelFlow ERROR:" / "labelflow-error" (error prefix)
+ * Detects any LabelFlow-internal marker, tracking metadata, or ISO timestamp
+ * that must NEVER leak into DAC's courier-visible observations field.
  *
- * Exported so the sanitizer can be unit-tested in isolation.
+ * HISTORY of this filter (each version added after a real leak was observed):
  *
- * History:
- *   v1: /labelflow[-_ ]?(guia|error|gu[ií]a)/i  ← missed "Guía labelflow"
- *   v2: adds reversed-order branch gu[ií]a[-_ ]?labelflow
+ *   v1: /labelflow[-_ ]?(guia|error|gu[ií]a)/i
+ *       Caught: "LabelFlow-GUIA: N"
+ *       Missed: reversed order "Guía labelflow: N" (reported 2026-04-10)
+ *
+ *   v2: adds |gu[ií]a[-_ ]?labelflow branch (reversed order)
+ *       Caught: "Guía labelflow: N" (adjacent)
+ *       Missed: "Guía: labelflow: N" (colon between → separator not in [-_ ])
+ *       Missed: "Fecha: 2026-04-06T17:12:57.789Z" (no labelflow word at all)
+ *
+ *   v3 (this version): replaces the single regex with a suite of 4 independent
+ *       SIGNALS. Any signal triggers a block. Together they cover every
+ *       observed real-world leak and are defensive against future variants.
+ *
+ * Exported for isolated unit testing.
  */
-export const LABELFLOW_MARKER_RE =
-  /labelflow[-_ ]?(guia|gu[ií]a|error)|gu[ií]a[-_ ]?labelflow/i;
+
+/** Signal 1: Any case-insensitive appearance of "labelflow" in the text. */
+export const LABELFLOW_WORD_RE = /labelflow/i;
+
+/** Signal 2: The bare Spanish/English word for guide/guía/tracking/fecha/timestamp. */
+export const INTERNAL_METADATA_NAME_RE =
+  /^\s*(gu[ií]a|guia|tracking|fecha|timestamp|label|internal|meta|system|__)/i;
+
+/** Signal 3: An ISO-8601 timestamp anywhere in the text (e.g. 2026-04-06T17:12:57.789Z). */
+export const ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}[tT ]\d{2}:\d{2}:\d{2}/;
+
+/** Signal 4: A standalone 10+ digit numeric ID (likely a DAC guia or tracking code). */
+export const LONG_NUMERIC_ID_RE = /^\s*\d{10,}\s*$/;
+
+/**
+ * Legacy alias kept for any external caller that still imports the v1/v2 name.
+ * Prefer isLabelflowInternal() for new code.
+ */
+export const LABELFLOW_MARKER_RE = LABELFLOW_WORD_RE;
+
+/**
+ * True if the given text contains ANY LabelFlow-internal marker, tracking
+ * metadata, or ISO timestamp that should not leak into DAC observations.
+ *
+ * This is the authoritative check used by the sanitizer. Any caller that
+ * needs to gate content before sending to DAC should use this function.
+ */
+export function isLabelflowInternal(text: string): boolean {
+  if (!text) return false;
+  if (LABELFLOW_WORD_RE.test(text)) return true;
+  if (ISO_TIMESTAMP_RE.test(text)) return true;
+  return false;
+}
+
+/**
+ * Stricter variant for note_attribute NAME/VALUE pairs. In addition to the
+ * isLabelflowInternal() checks, this also blocks attributes whose name starts
+ * with internal-metadata keywords (guia, tracking, fecha, timestamp, label, etc.)
+ * or whose value is purely a long numeric ID.
+ */
+export function shouldSkipNoteAttribute(name: string, value: string): boolean {
+  const n = name ?? '';
+  const v = String(value ?? '');
+  if (isLabelflowInternal(n) || isLabelflowInternal(v)) return true;
+  if (INTERNAL_METADATA_NAME_RE.test(n)) return true;
+  if (LONG_NUMERIC_ID_RE.test(v)) return true;
+  return false;
+}
 
 /**
  * Strip any piece of text (split by newlines or pipe separators) that contains a
- * LabelFlow-internal marker. Used as the final belt-and-suspenders pass before
- * filling DAC's observations field — see sanitizeObservationLine tests.
+ * LabelFlow-internal marker, ISO timestamp, or standalone long numeric ID. Used
+ * as the final belt-and-suspenders pass before filling DAC's observations field.
+ *
+ * Uses isLabelflowInternal() + LONG_NUMERIC_ID_RE for detection — see the header
+ * comment on LABELFLOW_WORD_RE for the full filter architecture.
  */
 export function sanitizeObservationLine(raw: string): string {
   return raw
     .split(/[\n|]/)
-    .filter(piece => !LABELFLOW_MARKER_RE.test(piece))
+    .filter(piece => {
+      const trimmed = piece.trim();
+      if (!trimmed) return false;
+      if (isLabelflowInternal(trimmed)) return false;
+      if (LONG_NUMERIC_ID_RE.test(trimmed)) return false;
+      return true;
+    })
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -1007,22 +1068,24 @@ export async function createShipment(
   // ===== FILL OBSERVACIONES BEFORE Agregar (must be set before submission) =====
   // Build observations from: extraObs (apt/delivery notes) + order notes + note_attributes
   //
-  // CRITICAL: Strip ALL LabelFlow-internal markers before sending to DAC. These
-  // markers include the guia prefix (written to the Shopify note by markOrderProcessed
-  // so that duplicate orders are skipped on the next cron), error prefixes, and any
-  // note_attribute whose name starts with "labelflow". A previous bug leaked these
-  // into DAC's observations field where the courier sees them — exposing internal
-  // guia numbers that could be abused. The filter is case-insensitive, applies to
-  // both lines of order.note AND entries in order.note_attributes (by name and by
-  // value), and runs once more as a belt-and-suspenders strip on the final joined
-  // observations to catch any edge case where the marker snuck through.
-  // See LABELFLOW_MARKER_RE and sanitizeObservationLine at the top of this file.
+  // CRITICAL: Strip ALL internal markers, ISO timestamps, tracking metadata, and
+  // long numeric IDs before sending to DAC. Multiple real leaks have been observed:
+  //   1. "LabelFlow-GUIA: N" written by our own markOrderProcessed
+  //   2. "labelflow-guia: N" lowercase from older code or plugins
+  //   3. "Guía labelflow: N" reversed-order from polluted note_attributes
+  //   4. "Guía: labelflow: N" with colon separator (v2 regex missed this)
+  //   5. "Fecha: 2026-04-06T17:12:57.789Z" bare ISO timestamp attribute
+  //   6. "882277908035" standalone tracking ID
+  // The fix uses 4 independent signals (see filter helpers at top of file):
+  //   - isLabelflowInternal: text contains "labelflow" OR ISO timestamp
+  //   - shouldSkipNoteAttribute: name/value metadata + long ID patterns
+  //   - sanitizeObservationLine: final belt-and-suspenders pass
   const observations: string[] = [];
   if (extraObs) observations.push(extraObs);
   if (order.note) {
     const cleanNote = order.note
       .split('\n')
-      .filter(line => !LABELFLOW_MARKER_RE.test(line))
+      .filter(line => !isLabelflowInternal(line) && !LONG_NUMERIC_ID_RE.test(line.trim()))
       .join('\n')
       .trim();
     if (cleanNote) observations.push(cleanNote);
@@ -1030,9 +1093,7 @@ export async function createShipment(
   if (order.note_attributes && Array.isArray(order.note_attributes)) {
     for (const attr of order.note_attributes) {
       if (!attr.value) continue;
-      // Skip attributes whose name OR value contains a LabelFlow marker
-      if (LABELFLOW_MARKER_RE.test(attr.name ?? '')) continue;
-      if (LABELFLOW_MARKER_RE.test(String(attr.value))) continue;
+      if (shouldSkipNoteAttribute(attr.name ?? '', String(attr.value))) continue;
       observations.push(`${attr.name}: ${attr.value}`);
     }
   }

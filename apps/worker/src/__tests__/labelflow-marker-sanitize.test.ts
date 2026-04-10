@@ -29,6 +29,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   LABELFLOW_MARKER_RE,
+  LABELFLOW_WORD_RE,
+  ISO_TIMESTAMP_RE,
+  LONG_NUMERIC_ID_RE,
+  INTERNAL_METADATA_NAME_RE,
+  isLabelflowInternal,
+  shouldSkipNoteAttribute,
   sanitizeObservationLine,
 } from '../dac/shipment';
 
@@ -130,8 +136,14 @@ describe('LABELFLOW_MARKER_RE — marker detection regex', () => {
     expect(LABELFLOW_MARKER_RE.test('guia 882277945994')).toBe(false);
   });
 
-  it('does NOT match the word "labelflow" without guia/error', () => {
-    expect(LABELFLOW_MARKER_RE.test('Sent via labelflow')).toBe(false);
+  it('v3 change: the bare word "labelflow" IS now blocked (defensive stance)', () => {
+    // Previously (v1/v2) this test asserted the opposite — a bare "labelflow"
+    // without guia/error was allowed. v3 takes a defensive stance: our brand
+    // name should never appear in customer-facing DAC observations under any
+    // circumstance, so ANY case-insensitive match of "labelflow" is blocked.
+    // This eliminates an entire class of edge cases where separators or
+    // word order tricks let the marker slip through.
+    expect(LABELFLOW_MARKER_RE.test('Sent via labelflow')).toBe(true);
   });
 
   it('does NOT match partial matches like "label" or "flow"', () => {
@@ -179,17 +191,12 @@ describe('sanitizeObservationLine — strips markers from combined observation t
     expect(sanitizeObservationLine('labelflow-guia: 882277945994')).toBe('');
   });
 
-  it('strips marker portion but preserves separate pipe-delimited pieces', () => {
-    // When the sanitizer encounters "marker | bare-timestamp", it splits on the
-    // pipe and only strips the marker piece — the timestamp survives. This is
-    // acceptable for two reasons:
-    //   (a) at the order.note.split('\n') level upstream, the entire line would
-    //       already be filtered because the full line matches LABELFLOW_MARKER_RE
-    //   (b) a bare ISO timestamp in observations is not a data leak — no internal
-    //       guia number or error prefix remains
-    expect(sanitizeObservationLine('LabelFlow-GUIA: 123 | 2026-04-10T15:00:00Z')).toBe(
-      '2026-04-10T15:00:00Z',
-    );
+  it('v3 change: strips BOTH the marker AND the bare ISO timestamp', () => {
+    // In v2 the bare timestamp piece survived the sanitizer because only the
+    // labelflow-marker piece matched the regex. In v3, the filter now ALSO
+    // blocks ISO 8601 timestamps (Signal 3 in the filter architecture).
+    // So the entire input reduces to empty — both halves are stripped.
+    expect(sanitizeObservationLine('LabelFlow-GUIA: 123 | 2026-04-10T15:00:00Z')).toBe('');
   });
 
   it('strips marker mixed with pipe separators', () => {
@@ -241,5 +248,144 @@ describe('sanitizeObservationLine — strips markers from combined observation t
 
   it('preserves whitespace-only input as empty', () => {
     expect(sanitizeObservationLine('   ')).toBe('');
+  });
+
+  // ── v3 REAL-WORLD LEAKS (reported 2026-04-10 in the third screenshot) ──
+
+  it('v3: handles "Guía: labelflow: N" with colon separator (v2 missed this)', () => {
+    const dirty = 'Guía: labelflow: 882277908035';
+    expect(sanitizeObservationLine(dirty)).toBe('');
+  });
+
+  it('v3: handles bare "Fecha: <ISO timestamp>" (no labelflow keyword)', () => {
+    const dirty = 'Fecha: 2026-04-06t17:12:57.789z';
+    expect(sanitizeObservationLine(dirty)).toBe('');
+  });
+
+  it('v3: strips bare long numeric ID (Signal 4: LONG_NUMERIC_ID_RE)', () => {
+    expect(sanitizeObservationLine('882277908035')).toBe('');
+  });
+
+  it('v3: preserves short numbers that are probably apartment numbers', () => {
+    expect(sanitizeObservationLine('Apto 3')).toBe('Apto 3');
+    expect(sanitizeObservationLine('Piso 12')).toBe('Piso 12');
+  });
+
+  it('v3: preserves legitimate delivery dates in human format', () => {
+    const ok = 'Entregar el 11/04/2026 entre las 14 y 18 hs';
+    expect(sanitizeObservationLine(ok)).toBe(ok);
+  });
+
+  it('v3: integration — strips all leak patterns, keeps legitimate parts', () => {
+    const dirty =
+      'Portero: Juan | Guía: labelflow: 882277908035 | Fecha: 2026-04-06T17:12:57.789Z | Apto 5 | 1234567890';
+    const clean = sanitizeObservationLine(dirty);
+    expect(clean).toContain('Portero: Juan');
+    expect(clean).toContain('Apto 5');
+    expect(clean).not.toContain('labelflow');
+    expect(clean).not.toContain('882277908035');
+    expect(clean).not.toContain('2026-04-06');
+    expect(clean).not.toContain('1234567890');
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// v3 FILTER ARCHITECTURE — isLabelflowInternal + shouldSkipNoteAttribute
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('isLabelflowInternal — combined label+timestamp detection', () => {
+  it('returns true for any case variant of "labelflow"', () => {
+    expect(isLabelflowInternal('labelflow')).toBe(true);
+    expect(isLabelflowInternal('LabelFlow')).toBe(true);
+    expect(isLabelflowInternal('LABELFLOW')).toBe(true);
+    expect(isLabelflowInternal('sent via labelflow yesterday')).toBe(true);
+  });
+
+  it('returns true for any ISO 8601 timestamp', () => {
+    expect(isLabelflowInternal('2026-04-06T17:12:57.789Z')).toBe(true);
+    expect(isLabelflowInternal('Fecha: 2026-04-06T17:12:57')).toBe(true);
+    expect(isLabelflowInternal('timestamp=2026-04-10 15:00:00')).toBe(true);
+  });
+
+  it('returns false for legitimate delivery instructions', () => {
+    expect(isLabelflowInternal('Apto 3')).toBe(false);
+    expect(isLabelflowInternal('Casa amarilla con rejas')).toBe(false);
+    expect(isLabelflowInternal('Entregar antes de las 18hs')).toBe(false);
+  });
+
+  it('returns false for empty / whitespace', () => {
+    expect(isLabelflowInternal('')).toBe(false);
+    expect(isLabelflowInternal('   ')).toBe(false);
+  });
+});
+
+describe('shouldSkipNoteAttribute — Shopify note_attribute filter', () => {
+  it('skips attribute whose name contains labelflow', () => {
+    expect(shouldSkipNoteAttribute('labelflow-guia', '882277908035')).toBe(true);
+    expect(shouldSkipNoteAttribute('LabelFlow-GUIA', '882277908035')).toBe(true);
+  });
+
+  it('skips attribute whose value contains labelflow', () => {
+    expect(shouldSkipNoteAttribute('random_name', 'labelflow reference')).toBe(true);
+  });
+
+  it('skips attribute whose name matches metadata patterns (guia, tracking, fecha, etc)', () => {
+    expect(shouldSkipNoteAttribute('Guía', '882277908035')).toBe(true);
+    expect(shouldSkipNoteAttribute('Fecha', '2026-04-06T17:12:57.789Z')).toBe(true);
+    expect(shouldSkipNoteAttribute('Tracking', 'ABC123')).toBe(true);
+    expect(shouldSkipNoteAttribute('timestamp', 'whatever')).toBe(true);
+    expect(shouldSkipNoteAttribute('label', 'whatever')).toBe(true);
+    expect(shouldSkipNoteAttribute('internal', 'whatever')).toBe(true);
+  });
+
+  it('skips attribute whose value is a bare long numeric ID', () => {
+    expect(shouldSkipNoteAttribute('external_id', '882277908035')).toBe(true);
+  });
+
+  it('skips attribute whose value is an ISO timestamp', () => {
+    expect(shouldSkipNoteAttribute('created_at', '2026-04-06T17:12:57.789Z')).toBe(true);
+  });
+
+  it('ALLOWS legitimate delivery instruction attributes', () => {
+    expect(shouldSkipNoteAttribute('delivery_instructions', 'Leave at the door')).toBe(false);
+    expect(shouldSkipNoteAttribute('gift_message', 'Feliz cumpleaños!')).toBe(false);
+    expect(shouldSkipNoteAttribute('apartment', '3B')).toBe(false);
+    expect(shouldSkipNoteAttribute('phone', '099123456')).toBe(false); // 9 digits stays
+  });
+});
+
+describe('v3 individual detection signals', () => {
+  it('LABELFLOW_WORD_RE matches labelflow in any case', () => {
+    expect(LABELFLOW_WORD_RE.test('LabelFlow')).toBe(true);
+    expect(LABELFLOW_WORD_RE.test('labelflow')).toBe(true);
+    expect(LABELFLOW_WORD_RE.test('LABELFLOW')).toBe(true);
+    expect(LABELFLOW_WORD_RE.test('notflow')).toBe(false);
+  });
+
+  it('ISO_TIMESTAMP_RE matches ISO 8601 but not other date formats', () => {
+    expect(ISO_TIMESTAMP_RE.test('2026-04-06T17:12:57.789Z')).toBe(true);
+    expect(ISO_TIMESTAMP_RE.test('2026-04-06t17:12:57.789z')).toBe(true);
+    expect(ISO_TIMESTAMP_RE.test('2026-04-06 17:12:57')).toBe(true);
+    expect(ISO_TIMESTAMP_RE.test('11/04/2026 14:00')).toBe(false);
+    expect(ISO_TIMESTAMP_RE.test('2026-04-06')).toBe(false);
+  });
+
+  it('LONG_NUMERIC_ID_RE matches 10+ digit standalone numbers only', () => {
+    expect(LONG_NUMERIC_ID_RE.test('882277908035')).toBe(true);
+    expect(LONG_NUMERIC_ID_RE.test('1234567890')).toBe(true);
+    expect(LONG_NUMERIC_ID_RE.test('123456789')).toBe(false); // 9 digits — could be phone
+    expect(LONG_NUMERIC_ID_RE.test('Apto 1234567890')).toBe(false); // has text
+  });
+
+  it('INTERNAL_METADATA_NAME_RE matches common metadata field names', () => {
+    expect(INTERNAL_METADATA_NAME_RE.test('Guía')).toBe(true);
+    expect(INTERNAL_METADATA_NAME_RE.test('guia')).toBe(true);
+    expect(INTERNAL_METADATA_NAME_RE.test('tracking')).toBe(true);
+    expect(INTERNAL_METADATA_NAME_RE.test('Fecha')).toBe(true);
+    expect(INTERNAL_METADATA_NAME_RE.test('timestamp')).toBe(true);
+    expect(INTERNAL_METADATA_NAME_RE.test('label')).toBe(true);
+    expect(INTERNAL_METADATA_NAME_RE.test('delivery_instructions')).toBe(false);
+    expect(INTERNAL_METADATA_NAME_RE.test('customer_note')).toBe(false);
+    expect(INTERNAL_METADATA_NAME_RE.test('apartment')).toBe(false);
   });
 });
