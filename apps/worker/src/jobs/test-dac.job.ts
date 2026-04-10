@@ -78,18 +78,42 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
       return;
     }
 
-    // Fetch recent orders from Shopify
+    // Fetch recent orders from Shopify.
+    //
+    // BUG FIX (2026-04-10): when specificOrderIds is provided, we MUST fetch enough
+    // orders to actually find them. The previous implementation fetched only
+    // `maxOrders` recent orders and then filtered, which silently dropped any target
+    // order that wasn't in the most recent N. This made the orderIds feature
+    // unusable for any historical replay (e.g. testing the 20 Curva Divina orders
+    // from yesterday — most of which were not in the 20 most recent orders).
+    //
+    // The fix: when orderIds is provided, fetch up to 250 (Shopify's max per call)
+    // recent orders, then filter. The maxOrders cap is also bypassed in this mode
+    // so all matched IDs are processed, not just the first N.
     const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken);
-    let orders = await getRecentOrders(shopifyClient, maxOrders);
-    slog.info('shopify', `Fetched ${orders.length} recent orders from Shopify`);
+    const hasSpecificIds = !!(specificOrderIds && specificOrderIds.length > 0);
+    const fetchLimit = hasSpecificIds ? 250 : maxOrders;
+    let orders = await getRecentOrders(shopifyClient, fetchLimit);
+    slog.info('shopify', `Fetched ${orders.length} recent orders from Shopify (fetchLimit=${fetchLimit})`);
 
     // Filter to specific order IDs if provided
-    if (specificOrderIds && specificOrderIds.length > 0) {
-      orders = orders.filter(o => specificOrderIds.includes(String(o.id)) || specificOrderIds.includes(o.name));
-      slog.info('filter', `Filtered to ${orders.length} specific orders`);
+    if (hasSpecificIds) {
+      const targetSet = new Set(specificOrderIds);
+      orders = orders.filter(o =>
+        targetSet.has(String(o.id)) ||
+        targetSet.has(o.name) ||
+        targetSet.has(o.name?.replace(/^#/, '') ?? ''),
+      );
+      slog.info('filter', `Filtered to ${orders.length} specific orders (out of ${specificOrderIds.length} requested)`);
+      if (orders.length < specificOrderIds.length) {
+        const found = new Set(orders.map(o => String(o.id)));
+        const missing = specificOrderIds.filter(id => !found.has(id));
+        slog.warn('filter', `${missing.length} requested orderIds were NOT found in the last ${fetchLimit} Shopify orders`, { missing });
+      }
+    } else {
+      // Only cap to maxOrders when not in specific-ID mode
+      orders = orders.slice(0, maxOrders);
     }
-
-    orders = orders.slice(0, maxOrders);
     totalOrders = orders.length;
 
     if (orders.length === 0) {
