@@ -6,6 +6,7 @@ import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress } from '../dac/shipment';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
+import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { getDepartmentForCity } from '../dac/uruguay-geo';
 import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
@@ -156,8 +157,14 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
         slog.info('order-payment', `[TEST] Payment: ${paymentType} (total: $${order.total_price} ${order.currency}, threshold: ${tenant.paymentThreshold})`);
 
         // Merge address and detect department
+        // Use buildSafeLabelGeoFields to guarantee non-null values for the Prisma
+        // required fields — see apps/worker/src/jobs/label-safe-fields.ts.
         const { fullAddress: mergedAddr, extraObs } = mergeAddress(addr.address1, addr.address2);
-        const resolvedDept = getDepartmentForCity(addr.city) ?? addr.province;
+        const { safeCity, safeDepartment: resolvedDept } = buildSafeLabelGeoFields({
+          city: addr.city,
+          province: addr.province,
+          resolvedDepartment: getDepartmentForCity(addr.city),
+        });
 
         slog.info('order-address', `[TEST] Address: "${mergedAddr}" | Dept: ${resolvedDept} | City: ${addr.city} | Obs: "${extraObs}"`);
 
@@ -186,7 +193,7 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
             customerEmail: order.email,
             customerPhone: addr.phone,
             deliveryAddress: mergedAddr,
-            city: addr.city,
+            city: safeCity,
             department: resolvedDept,
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType,

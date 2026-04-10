@@ -8,6 +8,7 @@ import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress } from '../dac/shipment';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
+import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { getDepartmentForCity, getDepartmentForCityAsync } from '../dac/uruguay-geo';
 import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
@@ -311,8 +312,19 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         slog.success('order-shipment', `DAC shipment created for ${order.name}`, { guia: result.guia });
 
         // c) Create or update label record in DB (upsert to handle retries of FAILED labels)
+        //
+        // Label.city and Label.department are REQUIRED (non-null) in Prisma. Use the
+        // buildSafeLabelGeoFields helper to guarantee non-null values — see
+        // apps/worker/src/jobs/label-safe-fields.ts for the full history on why this
+        // matters (hint: null causes a misleading "Argument tenant is missing" error
+        // and leaks DAC guias on every cron retry).
         const { fullAddress: mergedAddr } = mergeAddress(addr.address1, addr.address2);
-        const resolvedDept = (await getDepartmentForCityAsync(addr.city)) ?? addr.province;
+        const resolvedDeptRaw = await getDepartmentForCityAsync(addr.city);
+        const { safeCity, safeDepartment: resolvedDept } = buildSafeLabelGeoFields({
+          city: addr.city,
+          province: addr.province,
+          resolvedDepartment: resolvedDeptRaw,
+        });
         const labelRecord = await db.label.upsert({
           where: {
             tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
@@ -325,7 +337,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             customerEmail: order.email,
             customerPhone: addr.phone,
             deliveryAddress: mergedAddr,
-            city: addr.city,
+            city: safeCity,
             department: resolvedDept,
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType,
@@ -491,7 +503,13 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           : errorMsg.substring(0, 500);
 
         const { fullAddress: mergedAddrErr } = mergeAddress(addr.address1, addr.address2);
-        const resolvedDeptErr = (await getDepartmentForCityAsync(addr.city)) ?? addr.province;
+        // Same null-safety as the success path — Label.city/department are required (non-null)
+        const resolvedDeptRawErr = await getDepartmentForCityAsync(addr.city);
+        const { safeCity: safeCityErr, safeDepartment: resolvedDeptErr } = buildSafeLabelGeoFields({
+          city: addr.city,
+          province: addr.province,
+          resolvedDepartment: resolvedDeptRawErr,
+        });
         await db.label.upsert({
           where: {
             tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
@@ -503,7 +521,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             customerName,
             customerEmail: order.email,
             deliveryAddress: mergedAddrErr,
-            city: addr.city,
+            city: safeCityErr,
             department: resolvedDeptErr,
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType: 'DESTINATARIO',
