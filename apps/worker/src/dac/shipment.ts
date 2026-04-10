@@ -1325,37 +1325,85 @@ export async function createShipment(
  * Extract guia numbers AND their href links from <a> elements on the page.
  * Returns array of { guia, href } objects.
  */
+/**
+ * Extract guias + their tracking URLs from the current DAC page.
+ *
+ * RESILIENCE: this is called immediately after clicking "Finalizar" on the DAC
+ * form, while DAC is still navigating to the confirmation page. If the page
+ * context is destroyed mid-evaluate (classic Playwright "Execution context was
+ * destroyed, most likely because of a navigation" error), we DO NOT throw — we
+ * wait for the page to stabilize and retry up to 3 times. On the final retry,
+ * we return an empty array instead of throwing, so the caller can fall through
+ * to Method 2 (historial lookup) rather than aborting the whole order.
+ *
+ * The stakes are high here: if this function throws, the order is marked failed
+ * but DAC has ALREADY created and charged the guia. That leaves an orphan guia
+ * in the DAC system with no corresponding Label row in our DB — a real money
+ * leak (#1146, #1143, #1138 on 2026-04-10).
+ */
 async function extractGuiasWithLinks(pg: Page): Promise<{ guia: string; href: string | null }[]> {
   const GUIA_REGEX = /\b88\d{10,}\b/;
-  return pg.evaluate((regexStr: string) => {
-    const regex = new RegExp(regexStr);
-    const results: { guia: string; href: string | null }[] = [];
-    const seen = new Set<string>();
+  const EVAL_MAX_ATTEMPTS = 3;
 
-    // First: extract from <a> elements (these have the real tracking URLs)
-    const links = Array.from(document.querySelectorAll('a'));
-    for (const a of links) {
-      const text = a.textContent?.trim() ?? '';
-      if (regex.test(text)) {
-        const g = text.match(new RegExp(regexStr))?.[0];
-        if (g && !seen.has(g)) {
-          seen.add(g);
-          results.push({ guia: g, href: a.href || null });
+  for (let attempt = 1; attempt <= EVAL_MAX_ATTEMPTS; attempt++) {
+    try {
+      // Wait for the page to be at least minimally loaded before evaluating.
+      // This avoids the race where the context is destroyed mid-eval.
+      try {
+        await pg.waitForLoadState('domcontentloaded', { timeout: 5_000 });
+      } catch {
+        // Ignore — the page might already be loaded (waitForLoadState only waits
+        // if there's an active navigation). Continue to evaluate.
+      }
+
+      return await pg.evaluate((regexStr: string) => {
+        const regex = new RegExp(regexStr);
+        const results: { guia: string; href: string | null }[] = [];
+        const seen = new Set<string>();
+
+        // First: extract from <a> elements (these have the real tracking URLs)
+        const links = Array.from(document.querySelectorAll('a'));
+        for (const a of links) {
+          const text = a.textContent?.trim() ?? '';
+          if (regex.test(text)) {
+            const g = text.match(new RegExp(regexStr))?.[0];
+            if (g && !seen.has(g)) {
+              seen.add(g);
+              results.push({ guia: g, href: a.href || null });
+            }
+          }
         }
-      }
-    }
 
-    // Second: extract from full page text (catches guias not in links)
-    const allMatches = (document.body?.textContent ?? '').match(new RegExp(regexStr, 'g')) ?? [];
-    for (const g of allMatches) {
-      if (!seen.has(g)) {
-        seen.add(g);
-        results.push({ guia: g, href: null });
-      }
-    }
+        // Second: extract from full page text (catches guias not in links)
+        const allMatches = (document.body?.textContent ?? '').match(new RegExp(regexStr, 'g')) ?? [];
+        for (const g of allMatches) {
+          if (!seen.has(g)) {
+            seen.add(g);
+            results.push({ guia: g, href: null });
+          }
+        }
 
-    return results;
-  }, GUIA_REGEX.source);
+        return results;
+      }, GUIA_REGEX.source);
+    } catch (err) {
+      const msg = (err as Error).message ?? '';
+      const isNavigationRace = msg.includes('Execution context was destroyed')
+        || msg.includes('Target page, context or browser has been closed')
+        || msg.includes('Target closed');
+      if (!isNavigationRace) {
+        // Unexpected error — propagate
+        throw err;
+      }
+      if (attempt === EVAL_MAX_ATTEMPTS) {
+        // Final attempt failed — return empty instead of throwing so the caller
+        // can fall through to Method 2 (historial lookup).
+        return [];
+      }
+      // Navigation in progress — wait a bit longer and retry
+      await pg.waitForTimeout(1500);
+    }
+  }
+  return [];
 }
 
 /**
@@ -1395,10 +1443,24 @@ async function extractGuiaWithRetry(
     const currentUrl = page.url();
 
     // Method 0: Extract guia from confirmation page URL (/envios/guiacreada/XXXXX)
+    // Wrap page.evaluate in try/catch — if navigation is still in progress, this
+    // would throw "Execution context was destroyed" and abort the whole order.
+    // We don't strictly need this preview; it's only for logging/debugging. If it
+    // fails, log a warning and continue to Method 1.
     if (currentUrl.includes('guiacreada')) {
       await page.waitForTimeout(2000);
-      const pagePreview = await page.evaluate(() => document.body?.textContent?.substring(0, 500) ?? '');
-      slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Confirmation page content preview: "${pagePreview.substring(0, 200)}"`);
+      try {
+        const pagePreview = await page.evaluate(() => document.body?.textContent?.substring(0, 500) ?? '');
+        slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Confirmation page content preview: "${pagePreview.substring(0, 200)}"`);
+      } catch (previewErr) {
+        const msg = (previewErr as Error).message ?? '';
+        if (msg.includes('Execution context was destroyed') || msg.includes('Target closed')) {
+          slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Confirmation page still navigating — skipping preview, continuing to extraction');
+          await page.waitForTimeout(1500);
+        } else {
+          throw previewErr;
+        }
+      }
     }
 
     // Method 1: Search CURRENT page for guia + href, excluding already-assigned ones
