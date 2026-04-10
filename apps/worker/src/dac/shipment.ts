@@ -12,6 +12,29 @@ import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 
 // ---- Helpers ----
 
+/**
+ * Matches any LabelFlow-internal marker that must NEVER leak into DAC observations.
+ * Covers: "LabelFlow-GUIA:", "labelflow-guia", "labelflow_guia", "labelflow guia",
+ * "LabelFlow ERROR", accented "guía" variants, etc.
+ *
+ * Exported so the sanitizer can be unit-tested in isolation.
+ */
+export const LABELFLOW_MARKER_RE = /labelflow[-_ ]?(guia|error|gu[ií]a)/i;
+
+/**
+ * Strip any piece of text (split by newlines or pipe separators) that contains a
+ * LabelFlow-internal marker. Used as the final belt-and-suspenders pass before
+ * filling DAC's observations field — see sanitizeObservationLine tests.
+ */
+export function sanitizeObservationLine(raw: string): string {
+  return raw
+    .split(/[\n|]/)
+    .filter(piece => !LABELFLOW_MARKER_RE.test(piece))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function normalize(s: string): string {
   return s
     .toLowerCase()
@@ -974,21 +997,42 @@ export async function createShipment(
 
   // ===== FILL OBSERVACIONES BEFORE Agregar (must be set before submission) =====
   // Build observations from: extraObs (apt/delivery notes) + order notes + note_attributes
+  //
+  // CRITICAL: Strip ALL LabelFlow-internal markers before sending to DAC. These
+  // markers include the guia prefix (written to the Shopify note by markOrderProcessed
+  // so that duplicate orders are skipped on the next cron), error prefixes, and any
+  // note_attribute whose name starts with "labelflow". A previous bug leaked these
+  // into DAC's observations field where the courier sees them — exposing internal
+  // guia numbers that could be abused. The filter is case-insensitive, applies to
+  // both lines of order.note AND entries in order.note_attributes (by name and by
+  // value), and runs once more as a belt-and-suspenders strip on the final joined
+  // observations to catch any edge case where the marker snuck through.
+  // See LABELFLOW_MARKER_RE and sanitizeObservationLine at the top of this file.
   const observations: string[] = [];
   if (extraObs) observations.push(extraObs);
   if (order.note) {
     const cleanNote = order.note
       .split('\n')
-      .filter(line => !line.includes('LabelFlow-GUIA:') && !line.includes('LabelFlow ERROR:'))
+      .filter(line => !LABELFLOW_MARKER_RE.test(line))
       .join('\n')
       .trim();
     if (cleanNote) observations.push(cleanNote);
   }
   if (order.note_attributes && Array.isArray(order.note_attributes)) {
     for (const attr of order.note_attributes) {
-      if (attr.value) observations.push(`${attr.name}: ${attr.value}`);
+      if (!attr.value) continue;
+      // Skip attributes whose name OR value contains a LabelFlow marker
+      if (LABELFLOW_MARKER_RE.test(attr.name ?? '')) continue;
+      if (LABELFLOW_MARKER_RE.test(String(attr.value))) continue;
+      observations.push(`${attr.name}: ${attr.value}`);
     }
   }
+
+  // Final belt-and-suspenders strip: sanitize each accumulated observation one
+  // more time in case a marker slipped through the per-source filters above.
+  const observationsClean = observations.map(sanitizeObservationLine).filter(Boolean);
+  observations.length = 0;
+  observations.push(...observationsClean);
 
   if (observations.length > 0) {
     const obsText = observations.join(' | ');
