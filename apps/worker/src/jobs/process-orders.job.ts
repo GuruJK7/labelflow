@@ -258,7 +258,29 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
       let result: { guia: string; trackingUrl?: string; screenshotPath?: string } | undefined;
       try {
         // a) Determine payment type (respects paymentRuleEnabled toggle)
-        const paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
+        let paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
+
+        // Consecutive order consolidation: if same customer placed another order within the window,
+        // override to REMITENTE (store pays) regardless of amount.
+        if (tenant.consolidateConsecutiveOrders && order.email) {
+          const windowMs = (tenant.consolidationWindowMinutes ?? 30) * 60 * 1000;
+          const windowStart = new Date(Date.now() - windowMs);
+          const priorOrder = await db.label.findFirst({
+            where: {
+              tenantId,
+              customerEmail: order.email,
+              status: { in: ['PENDING', 'COMPLETED', 'CREATED'] },
+              shopifyOrderId: { not: String(order.id) },
+              createdAt: { gte: windowStart },
+            },
+            orderBy: { createdAt: 'desc' },
+          });
+          if (priorOrder) {
+            paymentType = 'REMITENTE';
+            slog.info('order-payment', `Consolidation: customer ${order.email} has prior order ${priorOrder.shopifyOrderName} within ${tenant.consolidationWindowMinutes}min window — overriding to REMITENTE`);
+          }
+        }
+
         slog.info('order-payment', `Payment type: ${paymentType}`, { orderName: order.name });
 
         // b) Check if this order already has a REAL guia from a previous failed attempt

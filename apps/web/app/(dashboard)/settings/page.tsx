@@ -54,6 +54,8 @@ export default function SettingsPage() {
   const [allowedProductTypes, setAllowedProductTypes] = useState<string[]>([]);
   const [availableProductTypes, setAvailableProductTypes] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
+  const [consolidateConsecutiveOrders, setConsolidateConsecutiveOrders] = useState(false);
+  const [consolidationWindowMinutes, setConsolidationWindowMinutes] = useState(30);
 
   const DAYS = [
     { value: 0, label: 'Dom', short: 'D' },
@@ -167,6 +169,8 @@ export default function SettingsPage() {
           parseCronToSchedule(cron, data.scheduleSlots);
           setOrderSort(data.orderSortDirection ?? 'oldest_first');
           setAllowedProductTypes(data.allowedProductTypes ?? []);
+          setConsolidateConsecutiveOrders(data.consolidateConsecutiveOrders ?? false);
+          setConsolidationWindowMinutes(data.consolidationWindowMinutes ?? 30);
           if (data.productTypeCache) {
             const types = [...new Set(Object.values(data.productTypeCache) as string[])].sort();
             setAvailableProductTypes(types);
@@ -323,6 +327,37 @@ export default function SettingsPage() {
             {saving === 'threshold' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar regla
           </button>
           <InlineMessage section="threshold" />
+
+          {/* Consolidación de pedidos consecutivos */}
+          <div className="mt-5 pt-5 border-t border-white/[0.06]">
+            <div className="flex items-center justify-between mb-3 p-3 rounded-lg bg-zinc-800/30 border border-white/[0.04]">
+              <div>
+                <p className="text-sm text-white font-medium">Consolidar pedidos consecutivos</p>
+                <p className="text-[10px] text-zinc-500 mt-0.5">
+                  {consolidateConsecutiveOrders
+                    ? `Si el mismo cliente hace 2+ pedidos en ${consolidationWindowMinutes} min, el 2do+ se cobra al remitente`
+                    : 'Desactivado — cada pedido se evalua independientemente'}
+                </p>
+              </div>
+              <button
+                onClick={() => setConsolidateConsecutiveOrders(!consolidateConsecutiveOrders)}
+                className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${consolidateConsecutiveOrders ? 'bg-cyan-600' : 'bg-zinc-700'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${consolidateConsecutiveOrders ? 'translate-x-5' : 'translate-x-0'}`} />
+              </button>
+            </div>
+            {consolidateConsecutiveOrders && (
+              <div className="mb-3">
+                <label className={labelClass}>Ventana de consolidación (minutos)</label>
+                <input type="number" min={1} max={1440} value={consolidationWindowMinutes} onChange={(e) => setConsolidationWindowMinutes(Number(e.target.value))} className={inputClass + ' max-w-xs'} />
+              </div>
+            )}
+            <button onClick={() => saveSection('consolidation', { consolidateConsecutiveOrders, consolidationWindowMinutes })} disabled={saving === 'consolidation'}
+              className="mt-2 inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
+              {saving === 'consolidation' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar consolidación
+            </button>
+            <InlineMessage section="consolidation" />
+          </div>
         </div>
 
         {/* Procesamiento de pedidos */}

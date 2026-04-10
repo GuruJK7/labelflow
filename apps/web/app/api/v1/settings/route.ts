@@ -35,6 +35,8 @@ const updateSchema = z.object({
   })).max(10).optional(),
   autoFulfillEnabled: z.boolean().optional(),
   fulfillMode: z.enum(['off', 'on', 'always']).optional(),
+  consolidateConsecutiveOrders: z.boolean().optional(),
+  consolidationWindowMinutes: z.number().min(1).max(1440).optional(),
   defaultPrinter: z.string().max(200).optional(),
   autoPrintEnabled: z.boolean().optional(),
   orderSortDirection: z.enum(['oldest_first', 'newest_first']).optional(),
@@ -79,6 +81,8 @@ export async function GET() {
       orderSortDirection: true,
       allowedProductTypes: true,
       productTypeCache: true,
+      consolidateConsecutiveOrders: true,
+      consolidationWindowMinutes: true,
     },
   });
 
@@ -132,6 +136,8 @@ export async function GET() {
     orderSortDirection: tenant.orderSortDirection,
     allowedProductTypes: tenant.allowedProductTypes,
     productTypeCache: tenant.productTypeCache,
+    consolidateConsecutiveOrders: tenant.consolidateConsecutiveOrders,
+    consolidationWindowMinutes: tenant.consolidationWindowMinutes,
   });
 }
 
@@ -171,6 +177,8 @@ export async function PUT(req: NextRequest) {
   if (input.autoPrintEnabled !== undefined) data.autoPrintEnabled = input.autoPrintEnabled;
   if (input.orderSortDirection !== undefined) data.orderSortDirection = input.orderSortDirection;
   if (input.allowedProductTypes !== undefined) data.allowedProductTypes = input.allowedProductTypes;
+  if (input.consolidateConsecutiveOrders !== undefined) data.consolidateConsecutiveOrders = input.consolidateConsecutiveOrders;
+  if (input.consolidationWindowMinutes !== undefined) data.consolidationWindowMinutes = input.consolidationWindowMinutes;
 
   // Encrypted fields
   if (input.shopifyToken !== undefined) data.shopifyToken = encryptIfPresent(input.shopifyToken);

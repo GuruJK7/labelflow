@@ -202,6 +202,12 @@ export function mergeAddress(address1: string, address2: string | undefined | nu
     if (slashApt) {
       return { fullAddress: a1, extraObs: `Apto ${slashApt[2]}` };
     }
+    // "Puerta X" embedded in address1 (e.g. "Cuató 3117 Puerta 3") — extract to obs
+    // "Puerta" in Uruguay = entrance/door code, NOT an apartment number
+    const puertaMatch = /\s+[Pp]uerta\s+\S+\s*$/.exec(a1);
+    if (puertaMatch) {
+      return { fullAddress: a1.slice(0, puertaMatch.index).trim(), extraObs: puertaMatch[0].trim() };
+    }
     return { fullAddress: a1, extraObs: '' };
   }
 
@@ -1083,19 +1089,31 @@ export async function createShipment(
   // ===== CLICK "Finalizar envio" (BUG C: separate button after Agregar) =====
   slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, 'Looking for Finalizar envio button');
 
-  const finalizarResult = await page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button'));
-    for (const b of buttons) {
-      if (b.textContent?.toLowerCase().includes('finalizar')) {
-        b.click();
-        return 'clicked Finalizar envio';
+  let finalizarResult: string;
+  try {
+    finalizarResult = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      for (const b of buttons) {
+        if (b.textContent?.toLowerCase().includes('finalizar')) {
+          b.click();
+          return 'clicked Finalizar envio';
+        }
       }
+      // Also try .btnSave class
+      const saveBtn = document.querySelector('.btnSave') as HTMLButtonElement;
+      if (saveBtn) { saveBtn.click(); return 'clicked .btnSave'; }
+      return 'no Finalizar button found';
+    });
+  } catch (finErr) {
+    // "Execution context was destroyed, most likely because of a navigation" means
+    // the Finalizar click triggered a page redirect (DAC success flow). Treat as OK.
+    if ((finErr as Error).message?.includes('Execution context was destroyed')) {
+      finalizarResult = 'navigation-triggered (form submitted — context destroyed)';
+      slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, 'Finalizar click caused immediate navigation — treating as success');
+    } else {
+      throw finErr;
     }
-    // Also try .btnSave class
-    const saveBtn = document.querySelector('.btnSave') as HTMLButtonElement;
-    if (saveBtn) { saveBtn.click(); return 'clicked .btnSave'; }
-    return 'no Finalizar button found';
-  });
+  }
 
   slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, `Finalizar result: ${finalizarResult}`);
 

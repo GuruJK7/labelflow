@@ -769,3 +769,73 @@ describe('detectCityIntelligent — real-order ZIP-override regressions', () => 
     expect(result.department).toBe('Montevideo');
   });
 });
+
+// ============================================================
+// SECTION 11: Regression tests for Curva Divina production bugs
+// ============================================================
+
+// Bug #11117 — zone wrong: Av. Libertador should prefer parque batlle over tres cruces
+describe('Regression #11117 — Av. Libertador zone detection', () => {
+  it('Av. Libertador street maps to parque batlle as first candidate', () => {
+    const barrios = getBarriosFromStreet('Av. Libertador 1748');
+    expect(barrios).not.toBeNull();
+    expect(barrios![0]).toBe('parque batlle');
+  });
+
+  it('detectCityIntelligent with Av. Libertador returns parque batlle', () => {
+    const result = detectCityIntelligent('Montevideo', 'Av. Libertador 1748', '', '');
+    expect(result.barrio).toBe('parque batlle');
+  });
+});
+
+// Bug #11120 — zone wrong: "Rbla." abbreviation should resolve to rambla barrios
+describe('Regression #11120 — Rbla. abbreviation zone detection', () => {
+  it('getBarriosFromStreet handles Rbla. abbreviation', () => {
+    const barrios = getBarriosFromStreet('Rbla. República de Chile 4507');
+    expect(barrios).not.toBeNull();
+    expect(barrios).toContain('pocitos');
+  });
+
+  it('detectCityIntelligent with Rbla. address detects barrio via street', () => {
+    const result = detectCityIntelligent('Montevideo', 'Rbla. República de Chile 4507 002', '', '');
+    expect(result.barrio).not.toBeNull();
+    expect(result.source).toBe('street');
+  });
+});
+
+// Bug #11121 — "Puerta X" in address1 should be extracted to extraObs, not treated as apt
+describe('Regression #11121 — Puerta X in address1', () => {
+  it('Puerta at end of address1 extracted to extraObs', () => {
+    const { fullAddress, extraObs } = mergeAddress('Cuató 3117 Puerta 3', undefined);
+    expect(fullAddress).toBe('Cuató 3117');
+    expect(extraObs).toBe('Puerta 3');
+  });
+
+  it('Puerta with letter suffix extracted to extraObs', () => {
+    const { fullAddress, extraObs } = mergeAddress('Av. Italia 2500 Puerta A', undefined);
+    expect(fullAddress).toBe('Av. Italia 2500');
+    expect(extraObs).toBe('Puerta A');
+  });
+
+  it('Address without Puerta unaffected', () => {
+    const { fullAddress, extraObs } = mergeAddress('Cuató 3117', undefined);
+    expect(fullAddress).toBe('Cuató 3117');
+    expect(extraObs).toBe('');
+  });
+
+  it('address2=Puerta 3 goes to extraObs without Apto prefix', () => {
+    const { fullAddress, extraObs } = mergeAddress('Cuató 3117', 'Puerta 3');
+    expect(fullAddress).toBe('Cuató 3117');
+    expect(extraObs).toBe('Puerta 3');
+    expect(extraObs).not.toContain('Apto');
+  });
+});
+
+// Bug #11125/#11126 — consecutive orders: rambla variants work after rbla alias added
+describe('Regression — street alias completeness', () => {
+  it('rambla (full word) still maps correctly', () => {
+    const barrios = getBarriosFromStreet('Rambla Gandhi 500');
+    expect(barrios).not.toBeNull();
+    expect(barrios).toContain('pocitos');
+  });
+});
