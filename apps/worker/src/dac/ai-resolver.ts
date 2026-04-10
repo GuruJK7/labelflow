@@ -29,9 +29,19 @@ import logger from '../logger';
 const MODEL = 'claude-haiku-4-5-20251001';
 const MAX_TOKENS = 512;
 
-// Haiku 4.5 pricing (USD per 1M tokens)
+// Haiku 4.5 pricing (USD per 1M tokens) — as of April 2026
+// Source: https://platform.claude.com/docs/en/about-claude/pricing
 const PRICE_INPUT_PER_MTOK = 1.0;
 const PRICE_OUTPUT_PER_MTOK = 5.0;
+// Prompt caching (5-minute ephemeral):
+//   - Cache writes cost 1.25x base input (we pay this only on the first call
+//     in a 5-minute window, or when cached content changes)
+//   - Cache reads cost 0.1x base input (every subsequent call within 5 minutes
+//     that hits the cache pays this reduced rate)
+// For LabelFlow's use case (batches of orders processed by the same worker),
+// this yields ~70% savings on the cached portion after the first call.
+const PRICE_CACHE_WRITE_PER_MTOK = 1.25;
+const PRICE_CACHE_READ_PER_MTOK = 0.1;
 
 // 19 departments of Uruguay — AI MUST return one of these exactly
 export const VALID_DEPARTMENTS = [
@@ -156,6 +166,35 @@ interface AIToolResponse {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Cost calculation (pure function, exported for testing)
+// ───────────────────────────────────────────────────────────────────────────
+
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
+/**
+ * Compute the USD cost of a single Anthropic API call given the token usage
+ * breakdown from the response. Handles both uncached calls and cached calls
+ * (prompt caching with ephemeral 5-minute breakpoints).
+ *
+ * Priced using the Haiku 4.5 rates hardcoded in this module.
+ */
+export function calculateAICost(usage: TokenUsage): number {
+  const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+  const cacheRead = usage.cache_read_input_tokens ?? 0;
+  return (
+    (usage.input_tokens / 1_000_000) * PRICE_INPUT_PER_MTOK +
+    (cacheCreation / 1_000_000) * PRICE_CACHE_WRITE_PER_MTOK +
+    (cacheRead / 1_000_000) * PRICE_CACHE_READ_PER_MTOK +
+    (usage.output_tokens / 1_000_000) * PRICE_OUTPUT_PER_MTOK
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Hashing
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -221,7 +260,13 @@ CONTEXTO GEOGRAFICO CLAVE:
 - Si la city dice "Pueblo X" o "Villa X", X suele ser el nombre del pueblo/barrio real
 - "Juan Lacaze" es una ciudad en Colonia
 - "Young" es una ciudad en Rio Negro
-- "Minas" es la capital de Lavalleja`;
+- "Minas" es la capital de Lavalleja
+
+BARRIOS VALIDOS DE MONTEVIDEO (58 total):
+Si department es "Montevideo", barrio DEBE ser EXACTAMENTE uno de estos (en lowercase):
+${VALID_MVD_BARRIOS.join(', ')}
+
+Si no podes determinar el barrio con certeza de esta lista exacta, devolve barrio=null y confidence="low".`;
 
 const ADDRESS_RESOLVER_TOOL: Anthropic.Tool = {
   name: 'resolve_address',
@@ -356,7 +401,8 @@ export async function resolveAddressWithAI(
     return null;
   }
 
-  // 4. Build user message
+  // 4. Build user message — kept minimal so the cache-stable prefix (system + tools)
+  // dominates the request. The barrios list lives in the system prompt now.
   const userMessage = [
     'Resolve this Uruguayan delivery address:',
     '',
@@ -367,22 +413,40 @@ export async function resolveAddressWithAI(
     `Province (from Shopify): ${input.province || '(empty)'}`,
     input.orderNotes ? `Order notes: ${input.orderNotes.slice(0, 400)}` : '',
     '',
-    `Valid Montevideo barrios (58): ${VALID_MVD_BARRIOS.join(', ')}`,
-    '',
     'Use the resolve_address tool to provide the structured resolution.',
   ]
     .filter(Boolean)
     .join('\n');
 
-  // 5. Call Claude Haiku with tool use
+  // 5. Call Claude Haiku with tool use + prompt caching
+  //
+  // We place a single cache_control breakpoint on the tool definition, which
+  // tells Anthropic to cache everything up to and including the tools (system
+  // prompt + tool schemas). The user message stays uncached since it changes
+  // per request. After the first call, each subsequent call within 5 minutes
+  // pays only 10% of the base rate on the cached ~2000 tokens — a 70% savings
+  // on the dominant cost.
+  //
+  // For implementation details see:
+  //   https://platform.claude.com/docs/en/build-with-claude/prompt-caching
   const client = new Anthropic({ apiKey });
   let response: Anthropic.Message;
   try {
     response = await client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: SYSTEM_PROMPT,
-      tools: [ADDRESS_RESOLVER_TOOL],
+      system: [
+        {
+          type: 'text',
+          text: SYSTEM_PROMPT,
+        },
+      ],
+      tools: [
+        {
+          ...ADDRESS_RESOLVER_TOOL,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
       tool_choice: { type: 'tool', name: 'resolve_address' },
       messages: [{ role: 'user', content: userMessage }],
     });
@@ -439,12 +503,32 @@ export async function resolveAddressWithAI(
     return null;
   }
 
-  // 8. Cost tracking
+  // 8. Cost tracking — includes cache accounting
+  //
+  // With prompt caching enabled, the usage response splits input tokens into
+  // three categories:
+  //   - input_tokens: uncached portion (always the user message in our setup)
+  //   - cache_creation_input_tokens: cached portion when this call WROTE the
+  //     cache (priced at 1.25x base — only happens on the first call of a
+  //     5-minute window or when the cached prefix changes)
+  //   - cache_read_input_tokens: cached portion when this call READ the cache
+  //     (priced at 0.10x base — huge savings on subsequent calls)
+  // The three categories sum to the total input token count. In steady-state
+  // batch processing, cache_read dominates and the average per-call cost
+  // drops to ~30% of the uncached baseline.
   const inputTokens = response.usage.input_tokens;
   const outputTokens = response.usage.output_tokens;
-  const costUsd =
-    (inputTokens / 1_000_000) * PRICE_INPUT_PER_MTOK +
-    (outputTokens / 1_000_000) * PRICE_OUTPUT_PER_MTOK;
+  const cacheCreationTokens =
+    (response.usage as any).cache_creation_input_tokens ?? 0;
+  const cacheReadTokens =
+    (response.usage as any).cache_read_input_tokens ?? 0;
+
+  const costUsd = calculateAICost({
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    cache_creation_input_tokens: cacheCreationTokens,
+    cache_read_input_tokens: cacheReadTokens,
+  });
 
   // 9. Persist to cache + audit log
   try {
@@ -513,6 +597,9 @@ export async function resolveAddressWithAI(
       barrio: result.barrio,
       inputTokens,
       outputTokens,
+      cacheCreationTokens,
+      cacheReadTokens,
+      cacheHit: cacheReadTokens > 0,
     },
     'AI resolver SUCCESS',
   );

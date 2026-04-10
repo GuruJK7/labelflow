@@ -9,9 +9,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   hashAddressInput,
+  calculateAICost,
   VALID_DEPARTMENTS,
   VALID_MVD_BARRIOS,
   AIResolverInput,
+  TokenUsage,
 } from '../dac/ai-resolver';
 
 describe('hashAddressInput', () => {
@@ -221,5 +223,162 @@ describe('VALID_MVD_BARRIOS', () => {
   it('contains at least 50 barrios', () => {
     // Montevideo has 62 official barrios; we track the ones DAC supports in its dropdown
     expect(VALID_MVD_BARRIOS.length).toBeGreaterThanOrEqual(50);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// calculateAICost — verifies Haiku 4.5 pricing and prompt caching math
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('calculateAICost', () => {
+  it('computes base cost with no caching (matches Haiku 4.5 pricing)', () => {
+    // 1000 input tokens × $1/MTok = $0.001
+    // 200 output tokens × $5/MTok = $0.001
+    // Total: $0.002
+    const usage: TokenUsage = {
+      input_tokens: 1000,
+      output_tokens: 200,
+    };
+    expect(calculateAICost(usage)).toBeCloseTo(0.002, 6);
+  });
+
+  it('computes cost with cache_creation tokens (first call in batch)', () => {
+    // Simulates the first call in a batch that writes the cache:
+    //   - 100 uncached input tokens (user message) × $1/MTok = $0.0001
+    //   - 2000 cache_creation tokens × $1.25/MTok = $0.0025
+    //   - 150 output tokens × $5/MTok = $0.00075
+    // Total: $0.00335
+    const usage: TokenUsage = {
+      input_tokens: 100,
+      output_tokens: 150,
+      cache_creation_input_tokens: 2000,
+      cache_read_input_tokens: 0,
+    };
+    expect(calculateAICost(usage)).toBeCloseTo(0.00335, 6);
+  });
+
+  it('computes cost with cache_read tokens (cached call within 5min)', () => {
+    // Simulates subsequent calls that hit the cache:
+    //   - 100 uncached input tokens × $1/MTok = $0.0001
+    //   - 2000 cache_read tokens × $0.10/MTok = $0.0002
+    //   - 150 output tokens × $5/MTok = $0.00075
+    // Total: $0.00105 (69% cheaper than first call)
+    const usage: TokenUsage = {
+      input_tokens: 100,
+      output_tokens: 150,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 2000,
+    };
+    expect(calculateAICost(usage)).toBeCloseTo(0.00105, 6);
+  });
+
+  it('cached calls are cheaper than uncached calls', () => {
+    // Same prompt, different caching state
+    const uncached: TokenUsage = {
+      input_tokens: 2100, // full prompt, no cache
+      output_tokens: 150,
+    };
+    const cached: TokenUsage = {
+      input_tokens: 100,
+      output_tokens: 150,
+      cache_read_input_tokens: 2000,
+    };
+    expect(calculateAICost(cached)).toBeLessThan(calculateAICost(uncached));
+  });
+
+  it('cache-read pricing is exactly 10% of base input price', () => {
+    // 1M cache_read tokens should equal 10% of the cost of 1M base input tokens
+    const baseOnly: TokenUsage = { input_tokens: 1_000_000, output_tokens: 0 };
+    const cachedOnly: TokenUsage = {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_input_tokens: 1_000_000,
+    };
+    expect(calculateAICost(cachedOnly)).toBeCloseTo(
+      calculateAICost(baseOnly) * 0.1,
+      6,
+    );
+  });
+
+  it('cache-write pricing is exactly 125% of base input price', () => {
+    // 1M cache_creation tokens should equal 125% of the cost of 1M base input tokens
+    const baseOnly: TokenUsage = { input_tokens: 1_000_000, output_tokens: 0 };
+    const writeOnly: TokenUsage = {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_input_tokens: 1_000_000,
+    };
+    expect(calculateAICost(writeOnly)).toBeCloseTo(
+      calculateAICost(baseOnly) * 1.25,
+      6,
+    );
+  });
+
+  it('handles zero cache fields (backwards compatible)', () => {
+    const noCache: TokenUsage = { input_tokens: 1000, output_tokens: 200 };
+    const explicitZero: TokenUsage = {
+      input_tokens: 1000,
+      output_tokens: 200,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    expect(calculateAICost(noCache)).toBe(calculateAICost(explicitZero));
+  });
+
+  it('per-call cost for realistic AI resolver payload is around $0.001-$0.004', () => {
+    // First call in batch (writes cache)
+    const firstCall: TokenUsage = {
+      input_tokens: 150, // user message (address data)
+      output_tokens: 180, // tool_use response
+      cache_creation_input_tokens: 2000, // system + tools
+      cache_read_input_tokens: 0,
+    };
+    const firstCost = calculateAICost(firstCall);
+    expect(firstCost).toBeGreaterThan(0.002);
+    expect(firstCost).toBeLessThan(0.005);
+
+    // Subsequent call (cache hit)
+    const cachedCall: TokenUsage = {
+      input_tokens: 150,
+      output_tokens: 180,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 2000,
+    };
+    const cachedCost = calculateAICost(cachedCall);
+    expect(cachedCost).toBeGreaterThan(0.0008);
+    expect(cachedCost).toBeLessThan(0.0025);
+
+    // Cache should save at least 25% vs first call
+    expect(cachedCost).toBeLessThan(firstCost * 0.75);
+  });
+
+  it('cache savings in a 100-order batch reach at least 55%', () => {
+    // Simulate: 1 cache write + 99 cache reads
+    // With our token profile (2000 cached + 150 uncached input + 180 output)
+    // the realistic savings are ~58% — the output cost is flat and drags the
+    // total savings below the per-call input-only savings. 55% is a safe
+    // floor that any regression in cache efficiency would trip.
+    const firstCall: TokenUsage = {
+      input_tokens: 150,
+      output_tokens: 180,
+      cache_creation_input_tokens: 2000,
+    };
+    const cachedCall: TokenUsage = {
+      input_tokens: 150,
+      output_tokens: 180,
+      cache_read_input_tokens: 2000,
+    };
+    const uncachedCall: TokenUsage = {
+      input_tokens: 2150, // full prompt
+      output_tokens: 180,
+    };
+
+    const batchCostWithCache =
+      calculateAICost(firstCall) + 99 * calculateAICost(cachedCall);
+    const batchCostWithoutCache = 100 * calculateAICost(uncachedCall);
+
+    const savings =
+      (batchCostWithoutCache - batchCostWithCache) / batchCostWithoutCache;
+    expect(savings).toBeGreaterThan(0.55); // at least 55% savings
   });
 });

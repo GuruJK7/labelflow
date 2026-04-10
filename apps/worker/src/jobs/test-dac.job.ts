@@ -5,6 +5,7 @@ import { getRecentOrders } from '../shopify/orders';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress } from '../dac/shipment';
+import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { getDepartmentForCity } from '../dac/uruguay-geo';
 import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
@@ -147,6 +148,9 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
         continue;
       }
 
+      // Hoisted so the catch block can access aiResolutionHash on failure
+      let result: { guia: string; trackingUrl?: string; screenshotPath?: string; aiResolutionHash?: string } | undefined;
+
       try {
         const paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
         slog.info('order-payment', `[TEST] Payment: ${paymentType} (total: $${order.total_price} ${order.currency}, threshold: ${tenant.paymentThreshold})`);
@@ -158,7 +162,7 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
         slog.info('order-address', `[TEST] Address: "${mergedAddr}" | Dept: ${resolvedDept} | City: ${addr.city} | Obs: "${extraObs}"`);
 
         // Create shipment in DAC
-        const result = await createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId, usedGuias);
+        result = await createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId, usedGuias);
 
         if (result.guia && !result.guia.startsWith('PENDING-')) {
           usedGuias.add(result.guia);
@@ -235,9 +239,33 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
         slog.success('order-complete', `[TEST] Order ${order.name} processed OK`, {
           guia: result.guia, paymentType, mergedAddr, department: resolvedDept,
         });
+
+        // AI resolver feedback: mark resolution as accepted if AI was used
+        if (result.aiResolutionHash) {
+          await markAddressResolutionFeedback(
+            tenantId,
+            result.aiResolutionHash,
+            true,
+            result.guia,
+          );
+        }
+
         successCount++;
       } catch (err) {
         slog.error('order-fail', `[TEST] Order ${order.name} failed: ${(err as Error).message}`);
+
+        // AI resolver feedback: mark resolution as rejected if AI was used
+        // result may be undefined if createShipment threw before returning — guard for it
+        if (result?.aiResolutionHash) {
+          await markAddressResolutionFeedback(
+            tenantId,
+            result.aiResolutionHash,
+            false,
+            undefined,
+            (err as Error).message?.slice(0, 500),
+          );
+        }
+
         failedCount++;
       }
 

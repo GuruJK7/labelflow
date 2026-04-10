@@ -256,7 +256,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         continue;
       }
 
-      let result: { guia: string; trackingUrl?: string; screenshotPath?: string } | undefined;
+      let result: { guia: string; trackingUrl?: string; screenshotPath?: string; aiResolutionHash?: string } | undefined;
       try {
         // a) Determine payment type (respects paymentRuleEnabled toggle)
         let paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
