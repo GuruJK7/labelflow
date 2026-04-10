@@ -7,12 +7,23 @@ import path from 'path';
 
 const COOKIE_STORAGE_KEY = 'dac_cookies';
 
+// Memory management: restart browser every N orders to prevent memory leaks
+// Render Starter tier has 512MB RAM, Chromium uses ~200-400MB, each page adds ~100MB
+const BROWSER_RESTART_INTERVAL = 5; // restart browser every 5 orders
+
 class DacBrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private activePage: Page | null = null;
+  private pageCount: number = 0;
 
   async getPage(): Promise<Page> {
+    // Proactive memory management: restart browser every N orders
+    if (this.pageCount >= BROWSER_RESTART_INTERVAL && this.browser) {
+      logger.info({ pageCount: this.pageCount }, 'Proactive browser restart (memory management)');
+      await this.close();
+    }
+
     if (!this.browser || !this.browser.isConnected()) {
       const config = getConfig();
       logger.info({ headless: config.PLAYWRIGHT_HEADLESS }, 'Starting Playwright browser');
@@ -24,6 +35,17 @@ class DacBrowserManager {
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process', // reduces memory fragmentation
+          '--disable-extensions',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+          '--disable-features=TranslateUI,BlinkGenPropertyTrees',
+          '--disable-ipc-flooding-protection',
+          '--js-flags=--max-old-space-size=256', // cap Chromium JS heap at 256MB
         ],
       });
 
@@ -31,18 +53,45 @@ class DacBrowserManager {
         acceptDownloads: true,
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         viewport: { width: 1280, height: 800 },
+        // Block heavy resources we don't need (images, fonts, media)
+        serviceWorkers: 'block',
       });
+
+      // Block images, fonts, stylesheets from loading (DAC form only needs HTML/JS)
+      await this.context.route('**/*', (route) => {
+        const type = route.request().resourceType();
+        if (type === 'image' || type === 'font' || type === 'media' || type === 'stylesheet') {
+          route.abort();
+        } else {
+          route.continue();
+        }
+      });
+
+      this.pageCount = 0;
     }
 
     if (!this.context) throw new Error('Browser context not initialized');
 
-    // Reuse page if still open, otherwise create new
+    // Close old page if exists — don't reuse to prevent DOM memory retention
     if (this.activePage && !this.activePage.isClosed()) {
-      return this.activePage;
+      await this.activePage.close().catch(() => {});
+      this.activePage = null;
     }
 
     this.activePage = await this.context.newPage();
+    this.pageCount++;
     return this.activePage;
+  }
+
+  /**
+   * Explicitly close the current page to free memory after an order completes.
+   * Browser stays alive for next order (reused), but page DOM is freed.
+   */
+  async closePage(): Promise<void> {
+    if (this.activePage && !this.activePage.isClosed()) {
+      await this.activePage.close().catch(() => {});
+      this.activePage = null;
+    }
   }
 
   /**
@@ -111,9 +160,17 @@ class DacBrowserManager {
   }
 
   async close(): Promise<void> {
+    if (this.activePage && !this.activePage.isClosed()) {
+      await this.activePage.close().catch(() => {});
+    }
     this.activePage = null;
     if (this.context) { await this.context.close().catch(() => {}); this.context = null; }
     if (this.browser) { await this.browser.close().catch(() => {}); this.browser = null; }
+    this.pageCount = 0;
+    // Force garbage collection if available (node --expose-gc)
+    if (global.gc) {
+      try { global.gc(); } catch {}
+    }
   }
 
   /**
