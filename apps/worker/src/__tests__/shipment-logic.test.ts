@@ -378,11 +378,21 @@ describe('mergeAddress', () => {
   });
 
   // --- Duplicate detection ---
-  it('address2 already at end of address1: "18 De Julio 705" + "705"', () => {
-    // Duplicate number detected; since it looks like an apt number, preserve in obs
+  // v3 (2026-04-10): when address2 is an AMBIGUOUS 3+ digit number (no leading zero)
+  // that duplicates the trailing number of address1, treat it as a duplicated DOOR
+  // number rather than an apartment. The customer typically did this by mistake —
+  // they entered the same door number twice. Apt numbers are usually short (1-2
+  // digits) or have a leading zero (002, 012). See isLikelyAptNumber().
+  it('address2 already at end of address1: "18 De Julio 705" + "705" — treated as duplicate door, NOT apt', () => {
     const result = mergeAddress('18 De Julio 705', '705');
     expect(result.fullAddress).toBe('18 De Julio 705');
-    expect(result.extraObs).toBe('Apto 705');
+    expect(result.extraObs).toBe('');
+  });
+
+  // The corollary: if address2 looks "obviously apt" (leading zero), it IS the apt
+  it('address2 with leading zero IS treated as apt: "Rambla X 4507" + "002"', () => {
+    const result = mergeAddress('Rambla X 4507', '002');
+    expect(result.extraObs).toBe('Apto 002');
   });
 
   // --- Direction references ---
@@ -460,10 +470,15 @@ describe('mergeAddress', () => {
     expect(result.extraObs).toBe('');
   });
 
-  it('real case: address1 has slash apt "Rivera 3274/801"', () => {
+  it('real case: address1 has slash apt "Rivera 3274/801" — split into door + apt', () => {
+    // v3 (2026-04-10): mergeAddress now detects slash apt patterns directly,
+    // not just in the post-merge step. This was needed for #11085 (Luis a de
+    // Herrera 1183/204 + delivery hours in address2). The slash form is split
+    // into a clean door address + Apto in obs so the courier doesn't get
+    // confused by "Calle 1234/5".
     const result = mergeAddress('Rivera 3274/801', null);
-    // The slash pattern is only detected in the post-merge step of createShipment, not in mergeAddress itself
-    expect(result.fullAddress).toBe('Rivera 3274/801');
+    expect(result.fullAddress).toBe('Rivera 3274');
+    expect(result.extraObs).toBe('Apto 801');
   });
 });
 

@@ -27,11 +27,15 @@ describe('mergeAddress', () => {
 
   // ====== BUG: DUPLICATE DOOR NUMBER (real case #11019) ======
   // address1="18 De Julio 705", address2="705" → was producing "18 De Julio 705 705"
+  // v3 (2026-04-10): also verify the obs is empty (705 is door, not apt — see
+  // isLikelyAptNumber heuristic)
 
   it('does NOT duplicate door number when address2 equals the number already in address1', () => {
     const result = mergeAddress('18 De Julio 705', '705');
     expect(result.fullAddress).toBe('18 De Julio 705');
     expect(result.fullAddress).not.toContain('705 705');
+    // 705 is 3 digits no leading zero → ambiguous → treated as duplicate door, not apt
+    expect(result.extraObs).toBe('');
   });
 
   it('does NOT duplicate when address2 is the last word of address1', () => {

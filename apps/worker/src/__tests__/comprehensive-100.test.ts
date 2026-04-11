@@ -58,10 +58,12 @@ describe('mergeAddress — comprehensive (50 tests)', () => {
 
   // ── 2. Deduplication ──
 
-  it('T07: exact number dedup — "705" already at end of address1', () => {
+  it('T07: exact number dedup — "705" already at end of address1 (v3: not extracted as apt)', () => {
     const r = mergeAddress('18 De Julio 705', '705');
     expect(r.fullAddress).toBe('18 De Julio 705');
     expect(r.fullAddress).not.toContain('705 705');
+    // v3 (2026-04-10): 705 is 3 digits no leading zero → ambiguous → not apt
+    expect(r.extraObs).toBe('');
   });
 
   it('T08: dedup with 4-digit number', () => {

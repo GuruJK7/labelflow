@@ -273,35 +273,271 @@ export function detectCityIntelligent(
   return { barrio: null, department: zipDept, source: 'none', confidence: 'low' };
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// mergeAddress — helper utilities (exported for unit testing)
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Strip a trailing apartment-style suffix from an address line.
+ *
+ * Matches patterns the customer commonly types at the END of address1:
+ *   - "..., apto 110"            → cleaned address, "Apto 110"
+ *   - "...Apto 1202"             → cleaned address, "Apto 1202"
+ *   - "...apt 5B"                → cleaned address, "Apto 5B"
+ *   - "...dpto 304"              → cleaned address, "Apto 304"
+ *   - "...apartamento 7"         → cleaned address, "Apto 7"
+ *
+ * Returns the original address unchanged if no apt pattern is at the end.
+ * Exported so tests can verify each pattern in isolation.
+ */
+export function stripTrailingAptPattern(addr: string): { cleaned: string; apt: string } {
+  if (!addr) return { cleaned: addr, apt: '' };
+  // Word-boundary match for apt-style words at the very end of the string.
+  // Captures the value after the apt word (could be alphanumeric like "5B", "1202", "110")
+  const re = /[\s,]+(?:apto|apt|apartamento|dpto|depto|dep|ap)\.?\s+(\S+)\s*$/i;
+  const m = addr.match(re);
+  if (!m) return { cleaned: addr, apt: '' };
+  const cleaned = addr.slice(0, m.index).trim().replace(/[,\s]+$/, '');
+  return { cleaned, apt: `Apto ${m[1]}` };
+}
+
+/**
+ * Strip a trailing "Porteria X" / "Portería X" suffix from an address line.
+ *
+ * Customers sometimes write "Calle X 410 Porteria 410" — the "Porteria 410"
+ * part is an instruction for the doorman/concierge, not part of the street
+ * address. It belongs in observations.
+ */
+export function stripTrailingPorteriaPattern(addr: string): { cleaned: string; porteria: string } {
+  if (!addr) return { cleaned: addr, porteria: '' };
+  const re = /[\s,]+porter[ií]a\s+(\S+)\s*$/i;
+  const m = addr.match(re);
+  if (!m) return { cleaned: addr, porteria: '' };
+  const cleaned = addr.slice(0, m.index).trim().replace(/[,\s]+$/, '');
+  return { cleaned, porteria: `Porteria ${m[1]}` };
+}
+
+/**
+ * Strip trailing known-place suffixes from an address line.
+ *
+ * Customers sometimes write the full hierarchical address into address1,
+ * e.g. "Guenoas, manzana L6, solar 8, El Pinar, ciudad de la costa".
+ * The barrio ("El Pinar") and city ("ciudad de la costa") are already going
+ * to DAC's K_Barrio and K_Ciudad dropdowns — they shouldn't be repeated in
+ * the street address text.
+ *
+ * Strips the LAST comma-separated segment if it matches a known Uruguayan
+ * city/barrio name. Iterates up to 5 times in case multiple known names are
+ * stacked at the end.
+ */
+const KNOWN_PLACES_FOR_STRIP = new Set([
+  // Departamentos
+  'montevideo', 'canelones', 'maldonado', 'salto', 'paysandu', 'rivera', 'tacuarembo',
+  'colonia', 'soriano', 'rocha', 'florida', 'durazno', 'artigas', 'treinta y tres',
+  'cerro largo', 'lavalleja', 'san jose', 'flores', 'rio negro',
+  // Ciudades / barrios comunes
+  'pocitos', 'buceo', 'carrasco', 'punta carretas', 'centro', 'cordon', 'parque rodo',
+  'malvin', 'union', 'la blanqueada', 'tres cruces', 'prado', 'lagomar', 'la floresta',
+  'las piedras', 'ciudad de la costa', 'pando', 'barros blancos', 'piriapolis', 'punta del este',
+  'minas', 'fray bentos', 'mercedes', 'nueva palmira', 'young', 'carmelo',
+  'el pinar', 'solymar', 'atlantida', 'parque del plata', 'sauce', 'progreso',
+  'la paz', 'delta del tigre', 'san carlos', 'pan de azucar', 'castillos',
+]);
+
+export function stripTrailingKnownPlaces(addr: string): string {
+  if (!addr) return addr;
+  let cleaned = addr;
+  for (let i = 0; i < 5; i++) {
+    // Match LAST ", segment" at end of string
+    const m = cleaned.match(/^(.+),\s*([^,]+)$/);
+    if (!m) break;
+    const lastSegment = m[2].trim().toLowerCase();
+    if (KNOWN_PLACES_FOR_STRIP.has(lastSegment)) {
+      cleaned = m[1].trim();
+    } else {
+      break;
+    }
+  }
+  return cleaned;
+}
+
+/**
+ * Detect when address1 has EXACTLY ONE number that equals address2's numeric
+ * value. This catches the false-positive apt extraction case where the customer
+ * mistakenly typed the door number twice (e.g. "Cuató 3117" + "3117").
+ *
+ * Returns true if address2 should be treated as a duplicate of the door number,
+ * NOT as an apartment number.
+ */
+export function isAddress2DuplicateOfDoor(a1: string, a2: string): boolean {
+  if (!a1 || !a2) return false;
+  // address2 must be a bare number
+  if (!/^\d{1,6}$/.test(a2.trim())) return false;
+  // Find all numbers in address1
+  const a1Numbers = a1.match(/\d+/g) ?? [];
+  // Only one number AND it matches address2
+  return a1Numbers.length === 1 && a1Numbers[0] === a2.trim();
+}
+
+/**
+ * Heuristic: is this bare numeric string "obviously" an apartment number?
+ *
+ * In Uruguay:
+ *   - Apt numbers usually have a leading zero (002, 005, 012) or are very short
+ *     (1, 5, 12) — those are unambiguous apt numbers.
+ *   - Door numbers are usually 3+ digits (100, 1234, 12345) and never have a
+ *     leading zero.
+ *   - 3+ digit numbers WITHOUT a leading zero are AMBIGUOUS — could be either.
+ *
+ * This function returns true ONLY for the "obviously apt" cases. Ambiguous
+ * digits (e.g. "705") return false, which lets the caller treat them as
+ * duplicate door numbers when they appear at the end of address1.
+ *
+ * Real-world cases this distinguishes:
+ *   - "Rbla...4507 002" + "002"   → "002" leading zero → APT
+ *   - "18 De Julio 705" + "705"   → "705" 3 digits, no leading zero → NOT apt
+ *   - "Cuató 3117" + "3117"       → caught earlier by isAddress2DuplicateOfDoor
+ *   - "Calle X 1234 5" + "5"      → "5" length 1 → APT
+ *   - "Calle X 1234 56" + "56"    → "56" length 2 → APT
+ */
+export function isLikelyAptNumber(s: string): boolean {
+  const t = s.trim();
+  if (!/^\d{1,5}$/.test(t)) return false;
+  // Leading zero is a strong signal of apt (no street uses door "002")
+  if (t.startsWith('0') && t.length >= 2) return true;
+  // 1-2 digit numbers are unambiguously apt (no street uses door "5")
+  if (t.length <= 2) return true;
+  // 3+ digit non-leading-zero numbers are AMBIGUOUS — caller decides
+  return false;
+}
+
+/**
+ * Combine an existing extraObs string with a new piece, joining with " | "
+ * if both are present. Avoids duplicating content already present.
+ */
+function combineObs(existing: string, addition: string): string {
+  const e = (existing || '').trim();
+  const a = (addition || '').trim();
+  if (!a) return e;
+  if (!e) return a;
+  // Avoid duplicate (case-insensitive substring check)
+  if (e.toLowerCase().includes(a.toLowerCase())) return e;
+  return `${e} | ${a}`;
+}
+
+/**
+ * Final post-processing pass that runs after the main mergeAddress logic.
+ * Cleans the fullAddress of any embedded apt/porteria/city patterns and
+ * promotes them to extraObs. Idempotent and safe to call on already-clean
+ * input.
+ */
+export function postProcessAddress(
+  fullAddress: string,
+  extraObs: string,
+): { fullAddress: string; extraObs: string } {
+  let addr = fullAddress;
+  let obs = extraObs;
+
+  // 1. Strip trailing apt pattern (Apto X / apto X / dpto X / etc)
+  const aptStrip = stripTrailingAptPattern(addr);
+  if (aptStrip.apt) {
+    addr = aptStrip.cleaned;
+    obs = combineObs(obs, aptStrip.apt);
+  }
+
+  // 2. Strip trailing Porteria pattern
+  const porteriaStrip = stripTrailingPorteriaPattern(addr);
+  if (porteriaStrip.porteria) {
+    addr = porteriaStrip.cleaned;
+    obs = combineObs(obs, porteriaStrip.porteria);
+  }
+
+  // 3. Strip trailing standalone number when extraObs already has a matching apt
+  // (catches "Rbla...4507 002" + obs="Apto 002" → strip the trailing 002)
+  const aptInObsMatch = obs.match(/apto\s+(\S+)/i);
+  if (aptInObsMatch) {
+    const aptValue = aptInObsMatch[1];
+    // Only strip if address has 2+ numbers (not the only door number)
+    const addrNumbers = addr.match(/\d+/g) ?? [];
+    if (addrNumbers.length >= 2 && addr.trim().endsWith(aptValue)) {
+      addr = addr.slice(0, addr.lastIndexOf(aptValue)).trim().replace(/[,\s]+$/, '');
+    }
+  }
+
+  // 4. Strip embedded city/dept names from end of address
+  addr = stripTrailingKnownPlaces(addr);
+
+  return { fullAddress: addr, extraObs: obs };
+}
+
 /**
  * Merge address1 + address2 into a clean delivery address + observaciones.
  *
- * PHILOSOPHY (v2 — April 2026):
+ * PHILOSOPHY (v3 — April 2026):
  *   - fullAddress = ONLY the street + door number (what DAC needs for delivery)
  *   - extraObs = EVERYTHING else (apt, floor, delivery notes, pickup info)
  *   - address2 almost NEVER goes into fullAddress — it goes to observaciones
  *   - Only exception: address2 is a pure door number that address1 is missing
  *
- * This ensures DAC gets a clean short address, and all extra info (apartment,
- * delivery hours, "dejar en porteria", etc.) goes to Observaciones where the
- * courier actually reads it.
+ * v3 adds a postProcessAddress() pass that catches embedded apt/porteria/city
+ * patterns the customer typed inside address1 itself (not as a separate
+ * address2). See the helpers above for the full pattern catalog and the
+ * Curva Divina audit (2026-04-10) for the real-world cases that motivated
+ * each pattern.
+ *
+ * v3 also fixes the false-positive case where address1 has exactly one number
+ * and address2 contains the same number — previously this was extracted as an
+ * "Apto X" duplicate, but it's actually the door number repeated by mistake.
  */
 export function mergeAddress(address1: string, address2: string | undefined | null): { fullAddress: string; extraObs: string } {
+  const result = mergeAddressCore(address1, address2);
+  // v3 (2026-04-10): post-process the result to strip embedded apt/porteria/city
+  // patterns the customer typed inside address1 itself. See postProcessAddress.
+  return postProcessAddress(result.fullAddress, result.extraObs);
+}
+
+/**
+ * Internal core merge logic. The public mergeAddress() wraps this with the
+ * v3 postProcessAddress() pass. Don't call this directly — call mergeAddress.
+ */
+function mergeAddressCore(address1: string, address2: string | undefined | null): { fullAddress: string; extraObs: string } {
   const a1 = (address1 ?? '').trim();
   const a2 = (address2 ?? '').trim();
 
-  if (!a2) {
-    // Even with no address2, check if address1 has a slash pattern like "3274/801"
-    const slashApt = /(\d+)\s*\/\s*(\d+)\s*$/.exec(a1);
-    if (slashApt) {
-      return { fullAddress: a1, extraObs: `Apto ${slashApt[2]}` };
+  // SLASH APT in address1 — works EVEN when address2 has other content.
+  // Customer wrote "Luis a de Herrera 1183/204" which is street + door/apt slash form.
+  // Split into "Luis a de Herrera 1183" + "Apto 204" so the address line is clean.
+  // The address2 content (if any) is appended to the obs.
+  const slashApt = /(\d+)\s*\/\s*(\d+)\s*$/.exec(a1);
+  if (slashApt) {
+    const cleanedA1 = a1.slice(0, slashApt.index).trim() + ' ' + slashApt[1];
+    const aptObs = `Apto ${slashApt[2]}`;
+    if (!a2) {
+      return { fullAddress: cleanedA1, extraObs: aptObs };
     }
+    // Recurse with the cleaned address1 to apply other rules to the address2 content
+    const inner = mergeAddressCore(cleanedA1, a2);
+    return {
+      fullAddress: inner.fullAddress,
+      extraObs: inner.extraObs ? `${aptObs} | ${inner.extraObs}` : aptObs,
+    };
+  }
+
+  if (!a2) {
     // "Puerta X" embedded in address1 (e.g. "Cuató 3117 Puerta 3") — extract to obs
     // "Puerta" in Uruguay = entrance/door code, NOT an apartment number
     const puertaMatch = /\s+[Pp]uerta\s+\S+\s*$/.exec(a1);
     if (puertaMatch) {
       return { fullAddress: a1.slice(0, puertaMatch.index).trim(), extraObs: puertaMatch[0].trim() };
     }
+    return { fullAddress: a1, extraObs: '' };
+  }
+
+  // SINGLE-NUMBER SELF-DUPLICATE: address1 has exactly one number AND address2
+  // contains the same number. The customer mistakenly typed the door number
+  // twice. Example: "Cuató 3117" + "3117". This is NOT an apartment number —
+  // it's the door number duplicated. Treat address2 as a no-op duplicate.
+  if (isAddress2DuplicateOfDoor(a1, a2)) {
     return { fullAddress: a1, extraObs: '' };
   }
 
@@ -339,9 +575,16 @@ export function mergeAddress(address1: string, address2: string | undefined | nu
     || a1Norm.includes(a2Norm) || a2Norm.includes(a1Norm)
     || (a2Words.length >= 2 && wordOverlap >= 0.8);
   if (isDuplicate) {
-    // Even though it's a duplicate, if it looks like an apt number, preserve in obs
+    // Even though it's a duplicate, if it LOOKS like an apt number, preserve in obs.
+    // v3 (2026-04-10): use isLikelyAptNumber to distinguish "obviously apt" (leading
+    // zero or 1-2 digits) from "ambiguous 3+ digit number" (could be door duplicated).
+    // Only treat as apt if isLikelyAptNumber returns true.
     if (/^\d{1,5}$/.test(a2)) {
-      return { fullAddress: a1, extraObs: `Apto ${a2}` };
+      if (isLikelyAptNumber(a2)) {
+        return { fullAddress: a1, extraObs: `Apto ${a2}` };
+      }
+      // Ambiguous 3+ digit number duplicating address1's door — treat as duplicate
+      return { fullAddress: a1, extraObs: '' };
     }
     if (/apto|apt\b|piso|oficina|depto|of\.|local|torre|int\b|interior/i.test(a2)) {
       return { fullAddress: a1, extraObs: a2 };
@@ -353,7 +596,13 @@ export function mergeAddress(address1: string, address2: string | undefined | nu
   if (/^\d{1,6}$/.test(a2)) {
     const a1EndsWithNum = /\d+\s*$/.test(a1);
     if (a1EndsWithNum) {
-      // address1 already has a number — address2 is likely apartment
+      // address1 already has a number — address2 is likely apartment.
+      // v3: but if a2 matches the trailing number of a1 AND is ambiguous (3+ digits,
+      // no leading zero), treat as a duplicated door, not an apt.
+      const trailingMatch = a1.match(/(\d+)\s*$/);
+      if (trailingMatch && trailingMatch[1] === a2 && !isLikelyAptNumber(a2)) {
+        return { fullAddress: a1, extraObs: '' };
+      }
       return { fullAddress: a1, extraObs: `Apto ${a2}` };
     }
     // address1 has no number — address2 is the door number, append it
