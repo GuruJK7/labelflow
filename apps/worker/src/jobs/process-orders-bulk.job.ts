@@ -56,7 +56,8 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
 
     const shopifyUrl = tenant.shopifyStoreUrl;
     const shopifyToken = decryptIfPresent(tenant.shopifyToken);
-    const dacUsername = decryptIfPresent(tenant.dacUsername);
+    // dacUsername is stored as plain text (CI/RUT number), NOT encrypted
+    const dacUsername = tenant.dacUsername;
     const dacPassword = decryptIfPresent(tenant.dacPassword);
 
     if (!shopifyUrl || !shopifyToken || !dacUsername || !dacPassword) {
