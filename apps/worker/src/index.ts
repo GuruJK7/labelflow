@@ -1,5 +1,6 @@
 import { getConfig } from './config';
 import { processOrdersJob } from './jobs/process-orders.job';
+import { processOrdersBulkJob } from './jobs/process-orders-bulk.job';
 import { testDacJob } from './jobs/test-dac.job';
 import { startScheduler } from './jobs/scheduler';
 import { dacBrowser } from './dac/browser';
@@ -33,6 +34,9 @@ async function pollForJobs(): Promise<void> {
     if (pendingJob.type === 'TEST_DAC') {
       logger.info({ jobId: pendingJob.id }, 'Routing to TEST_DAC processor');
       await testDacJob(pendingJob.tenantId, pendingJob.id);
+    } else if (pendingJob.type === 'PROCESS_ORDERS_BULK') {
+      logger.info({ jobId: pendingJob.id }, 'Routing to BULK processor');
+      await processOrdersBulkJob(pendingJob.tenantId, pendingJob.id);
     } else {
       await processOrdersJob(pendingJob.tenantId, pendingJob.id);
     }

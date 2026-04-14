@@ -185,6 +185,7 @@ model Job {
 
 enum JobType {
   PROCESS_ORDERS
+  PROCESS_ORDERS_BULK
   RETRY_FAILED
   TEST_DAC
 }
@@ -500,6 +501,11 @@ model RecoverConfig {
   whatsappMode          String  @default("PLATFORM")
   whatsappApiToken      String? // encrypted, only used when whatsappMode = "OWN"
   whatsappPhoneNumberId String? // only used when whatsappMode = "OWN"
+
+  // AI message generation (opt-in)
+  // When true, Claude generates personalized messages instead of the static templates.
+  // Falls back to static templates automatically if AI is unavailable.
+  aiMessageEnabled Boolean @default(false)
 
   tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   carts   RecoverCart[]
