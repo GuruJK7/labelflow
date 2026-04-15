@@ -171,11 +171,23 @@ export function generateBulkXlsx(
   const xlsxBuffer = fs.readFileSync(tmpXlsxPath);
   fs.unlinkSync(tmpXlsxPath);
 
+  // DEBUG: verify cell types from the worksheet before writing
+  const debugCells: Record<string, unknown> = {};
+  for (const key of ['A1','B1','C1','D1','E1','F1','G1','H1','I1','J1']) {
+    const cell = ws[key];
+    debugCells[key] = cell ? { v: cell.v, t: cell.t } : 'missing';
+  }
+  // Also log the first row raw data
+  const firstRow = xlsxData[0];
+
   logger.info({
     totalOrders: orders.length,
     included: includedRows.length,
     fallback: fallbackRows.length,
     xlsxSize: xlsxBuffer.length,
+    cells: debugCells,
+    firstRowTypes: firstRow?.map((v: unknown, i: number) => `${i}:${typeof v}`),
+    firstRowValues: firstRow?.map((v: unknown, i: number) => `${i}:${String(v).slice(0,20)}`),
   }, 'Bulk xlsx generated');
 
   return {
