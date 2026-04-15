@@ -146,17 +146,20 @@ export function generateBulkXlsx(
   }
 
   // Generate xlsx from included rows only
+  // Column layout: 11 columns (TipoGuia was missing in v1, causing column shift
+  // where DAC read Observaciones text as Oficina_destino numeric)
   const xlsxData = includedRows.map(row => [
-    row.nombre,         // A: Nombre
-    row.telefono,       // B: Telefono
-    row.direccion,      // C: Direccion
-    row.kEstado,        // D: K_Estado (dept ID)
-    row.kCiudad,        // E: K_Ciudad (city ID)
-    row.oficina,        // F: Oficina_destino (office ID)
-    row.observaciones,  // G: Observaciones
-    row.email,          // H: Email
-    row.empaque,        // I: K_Tipo_Empaque
-    row.cantidad,       // J: Cantidad
+    row.paymentType === 'REMITENTE' ? 1 : 4, // A: TipoGuia (1=paga remitente, 4=paga destinatario)
+    row.nombre,         // B: Nombre
+    row.telefono,       // C: Telefono
+    row.direccion,      // D: Direccion
+    row.kEstado,        // E: K_Estado (dept ID)
+    row.kCiudad,        // F: K_Ciudad (city ID)
+    row.oficina,        // G: Oficina_destino (office ID)
+    row.observaciones,  // H: Observaciones
+    row.email,          // I: Email
+    row.empaque,        // J: K_Tipo_Empaque
+    row.cantidad,       // K: Cantidad
   ]);
 
   const ws = XLSX.utils.aoa_to_sheet(xlsxData);
