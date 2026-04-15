@@ -96,30 +96,13 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
     }
 
     // 2. Generate bulk xlsx
-    // DEBUG TEST: generate a HARDCODED 1-row xlsx to isolate xlsx vs upload issue
-    const XLSX = await import('xlsx');
-    const fs = await import('fs');
-    const debugRows = [
-      ['Test Bulk Debug', '099123456', '18 De Julio 1234', 10, 363, 124, 'Apto 5 debug', 'test@test.com', 1, 1],
-    ];
-    const debugWs = XLSX.utils.aoa_to_sheet(debugRows);
-    const debugWb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(debugWb, debugWs, 'Envios');
-    const debugPath = `/tmp/debug_bulk_${Date.now()}.xlsx`;
-    XLSX.writeFile(debugWb, debugPath);
-    const debugBuffer = fs.readFileSync(debugPath);
-    const debugCellF = debugWs['F1'];
-    slog.info('bulk-xlsx', `DEBUG: hardcoded xlsx written to ${debugPath}, size=${debugBuffer.length}, F1={v:${debugCellF?.v}, t:${debugCellF?.t}}`);
-
-    // Use the debug xlsx instead of the real one for this test
-    const xlsxResult = {
-      xlsxBuffer: debugBuffer,
-      includedRows: debugRows.map((r, i) => ({ orderName: '#DEBUG', orderId: i, nombre: r[0] as string, telefono: '', direccion: '', kEstado: 10, kCiudad: 363, oficina: 124, observaciones: '', email: '', empaque: 1, cantidad: 1, paymentType: 'DESTINATARIO' as const, needsFallback: false })),
-      fallbackRows: [] as any[],
-      totalOrders: 1,
-    };
-    totalOrders = 1;
-    slog.info('bulk-xlsx', `DEBUG MODE: using hardcoded 1-row xlsx instead of real orders`);
+    slog.info('bulk-xlsx', `Generating xlsx for ${totalOrders} orders`);
+    const xlsxResult = generateBulkXlsx(
+      limitedOrders,
+      tenant.paymentThreshold,
+      tenant.paymentRuleEnabled,
+    );
+    slog.info('bulk-xlsx', `Xlsx generated: ${xlsxResult.includedRows.length} for bulk, ${xlsxResult.fallbackRows.length} need Playwright fallback`);
 
     // 3. Upload to DAC masivos
     if (xlsxResult.includedRows.length > 0) {
