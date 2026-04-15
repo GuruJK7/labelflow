@@ -102,7 +102,12 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
       tenant.paymentThreshold,
       tenant.paymentRuleEnabled,
     );
-    slog.info('bulk-xlsx', `Xlsx generated: ${xlsxResult.includedRows.length} for bulk, ${xlsxResult.fallbackRows.length} need Playwright fallback`);
+    // Debug: log first row's raw values and types to DB (slog goes to RunLog)
+    const firstRow = xlsxResult.includedRows[0];
+    if (firstRow) {
+      slog.info('bulk-xlsx-debug', `Row0: name="${firstRow.nombre}" addr="${firstRow.direccion}" D=${firstRow.kEstado}(${typeof firstRow.kEstado}) E=${firstRow.kCiudad}(${typeof firstRow.kCiudad}) F=${firstRow.oficina}(${typeof firstRow.oficina}) obs="${firstRow.observaciones}" I=${firstRow.empaque} J=${firstRow.cantidad}`);
+    }
+    slog.info('bulk-xlsx', `Xlsx generated: ${xlsxResult.includedRows.length} for bulk, ${xlsxResult.fallbackRows.length} need Playwright fallback, size=${xlsxResult.xlsxBuffer.length}b`);
 
     // 3. Upload to DAC masivos
     if (xlsxResult.includedRows.length > 0) {
