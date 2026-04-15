@@ -18,6 +18,7 @@
  */
 
 import * as XLSX from 'xlsx';
+import fs from 'fs';
 import { ShopifyOrder } from '../shopify/types';
 import { mergeAddress } from './shipment';
 import { resolveShopifyAddressToDacIds } from './dac-geo-resolver';
@@ -161,7 +162,14 @@ export function generateBulkXlsx(
   const ws = XLSX.utils.aoa_to_sheet(xlsxData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Envios');
-  const xlsxBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+  // Write to a temp file first (XLSX.writeFile is more reliable than
+  // XLSX.write + manual buffer handling across Node environments), then
+  // read back as Buffer. This matches the approach that worked in manual tests.
+  const tmpXlsxPath = `/tmp/bulk_gen_${Date.now()}.xlsx`;
+  XLSX.writeFile(wb, tmpXlsxPath);
+  const xlsxBuffer = fs.readFileSync(tmpXlsxPath);
+  fs.unlinkSync(tmpXlsxPath);
 
   logger.info({
     totalOrders: orders.length,
