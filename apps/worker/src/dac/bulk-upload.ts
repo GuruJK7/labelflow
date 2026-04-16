@@ -40,26 +40,15 @@ const PARALLEL_SLOTS = 8; // DAC processes 8 in parallel (from masivos JS: hilos
  * 10-item layout that worked with the all-1s manual test.
  */
 function buildItems(row: BulkXlsxRow): string[] {
-  // Must include ALL DAC form fields in the order the server expects.
-  // Discovered iteratively: API rejects missing fields with specific error messages.
+  // DEBUG: send ALL 1s to find the correct item count.
+  // If DAC accepts this, we know 17 items is correct.
+  // Then we can replace positions one by one with real data.
   return [
-    '1',                    // TipoServicio (1=Levante)
-    row.paymentType === 'REMITENTE' ? '1' : '4', // TipoGuia (1=remitente, 4=destinatario)
-    '1',                    // TipoEnvio (1=Paquete)
-    '2',                    // TipoEntrega (2=A Domicilio)
-    '1',                    // Oficina_Origen (1=default, auto-assigned by DAC)
-    String(row.nombre),
-    String(row.telefono),
-    String(row.direccion),
-    String(row.kEstado),
-    String(row.kCiudad),
-    '0',                    // K_Barrio (0=not specified, DAC auto-assigns)
-    String(row.oficina),    // Oficina_destino
-    '1',                    // Cantidad_Por_Bulto (1 item per package)
-    String(row.empaque),    // K_Tipo_Empaque
-    String(row.cantidad),   // Cantidad
-    String(row.observaciones), // Observaciones
-    String(row.email),      // Email
+    '1', '1', '1', '1', '1', // positions 0-4 (TipoServicio..Oficina_Origen)
+    '1', '1', '1',           // positions 5-7 (nombre, tel, dir — normally text)
+    '1', '1', '1',           // positions 8-10 (K_Estado, K_Ciudad, K_Barrio)
+    '1', '1', '1', '1',      // positions 11-14 (oficina, cantidad_bulto, empaque, cantidad)
+    '1', '1',                 // positions 15-16 (obs, email — normally text)
   ];
 }
 
