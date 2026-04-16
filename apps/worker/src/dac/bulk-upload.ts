@@ -65,8 +65,13 @@ export async function uploadBulkXlsx(
     logger.info('Bulk v6: clicked upload (validation detached)');
 
     // 5. Wait for DAC's AJAX to complete and table to render
-    //    DAC shows either an error dialog or the data table
-    await page.waitForTimeout(10000);
+    await page.waitForTimeout(15000);
+
+    // DEBUG: capture page state to see what DAC shows
+    const pageUrl = page.url();
+    const pageText = (await page.textContent('body') ?? '').slice(0, 500);
+    const alertText = await page.$eval('.alertify, .alertify-dialog', (el: any) => el?.textContent || '').catch(() => '');
+    logger.info({ pageUrl, pageText: pageText.slice(0, 300), alertText: alertText.slice(0, 200) }, 'Bulk v6: page state after click');
     const rowCount = await page.$$eval('tr.rowItem', r => r.length).catch(() => 0);
     logger.info({ rowCount }, 'Bulk v6: rows in table');
 
