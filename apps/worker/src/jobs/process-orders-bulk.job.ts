@@ -1,42 +1,40 @@
 /**
- * Bulk order processing job — uses DAC's masivos (xlsx upload) instead of
- * individual Playwright form filling.
+ * Bulk order processing job — AGENT-BASED architecture.
  *
- * Performance comparison (100 orders):
- *   - Playwright individual: ~3-5 hours (2-3 min per order)
- *   - Bulk xlsx upload:      ~5-10 minutes (8 orders in parallel server-side)
+ * After hours of debugging, we confirmed Playwright on Render Docker cannot
+ * upload files to DAC's /envios/masivos endpoint (setInputFiles does not
+ * produce a valid upload from the server's POV). The workaround: run the
+ * upload step on a real Mac with Chrome + Claude Agent (computer use), which
+ * DAC accepts as a normal user.
  *
- * Flow:
- *   1. Fetch unfulfilled Shopify orders (same as regular job)
- *   2. Generate .xlsx with DAC IDs for each order
- *   3. Upload xlsx to DAC masivos endpoint
- *   4. Extract guias from DAC's response
- *   5. Save labels to DB
- *   6. Download PDFs (bulk print endpoint)
- *   7. Fulfill in Shopify + send customer email
+ * New flow (this file):
+ *   1. Render worker picks up a PROCESS_ORDERS_BULK job (status=PENDING)
+ *   2. Fetch Shopify orders (same as before)
+ *   3. Generate the xlsx in-memory (same as before)
+ *   4. Upload the xlsx to Supabase Storage: bulk-xlsx/{tenantId}/{jobId}.xlsx
+ *   5. Mark the Job as WAITING_FOR_AGENT with xlsxStoragePath set
+ *   6. Agent (Adrian's Mac) polls for WAITING_FOR_AGENT jobs, handles the DAC
+ *      upload via Chrome MCP, extracts guias, creates Labels, marks COMPLETED
  *
- * Orders that can't be mapped to DAC IDs (missing department, unknown city,
- * retiro en agencia, etc.) are separated and processed individually via the
- * regular Playwright flow as a fallback.
+ * Fallback rows (orders that can't go through DAC bulk — missing department,
+ * retiro en agencia, etc.) are saved as FAILED labels here. The user can
+ * retry them individually through the regular flow.
  */
 
 import { db } from '../db';
 import { decryptIfPresent } from '../encryption';
 import { createShopifyClient } from '../shopify/client';
-import { getUnfulfilledOrders, markOrderProcessed } from '../shopify/orders';
-import { generateBulkXlsx, BulkXlsxRow } from '../dac/bulk-xlsx';
-import { uploadBulkXlsx } from '../dac/bulk-upload';
-import { dacBrowser } from '../dac/browser';
+import { getUnfulfilledOrders } from '../shopify/orders';
+import { generateBulkXlsx } from '../dac/bulk-xlsx';
+import { uploadBulkXlsxToStorage } from '../storage/upload';
 import { createStepLogger } from '../logger';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
-import { getDepartmentForCity } from '../dac/uruguay-geo';
 import logger from '../logger';
 
 export async function processOrdersBulkJob(tenantId: string, jobId: string): Promise<void> {
   const startTime = Date.now();
-  let successCount = 0;
-  let failedCount = 0;
   let totalOrders = 0;
+  let fallbackCount = 0;
 
   const slog = createStepLogger(jobId, tenantId);
 
@@ -50,19 +48,37 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
     const tenant = await db.tenant.findUnique({ where: { id: tenantId } });
     if (!tenant) {
       slog.error('config', 'Tenant not found');
-      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Tenant not found' } });
+      await db.job.update({
+        where: { id: jobId },
+        data: { status: 'FAILED', errorMessage: 'Tenant not found', finishedAt: new Date() },
+      });
       return;
     }
 
     const shopifyUrl = tenant.shopifyStoreUrl;
     const shopifyToken = decryptIfPresent(tenant.shopifyToken);
-    // dacUsername is stored as plain text (CI/RUT number), NOT encrypted
-    const dacUsername = tenant.dacUsername;
-    const dacPassword = decryptIfPresent(tenant.dacPassword);
 
-    if (!shopifyUrl || !shopifyToken || !dacUsername || !dacPassword) {
-      slog.error('config', 'Missing Shopify or DAC credentials');
-      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Missing credentials' } });
+    // DAC creds are checked by the agent, not here — we just need Shopify to generate the xlsx
+    if (!shopifyUrl || !shopifyToken) {
+      slog.error('config', 'Missing Shopify credentials');
+      await db.job.update({
+        where: { id: jobId },
+        data: { status: 'FAILED', errorMessage: 'Missing Shopify credentials', finishedAt: new Date() },
+      });
+      return;
+    }
+
+    // Also verify DAC creds are configured (agent will use them)
+    if (!tenant.dacUsername || !tenant.dacPassword) {
+      slog.error('config', 'Missing DAC credentials — agent cannot process');
+      await db.job.update({
+        where: { id: jobId },
+        data: {
+          status: 'FAILED',
+          errorMessage: 'Missing DAC credentials for this tenant',
+          finishedAt: new Date(),
+        },
+      });
       return;
     }
 
@@ -84,13 +100,21 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
     const limitedOrders = newOrders.slice(0, maxOrders);
     totalOrders = limitedOrders.length;
 
-    slog.info('shopify', `Found ${orders.length} unfulfilled, ${newOrders.length} new, processing ${totalOrders} (max ${maxOrders})`);
+    slog.info(
+      'shopify',
+      `Found ${orders.length} unfulfilled, ${newOrders.length} new, processing ${totalOrders} (max ${maxOrders})`,
+    );
 
     if (totalOrders === 0) {
       slog.info('complete', 'No new orders to process');
       await db.job.update({
         where: { id: jobId },
-        data: { status: 'COMPLETED', totalOrders: 0, finishedAt: new Date(), durationMs: Date.now() - startTime },
+        data: {
+          status: 'COMPLETED',
+          totalOrders: 0,
+          finishedAt: new Date(),
+          durationMs: Date.now() - startTime,
+        },
       });
       return;
     }
@@ -102,163 +126,119 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
       tenant.paymentThreshold,
       tenant.paymentRuleEnabled,
     );
-    // Debug: log first row's raw values and types to DB (slog goes to RunLog)
-    const firstRow = xlsxResult.includedRows[0];
-    if (firstRow) {
-      slog.info('bulk-xlsx-debug', `Row0: name="${firstRow.nombre}" addr="${firstRow.direccion}" D=${firstRow.kEstado}(${typeof firstRow.kEstado}) E=${firstRow.kCiudad}(${typeof firstRow.kCiudad}) F=${firstRow.oficina}(${typeof firstRow.oficina}) obs="${firstRow.observaciones}" I=${firstRow.empaque} J=${firstRow.cantidad}`);
-    }
-    slog.info('bulk-xlsx', `Xlsx generated: ${xlsxResult.includedRows.length} for bulk, ${xlsxResult.fallbackRows.length} need Playwright fallback, size=${xlsxResult.xlsxBuffer.length}b`);
 
-    // 3. Upload to DAC masivos
-    if (xlsxResult.includedRows.length > 0) {
-      slog.info('bulk-upload', `Uploading ${xlsxResult.includedRows.length} orders to DAC masivos`);
+    slog.info(
+      'bulk-xlsx',
+      `Xlsx generated: ${xlsxResult.includedRows.length} eligible for bulk, ` +
+        `${xlsxResult.fallbackRows.length} need individual fallback, ` +
+        `size=${xlsxResult.xlsxBuffer.length}b`,
+    );
 
-      const uploadResult = await uploadBulkXlsx(
-        xlsxResult.xlsxBuffer,
-        dacUsername,
-        dacPassword,
-        tenantId,
-        xlsxResult.includedRows.length,
-        xlsxResult.includedRows, // v4: pass rows directly for API-based upload
-      );
-
-      if (uploadResult.success) {
-        slog.success('bulk-upload', `DAC processed ${uploadResult.guias.length} guias`);
-
-        // 4. Save labels to DB (one per guia)
-        for (let i = 0; i < uploadResult.guias.length && i < xlsxResult.includedRows.length; i++) {
-          const row = xlsxResult.includedRows[i];
-          const guia = uploadResult.guias[i];
-
-          try {
-            const { safeCity, safeDepartment } = buildSafeLabelGeoFields({
-              city: row.direccion,
-              province: null,
-              resolvedDepartment: getDepartmentForCity(row.direccion) ?? '',
-            });
-
-            await db.label.upsert({
-              where: {
-                tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(row.orderId) },
-              },
-              create: {
-                tenantId,
-                jobId,
-                shopifyOrderId: String(row.orderId),
-                shopifyOrderName: row.orderName,
-                customerName: row.nombre,
-                customerEmail: row.email,
-                customerPhone: row.telefono,
-                deliveryAddress: row.direccion,
-                city: safeCity,
-                department: safeDepartment,
-                totalUyu: 0,
-                paymentType: row.paymentType,
-                dacGuia: guia,
-                status: 'COMPLETED',
-              },
-              update: {
-                jobId,
-                dacGuia: guia,
-                status: 'COMPLETED',
-                errorMessage: null,
-              },
-            });
-            successCount++;
-            slog.info('label-saved', `${row.orderName} → guia ${guia}`);
-          } catch (err) {
-            slog.error('label-save', `Failed to save label for ${row.orderName}: ${(err as Error).message}`);
-            failedCount++;
-          }
-        }
-
-        // Mark failed bulk rows
-        for (const failedIdx of uploadResult.failedRows) {
-          if (failedIdx < xlsxResult.includedRows.length) {
-            const row = xlsxResult.includedRows[failedIdx];
-            slog.warn('bulk-failed-row', `Row ${failedIdx} (${row.orderName}) failed in DAC bulk processing`);
-            failedCount++;
-          }
-        }
-      } else {
-        slog.error('bulk-upload', `Bulk upload failed: ${uploadResult.error}`);
-        failedCount += xlsxResult.includedRows.length;
+    // 3. Handle fallback rows — save as FAILED with descriptive message
+    for (const row of xlsxResult.fallbackRows) {
+      try {
+        const { safeCity, safeDepartment } = buildSafeLabelGeoFields({
+          city: '',
+          province: null,
+          resolvedDepartment: '',
+        });
+        await db.label.upsert({
+          where: {
+            tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(row.orderId) },
+          },
+          create: {
+            tenantId,
+            jobId,
+            shopifyOrderId: String(row.orderId),
+            shopifyOrderName: row.orderName,
+            customerName: row.nombre,
+            deliveryAddress: row.direccion,
+            city: safeCity,
+            department: safeDepartment,
+            totalUyu: 0,
+            paymentType: 'DESTINATARIO',
+            status: 'FAILED',
+            errorMessage: `Bulk mapping failed: ${row.fallbackReason}. Retry individually.`,
+          },
+          update: {
+            status: 'FAILED',
+            errorMessage: `Bulk mapping failed: ${row.fallbackReason}. Retry individually.`,
+          },
+        });
+        fallbackCount++;
+      } catch (err) {
+        slog.error('fallback-save', `Failed to save fallback label for ${row.orderName}: ${(err as Error).message}`);
+        fallbackCount++;
       }
     }
 
-    // 5. Process fallback rows individually (orders that couldn't be mapped)
-    if (xlsxResult.fallbackRows.length > 0) {
-      slog.warn('fallback', `${xlsxResult.fallbackRows.length} orders need Playwright fallback: ${xlsxResult.fallbackRows.map(r => r.orderName + ' (' + r.fallbackReason + ')').join(', ')}`);
-      // TODO: call the regular processOrdersJob for these specific orders
-      // For now, just mark them as failed with a descriptive message
-      for (const row of xlsxResult.fallbackRows) {
-        try {
-          const { safeCity, safeDepartment } = buildSafeLabelGeoFields({
-            city: '',
-            province: null,
-            resolvedDepartment: '',
-          });
-          await db.label.upsert({
-            where: {
-              tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(row.orderId) },
-            },
-            create: {
-              tenantId,
-              jobId,
-              shopifyOrderId: String(row.orderId),
-              shopifyOrderName: row.orderName,
-              customerName: row.nombre,
-              deliveryAddress: row.direccion,
-              city: safeCity,
-              department: safeDepartment,
-              totalUyu: 0,
-              paymentType: 'DESTINATARIO',
-              status: 'FAILED',
-              errorMessage: `Bulk mapping failed: ${row.fallbackReason}. Needs Playwright fallback.`,
-            },
-            update: {
-              status: 'FAILED',
-              errorMessage: `Bulk mapping failed: ${row.fallbackReason}. Needs Playwright fallback.`,
-            },
-          });
-          failedCount++;
-        } catch {
-          failedCount++;
-        }
-      }
+    // 4. If there are no bulk-eligible rows, nothing for the agent to do
+    if (xlsxResult.includedRows.length === 0) {
+      slog.warn('complete', `All ${fallbackCount} orders need individual fallback — agent has nothing to do`);
+      await db.job.update({
+        where: { id: jobId },
+        data: {
+          status: fallbackCount > 0 ? 'FAILED' : 'COMPLETED',
+          totalOrders,
+          failedCount: fallbackCount,
+          finishedAt: new Date(),
+          durationMs: Date.now() - startTime,
+          errorMessage:
+            fallbackCount > 0
+              ? `All ${fallbackCount} orders needed individual fallback (no bulk-eligible rows)`
+              : null,
+        },
+      });
+      return;
     }
 
-    // 6. Close browser
-    await dacBrowser.close();
+    // 5. Upload xlsx to Supabase Storage for the agent
+    slog.info('storage-upload', `Uploading xlsx to Supabase Storage for agent pickup`);
+    const uploadResult = await uploadBulkXlsxToStorage(tenantId, jobId, xlsxResult.xlsxBuffer);
 
-    // 7. Update job status
-    const durationMs = Date.now() - startTime;
-    const status = failedCount === 0 ? 'COMPLETED' : (successCount > 0 ? 'PARTIAL' : 'FAILED');
+    if (uploadResult.error) {
+      slog.error('storage-upload', `Storage upload failed: ${uploadResult.error}`);
+      await db.job.update({
+        where: { id: jobId },
+        data: {
+          status: 'FAILED',
+          totalOrders,
+          failedCount: totalOrders,
+          finishedAt: new Date(),
+          durationMs: Date.now() - startTime,
+          errorMessage: `Storage upload failed: ${uploadResult.error}`,
+        },
+      });
+      return;
+    }
 
+    slog.success('storage-upload', `Xlsx uploaded to ${uploadResult.path}`);
+
+    // 6. Hand off to agent — mark WAITING_FOR_AGENT with xlsxStoragePath set
     await db.job.update({
       where: { id: jobId },
       data: {
-        status,
+        status: 'WAITING_FOR_AGENT',
         totalOrders,
-        successCount,
-        failedCount,
-        finishedAt: new Date(),
-        durationMs,
+        failedCount: fallbackCount, // preliminary — agent will update with actual DAC results
+        xlsxStoragePath: uploadResult.path,
+        // Intentionally DO NOT set finishedAt / durationMs — agent will set those
       },
     });
 
-    slog.success('complete', `Bulk job done: ${successCount} success, ${failedCount} failed in ${Math.round(durationMs / 1000)}s`);
-
+    slog.success(
+      'handoff',
+      `Handed off to agent: ${xlsxResult.includedRows.length} orders for DAC bulk, ` +
+        `${fallbackCount} fallback failures. Waiting for agent to process...`,
+    );
   } catch (err) {
-    logger.error({ jobId, error: (err as Error).message }, 'Bulk job crashed');
-    await dacBrowser.close();
+    logger.error({ jobId, error: (err as Error).message }, 'Bulk job (Render side) crashed');
     await db.job.update({
       where: { id: jobId },
       data: {
         status: 'FAILED',
         totalOrders,
-        successCount,
-        failedCount,
+        failedCount: totalOrders,
         finishedAt: new Date(),
         durationMs: Date.now() - startTime,
         errorMessage: (err as Error).message?.slice(0, 500),

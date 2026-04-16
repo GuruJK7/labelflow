@@ -2,6 +2,7 @@ import { getConfig } from './config';
 import { processOrdersJob } from './jobs/process-orders.job';
 import { processOrdersBulkJob } from './jobs/process-orders-bulk.job';
 import { testDacJob } from './jobs/test-dac.job';
+import { pollAgentBulkJobs } from './jobs/agent-bulk-upload.job';
 import { startScheduler } from './jobs/scheduler';
 import { dacBrowser } from './dac/browser';
 import { db } from './db';
@@ -14,6 +15,10 @@ import { startReconciliationLoop } from './jobs/reconcile.job';
 const RECOVER_POLL_INTERVAL_MS = 10_000; // Check for recover jobs every 10 seconds
 
 const POLL_INTERVAL_MS = 5_000; // Check for jobs every 5 seconds
+const AGENT_POLL_INTERVAL_MS = 30_000; // Agent polls less aggressively
+
+// AGENT_MODE=true → this worker is running on Adrian's Mac, only picks up WAITING_FOR_AGENT jobs
+const AGENT_MODE = process.env.AGENT_MODE === 'true';
 
 async function pollForJobs(): Promise<void> {
   try {
@@ -172,10 +177,32 @@ async function main(): Promise<void> {
       concurrency: config.WORKER_CONCURRENCY,
       headless: config.PLAYWRIGHT_HEADLESS,
       pollInterval: POLL_INTERVAL_MS,
+      agentMode: AGENT_MODE,
     },
-    'LabelFlow Worker starting (DB polling mode)...'
+    `LabelFlow Worker starting (DB polling mode, ${AGENT_MODE ? 'AGENT' : 'RENDER'} role)...`,
   );
 
+  // AGENT MODE: only process WAITING_FOR_AGENT jobs (runs on Adrian's Mac)
+  if (AGENT_MODE) {
+    const pollAgent = async () => {
+      while (true) {
+        try {
+          await pollAgentBulkJobs();
+        } catch (err) {
+          logger.error({ error: (err as Error).message }, '[Agent] Unhandled error in agent poll cycle');
+        }
+        await new Promise((resolve) => setTimeout(resolve, AGENT_POLL_INTERVAL_MS));
+      }
+    };
+    pollAgent();
+    logger.info('[Agent] Worker in AGENT_MODE — only polling for WAITING_FOR_AGENT jobs');
+    // In agent mode, skip all the other loops (Render handles regular jobs/ads/recover/cron)
+    process.on('SIGTERM', async () => { await dacBrowser.close(); await db.$disconnect(); process.exit(0); });
+    process.on('SIGINT', async () => { await dacBrowser.close(); await db.$disconnect(); process.exit(0); });
+    return;
+  }
+
+  // RENDER MODE (normal): poll for all job types except WAITING_FOR_AGENT
   // Poll loop — DAC jobs
   const poll = async () => {
     while (true) {

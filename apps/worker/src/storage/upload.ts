@@ -42,3 +42,62 @@ export async function uploadLabelPdf(
   logger.info({ storagePath, tenantId, labelId }, 'PDF uploaded to Supabase Storage');
   return { path: storagePath, error: null };
 }
+
+/**
+ * Uploads a bulk DAC xlsx to Supabase Storage so Adrian's Mac (agent) can
+ * download and process it.
+ *
+ * Path: bulk-xlsx/{tenantId}/{jobId}.xlsx
+ *
+ * Used by the agent-based bulk flow:
+ *   Render → generates xlsx → uploadBulkXlsxToStorage → WAITING_FOR_AGENT
+ *   Agent  → downloads xlsx → uploads to DAC → COMPLETED
+ */
+export async function uploadBulkXlsxToStorage(
+  tenantId: string,
+  jobId: string,
+  xlsxBuffer: Buffer,
+): Promise<{ path: string; error: string | null }> {
+  const config = getConfig();
+  const supabase = getSupabase();
+
+  const storagePath = `bulk-xlsx/${tenantId}/${jobId}.xlsx`;
+
+  const { error } = await supabase.storage
+    .from(config.SUPABASE_STORAGE_BUCKET)
+    .upload(storagePath, xlsxBuffer, {
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      upsert: true,
+    });
+
+  if (error) {
+    logger.error({ error: error.message, storagePath }, 'Failed to upload bulk xlsx to Supabase');
+    return { path: '', error: error.message };
+  }
+
+  logger.info({ storagePath, tenantId, jobId, sizeBytes: xlsxBuffer.length }, 'Bulk xlsx uploaded to Supabase Storage');
+  return { path: storagePath, error: null };
+}
+
+/**
+ * Downloads a bulk DAC xlsx from Supabase Storage. Used by the agent.
+ */
+export async function downloadBulkXlsxFromStorage(
+  storagePath: string,
+): Promise<{ buffer: Buffer | null; error: string | null }> {
+  const config = getConfig();
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase.storage
+    .from(config.SUPABASE_STORAGE_BUCKET)
+    .download(storagePath);
+
+  if (error || !data) {
+    logger.error({ error: error?.message, storagePath }, 'Failed to download bulk xlsx from Supabase');
+    return { buffer: null, error: error?.message ?? 'No data returned' };
+  }
+
+  const buffer = Buffer.from(await data.arrayBuffer());
+  logger.info({ storagePath, sizeBytes: buffer.length }, 'Bulk xlsx downloaded from Supabase Storage');
+  return { buffer, error: null };
+}

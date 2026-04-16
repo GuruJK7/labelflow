@@ -66,13 +66,34 @@ export async function enqueueProcessOrders(
 }
 
 /**
- * Checks if there's a running job for a tenant.
+ * Enqueues a bulk-agent job for a tenant. The Render worker will generate the
+ * xlsx and hand off to Adrian's Mac agent for the actual DAC upload.
+ */
+export async function enqueueProcessOrdersBulk(
+  tenantId: string,
+  trigger: 'CRON' | 'WEBHOOK' | 'MANUAL' | 'MCP',
+): Promise<string> {
+  const dbJob = await db.job.create({
+    data: {
+      tenantId,
+      trigger,
+      type: 'PROCESS_ORDERS_BULK',
+      status: 'PENDING',
+    },
+  });
+
+  return dbJob.id;
+}
+
+/**
+ * Checks if there's a running job for a tenant. Includes agent-handoff states
+ * so we don't enqueue a new bulk while one is mid-flight on the agent.
  */
 export async function isJobRunning(tenantId: string): Promise<boolean> {
   const runningJob = await db.job.findFirst({
     where: {
       tenantId,
-      status: { in: ['PENDING', 'RUNNING'] },
+      status: { in: ['PENDING', 'RUNNING', 'WAITING_FOR_AGENT', 'UPLOADING'] },
     },
   });
 
