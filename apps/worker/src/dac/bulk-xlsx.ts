@@ -156,24 +156,32 @@ export function generateBulkXlsx(
   //   v2 (11 cols, +TipoGuia at A): error "Oficina_Origen not numeric"
   //   v3 (15 cols, ALL form fields): includes TipoServicio, TipoGuia, TipoEnvio,
   //       TipoEntrega, Oficina_Origen before the recipient data
-  const xlsxData = includedRows.map(row => [
-    1,                  // A: TipoServicio (1=Levante, always 1)
-    row.paymentType === 'REMITENTE' ? 1 : 4, // B: TipoGuia (1=paga remitente, 4=paga destinatario)
-    1,                  // C: TipoEnvio (1=Paquete)
-    2,                  // D: TipoEntrega (2=A Domicilio)
-    1,                  // E: Oficina_Origen (1=default origin, auto-assigned by DAC)
-    row.nombre,         // F: Nombre destinatario
-    row.telefono,       // G: Telefono
-    row.direccion,      // H: Direccion
-    row.kEstado,        // I: K_Estado (dept ID)
-    row.kCiudad,        // J: K_Ciudad (city ID)
-    row.oficina,        // K: Oficina_destino (office ID)
-    row.observaciones,  // L: Observaciones
-    row.email,          // M: Email
+  // ROW 1 = HEADERS (DAC's server uses row[0] as column headers)
+  // ROW 2+ = DATA
+  // Without headers, DAC treats the first data row as headers and shows 0 data.
+  // The header names don't matter — DAC maps by POSITION, not by name.
+  const headerRow = [
+    'Nombre', 'Telefono', 'Direccion', 'Departamento', 'Ciudad',
+    'Oficina', 'Observaciones', 'Email', 'Empaque', 'Cantidad',
+  ];
+
+  // SIMPLE 10-column layout (same as the manual test that worked):
+  // No TipoServicio/TipoGuia/TipoEnvio/TipoEntrega/Oficina_Origen —
+  // DAC fills those from the account defaults during server-side parsing.
+  const dataRows = includedRows.map(row => [
+    row.nombre,         // A: Nombre destinatario
+    row.telefono,       // B: Telefono
+    row.direccion,      // C: Direccion
+    row.kEstado,        // D: K_Estado (dept ID)
+    row.kCiudad,        // E: K_Ciudad (city ID)
+    row.oficina,        // F: Oficina_destino (office ID)
+    row.observaciones,  // G: Observaciones
+    row.email,          // H: Email
     row.empaque,        // N: K_Tipo_Empaque
     row.cantidad,       // O: Cantidad
   ]);
 
+  const xlsxData = [headerRow, ...dataRows];
   const ws = XLSX.utils.aoa_to_sheet(xlsxData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Envios');
