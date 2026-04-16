@@ -40,7 +40,14 @@ const PARALLEL_SLOTS = 8; // DAC processes 8 in parallel (from masivos JS: hilos
  * 10-item layout that worked with the all-1s manual test.
  */
 function buildItems(row: BulkXlsxRow): string[] {
+  // Must include ALL DAC form fields in the order the server expects.
+  // Discovered iteratively: API rejects missing fields with specific error messages.
   return [
+    '1',                    // TipoServicio (1=Levante)
+    row.paymentType === 'REMITENTE' ? '1' : '4', // TipoGuia (1=remitente, 4=destinatario)
+    '1',                    // TipoEnvio (1=Paquete)
+    '2',                    // TipoEntrega (2=A Domicilio)
+    '1',                    // Oficina_Origen (1=default, auto-assigned by DAC)
     String(row.nombre),
     String(row.telefono),
     String(row.direccion),
