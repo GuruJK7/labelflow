@@ -52,11 +52,17 @@ export async function uploadBulkXlsx(
     });
     logger.info({ size: xlsxBuffer.length }, 'Bulk v6: file set');
 
-    // 4. Click the actual upload button (triggers DAC's jQuery handler which
-    //    reads FormData from the form including the file we set via setInputFiles)
+    // 4. Disable validationEngine (blocks Playwright-set files) then click
     await page.waitForTimeout(500);
+    await page.evaluate(() => {
+      // Detach validation engine so it doesn't block the submit
+      const $form = (window as any).$('#formUploadXlsx');
+      if ($form.length) {
+        try { $form.validationEngine('detach'); } catch {}
+      }
+    });
     await page.click('#btnDoUpload, button:has-text("Subir archivo y validar")');
-    logger.info('Bulk v6: clicked upload button');
+    logger.info('Bulk v6: clicked upload (validation detached)');
 
     // 5. Wait for DAC's AJAX to complete and table to render
     //    DAC shows either an error dialog or the data table
