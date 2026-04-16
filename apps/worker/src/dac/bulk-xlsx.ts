@@ -156,13 +156,16 @@ export function generateBulkXlsx(
   //   v2 (11 cols, +TipoGuia at A): error "Oficina_Origen not numeric"
   //   v3 (15 cols, ALL form fields): includes TipoServicio, TipoGuia, TipoEnvio,
   //       TipoEntrega, Oficina_Origen before the recipient data
-  // ROW 1 = HEADERS (DAC's server uses row[0] as column headers)
-  // ROW 2+ = DATA
-  // Without headers, DAC treats the first data row as headers and shows 0 data.
-  // The header names don't matter — DAC maps by POSITION, not by name.
-  const headerRow = [
-    'Nombre', 'Telefono', 'Direccion', 'Departamento', 'Ciudad',
-    'Oficina', 'Observaciones', 'Email', 'Empaque', 'Cantidad',
+  // ROW 1 = SACRIFICIAL ROW (DAC's JS treats row[0] as table headers)
+  // ROW 2+ = ACTUAL DATA
+  // The sacrificial row must pass DAC's server-side validation which checks
+  // that numeric columns have numeric values. So we use 0/1 in numeric
+  // positions and empty strings in text positions.
+  const sacrificialRow = [
+    '', '', '',   // text cols: nombre, telefono, direccion
+    1, 1, 1,      // numeric cols: K_Estado, K_Ciudad, Oficina_destino
+    '', '',       // text cols: observaciones, email
+    1, 1,         // numeric cols: empaque, cantidad
   ];
 
   // SIMPLE 10-column layout (same as the manual test that worked):
@@ -181,7 +184,7 @@ export function generateBulkXlsx(
     row.cantidad,       // O: Cantidad
   ]);
 
-  const xlsxData = [headerRow, ...dataRows];
+  const xlsxData = [sacrificialRow, ...dataRows];
   const ws = XLSX.utils.aoa_to_sheet(xlsxData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Envios');
