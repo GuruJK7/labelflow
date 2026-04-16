@@ -733,7 +733,7 @@ async function clickSiguiente(page: Page, slog: StepLogger, stepLabel: string): 
 
     slog.info(stepLabel, `Clicking visible Siguiente button (index ${i})`, { text: text.trim() });
     await link.click({ timeout: 5000 });
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(500);
     return true;
   }
 
@@ -818,7 +818,7 @@ export async function createShipment(
 
   // Navigate to new shipment form
   await page.goto(DAC_URLS.NEW_SHIPMENT, { waitUntil: 'domcontentloaded', timeout: 15_000 });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1000);
 
   // Wait for the form to be present
   try {
@@ -854,7 +854,7 @@ export async function createShipment(
     : DAC_SELECTORS.DELIVERY_VALUE_DOMICILIO;
 
   await safeSelect(page, 'select[name="TipoServicio"]', pickupVal, slog, DAC_STEPS.STEP1_TIPO_SERVICIO, 'TipoServicio');
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(150);
 
   // TipoGuia might be a select or hidden input
   const tipoGuiaEl = await page.$('select[name="TipoGuia"]');
@@ -870,9 +870,9 @@ export async function createShipment(
   }
 
   await safeSelect(page, 'select[name="TipoEnvio"]', packageVal, slog, DAC_STEPS.STEP1_TIPO_ENVIO, 'TipoEnvio');
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(150);
   await safeSelect(page, 'select[name="TipoEntrega"]', deliveryVal, slog, DAC_STEPS.STEP1_TIPO_ENTREGA, 'TipoEntrega');
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(150);
 
   slog.info(DAC_STEPS.STEP1_OK, 'Step 1 complete', { pickupVal, payVal, packageVal, deliveryVal });
 
@@ -882,7 +882,7 @@ export async function createShipment(
   if (!adv1) {
     slog.warn(DAC_STEPS.STEP1_SIGUIENTE, 'Could not click Siguiente after Step 1, continuing anyway');
   }
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(400);
 
   // ===== STEP 2: Origin (auto-filled) =====
   slog.info(DAC_STEPS.STEP2_START, 'Step 2: Origin (auto-filled from account)');
@@ -892,7 +892,7 @@ export async function createShipment(
   if (!adv2) {
     slog.warn(DAC_STEPS.STEP2_SIGUIENTE, 'Could not click Siguiente after Step 2, continuing anyway');
   }
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
   slog.info(DAC_STEPS.STEP2_OK, 'Step 2 complete');
 
   // ===== STEP 3: Recipient =====
@@ -1123,7 +1123,7 @@ export async function createShipment(
     if (deptMatch) {
       await safeSelect(page, DAC_SELECTORS.RECIPIENT_DEPARTMENT, deptMatch, slog, DAC_STEPS.STEP3_SELECT_DEPT, 'K_Estado (department)');
       slog.info(DAC_STEPS.STEP3_WAIT_CITIES, 'Waiting for cities to load after department change');
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(800);
     } else {
       // Log available options for debugging
       const deptOptions = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_DEPARTMENT} option`,
@@ -1145,7 +1145,7 @@ export async function createShipment(
 
     if (cityMatch) {
       await safeSelect(page, DAC_SELECTORS.RECIPIENT_CITY, cityMatch, slog, DAC_STEPS.STEP3_SELECT_CITY, 'K_Ciudad (city)');
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(400);
     } else {
       // City not found in DAC dropdown for this department — try barrio fallback
       const detectedBarrio = resolvedBarrioHint ||
@@ -1155,7 +1155,7 @@ export async function createShipment(
         const mvdMatch = await findBestOptionMatch(page, DAC_SELECTORS.RECIPIENT_CITY, 'Montevideo');
         if (mvdMatch) {
           await safeSelect(page, DAC_SELECTORS.RECIPIENT_CITY, mvdMatch, slog, DAC_STEPS.STEP3_SELECT_CITY, 'K_Ciudad (Montevideo fallback)');
-          await page.waitForTimeout(800);
+          await page.waitForTimeout(400);
         }
       } else {
         const cityOptions = await page.$$eval(`${DAC_SELECTORS.RECIPIENT_CITY} option`,
@@ -1172,7 +1172,7 @@ export async function createShipment(
   try {
     const barrioEl = await page.$(DAC_SELECTORS.RECIPIENT_BARRIO);
     if (barrioEl) {
-      await page.waitForTimeout(500); // Wait for barrio dropdown to populate after city
+      await page.waitForTimeout(300); // Wait for barrio dropdown to populate after city
       if (detectedBarrioName) {
         // Try intelligent match
         const barrioMatch = await findBarrioMatch(page, DAC_SELECTORS.RECIPIENT_BARRIO, detectedBarrioName);
@@ -1291,7 +1291,7 @@ export async function createShipment(
     const choicesDiv = await page.$('.choices');
     if (choicesDiv) {
       await choicesDiv.click();
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(300);
       // Click the "Hasta 2Kg 20x20x20" option
       const option = page.locator('.choices__item--choice').filter({ hasText: '2Kg' }).first();
       if (await option.count() > 0) {
@@ -1312,7 +1312,7 @@ export async function createShipment(
   });
   slog.info(DAC_STEPS.STEP4_FILL_QTY, 'Set Cantidad = 1');
 
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(300);
 
   // ===== FILL OBSERVACIONES BEFORE Agregar (must be set before submission) =====
   // Build observations from: extraObs (apt/delivery notes) + order notes + note_attributes
@@ -1385,7 +1385,7 @@ export async function createShipment(
             textarea.removeAttribute('readonly');
           }
         }, sel);
-        await page.waitForTimeout(200);
+        await page.waitForTimeout(100);
 
         // Use Playwright fill (triggers proper input/change events)
         await page.fill(sel, obsText);
@@ -1455,7 +1455,7 @@ export async function createShipment(
   }
 
   // Wait for response
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(1500);
 
   // Handle address validation modal
   const modalDismissed = await page.evaluate(() => {
@@ -1471,7 +1471,7 @@ export async function createShipment(
   slog.info(DAC_STEPS.STEP4_CLICK_SUBMIT, `Modal check: ${modalDismissed}`);
 
   // Check if item was added to cart
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
   const hasCartItem = await page.evaluate(() => {
     const body = document.body?.textContent ?? '';
     return body.includes('Finalizar') || body.includes('Total') || body.includes('Subtotal');
@@ -1505,12 +1505,12 @@ export async function createShipment(
       const btn = document.querySelector('.btnAdd') as HTMLButtonElement;
       if (btn) btn.click();
     });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(1500);
     await page.evaluate(() => {
       const closeBtn = document.querySelector('.modal.show .close, .modal.show button, .swal2-close') as HTMLButtonElement;
       if (closeBtn) closeBtn.click();
     });
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(500);
   }
 
   slog.info(DAC_STEPS.STEP4_OK, 'Item added to cart');
@@ -1551,7 +1551,7 @@ export async function createShipment(
   }
 
   // Wait for redirect to confirmation page
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(2500);
 
   const currentUrl = page.url();
   slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, `Current URL after Finalizar: ${currentUrl}`);
@@ -1649,7 +1649,7 @@ async function extractGuiasWithLinks(pg: Page): Promise<{ guia: string; href: st
         return [];
       }
       // Navigation in progress — wait a bit longer and retry
-      await pg.waitForTimeout(1500);
+      await pg.waitForTimeout(800);
     }
   }
   return [];
@@ -1686,7 +1686,7 @@ async function extractGuiaWithRetry(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (attempt > 1) {
       slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Guia extraction retry ${attempt}/${maxAttempts} (NOT re-submitting form)`);
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
     }
 
     const currentUrl = page.url();
@@ -1697,7 +1697,7 @@ async function extractGuiaWithRetry(
     // We don't strictly need this preview; it's only for logging/debugging. If it
     // fails, log a warning and continue to Method 1.
     if (currentUrl.includes('guiacreada')) {
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
       try {
         const pagePreview = await page.evaluate(() => document.body?.textContent?.substring(0, 500) ?? '');
         slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, `Confirmation page content preview: "${pagePreview.substring(0, 200)}"`);
@@ -1705,7 +1705,7 @@ async function extractGuiaWithRetry(
         const msg = (previewErr as Error).message ?? '';
         if (msg.includes('Execution context was destroyed') || msg.includes('Target closed')) {
           slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Confirmation page still navigating — skipping preview, continuing to extraction');
-          await page.waitForTimeout(1500);
+          await page.waitForTimeout(800);
         } else {
           throw previewErr;
         }
@@ -1739,7 +1739,7 @@ async function extractGuiaWithRetry(
     try {
       slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Guia not on current page — checking mis envios');
       await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'domcontentloaded', timeout: 15_000 });
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(1500);
 
       pageResults = await extractGuiasWithLinks(page);
       newResults = pageResults.filter(r => !excludeGuias.includes(r.guia));
@@ -1770,7 +1770,7 @@ async function extractGuiaWithRetry(
     try {
       if (!page.url().includes('/envios')) {
         await page.goto('https://www.dac.com.uy/envios', { waitUntil: 'domcontentloaded', timeout: 15_000 });
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(1500);
       }
       const linkHref = await page.evaluate((g: string) => {
         const links = Array.from(document.querySelectorAll('a'));
