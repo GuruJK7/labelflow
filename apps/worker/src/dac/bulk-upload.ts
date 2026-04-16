@@ -53,7 +53,8 @@ function buildItems(row: BulkXlsxRow): string[] {
     String(row.direccion),
     String(row.kEstado),
     String(row.kCiudad),
-    String(row.oficina),
+    '0',                    // K_Barrio (0=not specified, DAC auto-assigns)
+    String(row.oficina),    // Oficina_destino
     String(row.observaciones),
     String(row.email),
     String(row.empaque),
