@@ -64,13 +64,20 @@ async function processOneOrder(
   orderName: string,
 ): Promise<{ guia: string | null; error?: string }> {
   try {
+    // DAC expects form-urlencoded data (jQuery $.ajax default), NOT JSON.
+    // Items must be sent as items[]=val1&items[]=val2&... format.
+    const params = new URLSearchParams();
+    for (const item of items) {
+      params.append('items[]', item);
+    }
+
     const response = await axios.post(
       'https://www.dac.com.uy/envios/masivos_validateAndUpload',
-      { items },
+      params.toString(),
       {
         headers: {
           'Cookie': cookieHeader,
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
           'X-Requested-With': 'XMLHttpRequest',
           'Referer': 'https://www.dac.com.uy/envios/masivos',
         },
