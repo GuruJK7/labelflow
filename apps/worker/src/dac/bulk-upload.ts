@@ -64,13 +64,16 @@ export async function uploadBulkXlsx(
     });
     logger.info({ bufferSize: knownGoodBuffer.length }, 'Bulk v5: file set via buffer');
 
-    // 5. Click "Subir archivo y validar"
+    // 5. Click "Subir archivo y validar" via jQuery to ensure handler fires
     await page.waitForTimeout(500);
-    await page.click('button:has-text("Subir archivo y validar")');
-    logger.info('Bulk v5: clicked upload button');
+    await page.evaluate(() => {
+      const btn = document.getElementById('btnDoUpload') || document.querySelector('button');
+      if (btn) (btn as HTMLElement).click();
+    });
+    logger.info('Bulk v5: clicked upload button via evaluate');
 
-    // 6. Wait for response
-    await page.waitForTimeout(5000);
+    // 6. Wait for AJAX response (DAC uses AjaxCallWithFormData which is async)
+    await page.waitForTimeout(10000);
 
     // Check for error
     const bodyText = await page.textContent('body') ?? '';
