@@ -177,7 +177,7 @@ export function generateBulkXlsx(
     row.direccion,      // C: Direccion
     row.kEstado,        // D: K_Estado (dept ID)
     row.kCiudad,        // E: K_Ciudad (city ID)
-    row.oficina,        // F: Oficina_destino (office ID)
+    1,                  // F: Oficina_destino (1=default, DAC auto-routes)
     row.observaciones,  // G: Observaciones
     row.email,          // H: Email
     row.empaque,        // N: K_Tipo_Empaque
