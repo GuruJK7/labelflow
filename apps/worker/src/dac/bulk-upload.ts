@@ -39,15 +39,34 @@ const PARALLEL_SLOTS = 8; // DAC processes 8 in parallel (from masivos JS: hilos
  * 10-item layout that worked with the all-1s manual test.
  */
 function buildItems(row: BulkXlsxRow): string[] {
-  // DEBUG: send ALL 1s to find the correct item count.
-  // If DAC accepts this, we know 17 items is correct.
-  // Then we can replace positions one by one with real data.
+  // DAC's masivos JS extracts items from table cells via $('td span').each().
+  // The FIRST span is the status button span (contains " " / &nbsp;), followed
+  // by the actual data column spans. So items[0] = " " and items[1..N] = data.
+  //
+  // For the 10-column xlsx format that worked manually, the items are:
+  //   [0] = " " (button span)
+  //   [1] = nombre
+  //   [2] = telefono
+  //   [3] = direccion
+  //   [4] = K_Estado
+  //   [5] = K_Ciudad
+  //   [6] = Oficina_destino
+  //   [7] = observaciones
+  //   [8] = email
+  //   [9] = K_Tipo_Empaque
+  //   [10] = cantidad
   return [
-    '1', '1', '1', '1', '1', // positions 0-4 (TipoServicio..Oficina_Origen)
-    '1', '1', '1',           // positions 5-7 (nombre, tel, dir — normally text)
-    '1', '1', '1',           // positions 8-10 (K_Estado, K_Ciudad, K_Barrio)
-    '1', '1', '1', '1',      // positions 11-14 (oficina, cantidad_bulto, empaque, cantidad)
-    '1', '1',                 // positions 15-16 (obs, email — normally text)
+    ' ',                       // [0] status span (empty/nbsp)
+    String(row.nombre),        // [1] nombre
+    String(row.telefono),      // [2] telefono
+    String(row.direccion),     // [3] direccion
+    String(row.kEstado),       // [4] K_Estado (dept ID)
+    String(row.kCiudad),       // [5] K_Ciudad (city ID)
+    String(row.oficina),       // [6] Oficina_destino (office ID)
+    String(row.observaciones), // [7] observaciones
+    String(row.email),         // [8] email
+    String(row.empaque),       // [9] K_Tipo_Empaque
+    String(row.cantidad),      // [10] cantidad
   ];
 }
 
