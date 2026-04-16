@@ -52,30 +52,15 @@ export async function uploadBulkXlsx(
     });
     logger.info({ size: xlsxBuffer.length }, 'Bulk v6: file set');
 
-    // 4. Submit form via DAC's own AJAX function (bypasses validationEngine)
-    const submitResult = await page.evaluate(() => {
-      return new Promise<string>((resolve) => {
-        const form = document.querySelector('#formUploadXlsx') as HTMLFormElement;
-        if (!form) { resolve('form not found'); return; }
-        const $form = (window as any).$(form);
-        const action = $form.attr('action') || form.action;
-        (window as any).AjaxCallWithFormData($form, action, function(data: any) {
-          if (data?.data?.rows) {
-            (window as any).masivos_CreateTableEnvios(data.data.rows);
-            (window as any).masivos_SetupEventsOnTable();
-            (window as any).masivos_ShowButtonsProccess();
-            resolve('success: ' + data.data.rows.length + ' rows');
-          } else {
-            resolve('no rows: ' + JSON.stringify(data).slice(0, 200));
-          }
-        });
-        setTimeout(() => resolve('timeout'), 15000);
-      });
-    });
-    logger.info({ submitResult }, 'Bulk v6: form submitted');
+    // 4. Click the actual upload button (triggers DAC's jQuery handler which
+    //    reads FormData from the form including the file we set via setInputFiles)
+    await page.waitForTimeout(500);
+    await page.click('#btnDoUpload, button:has-text("Subir archivo y validar")');
+    logger.info('Bulk v6: clicked upload button');
 
-    // 5. Check for data rows
-    await page.waitForTimeout(2000);
+    // 5. Wait for DAC's AJAX to complete and table to render
+    //    DAC shows either an error dialog or the data table
+    await page.waitForTimeout(10000);
     const rowCount = await page.$$eval('tr.rowItem', r => r.length).catch(() => 0);
     logger.info({ rowCount }, 'Bulk v6: rows in table');
 
