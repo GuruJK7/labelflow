@@ -54,11 +54,15 @@ export async function uploadBulkXlsx(
     fs.writeFileSync(tmpPath, knownGoodBuffer);
     logger.info({ size: xlsxBuffer.length, path: tmpPath }, 'Bulk v5: xlsx saved');
 
-    // 4. Upload via setInputFiles
+    // 4. Upload via setInputFiles with BUFFER (bypass filesystem entirely)
     const fileInput = await page.$('input[type="file"][name="xlsx"]');
     if (!fileInput) throw new Error('File input not found');
-    await fileInput.setInputFiles(tmpPath);
-    logger.info('Bulk v5: file set on input');
+    await fileInput.setInputFiles({
+      name: 'envios.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer: knownGoodBuffer,
+    });
+    logger.info({ bufferSize: knownGoodBuffer.length }, 'Bulk v5: file set via buffer');
 
     // 5. Click "Subir archivo y validar"
     await page.waitForTimeout(500);
