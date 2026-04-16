@@ -64,16 +64,39 @@ export async function uploadBulkXlsx(
     });
     logger.info({ bufferSize: knownGoodBuffer.length }, 'Bulk v5: file set via buffer');
 
-    // 5. Click "Subir archivo y validar" via jQuery to ensure handler fires
-    await page.waitForTimeout(500);
-    await page.evaluate(() => {
-      const btn = document.getElementById('btnDoUpload') || document.querySelector('button');
-      if (btn) (btn as HTMLElement).click();
+    // 5. Check if file is attached, then submit form directly via DAC's AJAX function
+    const fileInfo = await page.evaluate(() => {
+      const input = document.querySelector('input[type="file"][name="xlsx"]') as HTMLInputElement;
+      return input?.files?.length ? input.files[0].name + ' (' + input.files[0].size + 'b)' : 'NO FILE';
     });
-    logger.info('Bulk v5: clicked upload button via evaluate');
+    logger.info({ fileInfo }, 'Bulk v5: file check');
 
-    // 6. Wait for AJAX response (DAC uses AjaxCallWithFormData which is async)
-    await page.waitForTimeout(10000);
+    // Submit form via DAC's own AjaxCallWithFormData, bypassing validationEngine
+    const submitResult = await page.evaluate(() => {
+      return new Promise<string>((resolve) => {
+        const form = document.querySelector('#formUploadXlsx') as HTMLFormElement;
+        if (!form) { resolve('form not found'); return; }
+        const $form = (window as any).$(form);
+        const action = $form.attr('action') || form.action;
+        if (!action) { resolve('no action URL'); return; }
+        (window as any).AjaxCallWithFormData($form, action, function(data: any) {
+          if (data?.data?.rows) {
+            (window as any).masivos_CreateTableEnvios(data.data.rows);
+            (window as any).masivos_SetupEventsOnTable();
+            (window as any).masivos_ShowButtonsProccess();
+            resolve('success: ' + data.data.rows.length + ' rows');
+          } else {
+            resolve('no rows in response: ' + JSON.stringify(data).slice(0, 200));
+          }
+        });
+        // Timeout fallback
+        setTimeout(() => resolve('timeout'), 15000);
+      });
+    });
+    logger.info({ submitResult }, 'Bulk v5: form submitted');
+
+    // 6. Wait for table to render
+    await page.waitForTimeout(3000);
 
     // Check for error
     const bodyText = await page.textContent('body') ?? '';
