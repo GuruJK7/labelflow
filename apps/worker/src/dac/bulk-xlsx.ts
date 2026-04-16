@@ -146,20 +146,32 @@ export function generateBulkXlsx(
   }
 
   // Generate xlsx from included rows only
-  // Column layout: 11 columns (TipoGuia was missing in v1, causing column shift
-  // where DAC read Observaciones text as Oficina_destino numeric)
+  //
+  // Column layout discovered by trial and error against DAC's /envios/masivos:
+  // DAC expects ALL form fields as columns, including the shipment type selects
+  // and the origin office. The column order matches the form field order.
+  //
+  // Discovery timeline:
+  //   v1 (10 cols, no TipoGuia): error "Oficina_destino not numeric"
+  //   v2 (11 cols, +TipoGuia at A): error "Oficina_Origen not numeric"
+  //   v3 (15 cols, ALL form fields): includes TipoServicio, TipoGuia, TipoEnvio,
+  //       TipoEntrega, Oficina_Origen before the recipient data
   const xlsxData = includedRows.map(row => [
-    row.paymentType === 'REMITENTE' ? 1 : 4, // A: TipoGuia (1=paga remitente, 4=paga destinatario)
-    row.nombre,         // B: Nombre
-    row.telefono,       // C: Telefono
-    row.direccion,      // D: Direccion
-    row.kEstado,        // E: K_Estado (dept ID)
-    row.kCiudad,        // F: K_Ciudad (city ID)
-    row.oficina,        // G: Oficina_destino (office ID)
-    row.observaciones,  // H: Observaciones
-    row.email,          // I: Email
-    row.empaque,        // J: K_Tipo_Empaque
-    row.cantidad,       // K: Cantidad
+    1,                  // A: TipoServicio (1=Levante, always 1)
+    row.paymentType === 'REMITENTE' ? 1 : 4, // B: TipoGuia (1=paga remitente, 4=paga destinatario)
+    1,                  // C: TipoEnvio (1=Paquete)
+    2,                  // D: TipoEntrega (2=A Domicilio)
+    1,                  // E: Oficina_Origen (1=default origin, auto-assigned by DAC)
+    row.nombre,         // F: Nombre destinatario
+    row.telefono,       // G: Telefono
+    row.direccion,      // H: Direccion
+    row.kEstado,        // I: K_Estado (dept ID)
+    row.kCiudad,        // J: K_Ciudad (city ID)
+    row.oficina,        // K: Oficina_destino (office ID)
+    row.observaciones,  // L: Observaciones
+    row.email,          // M: Email
+    row.empaque,        // N: K_Tipo_Empaque
+    row.cantidad,       // O: Cantidad
   ]);
 
   const ws = XLSX.utils.aoa_to_sheet(xlsxData);
