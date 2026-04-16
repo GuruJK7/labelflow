@@ -19,7 +19,6 @@
 import { dacBrowser } from './browser';
 import { smartLogin } from './auth';
 import logger from '../logger';
-import axios from 'axios';
 import { BulkXlsxRow } from './bulk-xlsx';
 
 export interface BulkUploadResult {
@@ -53,54 +52,44 @@ function buildItems(row: BulkXlsxRow): string[] {
 }
 
 /**
- * Process a single order via DAC's masivos API.
- * Returns the guia string on success, or null on failure.
+ * Process a single order using DAC's OWN InitiateAsyncAjaxCall function
+ * executed INSIDE the browser via page.evaluate. This guarantees the request
+ * matches what DAC's JavaScript sends — same jQuery serialization, same
+ * cookies, same CSRF tokens, same everything.
  */
-async function processOneOrder(
+async function processOneOrderInBrowser(
+  page: import('playwright').Page,
   items: string[],
-  cookieHeader: string,
   orderName: string,
 ): Promise<{ guia: string | null; error?: string }> {
   try {
-    // DAC expects form-urlencoded data (jQuery $.ajax default), NOT JSON.
-    // Items must be sent as items[]=val1&items[]=val2&... format.
-    const params = new URLSearchParams();
-    for (const item of items) {
-      params.append('items[]', item);
+    const result = await page.evaluate(async (itemsArg: string[]) => {
+      return new Promise<{ ok: boolean; guia?: string; error?: string }>((resolve) => {
+        // Use DAC's own AJAX function (loaded on the masivos page)
+        (window as any).InitiateAsyncAjaxCall(
+          '/envios/masivos_validateAndUpload',
+          { items: itemsArg },
+          (data: any) => {
+            const guia = data?.data?.response?.WS_InGuiaResponse?.WS_InGuia?.K_Guia;
+            resolve({ ok: true, guia: String(guia || '') });
+          },
+          (data: any) => {
+            resolve({ ok: false, error: data?.msg || 'Unknown error' });
+          },
+          (_jqXHR: any, textStatus: string) => {
+            resolve({ ok: false, error: `Request failed: ${textStatus}` });
+          },
+        );
+      });
+    }, items);
+
+    if (result.ok && result.guia) {
+      logger.info({ orderName, guia: result.guia }, 'Bulk API: guia created');
+      return { guia: result.guia };
     }
-
-    const response = await axios.post(
-      'https://www.dac.com.uy/envios/masivos_validateAndUpload',
-      params.toString(),
-      {
-        headers: {
-          'Cookie': cookieHeader,
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Referer': 'https://www.dac.com.uy/envios/masivos',
-        },
-        timeout: 30_000,
-        validateStatus: () => true,
-      },
-    );
-
-    const data = response.data;
-
-    // Success path: extract guia from WS response
-    const guia = data?.data?.response?.WS_InGuiaResponse?.WS_InGuia?.K_Guia;
-    if (guia) {
-      logger.info({ orderName, guia }, 'Bulk API: guia created');
-      return { guia: String(guia) };
-    }
-
-    // Error path
-    const errorMsg = data?.msg || data?.message || JSON.stringify(data).slice(0, 200);
-    logger.warn({ orderName, error: errorMsg }, 'Bulk API: order failed');
-    return { guia: null, error: errorMsg };
+    return { guia: null, error: result.error };
   } catch (err) {
-    const msg = (err as Error).message;
-    logger.error({ orderName, error: msg }, 'Bulk API: request failed');
-    return { guia: null, error: msg };
+    return { guia: null, error: (err as Error).message };
   }
 }
 
@@ -126,48 +115,41 @@ export async function uploadBulkXlsx(
     await smartLogin(page, dacUsername, dacPassword, tenantId);
     logger.info('Bulk API: DAC login OK');
 
-    // 2. Extract cookies
-    const context = page.context();
-    const cookies = await context.cookies('https://www.dac.com.uy');
-    const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-    logger.info({ cookieCount: cookies.length }, 'Bulk API: cookies extracted');
+    // 2. Navigate to masivos page (required: InitiateAsyncAjaxCall is loaded here)
+    await page.goto('https://www.dac.com.uy/envios/masivos', {
+      waitUntil: 'domcontentloaded',
+      timeout: 15_000,
+    });
+    await page.waitForTimeout(2000);
+    logger.info('Bulk API: on masivos page');
 
-    // 3. Process orders in parallel batches of 8
+    // 3. Process orders SEQUENTIALLY via page.evaluate (browser context)
+    // We process one at a time because page.evaluate can only run one at a time.
+    // Even so, this is faster than Playwright form-filling (~2s per order vs ~2min).
     const guias: string[] = [];
     const failedRows: number[] = [];
     const errors: string[] = [];
 
-    for (let i = 0; i < rows.length; i += PARALLEL_SLOTS) {
-      const batch = rows.slice(i, i + PARALLEL_SLOTS);
-      const promises = batch.map((row, batchIdx) => {
-        const items = buildItems(row);
-        return processOneOrder(items, cookieHeader, row.orderName).then(result => ({
-          globalIdx: i + batchIdx,
-          ...result,
-        }));
-      });
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const items = buildItems(row);
+      const result = await processOneOrderInBrowser(page, items, row.orderName);
 
-      const results = await Promise.all(promises);
-
-      for (const r of results) {
-        if (r.guia) {
-          guias.push(r.guia);
-        } else {
-          failedRows.push(r.globalIdx);
-          if (r.error) errors.push(`${rows[r.globalIdx]?.orderName}: ${r.error}`);
-        }
+      if (result.guia) {
+        guias.push(result.guia);
+      } else {
+        failedRows.push(i);
+        if (result.error) errors.push(`${row.orderName}: ${result.error}`);
       }
 
-      logger.info({
-        batchStart: i,
-        batchEnd: Math.min(i + PARALLEL_SLOTS, rows.length),
-        guiasSoFar: guias.length,
-        failedSoFar: failedRows.length,
-      }, 'Bulk API: batch complete');
+      if ((i + 1) % 5 === 0 || i === rows.length - 1) {
+        logger.info({ processed: i + 1, total: rows.length, guias: guias.length, failed: failedRows.length },
+          'Bulk API: progress');
+      }
     }
 
     logger.info({ total: rows.length, guias: guias.length, failed: failedRows.length },
-      'Bulk API: all batches complete');
+      'Bulk API: complete');
 
     return {
       success: guias.length > 0,
