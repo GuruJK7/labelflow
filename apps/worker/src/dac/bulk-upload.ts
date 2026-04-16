@@ -66,7 +66,7 @@ export async function uploadBulkXlsx(
 
     if (rowCount === 0) {
       return { success: false, guias: [], failedRows: [], totalRows: totalExpectedRows,
-        error: `No data rows. Submit: ${submitResult}` };
+        error: 'No data rows after upload' };
     }
 
     // 6. Click "Cargar envíos"
