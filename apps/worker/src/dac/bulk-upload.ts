@@ -130,6 +130,7 @@ export async function uploadBulkXlsx(
     // 3. Process orders in parallel batches of 8
     const guias: string[] = [];
     const failedRows: number[] = [];
+    const errors: string[] = [];
 
     for (let i = 0; i < rows.length; i += PARALLEL_SLOTS) {
       const batch = rows.slice(i, i + PARALLEL_SLOTS);
@@ -148,8 +149,7 @@ export async function uploadBulkXlsx(
           guias.push(r.guia);
         } else {
           failedRows.push(r.globalIdx);
-          logger.warn({ idx: r.globalIdx, order: rows[r.globalIdx]?.orderName, error: r.error },
-            'Bulk API: row failed');
+          if (r.error) errors.push(`${rows[r.globalIdx]?.orderName}: ${r.error}`);
         }
       }
 
@@ -169,6 +169,7 @@ export async function uploadBulkXlsx(
       guias,
       failedRows,
       totalRows: rows.length,
+      error: errors.length > 0 ? errors.slice(0, 3).join(' | ') : undefined,
     };
   } catch (err) {
     logger.error({ error: (err as Error).message }, 'Bulk API: fatal error');
