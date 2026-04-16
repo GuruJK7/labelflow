@@ -1,15 +1,26 @@
 /**
- * Uploads a bulk xlsx to DAC's masivos endpoint and extracts the resulting guias.
+ * Bulk upload to DAC via direct API calls to /envios/masivos_validateAndUpload.
  *
- * v3 (2026-04-15): Injects the xlsx file directly into the browser via
- * JavaScript (DataTransfer + File API) instead of setInputFiles or HTTP POST.
- * This keeps everything in one browser session and avoids the Render Docker
- * file upload issues.
+ * v4 (2026-04-15): Bypasses the xlsx upload entirely. Instead of generating
+ * a spreadsheet and uploading it through the browser, we call DAC's internal
+ * per-row validation endpoint directly via HTTP.
+ *
+ * Discovery: reading envios.masivos.js revealed that the xlsx upload is just
+ * a UI wrapper. After the user uploads an xlsx, DAC's JS extracts each row's
+ * cell values as strings and POSTs them as {items: [...]} to the endpoint.
+ * The server validates, geocodes, and creates the guia.
+ *
+ * Response format: {data: {response: {WS_InGuiaResponse: {WS_InGuia: {K_Guia: "882279..."}}}}}
+ *
+ * This approach eliminates ALL xlsx format issues (column count, types, order)
+ * because we send the same data the browser JS would extract from the table.
  */
 
 import { dacBrowser } from './browser';
 import { smartLogin } from './auth';
 import logger from '../logger';
+import axios from 'axios';
+import { BulkXlsxRow } from './bulk-xlsx';
 
 export interface BulkUploadResult {
   success: boolean;
@@ -19,148 +30,154 @@ export interface BulkUploadResult {
   error?: string;
 }
 
+const PARALLEL_SLOTS = 8; // DAC processes 8 in parallel (from masivos JS: hilos = 8)
+
+/**
+ * Build the items array for a single order. The order of items must match
+ * what DAC expects when processing rows from the masivos table.
+ *
+ * We'll discover the correct order by testing. Starting with the same
+ * 10-item layout that worked with the all-1s manual test.
+ */
+function buildItems(row: BulkXlsxRow): string[] {
+  return [
+    String(row.nombre),
+    String(row.telefono),
+    String(row.direccion),
+    String(row.kEstado),
+    String(row.kCiudad),
+    String(row.oficina),
+    String(row.observaciones),
+    String(row.email),
+    String(row.empaque),
+    String(row.cantidad),
+  ];
+}
+
+/**
+ * Process a single order via DAC's masivos API.
+ * Returns the guia string on success, or null on failure.
+ */
+async function processOneOrder(
+  items: string[],
+  cookieHeader: string,
+  orderName: string,
+): Promise<{ guia: string | null; error?: string }> {
+  try {
+    const response = await axios.post(
+      'https://www.dac.com.uy/envios/masivos_validateAndUpload',
+      { items },
+      {
+        headers: {
+          'Cookie': cookieHeader,
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': 'https://www.dac.com.uy/envios/masivos',
+        },
+        timeout: 30_000,
+        validateStatus: () => true,
+      },
+    );
+
+    const data = response.data;
+
+    // Success path: extract guia from WS response
+    const guia = data?.data?.response?.WS_InGuiaResponse?.WS_InGuia?.K_Guia;
+    if (guia) {
+      logger.info({ orderName, guia }, 'Bulk API: guia created');
+      return { guia: String(guia) };
+    }
+
+    // Error path
+    const errorMsg = data?.msg || data?.message || JSON.stringify(data).slice(0, 200);
+    logger.warn({ orderName, error: errorMsg }, 'Bulk API: order failed');
+    return { guia: null, error: errorMsg };
+  } catch (err) {
+    const msg = (err as Error).message;
+    logger.error({ orderName, error: msg }, 'Bulk API: request failed');
+    return { guia: null, error: msg };
+  }
+}
+
+/**
+ * Process all orders via DAC's masivos API with 8-way parallelism.
+ */
 export async function uploadBulkXlsx(
-  xlsxBuffer: Buffer,
+  _xlsxBuffer: Buffer, // kept for interface compat, not used in v4
   dacUsername: string,
   dacPassword: string,
   tenantId: string,
   totalExpectedRows: number,
+  rows?: BulkXlsxRow[], // the actual row data to send
 ): Promise<BulkUploadResult> {
+  if (!rows || rows.length === 0) {
+    return { success: false, guias: [], failedRows: [], totalRows: 0, error: 'No rows provided' };
+  }
+
   const page = await dacBrowser.getPage();
 
   try {
-    // 1. Login
+    // 1. Login to DAC via Playwright to get session cookies
     await smartLogin(page, dacUsername, dacPassword, tenantId);
-    logger.info('Bulk upload: DAC login OK');
+    logger.info('Bulk API: DAC login OK');
 
-    // 2. Navigate to masivos
-    await page.goto('https://www.dac.com.uy/envios/masivos', {
-      waitUntil: 'domcontentloaded',
-      timeout: 15_000,
-    });
-    await page.waitForTimeout(2000);
+    // 2. Extract cookies
+    const context = page.context();
+    const cookies = await context.cookies('https://www.dac.com.uy');
+    const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+    logger.info({ cookieCount: cookies.length }, 'Bulk API: cookies extracted');
 
-    // 3. Inject xlsx file into the file input via JavaScript
-    //    This avoids both setInputFiles (broken on Docker) and HTTP POST
-    //    (session mismatch). The File is created in-browser from base64 data.
-    const base64 = xlsxBuffer.toString('base64');
+    // 3. Process orders in parallel batches of 8
+    const guias: string[] = [];
+    const failedRows: number[] = [];
 
-    await page.evaluate((b64: string) => {
-      const binaryStr = atob(b64);
-      const bytes = new Uint8Array(binaryStr.length);
-      for (let i = 0; i < binaryStr.length; i++) {
-        bytes[i] = binaryStr.charCodeAt(i);
+    for (let i = 0; i < rows.length; i += PARALLEL_SLOTS) {
+      const batch = rows.slice(i, i + PARALLEL_SLOTS);
+      const promises = batch.map((row, batchIdx) => {
+        const items = buildItems(row);
+        return processOneOrder(items, cookieHeader, row.orderName).then(result => ({
+          globalIdx: i + batchIdx,
+          ...result,
+        }));
+      });
+
+      const results = await Promise.all(promises);
+
+      for (const r of results) {
+        if (r.guia) {
+          guias.push(r.guia);
+        } else {
+          failedRows.push(r.globalIdx);
+          logger.warn({ idx: r.globalIdx, order: rows[r.globalIdx]?.orderName, error: r.error },
+            'Bulk API: row failed');
+        }
       }
-      const file = new File(
-        [bytes],
-        'envios.xlsx',
-        { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-      );
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      const input = document.querySelector('input[type="file"][name="xlsx"]') as HTMLInputElement;
-      if (!input) throw new Error('File input not found');
-      input.files = dt.files;
-      // Trigger change event so DAC's JS picks up the file
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    }, base64);
 
-    logger.info({ size: xlsxBuffer.length, base64Length: base64.length }, 'Bulk upload: file injected into input');
-
-    // 4. Click "Subir archivo y validar"
-    await page.waitForTimeout(500);
-    const uploadBtn = await page.$('button:has-text("Subir archivo y validar")');
-    if (!uploadBtn) {
-      throw new Error('"Subir archivo y validar" button not found');
-    }
-    await uploadBtn.click();
-    logger.info('Bulk upload: clicked "Subir archivo y validar"');
-
-    // 5. Wait for response (could be error dialog or data table)
-    await page.waitForTimeout(5000);
-
-    // Check for error dialog
-    const pageText = await page.textContent('body') ?? '';
-    if (pageText.includes('Atención') && pageText.includes('numérico')) {
-      const errorMatch = pageText.match(/¡Atención!([^¡]+)/);
-      // Dismiss dialog
-      const okBtn = await page.$('.alertify-button-ok, button:has-text("OK")');
-      if (okBtn) await okBtn.click();
-      return {
-        success: false,
-        guias: [],
-        failedRows: [],
-        totalRows: totalExpectedRows,
-        error: `DAC validation error: ${errorMatch?.[1]?.trim().slice(0, 200) || 'unknown'}`,
-      };
+      logger.info({
+        batchStart: i,
+        batchEnd: Math.min(i + PARALLEL_SLOTS, rows.length),
+        guiasSoFar: guias.length,
+        failedSoFar: failedRows.length,
+      }, 'Bulk API: batch complete');
     }
 
-    // 6. Check for imported data table
-    const rowCount = await page.$$eval('tr.rowItem', rows => rows.length);
-    logger.info({ rowCount }, 'Bulk upload: data table rows');
+    logger.info({ total: rows.length, guias: guias.length, failed: failedRows.length },
+      'Bulk API: all batches complete');
 
-    if (rowCount === 0) {
-      return {
-        success: false,
-        guias: [],
-        failedRows: [],
-        totalRows: totalExpectedRows,
-        error: 'No rows appeared in import table after upload',
-      };
-    }
-
-    // 7. Click "Cargar envíos"
-    const cargarBtn = await page.$('button:has-text("Cargar envíos")');
-    if (!cargarBtn) {
-      return {
-        success: false,
-        guias: [],
-        failedRows: [],
-        totalRows: totalExpectedRows,
-        error: '"Cargar envíos" button not found',
-      };
-    }
-    await cargarBtn.click();
-    logger.info('Bulk upload: clicked "Cargar envíos"');
-
-    // 8. Wait for processing (8 parallel slots, max 5 min)
-    const maxWaitMs = 5 * 60 * 1000;
-    const startTime = Date.now();
-
-    while (Date.now() - startTime < maxWaitMs) {
-      await page.waitForTimeout(3000);
-      const spinning = await page.$$eval('.fa-spinner', els => els.length);
-      const completed = await page.$$eval('.fa-check', els => els.length);
-      const failed = await page.$$eval('.fa-exclamation-triangle', els => els.length);
-      logger.info({ spinning, completed, failed }, 'Bulk upload: progress');
-      if (spinning === 0) break;
-    }
-
-    // 9. Dismiss success dialog
-    await page.waitForTimeout(1000);
-    const okBtn = await page.$('button:has-text("OK")');
-    if (okBtn) await okBtn.click();
-
-    // 10. Extract guias
-    let guias = await page.$$eval(
-      'input[name="Codigo_Rastreo_K_Guia[]"]',
-      inputs => inputs.map(i => (i as HTMLInputElement).value).filter(Boolean),
-    );
-    if (guias.length === 0) {
-      guias = await page.$$eval('tr.rowItem', rows =>
-        rows.map(row => (row.textContent?.match(/\b88\d{10,}\b/) || [])[0] || '').filter(Boolean),
-      );
-    }
-
-    const failedRowIndices = await page.$$eval('tr.rowItem', rows =>
-      rows.map((row, idx) => row.querySelector('.fa-exclamation-triangle') ? idx : -1).filter(i => i >= 0),
-    );
-
-    logger.info({ guias: guias.length, failed: failedRowIndices.length }, 'Bulk upload: complete');
-
-    return { success: guias.length > 0, guias, failedRows: failedRowIndices, totalRows: totalExpectedRows };
+    return {
+      success: guias.length > 0,
+      guias,
+      failedRows,
+      totalRows: rows.length,
+    };
   } catch (err) {
-    logger.error({ error: (err as Error).message }, 'Bulk upload failed');
-    return { success: false, guias: [], failedRows: [], totalRows: totalExpectedRows, error: (err as Error).message };
+    logger.error({ error: (err as Error).message }, 'Bulk API: fatal error');
+    return {
+      success: false,
+      guias: [],
+      failedRows: [],
+      totalRows: totalExpectedRows,
+      error: (err as Error).message,
+    };
   }
 }

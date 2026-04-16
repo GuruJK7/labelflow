@@ -119,6 +119,7 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
         dacPassword,
         tenantId,
         xlsxResult.includedRows.length,
+        xlsxResult.includedRows, // v4: pass rows directly for API-based upload
       );
 
       if (uploadResult.success) {
