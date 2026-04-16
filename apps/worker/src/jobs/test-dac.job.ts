@@ -195,9 +195,12 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
         // Create shipment in DAC
         result = await createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId, usedGuias);
 
-        if (result.guia && !result.guia.startsWith('PENDING-')) {
-          usedGuias.add(result.guia);
+        // Treat PENDING guia as failure — it means DAC did not confirm shipment creation
+        if (!result.guia || result.guia.startsWith('PENDING-')) {
+          throw new Error(`DAC did not return a valid guia (got: ${result.guia ?? 'null'}) — shipment likely not created`);
         }
+
+        usedGuias.add(result.guia);
 
         slog.success('order-shipment', `[TEST] DAC shipment created: guia=${result.guia}`, { trackingUrl: result.trackingUrl });
 
