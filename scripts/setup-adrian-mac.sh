@@ -212,6 +212,22 @@ else
 fi
 cd "${REPO_ROOT}"
 
+# ===== 8b. Install Claude skill =====
+section "8b. Installing process-bulk-dac Claude skill"
+
+CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
+SKILL_SRC="${REPO_ROOT}/scripts/skills/process-bulk-dac"
+SKILL_DST="${CLAUDE_SKILLS_DIR}/process-bulk-dac"
+
+if [[ ! -d "${SKILL_SRC}" ]]; then
+  warn "Skill source not found at ${SKILL_SRC} — skipping"
+else
+  mkdir -p "${CLAUDE_SKILLS_DIR}"
+  rm -rf "${SKILL_DST}"
+  cp -R "${SKILL_SRC}" "${SKILL_DST}"
+  ok "Skill installed at ${SKILL_DST}"
+fi
+
 # ===== 9. Worker LaunchAgent =====
 section "9. Worker LaunchAgent (auto-start on boot, auto-restart on crash)"
 
