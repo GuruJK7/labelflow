@@ -1409,7 +1409,7 @@ export async function createShipment(
       // Last resort: force fill ALL textareas via evaluate + manual events
       slog.warn(DAC_STEPS.STEP4_OK, 'All page.fill() attempts failed — using evaluate fallback');
       await page.evaluate((text: string) => {
-        const textareas = document.querySelectorAll('textarea');
+        const textareas = Array.from(document.querySelectorAll('textarea'));
         for (const ta of textareas) {
           (ta as HTMLTextAreaElement).value = text;
           ta.dispatchEvent(new Event('input', { bubbles: true }));
