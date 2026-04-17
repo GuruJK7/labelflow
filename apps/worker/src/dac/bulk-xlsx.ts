@@ -159,40 +159,61 @@ export function generateBulkXlsx(
   // ROW 1 = SACRIFICIAL ROW (DAC's JS treats row[0] as table headers)
   // ROW 2+ = ACTUAL DATA
   //
-  // NEW APPROACH (2026-04-17): DAC's error "columna 'Oficina_destino'" tells us
-  // DAC knows the column names. It likely expects row 1 to be TEXT HEADERS with
-  // column names matching its internal schema. The numeric-sacrificial-row
-  // approach was never validated against DAC's actual parser — just a guess.
+  // EVIDENCE-BASED LAYOUT (2026-04-17):
+  // Prior iterations confirmed DAC uses POSITIONAL mapping (not header names):
+  //   - 10-col (Nombre at A): error "Oficina_destino not numeric"
+  //   - 11-col (+TipoGuia at A): error shifts to "Oficina_Origen not numeric"
   //
-  // Using exact DAC field names (matching the form's <input name="...">):
-  const headerRow = [
-    'Nombre',            // A
-    'Telefono',          // B
-    'Direccion',         // C
-    'K_Estado',          // D
-    'K_Ciudad',          // E
-    'Oficina_destino',   // F
-    'Observaciones',     // G
-    'Email',             // H
-    'K_Tipo_Empaque',    // I
-    'Cantidad',          // J
+  // This tells us DAC has a fixed 15-col schema starting with the form-level
+  // config fields BEFORE the recipient data. Implementing that schema now.
+  //
+  // Full DAC masivos schema (inferred from the single-shipment form field order):
+  //   A: TipoServicio    (1 = default / domicilio)
+  //   B: TipoGuia        (1 = default)
+  //   C: TipoEnvio       (1 = Paquete hasta 2Kg)
+  //   D: TipoEntrega     (1 = Domicilio)
+  //   E: Oficina_Origen  (1 = default, DAC auto-resolves from account)
+  //   F: Nombre          (text)
+  //   G: Telefono        (text)
+  //   H: Direccion       (text)
+  //   I: K_Estado        (numeric, dept ID)
+  //   J: K_Ciudad        (numeric, city ID)
+  //   K: Oficina_destino (numeric, 1 = auto-route)
+  //   L: Observaciones   (text)
+  //   M: Email           (text)
+  //   N: K_Tipo_Empaque  (numeric, 1 = default)
+  //   O: Cantidad        (numeric)
+  //
+  // Row 1 is a SACRIFICIAL numeric-safe row (not text headers — DAC uses
+  // positional parsing and rejects text where it expects numbers). We use 1s
+  // for numeric columns and empty strings for text columns in row 1.
+  const sacrificialRow = [
+    1, 1, 1, 1, 1,      // A-E: TipoServicio, TipoGuia, TipoEnvio, TipoEntrega, Oficina_Origen
+    '', '', '',         // F-H: Nombre, Telefono, Direccion
+    1, 1, 1,            // I-K: K_Estado, K_Ciudad, Oficina_destino
+    '', '',             // L-M: Observaciones, Email
+    1, 1,               // N-O: K_Tipo_Empaque, Cantidad
   ];
 
-  // SIMPLE 10-column layout matching the header above
   const dataRows = includedRows.map(row => [
-    row.nombre,         // A: Nombre destinatario
-    row.telefono,       // B: Telefono
-    row.direccion,      // C: Direccion
-    row.kEstado,        // D: K_Estado (dept ID)
-    row.kCiudad,        // E: K_Ciudad (city ID)
-    1,                  // F: Oficina_destino (1=default, DAC auto-routes)
-    row.observaciones,  // G: Observaciones
-    row.email,          // H: Email
-    row.empaque,        // I: K_Tipo_Empaque
-    row.cantidad,       // J: Cantidad
+    1,                  // A: TipoServicio
+    1,                  // B: TipoGuia
+    1,                  // C: TipoEnvio
+    1,                  // D: TipoEntrega
+    1,                  // E: Oficina_Origen (DAC resolves from account)
+    row.nombre,         // F: Nombre destinatario
+    row.telefono,       // G: Telefono
+    row.direccion,      // H: Direccion
+    row.kEstado,        // I: K_Estado (dept ID)
+    row.kCiudad,        // J: K_Ciudad (city ID)
+    1,                  // K: Oficina_destino (1 = auto-route)
+    row.observaciones,  // L: Observaciones
+    row.email,          // M: Email
+    row.empaque,        // N: K_Tipo_Empaque
+    row.cantidad,       // O: Cantidad
   ]);
 
-  const xlsxData = [headerRow, ...dataRows];
+  const xlsxData = [sacrificialRow, ...dataRows];
   const ws = XLSX.utils.aoa_to_sheet(xlsxData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Envios');
