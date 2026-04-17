@@ -158,19 +158,27 @@ export function generateBulkXlsx(
   //       TipoEntrega, Oficina_Origen before the recipient data
   // ROW 1 = SACRIFICIAL ROW (DAC's JS treats row[0] as table headers)
   // ROW 2+ = ACTUAL DATA
-  // The sacrificial row must pass DAC's server-side validation which checks
-  // that numeric columns have numeric values. So we use 0/1 in numeric
-  // positions and empty strings in text positions.
-  const sacrificialRow = [
-    '', '', '',   // text cols: nombre, telefono, direccion
-    1, 1, 1,      // numeric cols: K_Estado, K_Ciudad, Oficina_destino
-    '', '',       // text cols: observaciones, email
-    1, 1,         // numeric cols: empaque, cantidad
+  //
+  // NEW APPROACH (2026-04-17): DAC's error "columna 'Oficina_destino'" tells us
+  // DAC knows the column names. It likely expects row 1 to be TEXT HEADERS with
+  // column names matching its internal schema. The numeric-sacrificial-row
+  // approach was never validated against DAC's actual parser — just a guess.
+  //
+  // Using exact DAC field names (matching the form's <input name="...">):
+  const headerRow = [
+    'Nombre',            // A
+    'Telefono',          // B
+    'Direccion',         // C
+    'K_Estado',          // D
+    'K_Ciudad',          // E
+    'Oficina_destino',   // F
+    'Observaciones',     // G
+    'Email',             // H
+    'K_Tipo_Empaque',    // I
+    'Cantidad',          // J
   ];
 
-  // SIMPLE 10-column layout (same as the manual test that worked):
-  // No TipoServicio/TipoGuia/TipoEnvio/TipoEntrega/Oficina_Origen —
-  // DAC fills those from the account defaults during server-side parsing.
+  // SIMPLE 10-column layout matching the header above
   const dataRows = includedRows.map(row => [
     row.nombre,         // A: Nombre destinatario
     row.telefono,       // B: Telefono
@@ -180,11 +188,11 @@ export function generateBulkXlsx(
     1,                  // F: Oficina_destino (1=default, DAC auto-routes)
     row.observaciones,  // G: Observaciones
     row.email,          // H: Email
-    row.empaque,        // N: K_Tipo_Empaque
-    row.cantidad,       // O: Cantidad
+    row.empaque,        // I: K_Tipo_Empaque
+    row.cantidad,       // J: Cantidad
   ]);
 
-  const xlsxData = [sacrificialRow, ...dataRows];
+  const xlsxData = [headerRow, ...dataRows];
   const ws = XLSX.utils.aoa_to_sheet(xlsxData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Envios');
