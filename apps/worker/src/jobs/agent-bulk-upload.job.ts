@@ -1,50 +1,69 @@
 /**
- * Agent-side bulk upload job.
+ * Agent-side per-order job (formerly "bulk upload", now per-order Playwright).
  *
- * Runs on Adrian's Mac (not Render). Polls for WAITING_FOR_AGENT jobs,
- * downloads the xlsx that Render prepared, then SPAWNS Claude Code CLI with
- * the `process-bulk-dac` skill to do the actual DAC interaction via Chrome MCP.
+ * Runs on Adrian's Mac, not Render. Polls for WAITING_FOR_AGENT jobs, downloads
+ * the orders JSON that Render prepared, then — instead of trying the broken
+ * DAC bulk endpoint — processes each order sequentially via Playwright on the
+ * real Mac Chrome (which DAC treats as a normal user).
  *
- * Claude Code reads context from /tmp/labelflow-job-context.json, uses Chrome
- * MCP to login + upload + extract guías, writes result to
- * /tmp/labelflow-job-result.json. This worker then:
- *   - updates Labels with guías
- *   - fulfills Shopify orders (marks as fulfilled with tracking URLs)
- *   - marks the Job as COMPLETED
+ * Why this file is still named agent-bulk-upload.job.ts: to avoid touching
+ * every importer during the migration. The exported functions are the agent
+ * entry points that `index.ts` wires into the polling loop.
  *
- * Retry policy: up to 2 attempts per job. After 2 failures, marked FAILED.
+ * Phase 1 behavior (this file):
+ *   - GREEN + YELLOW labels are both processed with the deterministic Playwright
+ *     flow via `createShipment()`. YELLOW labels carry ambiguity warnings that
+ *     phase 2 will hand off to Claude; for now we log the warnings and try
+ *     anyway — if Playwright fails, the label goes to FAILED and the tenant
+ *     can retry individually.
+ *   - RED labels were already marked NEEDS_REVIEW on the Render side — we skip
+ *     them here and email the tenant.
  */
 
-import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 
 import { db } from '../db';
 import { decryptIfPresent } from '../encryption';
-import { downloadBulkXlsxFromStorage } from '../storage/upload';
+import { getConfig } from '../config';
+import { downloadOrdersJsonFromStorage } from '../storage/upload';
+import { uploadLabelPdf } from '../storage/upload';
 import { createStepLogger } from '../logger';
 import logger from '../logger';
+import { sleep } from '../utils';
+import { dacBrowser } from '../dac/browser';
+import { smartLogin } from '../dac/auth';
+import { createShipment } from '../dac/shipment';
+import { markAddressResolutionFeedback } from '../dac/ai-resolver';
+import { downloadLabel } from '../dac/label';
+import { createShopifyClient } from '../shopify/client';
+import { markOrderProcessed, addOrderNote } from '../shopify/orders';
+import { fulfillOrderWithTracking } from '../shopify/fulfillment';
+import { sendShipmentNotification } from '../notifier/email';
+import fsSync from 'fs';
 
-const MAX_ATTEMPTS = 2;
-const CLAUDE_TIMEOUT_MS = 6 * 60 * 1000; // 6 minutes per Claude invocation
+import type { AgentJobPayload } from './process-orders-bulk.job';
 
-interface JobContext {
-  jobId: string;
-  tenantId: string;
-  dacUsername: string;
-  dacPassword: string;
-  xlsxPath: string;
-  expectedRowCount: number;
+const DELAY_BETWEEN_ORDERS_MS = 500;
+
+/**
+ * AGENT_DRY_RUN=true skips all DAC + Shopify + email side effects and
+ * produces fake guías. Used to validate the handoff / classification /
+ * storage / polling pipeline on a developer Mac without creating real
+ * shipments or sending customer emails.
+ *
+ * Read fresh each invocation so tests can toggle it mid-session.
+ */
+function isDryRun(): boolean {
+  return process.env.AGENT_DRY_RUN === 'true';
 }
 
-interface ClaudeResult {
-  success: boolean;
-  guias: string[];
-  error: string | null;
-  stage?: string;
-  dacError?: string;
-  expectedCount?: number;
-  actualCount?: number;
+function makeFakeGuia(jobId: string, index: number): string {
+  // Prefix PENDING- is already recognized elsewhere as "not a real guia" —
+  // reuse that convention so downstream skip logic (PDF download, fulfill,
+  // tagging, email) automatically kicks in and we don't accidentally call
+  // Shopify even if someone forgets a guard.
+  return `PENDING-DRY-${jobId.slice(0, 6)}-${index.toString().padStart(3, '0')}`;
 }
 
 /**
@@ -71,142 +90,11 @@ async function claimNextAgentJob(): Promise<{ id: string; tenantId: string; xlsx
   });
 
   if (claimed.count === 0) return null;
-  return { id: candidate.id, tenantId: candidate.tenantId, xlsxStoragePath: candidate.xlsxStoragePath };
-}
-
-/**
- * Invokes `claude -p` with the process-bulk-dac skill and waits for the
- * result JSON file to be written. Returns the parsed ClaudeResult.
- *
- * The Max subscription is used — `claude` CLI runs non-interactively with
- * a specific skill, and reads context from a temp file (not stdin) so we
- * avoid leaking credentials via argv.
- */
-async function invokeClaudeCode(context: JobContext): Promise<ClaudeResult> {
-  const contextPath = '/tmp/labelflow-job-context.json';
-  const resultPath = '/tmp/labelflow-job-result.json';
-
-  // Write context file (Claude reads this)
-  await fs.writeFile(contextPath, JSON.stringify(context, null, 2), { mode: 0o600 });
-
-  // Delete old result file if exists
-  try {
-    await fs.unlink(resultPath);
-  } catch {
-    // Not present — fine
-  }
-
-  const prompt = [
-    'Execute the process-bulk-dac skill.',
-    '',
-    'Context file: /tmp/labelflow-job-context.json',
-    'Write result to: /tmp/labelflow-job-result.json',
-    '',
-    'Follow the skill SKILL.md instructions exactly. Do not deviate.',
-    'When done, respond with a brief one-line summary only.',
-  ].join('\n');
-
-  return new Promise((resolve, reject) => {
-    const proc = spawn('claude', ['-p', prompt, '--skill', 'process-bulk-dac'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    proc.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-    proc.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    const timeoutHandle = setTimeout(() => {
-      proc.kill('SIGTERM');
-      reject(new Error(`Claude Code timed out after ${CLAUDE_TIMEOUT_MS}ms`));
-    }, CLAUDE_TIMEOUT_MS);
-
-    proc.on('close', async (code) => {
-      clearTimeout(timeoutHandle);
-
-      logger.info(
-        { jobId: context.jobId, exitCode: code, stdoutPreview: stdout.slice(0, 300), stderrPreview: stderr.slice(0, 300) },
-        '[Agent] Claude Code process exited',
-      );
-
-      // Regardless of exit code, read the result file — the skill writes it even on failure
-      try {
-        const resultRaw = await fs.readFile(resultPath, 'utf-8');
-        const result: ClaudeResult = JSON.parse(resultRaw);
-        resolve(result);
-      } catch (err) {
-        reject(new Error(`Claude Code exited (code=${code}) without writing result file: ${(err as Error).message}`));
-      }
-    });
-
-    proc.on('error', (err) => {
-      clearTimeout(timeoutHandle);
-      reject(new Error(`Failed to spawn claude: ${err.message}`));
-    });
-  });
-}
-
-async function fulfillShopifyOrders(
-  tenantId: string,
-  jobId: string,
-  slog: ReturnType<typeof createStepLogger>,
-): Promise<void> {
-  // Load tenant + completed Labels with guías (created by the DB update below)
-  const labels = await db.label.findMany({
-    where: { jobId, dacGuia: { not: null }, status: 'COMPLETED' },
-  });
-
-  if (labels.length === 0) {
-    slog.warn('shopify-fulfill', 'No completed labels with guías to fulfill');
-    return;
-  }
-
-  slog.info('shopify-fulfill', `Fulfilling ${labels.length} Shopify orders (marking as shipped)`);
-
-  // Lazy import to avoid pulling in shopify deps on cold start
-  const { createShopifyClient } = await import('../shopify/client');
-  const { fulfillOrderWithTracking } = await import('../shopify/fulfillment');
-
-  const tenant = await db.tenant.findUnique({ where: { id: tenantId } });
-  if (!tenant?.shopifyStoreUrl || !tenant.shopifyToken) {
-    slog.warn('shopify-fulfill', 'Tenant missing Shopify creds — skipping fulfillment');
-    return;
-  }
-
-  const shopifyToken = decryptIfPresent(tenant.shopifyToken);
-  if (!shopifyToken) {
-    slog.warn('shopify-fulfill', 'Could not decrypt Shopify token — skipping fulfillment');
-    return;
-  }
-
-  const client = createShopifyClient(tenant.shopifyStoreUrl, shopifyToken);
-
-  for (const label of labels) {
-    if (!label.dacGuia) continue; // skip: no guía to attach
-    try {
-      const orderIdNum = Number(label.shopifyOrderId);
-      if (!Number.isInteger(orderIdNum)) {
-        slog.warn('shopify-skip', `Invalid orderId "${label.shopifyOrderId}" for label ${label.id} — skipping fulfillment`);
-        continue;
-      }
-      const trackingUrl = `https://www.dac.com.uy/envios/seguimiento?guia=${label.dacGuia}`;
-      await fulfillOrderWithTracking(client, orderIdNum, label.dacGuia, trackingUrl);
-      slog.info('shopify-fulfilled', `Order ${label.shopifyOrderName} marked fulfilled (guía=${label.dacGuia})`);
-
-      // TODO: re-fetch Shopify order + send customer email. Email requires
-      // original order payload (items, totals) which we don't persist on the
-      // Label record — deferred to v2.
-    } catch (err) {
-      slog.error('shopify-fail', `Fulfillment failed for ${label.shopifyOrderName}: ${(err as Error).message}`);
-      // Continue with other labels
-    }
-  }
+  return {
+    id: candidate.id,
+    tenantId: candidate.tenantId,
+    xlsxStoragePath: candidate.xlsxStoragePath,
+  };
 }
 
 export async function agentBulkUploadJob(job: {
@@ -217,154 +105,373 @@ export async function agentBulkUploadJob(job: {
   const startTime = Date.now();
   const slog = createStepLogger(job.id, job.tenantId);
 
-  let attempt = 0;
-  let lastError = '';
-  let claudeResult: ClaudeResult | null = null;
+  let successCount = 0;
+  let failedCount = 0;
+  let needsReviewCount = 0;
 
   try {
     slog.info('agent-start', `Agent picked up job ${job.id} (tenant=${job.tenantId})`);
 
-    // 1. Load tenant DAC credentials
-    const tenant = await db.tenant.findUnique({
-      where: { id: job.tenantId },
-      select: { dacUsername: true, dacPassword: true },
-    });
-
-    if (!tenant?.dacUsername || !tenant.dacPassword) {
-      throw new Error('Tenant DAC credentials not found');
-    }
+    // 1. Load tenant config (DAC + Shopify + email)
+    const tenant = await db.tenant.findUnique({ where: { id: job.tenantId } });
+    if (!tenant) throw new Error('Tenant not found');
 
     const dacUsername = tenant.dacUsername;
     const dacPassword = decryptIfPresent(tenant.dacPassword);
-    if (!dacPassword) throw new Error('DAC password failed to decrypt');
+    const shopifyToken = decryptIfPresent(tenant.shopifyToken);
+    if (!dacUsername || !dacPassword) throw new Error('Missing DAC credentials');
+    if (!tenant.shopifyStoreUrl || !shopifyToken) throw new Error('Missing Shopify credentials');
 
-    // 2. Download xlsx from Storage to local tmp
-    slog.info('agent-download', `Downloading xlsx from ${job.xlsxStoragePath}`);
-    const downloaded = await downloadBulkXlsxFromStorage(job.xlsxStoragePath);
-    if (downloaded.error || !downloaded.buffer) {
-      throw new Error(`Download failed: ${downloaded.error}`);
+    // 2. Download payload JSON
+    slog.info('agent-download', `Downloading agent payload from ${job.xlsxStoragePath}`);
+    const { payload, error } = await downloadOrdersJsonFromStorage<AgentJobPayload>(
+      job.xlsxStoragePath,
+    );
+    if (error || !payload) throw new Error(`Payload download failed: ${error ?? 'empty'}`);
+    if (payload.version !== 2) {
+      throw new Error(`Unsupported agent payload version: ${String(payload.version)}`);
+    }
+    const entries = payload.orders ?? [];
+    slog.info('agent-download', `Payload has ${entries.length} orders to process`);
+
+    if (entries.length === 0) {
+      await db.job.update({
+        where: { id: job.id },
+        data: {
+          status: 'COMPLETED',
+          finishedAt: new Date(),
+          durationMs: Date.now() - startTime,
+        },
+      });
+      return;
     }
 
-    const xlsxLocalPath = path.join('/tmp', `labelflow-xlsx-${job.id}.xlsx`);
-    await fs.writeFile(xlsxLocalPath, downloaded.buffer, { mode: 0o600 });
-    slog.info('agent-xlsx-saved', `Xlsx saved to ${xlsxLocalPath}`);
+    const dryRun = isDryRun();
+    if (dryRun) {
+      slog.warn(
+        'dry-run',
+        'AGENT_DRY_RUN=true — skipping DAC login / createShipment / Shopify fulfill / email. Fake guías only.',
+      );
+    }
 
-    // 3. Build context for Claude
-    const expectedRowCount = await db.label.count({
-      where: { jobId: job.id, status: { in: ['CREATED', 'FAILED'] } },
-    });
-
-    const context: JobContext = {
-      jobId: job.id,
-      tenantId: job.tenantId,
-      dacUsername,
-      dacPassword,
-      xlsxPath: xlsxLocalPath,
-      expectedRowCount,
-    };
-
-    // 4. Retry loop: up to MAX_ATTEMPTS invocations of Claude
-    while (attempt < MAX_ATTEMPTS) {
-      attempt++;
-      slog.info('claude-attempt', `Invoking Claude Code (attempt ${attempt}/${MAX_ATTEMPTS})`);
-
+    // 3. Launch browser + login (skipped in dry-run)
+    const shopifyClient = createShopifyClient(tenant.shopifyStoreUrl, shopifyToken);
+    // `page` is unused in dry-run but createShipment needs a Playwright Page
+    // in the live path — we only start the browser when we'll actually touch DAC.
+    // Use `any` locally to avoid a cascade of nullable types below.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let page: any = null;
+    if (!dryRun) {
+      page = await dacBrowser.getPage();
       try {
-        claudeResult = await invokeClaudeCode(context);
-
-        if (claudeResult.success) {
-          slog.success('claude-success', `Claude returned ${claudeResult.guias.length} guías on attempt ${attempt}`);
-          break;
-        } else {
-          lastError = claudeResult.error ?? 'Unknown Claude failure';
-          slog.warn('claude-fail', `Attempt ${attempt} failed: ${lastError} (stage=${claudeResult.stage})`);
-          // Fall through to retry
-        }
+        await smartLogin(page, dacUsername, dacPassword, job.tenantId);
+        slog.success('dac-login', 'DAC login successful');
       } catch (err) {
-        lastError = (err as Error).message;
-        slog.error('claude-error', `Attempt ${attempt} crashed: ${lastError}`);
-        claudeResult = null;
+        await dacBrowser.close();
+        throw new Error(`DAC login failed: ${(err as Error).message}`);
       }
     }
 
-    // 5. Cleanup temp files
-    await fs.unlink(xlsxLocalPath).catch(() => {});
-    await fs.unlink('/tmp/labelflow-job-context.json').catch(() => {});
+    // 4. Process each order sequentially
+    const config = getConfig();
+    const tmpDir = path.join(config.LABELS_TMP_DIR, new Date().toISOString().split('T')[0]);
 
-    // 6. Process result
-    if (!claudeResult?.success) {
-      throw new Error(`All ${MAX_ATTEMPTS} Claude attempts failed. Last error: ${lastError}`);
-    }
-
-    // 7. Attach guías to Labels
-    const guias = claudeResult.guias;
-    const pendingLabels = await db.label.findMany({
-      where: { jobId: job.id, dacGuia: null, status: { in: ['CREATED', 'FAILED'] } },
-      orderBy: { createdAt: 'asc' },
+    // Build usedGuias set to prevent cross-batch collisions
+    const existingGuias = await db.label.findMany({
+      where: { tenantId: job.tenantId, dacGuia: { not: null } },
+      select: { dacGuia: true },
     });
+    const usedGuias = new Set<string>(
+      existingGuias.map((l) => l.dacGuia!).filter((g) => !g.startsWith('PENDING-')),
+    );
 
-    let successCount = 0;
-    let failedCount = 0;
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const order = entry.order;
+      const paymentType = entry.paymentType;
+      const labelId = entry.labelId;
+      const cls = entry.classification;
 
-    for (let i = 0; i < guias.length; i++) {
-      const guia = guias[i];
-      const label = pendingLabels[i];
-      if (!label) {
-        slog.warn('guia-orphan', `Guía ${guia} has no pending label (index ${i})`);
-        continue;
-      }
+      slog.info(
+        'order-start',
+        `Processing ${i + 1}/${entries.length}: ${order.name} [${cls.zone}${cls.reasons.length ? ' ' + cls.reasons.join(',') : ''}]`,
+      );
+
+      let result: { guia: string; trackingUrl?: string; aiResolutionHash?: string } | undefined;
+
       try {
+        // Reuse existing guia if label already has one from a failed downstream run
+        const existingLabel = await db.label.findUnique({
+          where: { id: labelId },
+          select: { dacGuia: true, status: true },
+        });
+
+        if (
+          existingLabel?.dacGuia &&
+          !existingLabel.dacGuia.startsWith('PENDING-') &&
+          existingLabel.status === 'FAILED'
+        ) {
+          slog.warn(
+            'order-shipment',
+            `Label ${labelId} already has guia ${existingLabel.dacGuia} — skipping DAC form, reusing`,
+          );
+          result = { guia: existingLabel.dacGuia };
+          usedGuias.add(result.guia);
+        } else if (dryRun) {
+          // Dry-run: synthesize a fake guía and skip all DAC interaction.
+          // The PENDING- prefix triggers the downstream "skip PDF / skip
+          // fulfill / skip tag / skip email" guards already in the live path.
+          const fakeGuia = makeFakeGuia(job.id, i);
+          result = { guia: fakeGuia };
+          slog.info('order-dry-run', `Dry-run: fake guía ${fakeGuia} for ${order.name}`);
+        } else {
+          result = await createShipment(
+            page,
+            order,
+            paymentType,
+            dacUsername,
+            dacPassword,
+            job.tenantId,
+            job.id,
+            usedGuias,
+          );
+          if (result.guia && !result.guia.startsWith('PENDING-')) {
+            usedGuias.add(result.guia);
+          }
+        }
+
+        slog.success('order-shipment', `DAC shipment created for ${order.name}`, { guia: result.guia });
+
+        // Update label with guia, mark CREATED
         await db.label.update({
-          where: { id: label.id },
+          where: { id: labelId },
           data: {
-            dacGuia: guia,
-            status: 'COMPLETED',
+            dacGuia: result.guia,
+            status: 'CREATED',
             errorMessage: null,
           },
         });
+
+        // Download PDF (skip if PENDING guia)
+        if (result.guia && !result.guia.startsWith('PENDING-')) {
+          try {
+            const labelLocalPath = await downloadLabel(page, result.guia, tmpDir, dacUsername, dacPassword);
+            if (labelLocalPath && fsSync.existsSync(labelLocalPath)) {
+              const pdfBuffer = fsSync.readFileSync(labelLocalPath);
+              const upload = await uploadLabelPdf(job.tenantId, labelId, pdfBuffer);
+              if (!upload.error) {
+                await db.label.update({
+                  where: { id: labelId },
+                  data: { pdfPath: upload.path, status: 'COMPLETED' },
+                });
+                slog.info('order-pdf', `PDF uploaded for ${order.name}`, { path: upload.path });
+              }
+              try {
+                fsSync.unlinkSync(labelLocalPath);
+              } catch {
+                /* best-effort cleanup */
+              }
+            }
+          } catch (dlErr) {
+            slog.warn('order-pdf', `PDF download failed (non-fatal): ${(dlErr as Error).message}`);
+          }
+        }
+
+        // Shopify fulfillment
+        let fulfillMode = 'on';
+        try {
+          const raw = await db.$queryRaw<{ fulfillMode: string }[]>`SELECT "fulfillMode" FROM "Tenant" WHERE id = ${job.tenantId}`;
+          if (raw[0]?.fulfillMode) fulfillMode = raw[0].fulfillMode;
+        } catch {
+          /* fallback */
+        }
+        const shouldFulfill = fulfillMode !== 'off';
+        const forceAll = fulfillMode === 'always';
+        if (shouldFulfill && result.guia && !result.guia.startsWith('PENDING-')) {
+          try {
+            await fulfillOrderWithTracking(
+              shopifyClient,
+              order.id,
+              result.guia,
+              result.trackingUrl,
+              forceAll,
+            );
+            slog.success('order-fulfill', `Shopify fulfilled: ${order.name}`);
+          } catch (fulfillErr) {
+            slog.warn(
+              'order-fulfill',
+              `Fulfillment failed (non-fatal): ${(fulfillErr as Error).message}`,
+            );
+          }
+        }
+
+        // Shopify tag
+        if (result.guia && !result.guia.startsWith('PENDING-')) {
+          try {
+            await markOrderProcessed(shopifyClient, order.id, result.guia);
+          } catch (tagErr) {
+            slog.warn('order-shopify', `Tag failed (non-fatal): ${(tagErr as Error).message}`);
+          }
+        }
+
+        // Email notification — NEVER send in dry-run or with a PENDING guía
+        // (we would be emailing the customer a fake or incomplete tracking number)
+        const canSendEmail =
+          !dryRun && !!result.guia && !result.guia.startsWith('PENDING-');
+        if (canSendEmail && tenant.emailHost && tenant.emailUser) {
+          const emailPass = decryptIfPresent(tenant.emailPass);
+          if (emailPass) {
+            const emailSent = await sendShipmentNotification(
+              order,
+              result.guia,
+              paymentType,
+              tenant.storeName ?? tenant.name,
+              {
+                host: tenant.emailHost,
+                port: tenant.emailPort ?? 587,
+                user: tenant.emailUser,
+                pass: emailPass,
+                from: tenant.emailFrom ?? tenant.emailUser,
+              },
+            );
+            if (emailSent) {
+              await db.label.update({
+                where: { id: labelId },
+                data: { emailSent: true, emailSentAt: new Date() },
+              });
+            }
+          }
+        }
+
+        // AI resolver feedback
+        if (result.aiResolutionHash) {
+          await markAddressResolutionFeedback(job.tenantId, result.aiResolutionHash, true, result.guia);
+        }
+
         successCount++;
       } catch (err) {
-        slog.error('label-update', `Failed to update label ${label.id}: ${(err as Error).message}`);
+        if (result?.guia && !result.guia.startsWith('PENDING-')) {
+          usedGuias.add(result.guia);
+        }
+
+        const errorMsg = (err as Error).message;
+
+        if (result?.aiResolutionHash) {
+          await markAddressResolutionFeedback(
+            job.tenantId,
+            result.aiResolutionHash,
+            false,
+            undefined,
+            errorMsg.slice(0, 500),
+          );
+        }
+
+        slog.error('order-fail', `Order ${order.name} failed: ${errorMsg}`);
+
+        await db.label
+          .update({
+            where: { id: labelId },
+            data: {
+              status: 'FAILED',
+              errorMessage: errorMsg.slice(0, 500),
+            },
+          })
+          .catch(() => {});
+
+        // Don't pollute real Shopify orders with notes in dry-run
+        if (!dryRun) {
+          try {
+            await addOrderNote(shopifyClient, order.id, `LabelFlow ERROR: ${errorMsg.slice(0, 200)}`);
+          } catch {
+            /* ignore note errors */
+          }
+        }
+
         failedCount++;
+      }
+
+      if (i < entries.length - 1) {
+        await sleep(DELAY_BETWEEN_ORDERS_MS);
       }
     }
 
-    // 8. Shopify fulfillment (best-effort — don't fail the job if Shopify fails)
-    try {
-      await fulfillShopifyOrders(job.tenantId, job.id, slog);
-    } catch (err) {
-      slog.error('shopify-fulfill-fail', `Shopify fulfillment step crashed: ${(err as Error).message}`);
+    // 5. Save cookies and close browser (only if we actually opened one)
+    if (!dryRun) {
+      await dacBrowser.saveCookies(job.tenantId);
+      await dacBrowser.close();
     }
 
-    // 9. Mark job COMPLETED
+    // 6. Count RED (NEEDS_REVIEW) labels from this job for tenant visibility
+    needsReviewCount = await db.label.count({
+      where: { jobId: job.id, status: 'NEEDS_REVIEW' },
+    });
+
+    // 7. Final status
     const durationMs = Date.now() - startTime;
-    const finalStatus = failedCount === 0 && successCount > 0 ? 'COMPLETED' : successCount > 0 ? 'PARTIAL' : 'FAILED';
+    const status: 'COMPLETED' | 'PARTIAL' | 'FAILED' =
+      failedCount === 0 && needsReviewCount === 0 && successCount > 0
+        ? 'COMPLETED'
+        : successCount > 0
+        ? 'PARTIAL'
+        : 'FAILED';
 
     await db.job.update({
       where: { id: job.id },
       data: {
-        status: finalStatus,
+        status,
         successCount: { increment: successCount },
         failedCount: { increment: failedCount },
         finishedAt: new Date(),
         durationMs,
+        errorMessage:
+          needsReviewCount > 0
+            ? `${needsReviewCount} order(s) routed to NEEDS_REVIEW`
+            : failedCount > 0
+            ? `${failedCount} order(s) failed`
+            : null,
       },
     });
 
-    slog.success('agent-complete', `Done: ${successCount} success, ${failedCount} failed in ${Math.round(durationMs / 1000)}s`);
+    // Don't inflate real usage counters in dry-run — only record the timestamp
+    await db.tenant
+      .update({
+        where: { id: job.tenantId },
+        data: dryRun
+          ? { lastRunAt: new Date() }
+          : {
+              labelsThisMonth: { increment: successCount },
+              labelsTotal: { increment: successCount },
+              lastRunAt: new Date(),
+            },
+      })
+      .catch(() => {});
+
+    slog.success(
+      'agent-complete',
+      `Done: ${successCount} success, ${failedCount} failed, ${needsReviewCount} NEEDS_REVIEW in ${Math.round(durationMs / 1000)}s`,
+    );
   } catch (err) {
     const errorMsg = (err as Error).message;
-    logger.error({ jobId: job.id, error: errorMsg, lastError, attempts: attempt }, 'Agent bulk upload failed');
+    logger.error({ jobId: job.id, error: errorMsg }, 'Agent per-order flow crashed');
 
-    await db.job.update({
-      where: { id: job.id },
-      data: {
-        status: 'FAILED',
-        failedCount: { increment: 1 },
-        finishedAt: new Date(),
-        durationMs: Date.now() - startTime,
-        errorMessage: `${errorMsg} (last Claude error: ${lastError})`.slice(0, 500),
-      },
-    });
+    await dacBrowser.close().catch(() => {});
+
+    await db.job
+      .update({
+        where: { id: job.id },
+        data: {
+          status: 'FAILED',
+          failedCount: { increment: 1 },
+          finishedAt: new Date(),
+          durationMs: Date.now() - startTime,
+          errorMessage: errorMsg.slice(0, 500),
+        },
+      })
+      .catch(() => {});
+  } finally {
+    // Best-effort cleanup of any stale tmp artifacts from old bulk flow
+    await fs.unlink('/tmp/labelflow-job-context.json').catch(() => {});
+    await fs.unlink('/tmp/labelflow-job-result.json').catch(() => {});
   }
 }
 

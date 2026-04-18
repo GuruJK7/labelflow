@@ -80,6 +80,71 @@ export async function uploadBulkXlsxToStorage(
 }
 
 /**
+ * Uploads the per-order JSON payload for the Mac agent.
+ *
+ * Path: agent-orders/{tenantId}/{jobId}.json
+ *
+ * Used by the NEW per-order agent flow (replacement for the broken bulk
+ * xlsx endpoint):
+ *   Render → classifies + pre-creates Labels → uploads orders JSON → WAITING_FOR_AGENT
+ *   Agent  → downloads JSON → runs Playwright per-order → COMPLETED
+ */
+export async function uploadOrdersJsonToStorage(
+  tenantId: string,
+  jobId: string,
+  payload: unknown,
+): Promise<{ path: string; error: string | null }> {
+  const config = getConfig();
+  const supabase = getSupabase();
+
+  const storagePath = `agent-orders/${tenantId}/${jobId}.json`;
+  const buffer = Buffer.from(JSON.stringify(payload), 'utf-8');
+
+  const { error } = await supabase.storage
+    .from(config.SUPABASE_STORAGE_BUCKET)
+    .upload(storagePath, buffer, {
+      contentType: 'application/json',
+      upsert: true,
+    });
+
+  if (error) {
+    logger.error({ error: error.message, storagePath }, 'Failed to upload agent orders JSON');
+    return { path: '', error: error.message };
+  }
+
+  logger.info({ storagePath, tenantId, jobId, sizeBytes: buffer.length }, 'Agent orders JSON uploaded');
+  return { path: storagePath, error: null };
+}
+
+/**
+ * Downloads the agent orders JSON. Returns parsed payload or error.
+ */
+export async function downloadOrdersJsonFromStorage<T = unknown>(
+  storagePath: string,
+): Promise<{ payload: T | null; error: string | null }> {
+  const config = getConfig();
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase.storage
+    .from(config.SUPABASE_STORAGE_BUCKET)
+    .download(storagePath);
+
+  if (error || !data) {
+    logger.error({ error: error?.message, storagePath }, 'Failed to download agent orders JSON');
+    return { payload: null, error: error?.message ?? 'No data returned' };
+  }
+
+  try {
+    const text = await data.text();
+    const payload = JSON.parse(text) as T;
+    logger.info({ storagePath }, 'Agent orders JSON downloaded');
+    return { payload, error: null };
+  } catch (err) {
+    return { payload: null, error: `Parse failure: ${(err as Error).message}` };
+  }
+}
+
+/**
  * Downloads a bulk DAC xlsx from Supabase Storage. Used by the agent.
  */
 export async function downloadBulkXlsxFromStorage(

@@ -1,16 +1,31 @@
 #!/usr/bin/env bash
 #
-# Setup script for Adrian's Mac — Agent runner for LabelFlow bulk DAC uploads.
+# Setup script for Adrian's Mac — Agent runner for LabelFlow DAC per-order flow.
+#
+# Architecture (v2, 2026-04-17):
+#   - Render classifies each Shopify order as GREEN / YELLOW / RED and pre-creates
+#     Label rows (RED → NEEDS_REVIEW, others → PENDING), then uploads a JSON
+#     payload to Supabase Storage and marks the Job WAITING_FOR_AGENT.
+#   - This Mac polls for WAITING_FOR_AGENT jobs and processes each order
+#     individually via Playwright against DAC's /envios/normales form (the bulk
+#     /envios/masivos endpoint was confirmed broken server-side for 2+ rows —
+#     see apps/worker/src/dac/bulk-xlsx.ts deprecation notice).
+#   - Phase 1 (this script): Playwright-only, no Claude spawn. The process-bulk-dac
+#     skill below is installed but NOT invoked yet — it is reserved for Phase 2
+#     (YELLOW escalation and auto-verification with screenshot compare).
 #
 # This script is idempotent: safe to run multiple times. It will:
-#   1. Verify prerequisites (Node 20+, Claude Code CLI, Chrome MCP extension)
+#   1. Verify prerequisites (Node 20+, Claude Code CLI reserved for Phase 2)
 #   2. Configure macOS to stay awake 24/7 (caffeinate via LaunchAgent)
 #   3. Disable system sleep + hibernate (requires sudo)
-#   4. Install/update the bulk-dac-agent skill in Claude Code
-#   5. Run a health check to verify everything works
+#   4. Install dependencies, regenerate Prisma, verify DB connectivity
+#   5. Enable AGENT_MODE=true in worker .env
+#   6. Install Playwright Chromium
+#   7. Install/update the Claude skill (reserved for Phase 2)
+#   8. Register the worker LaunchAgent so it starts on boot / auto-restarts
 #
 # Usage:
-#   cd ~/Documents/LabelflOW2
+#   cd ~/Documents/labelflow
 #   git pull origin main
 #   bash scripts/setup-adrian-mac.sh
 #
@@ -156,8 +171,8 @@ info "Generating Prisma client..."
 npx prisma generate --schema=apps/web/prisma/schema.prisma
 ok "Prisma client generated"
 
-# ===== 5. DB connectivity test =====
-section "5. Database connectivity check"
+# ===== 5. DB connectivity test + schema sync =====
+section "5. Database connectivity check + schema sync"
 
 cd "${REPO_ROOT}/apps/web"
 if npx prisma db pull --print 2>&1 | grep -q "^model"; then
@@ -165,6 +180,16 @@ if npx prisma db pull --print 2>&1 | grep -q "^model"; then
 else
   fail "Cannot connect to Supabase. Check DATABASE_URL in apps/web/.env"
   exit 1
+fi
+
+# Idempotent schema push — applies any enum additions (e.g. NEEDS_REVIEW) or
+# new columns. Safe to re-run: Prisma only pushes diffs. --accept-data-loss is
+# NOT passed, so destructive changes still abort.
+info "Pushing schema changes (idempotent)..."
+if npx prisma db push --skip-generate 2>&1 | tee /tmp/labelflow-db-push.log | grep -qE "already in sync|Your database is now in sync"; then
+  ok "Schema in sync with Supabase"
+else
+  warn "Schema push produced unexpected output — review /tmp/labelflow-db-push.log"
 fi
 cd "${REPO_ROOT}"
 

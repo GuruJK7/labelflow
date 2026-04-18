@@ -1,20 +1,32 @@
 /**
- * Generates a .xlsx file for DAC's bulk upload (masivos) endpoint.
+ * @deprecated DAC's /envios/masivos bulk endpoint has a confirmed server-side
+ * bug that rejects any xlsx with 2+ rows regardless of format. After extensive
+ * testing (13 variants across SheetJS / ExcelJS / LibreOffice) we abandoned the
+ * bulk endpoint entirely in favor of per-order Playwright processing — see
+ * apps/worker/src/jobs/agent-bulk-upload.job.ts and
+ * apps/worker/src/rules/order-classifier.ts for the replacement architecture.
  *
- * Format: 10 columns, NO headers, positional mapping:
- *   A: Nombre destinatario (text)
- *   B: Telefono (text)
- *   C: Direccion (text)
- *   D: K_Estado — department ID (numeric)
- *   E: K_Ciudad — city ID (numeric)
- *   F: Oficina_destino — office ID (numeric)
- *   G: Observaciones (text)
- *   H: Email (text)
- *   I: K_Tipo_Empaque — package type ID (numeric, default 1 = Hasta 2Kg)
- *   J: Cantidad (numeric, default 1)
+ * This module stays in-tree because `bulk-upload.ts` still re-exports the
+ * BulkXlsxRow type and a couple of dev scripts still import it for testing.
+ * Do not use generateBulkXlsx() in production code — new jobs go through the
+ * per-order agent flow.
  *
- * Discovered by reverse-engineering dac.com.uy/envios/masivos on 2026-04-14.
- * See the session notes for the full investigation trail.
+ * Original format (for historical reference):
+ *   Generates a .xlsx file for DAC's bulk upload (masivos) endpoint.
+ *   10 columns, NO headers, positional mapping:
+ *     A: Nombre destinatario (text)
+ *     B: Telefono (text)
+ *     C: Direccion (text)
+ *     D: K_Estado — department ID (numeric)
+ *     E: K_Ciudad — city ID (numeric)
+ *     F: Oficina_destino — office ID (numeric)
+ *     G: Observaciones (text)
+ *     H: Email (text)
+ *     I: K_Tipo_Empaque — package type ID (numeric, default 1 = Hasta 2Kg)
+ *     J: Cantidad (numeric, default 1)
+ *
+ *   Discovered by reverse-engineering dac.com.uy/envios/masivos on 2026-04-14.
+ *   Deprecated on 2026-04-17 after concluding the endpoint itself is broken.
  */
 
 import * as XLSX from 'xlsx';
@@ -157,25 +169,20 @@ export function generateBulkXlsx(
   //   v3 (15 cols, ALL form fields): includes TipoServicio, TipoGuia, TipoEnvio,
   //       TipoEntrega, Oficina_Origen before the recipient data
   // ROW 1 = SACRIFICIAL ROW (DAC's JS treats row[0] as table headers)
-  // ROW 2+ = ACTUAL DATA
+  // ROW 1+ = ACTUAL DATA (no sacrificial row, no headers)
   //
-  // EVIDENCE-BASED LAYOUT (2026-04-17):
-  // Prior iterations confirmed DAC uses POSITIONAL mapping (not header names):
-  //   - 10-col (Nombre at A): error "Oficina_destino not numeric"
-  //   - 11-col (+TipoGuia at A): error shifts to "Oficina_Origen not numeric"
+  // VALIDATED LAYOUT (2026-04-17 — confirmed DAC accepts this via HTTP 200 + ok:true):
+  // 15 columns, POSITIONAL mapping, data starts at row 1 (no header row, no sacrificial).
   //
-  // This tells us DAC has a fixed 15-col schema starting with the form-level
-  // config fields BEFORE the recipient data. Implementing that schema now.
-  //
-  // Full DAC masivos schema (inferred from the single-shipment form field order):
-  //   A: TipoServicio    (1 = default / domicilio)
-  //   B: TipoGuia        (1 = default)
-  //   C: TipoEnvio       (1 = Paquete hasta 2Kg)
-  //   D: TipoEntrega     (1 = Domicilio)
-  //   E: Oficina_Origen  (1 = default, DAC auto-resolves from account)
+  // Full schema (from DAC's masivos endpoint response):
+  //   A: TipoServicio    (numeric, 1 = default)
+  //   B: TipoGuia        (numeric, 1 = default)
+  //   C: TipoEnvio       (numeric, 1 = Paquete hasta 2Kg)
+  //   D: TipoEntrega     (numeric, 1 = Domicilio)
+  //   E: Oficina_Origen  (numeric, 1 = DAC auto-resolves from account)
   //   F: Nombre          (text)
   //   G: Telefono        (text)
-  //   H: Direccion       (text)
+  //   H: Direccion       (text — column index 6 is editable in DAC UI)
   //   I: K_Estado        (numeric, dept ID)
   //   J: K_Ciudad        (numeric, city ID)
   //   K: Oficina_destino (numeric, 1 = auto-route)
@@ -184,28 +191,19 @@ export function generateBulkXlsx(
   //   N: K_Tipo_Empaque  (numeric, 1 = default)
   //   O: Cantidad        (numeric)
   //
-  // Row 1 is a SACRIFICIAL numeric-safe row (not text headers — DAC uses
-  // positional parsing and rejects text where it expects numbers). We use 1s
-  // for numeric columns and empty strings for text columns in row 1.
-  const sacrificialRow = [
-    1, 1, 1, 1, 1,      // A-E: TipoServicio, TipoGuia, TipoEnvio, TipoEntrega, Oficina_Origen
-    '', '', '',         // F-H: Nombre, Telefono, Direccion
-    1, 1, 1,            // I-K: K_Estado, K_Ciudad, Oficina_destino
-    '', '',             // L-M: Observaciones, Email
-    1, 1,               // N-O: K_Tipo_Empaque, Cantidad
-  ];
+  // Do NOT add header rows or sacrificial rows — DAC rejects both.
 
   const dataRows = includedRows.map(row => [
     1,                  // A: TipoServicio
     1,                  // B: TipoGuia
     1,                  // C: TipoEnvio
     1,                  // D: TipoEntrega
-    1,                  // E: Oficina_Origen (DAC resolves from account)
+    1,                  // E: Oficina_Origen
     row.nombre,         // F: Nombre destinatario
     row.telefono,       // G: Telefono
     row.direccion,      // H: Direccion
-    row.kEstado,        // I: K_Estado (dept ID)
-    row.kCiudad,        // J: K_Ciudad (city ID)
+    row.kEstado,        // I: K_Estado
+    row.kCiudad,        // J: K_Ciudad
     1,                  // K: Oficina_destino (1 = auto-route)
     row.observaciones,  // L: Observaciones
     row.email,          // M: Email
@@ -213,7 +211,7 @@ export function generateBulkXlsx(
     row.cantidad,       // O: Cantidad
   ]);
 
-  const xlsxData = [sacrificialRow, ...dataRows];
+  const xlsxData = dataRows;
   const ws = XLSX.utils.aoa_to_sheet(xlsxData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Envios');
