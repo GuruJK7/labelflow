@@ -801,6 +801,42 @@ export interface AddressOverride {
 }
 
 /**
+ * Pure function: applies the fields present in `override` to `current`,
+ * returning a new object with overridden values. Fields absent (undefined)
+ * in `override` keep their `current` values unchanged.
+ *
+ * Extracted from createShipment() to enable isolated unit testing without
+ * a Playwright Page dependency.
+ */
+export function applyAddressOverride(
+  override: AddressOverride,
+  current: {
+    resolvedDept: string;
+    resolvedCity: string;
+    fullAddress: string;
+    extraObs: string;
+    phone: string;
+    recipientName: string;
+  },
+): {
+  resolvedDept: string;
+  resolvedCity: string;
+  fullAddress: string;
+  extraObs: string;
+  phone: string;
+  recipientName: string;
+} {
+  return {
+    resolvedDept: override.department ?? current.resolvedDept,
+    resolvedCity: override.city ?? current.resolvedCity,
+    fullAddress: override.address1 ?? current.fullAddress,
+    extraObs: override.notes ?? current.extraObs,
+    phone: override.phone ?? current.phone,
+    recipientName: override.recipientName ?? current.recipientName,
+  };
+}
+
+/**
  * Creates a shipment in DAC via Playwright browser automation.
  *
  * BUG FIXES applied:
@@ -1002,13 +1038,21 @@ export async function createShipment(
 
   if (addressOverride) {
     // Address was pre-corrected by Claude — skip AI + deterministic resolution entirely
-    if (addressOverride.department !== undefined) resolvedDept = addressOverride.department;
-    if (addressOverride.city !== undefined) resolvedCity = addressOverride.city;
+    const applied = applyAddressOverride(addressOverride, {
+      resolvedDept,
+      resolvedCity,
+      fullAddress,
+      extraObs,
+      phone,
+      recipientName: fullName,
+    });
+    resolvedDept = applied.resolvedDept;
+    resolvedCity = applied.resolvedCity;
+    extraObs = applied.extraObs;
     if (addressOverride.address1 !== undefined) {
-      fullAddress = addressOverride.address1;
+      fullAddress = applied.fullAddress;
       await safeFill(page, 'input[name="DirD"]', fullAddress, slog, DAC_STEPS.STEP3_FILL_ADDRESS, 'DirD (override refill)');
     }
-    if (addressOverride.notes !== undefined) extraObs = addressOverride.notes;
     slog.info(DAC_STEPS.STEP3_SELECT_DEPT, 'Address override applied — skipping deterministic/AI resolution', {
       fullAddress, resolvedDept, resolvedCity, extraObs: extraObs || 'none',
     });
