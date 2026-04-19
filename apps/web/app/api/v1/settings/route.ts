@@ -207,5 +207,15 @@ export async function PUT(req: NextRequest) {
     data,
   });
 
+  // If DAC credentials changed, invalidate cached Playwright session cookies so the
+  // worker logs in fresh with the new creds on the next cycle. Without this, the
+  // worker can keep riding an active DAC session belonging to the *previous* user
+  // for up to 4h (cookie TTL), silently filing guias under the wrong account.
+  if (input.dacUsername !== undefined || input.dacPassword !== undefined) {
+    await db.runLog.deleteMany({
+      where: { tenantId: auth.tenantId, message: 'dac_cookies' },
+    });
+  }
+
   return apiSuccess({ message: 'Configuracion actualizada' });
 }
