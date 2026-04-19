@@ -59,6 +59,19 @@ function isDryRun(): boolean {
   return process.env.AGENT_DRY_RUN === 'true';
 }
 
+/**
+ * LABELFLOW_SKIP_SHOPIFY=true skips all Shopify writes (fulfillment, tag/note,
+ * and the shipment email notification) while still running the full DAC path
+ * and downloading PDFs. Used for real-DAC integration testing without touching
+ * the merchant's Shopify store. Unlike AGENT_DRY_RUN, DAC shipments ARE
+ * created.
+ *
+ * Read fresh each invocation so tests can toggle it mid-session.
+ */
+function isSkipShopify(): boolean {
+  return process.env.LABELFLOW_SKIP_SHOPIFY === 'true';
+}
+
 function makeFakeGuia(jobId: string, index: number): string {
   // Prefix PENDING- is already recognized elsewhere as "not a real guia" —
   // reuse that convention so downstream skip logic (PDF download, fulfill,
@@ -152,6 +165,14 @@ export async function agentBulkUploadJob(job: {
       slog.warn(
         'dry-run',
         'AGENT_DRY_RUN=true — skipping DAC login / createShipment / Shopify fulfill / email. Fake guías only.',
+      );
+    }
+
+    const skipShopify = isSkipShopify();
+    if (skipShopify) {
+      slog.warn(
+        'skip-shopify',
+        'LABELFLOW_SKIP_SHOPIFY=true — DAC will run normally but Shopify fulfillment / tag / email are skipped.',
       );
     }
 
@@ -335,7 +356,7 @@ export async function agentBulkUploadJob(job: {
         }
         const shouldFulfill = fulfillMode !== 'off';
         const forceAll = fulfillMode === 'always';
-        if (shouldFulfill && result.guia && !result.guia.startsWith('PENDING-')) {
+        if (!skipShopify && shouldFulfill && result.guia && !result.guia.startsWith('PENDING-')) {
           try {
             await fulfillOrderWithTracking(
               shopifyClient,
@@ -351,21 +372,25 @@ export async function agentBulkUploadJob(job: {
               `Fulfillment failed (non-fatal): ${(fulfillErr as Error).message}`,
             );
           }
+        } else if (skipShopify) {
+          slog.info('order-fulfill', `SKIP_SHOPIFY: not fulfilling ${order.name} (guia=${result.guia})`);
         }
 
         // Shopify tag
-        if (result.guia && !result.guia.startsWith('PENDING-')) {
+        if (!skipShopify && result.guia && !result.guia.startsWith('PENDING-')) {
           try {
             await markOrderProcessed(shopifyClient, order.id, result.guia);
           } catch (tagErr) {
             slog.warn('order-shopify', `Tag failed (non-fatal): ${(tagErr as Error).message}`);
           }
+        } else if (skipShopify) {
+          slog.info('order-shopify', `SKIP_SHOPIFY: not tagging ${order.name} (guia=${result.guia})`);
         }
 
-        // Email notification — NEVER send in dry-run or with a PENDING guía
-        // (we would be emailing the customer a fake or incomplete tracking number)
+        // Email notification — NEVER send in dry-run / skip-shopify, or with a
+        // PENDING guía (we would email the customer a fake or incomplete tracking).
         const canSendEmail =
-          !dryRun && !!result.guia && !result.guia.startsWith('PENDING-');
+          !dryRun && !skipShopify && !!result.guia && !result.guia.startsWith('PENDING-');
         if (canSendEmail && tenant.emailHost && tenant.emailUser) {
           const emailPass = decryptIfPresent(tenant.emailPass);
           if (emailPass) {
