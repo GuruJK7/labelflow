@@ -344,7 +344,7 @@ function RuleModal({
               onChange={(e) => setName(e.target.value)}
               maxLength={100}
               placeholder="Ej: VIPs siempre envio gratis"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
             />
           </Field>
 
@@ -352,7 +352,7 @@ function RuleModal({
             <select
               value={ruleType}
               onChange={(e) => changeRuleType(e.target.value as ShippingRuleType)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-black"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-black"
             >
               {SHIPPING_RULE_TYPES.map((t) => (
                 <option key={t} value={t}>
@@ -373,7 +373,7 @@ function RuleModal({
                 onChange={(e) => setPriority(parseInt(e.target.value || '0', 10))}
                 min={0}
                 max={10000}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
               />
             </Field>
             <Field label="Estado">
@@ -436,7 +436,7 @@ function ConfigEditor({
             value={config.minTotalUyu ?? ''}
             onChange={(e) => onChange({ minTotalUyu: parseFloat(e.target.value || '0') })}
             min={1}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
           />
           <p className="text-xs text-gray-500 mt-1">
             Pedidos con total convertido a UYU mayor que este monto → REMITENTE.
@@ -452,7 +452,7 @@ function ConfigEditor({
             onChange={(e) => onChange({ windowMinutes: parseInt(e.target.value || '0', 10) })}
             min={1}
             max={1440}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
           />
           <p className="text-xs text-gray-500 mt-1">
             Si el mismo cliente ya tiene un pedido dentro de este periodo, el nuevo va como REMITENTE.
@@ -468,7 +468,7 @@ function ConfigEditor({
             onChange={(e) => onChange({ nth: parseInt(e.target.value || '0', 10) })}
             min={2}
             max={1000}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
           />
           <p className="text-xs text-gray-500 mt-1">
             El 2do, 4to, Nesimo... envio al mismo email va como REMITENTE. Se cuentan etiquetas CREATED y COMPLETED.
@@ -483,7 +483,7 @@ function ConfigEditor({
             onChange={(e) => onChange({ tag: e.target.value })}
             maxLength={100}
             placeholder="vip"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
           />
           <p className="text-xs text-gray-500 mt-1">
             Comparacion case-insensitive contra tags del pedido o del cliente en Shopify.
@@ -499,7 +499,7 @@ function ConfigEditor({
             onChange={(e) => onChange({ minItems: parseInt(e.target.value || '0', 10) })}
             min={1}
             max={100}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
           />
           <p className="text-xs text-gray-500 mt-1">
             Pedidos con mas items que este numero → REMITENTE.
