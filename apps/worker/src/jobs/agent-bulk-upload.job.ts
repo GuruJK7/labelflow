@@ -10,12 +10,12 @@
  * every importer during the migration. The exported functions are the agent
  * entry points that `index.ts` wires into the polling loop.
  *
- * Phase 1 behavior (this file):
- *   - GREEN + YELLOW labels are both processed with the deterministic Playwright
- *     flow via `createShipment()`. YELLOW labels carry ambiguity warnings that
- *     phase 2 will hand off to Claude; for now we log the warnings and try
- *     anyway — if Playwright fails, the label goes to FAILED and the tenant
- *     can retry individually.
+ * Current behavior:
+ *   - GREEN labels: deterministic Playwright flow via `createShipment()`.
+ *   - YELLOW labels: Claude corrects ambiguous address fields (city→dept, apt
+ *     extraction, phone), then `createShipment()` fills the DAC form using the
+ *     override. Claude never opens a browser — it only returns corrected fields.
+ *     If Claude cannot resolve, the label is routed to NEEDS_REVIEW.
  *   - RED labels were already marked NEEDS_REVIEW on the Render side — we skip
  *     them here and email the tenant.
  */
@@ -43,7 +43,7 @@ import { sendShipmentNotification } from '../notifier/email';
 import fsSync from 'fs';
 
 import type { AgentJobPayload } from './process-orders-bulk.job';
-import { invokeClaudeForYellow } from '../agent/invoke-claude';
+import { invokeClaudeForAddressCorrection } from '../agent/invoke-claude';
 
 const DELAY_BETWEEN_ORDERS_MS = 500;
 
@@ -247,50 +247,64 @@ export async function agentBulkUploadJob(job: {
           result = { guia: fakeGuia };
           slog.info('order-dry-run', `Dry-run: fake guía ${fakeGuia} for ${order.name}`);
         } else if (cls.zone === 'YELLOW') {
-          // YELLOW: hand off to the Claude Code skill running on the Mac Mini
-          // with the Max subscription. Claude opens its own Chromium via the
-          // Playwright MCP — the worker's dacBrowser stays open but is NOT
-          // used for this order (Estrategia A: dos Chromium simultáneos).
-          const debugYellow = process.env.LABELFLOW_YELLOW_DEBUG === 'true';
-          const claudeRes = await invokeClaudeForYellow({
+          // YELLOW: Claude corrects ambiguous address fields, worker fills DAC
+          // form via the standard Playwright path. Claude never touches DAC.
+          const correctionStart = Date.now();
+          const override = await invokeClaudeForAddressCorrection({
             entry,
-            tenant: {
-              id: job.tenantId,
-              dacUsername,
-              dacPassword,
-              // DAC auto-fills "Origen" from the logged-in account; these are
-              // only used by the skill for reasoning/logging context.
-              senderName: tenant.storeName ?? tenant.name,
-              senderEmail: tenant.emailFrom ?? tenant.emailUser,
-            },
             jobId: job.id,
             slog,
-            debug: debugYellow,
           });
+          const correctionMs = Date.now() - correctionStart;
 
-          if (debugYellow) {
-            // Debug mode: skill filled form but did NOT submit. Mark the label
-            // with a PENDING- guía so downstream guards skip PDF/fulfill/tag/
-            // email — mirrors dry-run behavior.
-            const pendingGuia = `PENDING-DEBUG-${labelId.slice(0, 8)}`;
-            result = { guia: pendingGuia };
-            slog.info(
-              'order-yellow-debug',
-              `YELLOW debug: ${(claudeRes.reasoning ?? 'no reasoning').slice(0, 200)}`,
+          // Shadow mode: log full correction detail for monitoring / comparison.
+          // Enable with LABELFLOW_YELLOW_SHADOW=true on the Mac Mini.
+          if (process.env.LABELFLOW_YELLOW_SHADOW === 'true') {
+            slog.info('yellow-shadow', 'Address correction result (shadow logging enabled)', {
+              override: override ?? 'null (unresolvable)',
+              correctionMs,
+              reasons: cls.reasons,
+              originalCity: order.shipping_address?.city,
+              originalProvince: order.shipping_address?.province,
+              originalAddress1: order.shipping_address?.address1,
+            });
+          }
+
+          if (!override) {
+            // Claude couldn't resolve — route to manual review, no throw.
+            slog.warn(
+              'order-yellow-unresolvable',
+              `YELLOW order ${order.name} could not be resolved by Claude — marking NEEDS_REVIEW`,
             );
-          } else if (!claudeRes.success || !claudeRes.guia) {
-            throw new Error(
-              `YELLOW escalation failed: ${claudeRes.error || claudeRes.reasoning || 'unknown'}`,
-            );
-          } else {
-            result = { guia: claudeRes.guia, trackingUrl: claudeRes.trackingUrl };
-            if (!result.guia.startsWith('PENDING-')) {
-              usedGuias.add(result.guia);
-            }
-            slog.success(
-              'order-yellow-done',
-              `YELLOW resolved by Claude: ${(claudeRes.reasoning ?? '').slice(0, 200)}`,
-            );
+            await db.label.update({
+              where: { id: labelId },
+              data: {
+                status: 'NEEDS_REVIEW',
+                errorMessage: 'Address correction failed — manual review required',
+              },
+            });
+            continue;
+          }
+
+          slog.info(
+            'order-yellow-override',
+            `YELLOW ${order.name}: Claude corrected in ${correctionMs}ms`,
+            { ...override },
+          );
+
+          result = await createShipment(
+            page,
+            order,
+            paymentType,
+            dacUsername,
+            dacPassword,
+            job.tenantId,
+            job.id,
+            usedGuias,
+            override,
+          );
+          if (result.guia && !result.guia.startsWith('PENDING-')) {
+            usedGuias.add(result.guia);
           }
         } else {
           // GREEN: deterministic Playwright flow on the worker's browser.

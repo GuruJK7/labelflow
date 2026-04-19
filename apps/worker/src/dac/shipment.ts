@@ -781,6 +781,26 @@ async function safeSelect(page: Page, selector: string, value: string, slog: Ste
 }
 
 /**
+ * Optional address fields that Claude has pre-corrected for a YELLOW order.
+ * When passed to createShipment(), the address resolution pipeline
+ * (detectCityIntelligent + AI resolver) is skipped entirely.
+ */
+export interface AddressOverride {
+  /** Cleaned street + number, with apt/floor markers moved to notes */
+  address1?: string;
+  /** Concatenated apt/floor markers and other delivery notes */
+  notes?: string;
+  /** Resolved DAC department name (must be in VALID_DEPARTMENTS) */
+  department?: string;
+  /** Resolved city for the department dropdown */
+  city?: string;
+  /** Override recipient name */
+  recipientName?: string;
+  /** Normalized phone number (digits only) */
+  phone?: string;
+}
+
+/**
  * Creates a shipment in DAC via Playwright browser automation.
  *
  * BUG FIXES applied:
@@ -798,7 +818,8 @@ export async function createShipment(
   dacPassword: string,
   tenantId: string,
   jobId?: string,
-  usedGuias?: Set<string>
+  usedGuias?: Set<string>,
+  addressOverride?: AddressOverride
 ): Promise<DacShipmentResult> {
   const slog = createStepLogger(jobId ?? 'manual', tenantId);
   const addr = order.shipping_address;
@@ -899,8 +920,9 @@ export async function createShipment(
   slog.info(DAC_STEPS.STEP3_START, 'Filling Step 3: recipient data');
   await dacBrowser.screenshot(page, `step3-before-${order.name.replace('#', '')}`);
 
-  const fullName = `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente';
-  const phone = cleanPhone(addr.phone);
+  const fullName = addressOverride?.recipientName
+    ?? (`${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente');
+  const phone = addressOverride?.phone ?? cleanPhone(addr.phone);
 
   // BUG FIX 5 (NAME CROSS-ASSIGNMENT): Clear ALL recipient fields BEFORE filling
   // This prevents stale data from previous order leaking into current one
@@ -976,12 +998,26 @@ export async function createShipment(
     { zip: addr.zip, city: addr.city, address1: addr.address1 }
   );
 
+  let aiResolution: AIResolverResult | null = null;
+
+  if (addressOverride) {
+    // Address was pre-corrected by Claude — skip AI + deterministic resolution entirely
+    if (addressOverride.department !== undefined) resolvedDept = addressOverride.department;
+    if (addressOverride.city !== undefined) resolvedCity = addressOverride.city;
+    if (addressOverride.address1 !== undefined) {
+      fullAddress = addressOverride.address1;
+      await safeFill(page, 'input[name="DirD"]', fullAddress, slog, DAC_STEPS.STEP3_FILL_ADDRESS, 'DirD (override refill)');
+    }
+    if (addressOverride.notes !== undefined) extraObs = addressOverride.notes;
+    slog.info(DAC_STEPS.STEP3_SELECT_DEPT, 'Address override applied — skipping deterministic/AI resolution', {
+      fullAddress, resolvedDept, resolvedCity, extraObs: extraObs || 'none',
+    });
+  } else {
   // ── AI FALLBACK ──
   // When deterministic rules cannot resolve the address with high confidence,
   // ask Claude Haiku to resolve it using structured tool use. The AI result
   // overrides the deterministic result for dept/city/barrio/address/obs.
   // See apps/worker/src/dac/ai-resolver.ts for the full implementation.
-  let aiResolution: AIResolverResult | null = null;
   const needsAI =
     intelligent.confidence === 'low' ||
     (intelligent.confidence === 'medium' && !intelligent.barrio) ||
@@ -1115,6 +1151,7 @@ export async function createShipment(
       );
     }
   }
+  } // end else (no addressOverride)
 
   // Department (select) — using resolved (possibly corrected) department
   if (resolvedDept) {

@@ -2,13 +2,12 @@ import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 
-// Admin tenant IDs that can see ALL reports
-const ADMIN_TENANT_IDS = [
-  'cmn86ab6i0003do10kx8s8cwh', // AutoEnvia Test
-  'cmndmk0wl0005603cdhx2b4jo', // Luciano
-  'cmneod7nv0001oew5vnk5dsas', // Manuel
-  'cmnexjjt700015feh428w52ms', // Leandro
-];
+// Admin tenant IDs that can see ALL reports.
+// Configured via ADMIN_TENANT_IDS env var (comma-separated list of tenant IDs).
+// Falls back to empty array (no cross-tenant admin access) if not set.
+const ADMIN_TENANT_IDS: string[] = process.env.ADMIN_TENANT_IDS
+  ? process.env.ADMIN_TENANT_IDS.split(',').map((id) => id.trim()).filter(Boolean)
+  : [];
 
 const ALLOWED_TYPES = ['bug', 'feedback', 'help'];
 

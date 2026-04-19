@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
   const webhookSecret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error('MercadoPago: MERCADOPAGO_WEBHOOK_SECRET is not set — rejecting webhook');
-    return NextResponse.json({ error: 'Server misconfiguration' }, { status: 500 });
+    return NextResponse.json({ error: 'Service not configured' }, { status: 503 });
   }
 
   const isValid = verifyMercadoPagoSignature(req, rawBody, webhookSecret);

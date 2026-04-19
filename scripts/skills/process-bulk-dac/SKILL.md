@@ -51,10 +51,6 @@ Path: `/tmp/labelflow-order-context.json`
     }
   },
   "paymentType": "DESTINATARIO",
-  "dacCreds": {
-    "username": "49665891",
-    "password": "<plaintext>"
-  },
   "senderInfo": {
     "name": "Adrian Spinelli Lemo",
     "phone": "+59899999999",
@@ -68,7 +64,20 @@ Path: `/tmp/labelflow-order-context.json`
 
 The worker will have written this file atomically before spawning you. It is
 safe to assume the file exists, is valid JSON, and has all fields above.
-**Do not ask the user for clarifying information. All inputs are in the JSON.**
+**Do not ask the user for clarifying information. All inputs are in the JSON or env vars.**
+
+### DAC credentials — read from environment variables (NOT from the context file)
+
+DAC credentials are injected as environment variables by the worker. Read them
+with the `Bash` tool before navigating to DAC:
+
+```bash
+echo $DAC_USERNAME
+echo $DAC_PASSWORD
+```
+
+Both variables will always be set. Do not look for `dacCreds` in the JSON —
+it is no longer present.
 
 ### Output — you MUST write this file before exiting
 
@@ -105,15 +114,17 @@ Failure (unrecoverable — worker will mark label FAILED):
 
 ## How to operate
 
-1. **Read** `/tmp/labelflow-order-context.json` with the `Read` tool.
-2. **Launch Chromium** via the `playwright` MCP server (`browser_navigate` tool)
+1. **Read credentials** from environment variables using the `Bash` tool:
+   `echo $DAC_USERNAME` and `echo $DAC_PASSWORD`. Store them for the login step.
+2. **Read** `/tmp/labelflow-order-context.json` with the `Read` tool.
+3. **Launch Chromium** via the `playwright` MCP server (`browser_navigate` tool)
    to `https://www.dac.com.uy/login`.
-3. **Login** using `dacCreds.username` and `dacCreds.password`. Fill the form
-   fields by inspecting the DOM with `browser_snapshot`; never rely on fixed
-   selectors — DAC may change them without notice.
-4. **Navigate** to the `/envios/normales` form (or equivalent "Agregar envío"
+4. **Login** using the `DAC_USERNAME` and `DAC_PASSWORD` values from step 1. Fill
+   the form fields by inspecting the DOM with `browser_snapshot`; never rely on
+   fixed selectors — DAC may change them without notice.
+5. **Navigate** to the `/envios/normales` form (or equivalent "Agregar envío"
    flow you find after login).
-5. **Fill the form step by step**:
+6. **Fill the form step by step**:
    - **Tipo de envío**: choose the option matching `paymentType`
      (`REMITENTE` → "Paga remitente" / `DESTINATARIO` → "Paga destino")
    - **Origen / Remitente**: use `senderInfo` fields
@@ -134,19 +145,19 @@ Failure (unrecoverable — worker will mark label FAILED):
        (< 7 digits), use `"00000000"` as DAC fallback and flag it in reasoning.
      - Observaciones: concatenate `address2` + extracted apt/floor markers.
    - **Pago**: set as specified by `paymentType`.
-6. **Submit** the form. DAC will either:
+7. **Submit** the form. DAC will either:
    - Show a confirmation with the new guía (8+ digits) → **success**
    - Show a validation error → read the error text, decide if it's recoverable
      (e.g. dropdown wrong — retry with adjusted values, max 2 retries) or
      unrecoverable (e.g. "no credit", "duplicate guía") → **failure**
-7. **Extract the guía** from the confirmation page. It is typically a string
+8. **Extract the guía** from the confirmation page. It is typically a string
    of 10–13 digits shown prominently. Use `browser_evaluate` if needed to read
    `document.body.innerText` and regex for the guía pattern.
-8. **Write the result JSON** (`/tmp/labelflow-order-result.json`) with the
+9. **Write the result JSON** (`/tmp/labelflow-order-result.json`) with the
    structure above. Be verbose in `reasoning` — the worker logs it and the
    tenant sees it in the dashboard.
-9. **Close the browser** (`browser_close`) cleanly.
-10. Exit.
+10. **Close the browser** (`browser_close`) cleanly.
+11. Exit.
 
 ## Safety rules (CRITICAL — do not violate)
 
