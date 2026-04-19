@@ -26,7 +26,7 @@ import type { createStepLogger } from '../logger';
 const CONTEXT_PATH = '/tmp/labelflow-order-context.json';
 const RESULT_PATH = '/tmp/labelflow-order-result.json';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || '/Users/jk7/.local/bin/claude';
-const DEFAULT_TIMEOUT_MS = 180_000;
+const DEFAULT_TIMEOUT_MS = 600_000;
 
 const VALID_DEPARTMENTS = [
   'Montevideo', 'Canelones', 'Maldonado', 'Rocha', 'Colonia',
