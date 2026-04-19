@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { db } from '@/lib/db';
 import { enqueueProcessOrders } from '@/lib/queue';
+import { decrypt } from '@/lib/encryption';
 
 function verifyHmac(body: string, hmacHeader: string, secret: string): boolean {
   const digest = crypto
@@ -28,20 +29,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing headers' }, { status: 401 });
   }
 
-  // Verify HMAC using the app's client secret (shared across all shops).
-  // Shopify signs all webhook payloads with the app's API secret key — NOT
-  // the per-shop access token. See:
-  // https://shopify.dev/docs/api/admin-rest/webhooks#verify-a-webhook
-  const webhookSecret = process.env.SHOPIFY_CLIENT_SECRET;
-  if (!webhookSecret) {
-    console.error('Shopify: SHOPIFY_CLIENT_SECRET is not set — rejecting webhook');
-    return NextResponse.json({ error: 'Service not configured' }, { status: 503 });
-  }
-
-  if (!verifyHmac(body, hmacHeader, webhookSecret)) {
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
-  }
-
   // Only process order/paid events
   if (topic !== 'orders/paid') {
     return NextResponse.json({ ok: true });
@@ -54,11 +41,17 @@ export async function POST(req: NextRequest) {
       isActive: true,
       subscriptionStatus: 'ACTIVE',
     },
-    select: { id: true },
+    select: { id: true, shopifyToken: true },
   });
 
-  if (!tenant) {
+  if (!tenant || !tenant.shopifyToken) {
     return NextResponse.json({ ok: true });
+  }
+
+  // Verify HMAC using the tenant's Shopify token as webhook secret
+  const shopifySecret = decrypt(tenant.shopifyToken);
+  if (!verifyHmac(body, hmacHeader, shopifySecret)) {
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
   try {
