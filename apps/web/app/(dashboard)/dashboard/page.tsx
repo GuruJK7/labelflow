@@ -62,7 +62,7 @@ export default function DashboardPage() {
   const [availableProductTypes, setAvailableProductTypes] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
   const [savingSort, setSavingSort] = useState(false);
-  const [fulfillMode, setFulfillMode] = useState<'off' | 'on' | 'always'>('on');
+  const [fulfillMode, setFulfillMode] = useState<'off' | 'on' | 'always' | 'testing'>('on');
   const [savingFulfill, setSavingFulfill] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -306,9 +306,10 @@ export default function DashboardPage() {
             <span className="text-xs text-zinc-500">Preparado:</span>
             <div className="flex rounded-lg overflow-hidden border border-white/[0.06]">
               {([
-                { value: 'off' as const, label: 'No', title: 'No marcar como Preparado — solo crea el envio en DAC' },
+                { value: 'off' as const, label: 'No', title: 'No marcar como Preparado — solo crea el envio en DAC (igual taggea y manda email)' },
                 { value: 'on' as const, label: 'Si', title: 'Marcar como Preparado si el pedido tiene fulfillment abierto' },
                 { value: 'always' as const, label: 'Siempre', title: 'Forzar Preparado siempre, sin importar el producto o estado del pedido' },
+                { value: 'testing' as const, label: 'Test', title: 'MODO TEST: no toca Shopify en absoluto (sin fulfillment, sin tag, sin nota, sin email). Usar solo en tenants de prueba.' },
               ]).map((opt) => (
                 <button
                   key={opt.value}
@@ -334,7 +335,9 @@ export default function DashboardPage() {
                         ? 'bg-zinc-600 text-white'
                         : opt.value === 'on'
                           ? 'bg-emerald-600 text-white'
-                          : 'bg-amber-600 text-white'
+                          : opt.value === 'always'
+                            ? 'bg-amber-600 text-white'
+                            : 'bg-sky-600 text-white'
                       : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'
                   )}
                 >

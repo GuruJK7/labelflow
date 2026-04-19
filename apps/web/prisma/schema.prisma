@@ -111,7 +111,7 @@ model Tenant {
 
   // Fulfillment
   autoFulfillEnabled Boolean @default(true) // Mark orders as "Preparado" in Shopify after DAC shipment
-  fulfillMode        String  @default("on") // "off" | "on" | "always" — always = force fulfill regardless of product/status
+  fulfillMode        String  @default("on") // "off" | "on" | "always" | "testing" — testing = skip ALL Shopify writes (fulfill/tag/note/email) for test-only tenants
 
   // Consecutive order consolidation
   consolidateConsecutiveOrders Boolean @default(false) // When same customer places 2+ orders in window, 2nd+ = REMITENTE

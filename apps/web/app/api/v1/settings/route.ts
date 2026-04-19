@@ -34,7 +34,7 @@ const updateSchema = z.object({
     maxOrders: z.number().min(0).max(50),
   })).max(10).optional(),
   autoFulfillEnabled: z.boolean().optional(),
-  fulfillMode: z.enum(['off', 'on', 'always']).optional(),
+  fulfillMode: z.enum(['off', 'on', 'always', 'testing']).optional(),
   consolidateConsecutiveOrders: z.boolean().optional(),
   consolidationWindowMinutes: z.number().min(1).max(1440).optional(),
   defaultPrinter: z.string().max(200).optional(),
@@ -170,8 +170,8 @@ export async function PUT(req: NextRequest) {
   if (input.autoFulfillEnabled !== undefined) data.autoFulfillEnabled = input.autoFulfillEnabled;
   if (input.fulfillMode !== undefined) {
     data.fulfillMode = input.fulfillMode;
-    // Sync legacy boolean field
-    data.autoFulfillEnabled = input.fulfillMode !== 'off';
+    // Sync legacy boolean field — 'off' and 'testing' disable fulfillment
+    data.autoFulfillEnabled = input.fulfillMode !== 'off' && input.fulfillMode !== 'testing';
   }
   if (input.defaultPrinter !== undefined) data.defaultPrinter = input.defaultPrinter;
   if (input.autoPrintEnabled !== undefined) data.autoPrintEnabled = input.autoPrintEnabled;

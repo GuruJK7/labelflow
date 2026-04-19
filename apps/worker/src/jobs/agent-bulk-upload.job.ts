@@ -347,6 +347,14 @@ export async function agentBulkUploadJob(job: {
         }
 
         // Shopify fulfillment
+        // fulfillMode values:
+        //   - 'off'      → skip fulfillment (still tag/note/email)
+        //   - 'on'       → fulfill open orders + tag + note + email
+        //   - 'always'   → force fulfill any status + tag + note + email
+        //   - 'testing'  → skip EVERYTHING Shopify-side (fulfill, tag, note, email)
+        //                  for dedicated test tenants that must not touch the store.
+        // Also honors global env LABELFLOW_SKIP_SHOPIFY (same effect as 'testing'
+        // but across all tenants — used for operator-side kill-switch).
         let fulfillMode = 'on';
         try {
           const raw = await db.$queryRaw<{ fulfillMode: string }[]>`SELECT "fulfillMode" FROM "Tenant" WHERE id = ${job.tenantId}`;
@@ -354,9 +362,11 @@ export async function agentBulkUploadJob(job: {
         } catch {
           /* fallback */
         }
-        const shouldFulfill = fulfillMode !== 'off';
+        const tenantTesting = fulfillMode === 'testing';
+        const skipAllShopify = skipShopify || tenantTesting;
+        const shouldFulfill = fulfillMode !== 'off' && fulfillMode !== 'testing';
         const forceAll = fulfillMode === 'always';
-        if (!skipShopify && shouldFulfill && result.guia && !result.guia.startsWith('PENDING-')) {
+        if (!skipAllShopify && shouldFulfill && result.guia && !result.guia.startsWith('PENDING-')) {
           try {
             await fulfillOrderWithTracking(
               shopifyClient,
@@ -372,25 +382,27 @@ export async function agentBulkUploadJob(job: {
               `Fulfillment failed (non-fatal): ${(fulfillErr as Error).message}`,
             );
           }
-        } else if (skipShopify) {
-          slog.info('order-fulfill', `SKIP_SHOPIFY: not fulfilling ${order.name} (guia=${result.guia})`);
+        } else if (skipAllShopify) {
+          const reason = tenantTesting ? 'fulfillMode=testing' : 'LABELFLOW_SKIP_SHOPIFY';
+          slog.info('order-fulfill', `SKIP_SHOPIFY (${reason}): not fulfilling ${order.name} (guia=${result.guia})`);
         }
 
         // Shopify tag
-        if (!skipShopify && result.guia && !result.guia.startsWith('PENDING-')) {
+        if (!skipAllShopify && result.guia && !result.guia.startsWith('PENDING-')) {
           try {
             await markOrderProcessed(shopifyClient, order.id, result.guia);
           } catch (tagErr) {
             slog.warn('order-shopify', `Tag failed (non-fatal): ${(tagErr as Error).message}`);
           }
-        } else if (skipShopify) {
-          slog.info('order-shopify', `SKIP_SHOPIFY: not tagging ${order.name} (guia=${result.guia})`);
+        } else if (skipAllShopify) {
+          const reason = tenantTesting ? 'fulfillMode=testing' : 'LABELFLOW_SKIP_SHOPIFY';
+          slog.info('order-shopify', `SKIP_SHOPIFY (${reason}): not tagging ${order.name} (guia=${result.guia})`);
         }
 
-        // Email notification — NEVER send in dry-run / skip-shopify, or with a
-        // PENDING guía (we would email the customer a fake or incomplete tracking).
+        // Email notification — NEVER send in dry-run / skip-shopify / testing, or
+        // with a PENDING guía (we'd email the customer a fake/incomplete tracking).
         const canSendEmail =
-          !dryRun && !skipShopify && !!result.guia && !result.guia.startsWith('PENDING-');
+          !dryRun && !skipAllShopify && !!result.guia && !result.guia.startsWith('PENDING-');
         if (canSendEmail && tenant.emailHost && tenant.emailUser) {
           const emailPass = decryptIfPresent(tenant.emailPass);
           if (emailPass) {
