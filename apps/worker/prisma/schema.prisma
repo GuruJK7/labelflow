@@ -173,6 +173,10 @@ model Job {
   failedCount  Int @default(0)
   skippedCount Int @default(0)
 
+  // Agent-based bulk flow: Render generates xlsx, Agent (Adrian's Mac) uploads to DAC
+  xlsxStoragePath String?
+  agentPickedAt   DateTime?
+
   errorMessage String?
   createdAt    DateTime @default(now())
 
@@ -193,6 +197,8 @@ enum JobType {
 enum JobStatus {
   PENDING
   RUNNING
+  WAITING_FOR_AGENT
+  UPLOADING
   COMPLETED
   FAILED
   PARTIAL
@@ -246,6 +252,7 @@ enum LabelStatus {
   COMPLETED
   FAILED
   SKIPPED
+  NEEDS_REVIEW
 }
 
 enum PaymentType {
