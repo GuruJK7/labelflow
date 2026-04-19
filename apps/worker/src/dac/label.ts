@@ -33,9 +33,11 @@ export async function downloadLabel(
 
   logger.info({ guia, outputDir }, 'Downloading shipping label (pegote) from DAC');
 
-  // DAC occasionally needs a few seconds after shipment creation to make the
-  // pegote PDF available (returns HTTP 500 until then). Retry with backoff.
-  const RETRY_DELAYS_MS = [3_000, 6_000, 12_000];
+  // DAC occasionally needs time after shipment creation to make the pegote PDF
+  // available (returns HTTP 500 until then). Retry with backoff.
+  // Observed in prod: 21s window was insufficient for some guias (e.g. 2355997).
+  // Extended to ~110s total window covering 5 attempts.
+  const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000];
 
   try {
     // The label sticker URL is deterministic — no need to navigate to history page
@@ -92,7 +94,7 @@ export async function downloadLabel(
     }
 
     // All HTTP retries exhausted — try the UI fallback (click the "Imprimir
-    // etiqueta" link). By now DAC has had ~21s total to index the shipment.
+    // etiqueta" link). By now DAC has had ~110s total to index the shipment.
     const etiquetaLink = await page.$(`a[href*="getPegote"][href*="${guia}"]`);
     if (etiquetaLink) {
       logger.info({ guia }, 'Trying click-to-download fallback for Imprimir etiqueta');
