@@ -43,6 +43,7 @@ import { sendShipmentNotification } from '../notifier/email';
 import fsSync from 'fs';
 
 import type { AgentJobPayload } from './process-orders-bulk.job';
+import { invokeClaudeForYellow } from '../agent/invoke-claude';
 
 const DELAY_BETWEEN_ORDERS_MS = 500;
 
@@ -224,7 +225,54 @@ export async function agentBulkUploadJob(job: {
           const fakeGuia = makeFakeGuia(job.id, i);
           result = { guia: fakeGuia };
           slog.info('order-dry-run', `Dry-run: fake guía ${fakeGuia} for ${order.name}`);
+        } else if (cls.zone === 'YELLOW') {
+          // YELLOW: hand off to the Claude Code skill running on the Mac Mini
+          // with the Max subscription. Claude opens its own Chromium via the
+          // Playwright MCP — the worker's dacBrowser stays open but is NOT
+          // used for this order (Estrategia A: dos Chromium simultáneos).
+          const debugYellow = process.env.LABELFLOW_YELLOW_DEBUG === 'true';
+          const claudeRes = await invokeClaudeForYellow({
+            entry,
+            tenant: {
+              id: job.tenantId,
+              dacUsername,
+              dacPassword,
+              // DAC auto-fills "Origen" from the logged-in account; these are
+              // only used by the skill for reasoning/logging context.
+              senderName: tenant.storeName ?? tenant.name,
+              senderEmail: tenant.emailFrom ?? tenant.emailUser,
+            },
+            jobId: job.id,
+            slog,
+            debug: debugYellow,
+          });
+
+          if (debugYellow) {
+            // Debug mode: skill filled form but did NOT submit. Mark the label
+            // with a PENDING- guía so downstream guards skip PDF/fulfill/tag/
+            // email — mirrors dry-run behavior.
+            const pendingGuia = `PENDING-DEBUG-${labelId.slice(0, 8)}`;
+            result = { guia: pendingGuia };
+            slog.info(
+              'order-yellow-debug',
+              `YELLOW debug: ${(claudeRes.reasoning ?? 'no reasoning').slice(0, 200)}`,
+            );
+          } else if (!claudeRes.success || !claudeRes.guia) {
+            throw new Error(
+              `YELLOW escalation failed: ${claudeRes.error || claudeRes.reasoning || 'unknown'}`,
+            );
+          } else {
+            result = { guia: claudeRes.guia, trackingUrl: claudeRes.trackingUrl };
+            if (!result.guia.startsWith('PENDING-')) {
+              usedGuias.add(result.guia);
+            }
+            slog.success(
+              'order-yellow-done',
+              `YELLOW resolved by Claude: ${(claudeRes.reasoning ?? '').slice(0, 200)}`,
+            );
+          }
         } else {
+          // GREEN: deterministic Playwright flow on the worker's browser.
           result = await createShipment(
             page,
             order,

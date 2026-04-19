@@ -33,6 +33,10 @@ export async function downloadLabel(
 
   logger.info({ guia, outputDir }, 'Downloading shipping label (pegote) from DAC');
 
+  // DAC occasionally needs a few seconds after shipment creation to make the
+  // pegote PDF available (returns HTTP 500 until then). Retry with backoff.
+  const RETRY_DELAYS_MS = [3_000, 6_000, 12_000];
+
   try {
     // The label sticker URL is deterministic — no need to navigate to history page
     const labelUrl = `https://www.dac.com.uy/envios/getPegote?CodigoRastreo=${guia}`;
@@ -45,26 +49,50 @@ export async function downloadLabel(
 
     logger.info({ guia, url: labelUrl }, 'Fetching label PDF via getPegote');
 
-    const response = await axios.get(labelUrl, {
-      responseType: 'arraybuffer',
-      headers: { Cookie: cookieHeader },
-      timeout: 30_000,
-    });
+    // Attempt up to 4 times total: initial + 3 retries. Retry on 5xx and on
+    // non-PDF responses (DAC sometimes returns HTML "envio no encontrado" while
+    // indexing). 4xx errors are NOT retried — those are unrecoverable.
+    let lastErr: Error | null = null;
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        const response = await axios.get(labelUrl, {
+          responseType: 'arraybuffer',
+          headers: { Cookie: cookieHeader },
+          timeout: 30_000,
+          validateStatus: () => true, // handle status codes manually so we control retries
+        });
 
-    const buffer = Buffer.from(response.data);
-    const contentType = response.headers['content-type'] || '';
-    const isPdf = contentType.includes('application/pdf') ||
-      (buffer.length >= 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46); // %PDF
+        const buffer = Buffer.from(response.data);
+        const contentType = response.headers['content-type'] || '';
+        const isPdf = contentType.includes('application/pdf') ||
+          (buffer.length >= 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46); // %PDF
 
-    if (isPdf && buffer.length > 1000) {
-      fs.writeFileSync(outputPath, buffer);
-      logger.info({ guia, path: outputPath, size: buffer.length }, 'Shipping label PDF downloaded successfully');
-      return outputPath;
+        if (response.status === 200 && isPdf && buffer.length > 1000) {
+          fs.writeFileSync(outputPath, buffer);
+          logger.info({ guia, path: outputPath, size: buffer.length, attempt: attempt + 1 }, 'Shipping label PDF downloaded successfully');
+          return outputPath;
+        }
+
+        const retriable = response.status >= 500 || !isPdf;
+        if (!retriable || response.status >= 400 && response.status < 500) {
+          logger.warn({ guia, status: response.status, contentType, size: buffer.length }, 'getPegote returned non-retriable response');
+          break;
+        }
+        logger.warn({ guia, status: response.status, contentType, size: buffer.length, attempt: attempt + 1 }, 'getPegote returned retriable response');
+      } catch (innerErr) {
+        lastErr = innerErr as Error;
+        logger.warn({ guia, error: lastErr.message, attempt: attempt + 1 }, 'getPegote request threw — will retry if attempts remain');
+      }
+
+      if (attempt < RETRY_DELAYS_MS.length) {
+        const delay = RETRY_DELAYS_MS[attempt];
+        logger.info({ guia, delayMs: delay, nextAttempt: attempt + 2 }, 'Sleeping before pegote retry');
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
     }
 
-    logger.warn({ guia, contentType, size: buffer.length }, 'getPegote did not return a valid PDF');
-
-    // Fallback: try clicking "Imprimir etiqueta" link on the history page
+    // All HTTP retries exhausted — try the UI fallback (click the "Imprimir
+    // etiqueta" link). By now DAC has had ~21s total to index the shipment.
     const etiquetaLink = await page.$(`a[href*="getPegote"][href*="${guia}"]`);
     if (etiquetaLink) {
       logger.info({ guia }, 'Trying click-to-download fallback for Imprimir etiqueta');
@@ -78,7 +106,7 @@ export async function downloadLabel(
     }
 
     const ssPath = await dacBrowser.screenshot(page, `label-not-found-${guia}`);
-    logger.warn({ guia, ssPath }, 'Could not download shipping label');
+    logger.warn({ guia, ssPath, lastErr: lastErr?.message }, 'Could not download shipping label after retries');
     return '';
   } catch (err) {
     const ssPath = await dacBrowser.screenshot(page, `download-error-${guia}`);
