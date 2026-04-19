@@ -122,7 +122,7 @@ model Tenant {
   autoPrintEnabled Boolean @default(false)
 
   // AI Address Resolver — fallback for ambiguous deterministic resolutions
-  aiResolverEnabled    Boolean @default(false) // opt-in per tenant
+  aiResolverEnabled    Boolean @default(true)  // on by default; opt-out per tenant
   aiResolverDailyLimit Int     @default(100)   // max AI calls per day
   aiResolverDailyUsed  Int     @default(0)     // reset daily at midnight UY
   aiResolverLastReset  DateTime?               // last time daily counter was reset
