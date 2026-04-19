@@ -34,6 +34,7 @@ import { createStepLogger } from '../logger';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { classifyOrders, type ClassifiedOrder } from '../rules/order-classifier';
 import { determinePaymentType } from '../rules/payment';
+import { evaluateShippingRules, type ShippingRuleRow } from '../rules/shipping';
 import { mergeAddress } from '../dac/shipment';
 import { getDepartmentForCityAsync } from '../dac/uruguay-geo';
 import type { ShopifyOrder } from '../shopify/types';
@@ -69,8 +70,16 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
       data: { status: 'RUNNING', startedAt: new Date() },
     });
 
-    // Load tenant config
-    const tenant = await db.tenant.findUnique({ where: { id: tenantId } });
+    // Load tenant config (+ active shipping rules, sorted by evaluation order)
+    const tenant = await db.tenant.findUnique({
+      where: { id: tenantId },
+      include: {
+        shippingRules: {
+          where: { isActive: true },
+          orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+        },
+      },
+    });
     if (!tenant) {
       slog.error('config', 'Tenant not found');
       await db.job.update({
@@ -170,7 +179,37 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
         ? `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente'
         : 'Sin datos';
       const totalUyu = parseFloat(order.total_price) || 0;
-      const paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
+
+      // Decide REMITENTE vs DESTINATARIO.
+      // 1) New ShippingRule engine — first active rule that matches wins.
+      // 2) Legacy fields — paymentRuleEnabled + paymentThreshold + consolidation.
+      //    Bulk job mirrors the same decision tree used by process-orders.job.ts
+      //    so single-order and bulk flows agree on payment type for any given order.
+      let paymentType: 'REMITENTE' | 'DESTINATARIO';
+      const ruleResult = await evaluateShippingRules(
+        tenant.shippingRules as unknown as ShippingRuleRow[],
+        { order, tenantId, db },
+      );
+      if (ruleResult.paymentType === 'REMITENTE') {
+        paymentType = 'REMITENTE';
+      } else {
+        paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
+        if (paymentType === 'DESTINATARIO' && tenant.consolidateConsecutiveOrders && order.email) {
+          const windowMs = (tenant.consolidationWindowMinutes ?? 30) * 60 * 1000;
+          const windowStart = new Date(Date.now() - windowMs);
+          const priorOrder = await db.label.findFirst({
+            where: {
+              tenantId,
+              customerEmail: order.email,
+              status: { in: ['PENDING', 'COMPLETED', 'CREATED'] },
+              shopifyOrderId: { not: orderId },
+              createdAt: { gte: windowStart },
+            },
+            select: { id: true },
+          });
+          if (priorOrder) paymentType = 'REMITENTE';
+        }
+      }
 
       const { fullAddress: mergedAddr } = addr?.address1
         ? mergeAddress(addr.address1, addr.address2)

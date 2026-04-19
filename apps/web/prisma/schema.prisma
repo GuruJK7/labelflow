@@ -141,6 +141,9 @@ model Tenant {
   // AI Address Resolutions
   addressResolutions AddressResolution[]
 
+  // Shipping rules (first-match-wins rule engine for REMITENTE/DESTINATARIO selection)
+  shippingRules ShippingRule[]
+
   @@index([slug])
   @@index([stripeCustomerId])
   @@index([apiKey])
@@ -670,4 +673,42 @@ model AddressResolution {
   @@index([inputHash])
   @@index([dacAccepted])
   @@index([source])
+}
+
+// --- SHIPPING RULES ---
+//
+// Ordered list of per-tenant rules that decide whether an order ships as
+// REMITENTE (store pays with DAC account) or DESTINATARIO (customer pays COD).
+//
+// Evaluation: rules are sorted by `priority` ascending and evaluated top-to-bottom.
+// The FIRST rule whose `ruleType` + `config` matches the order wins and sets the
+// payment type. If no rule matches, the worker falls back to the legacy
+// paymentRuleEnabled + paymentThreshold + consolidateConsecutiveOrders tenant
+// fields so existing tenants keep working without creating any rules.
+//
+// `config` is JSON because each `ruleType` has its own schema; validation lives
+// in apps/web/lib/shipping-rules.ts and apps/worker/src/rules/shipping.ts.
+model ShippingRule {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String                           // human label, shown in dashboard
+  ruleType  ShippingRuleType
+  config    Json                             // rule-specific params (see types in code)
+  priority  Int      @default(100)           // lower = evaluated earlier
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, priority])
+  @@index([tenantId, isActive])
+}
+
+enum ShippingRuleType {
+  THRESHOLD_TOTAL      // if order total (UYU) > minTotalUyu → REMITENTE
+  CONSECUTIVE_ORDERS   // if same customer ordered within windowMinutes → REMITENTE
+  NTH_SHIPMENT_FREE    // every Nth shipment to same customer → REMITENTE
+  CUSTOMER_TAG         // if Shopify order/customer has tag → REMITENTE
+  ITEM_COUNT           // if order has more than minItems line items → REMITENTE
 }

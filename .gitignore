@@ -13,3 +13,4 @@ dac-screenshots/
 *.pdf
 .turbo/
 .vercel
+*.tsbuildinfo

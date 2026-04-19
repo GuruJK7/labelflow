@@ -12,6 +12,7 @@ import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { getDepartmentForCity, getDepartmentForCityAsync } from '../dac/uruguay-geo';
 import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
+import { evaluateShippingRules, type ShippingRuleRow } from '../rules/shipping';
 import { sendShipmentNotification } from '../notifier/email';
 import { uploadLabelPdf } from '../storage/upload';
 import { createStepLogger } from '../logger';
@@ -79,7 +80,15 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     }
 
     // STEP 1: Load tenant config and decrypt credentials
-    const tenant = await db.tenant.findUnique({ where: { id: tenantId } });
+    const tenant = await db.tenant.findUnique({
+      where: { id: tenantId },
+      include: {
+        shippingRules: {
+          where: { isActive: true },
+          orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+        },
+      },
+    });
     if (!tenant) {
       slog.error('config', 'Tenant not found');
       await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Tenant not found' } });
@@ -259,27 +268,49 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
 
       let result: { guia: string; trackingUrl?: string; screenshotPath?: string; aiResolutionHash?: string } | undefined;
       try {
-        // a) Determine payment type (respects paymentRuleEnabled toggle)
-        let paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
+        // a) Determine payment type
+        //
+        // Evaluation order:
+        //   1) ShippingRule rows (new rule engine) — first-match-wins → REMITENTE
+        //   2) Legacy path: determinePaymentType(threshold) + consolidateConsecutiveOrders
+        //
+        // If a tenant has no rules (or none match), the legacy fields still apply
+        // unchanged, so pre-existing behavior is preserved.
+        let paymentType: 'REMITENTE' | 'DESTINATARIO';
 
-        // Consecutive order consolidation: if same customer placed another order within the window,
-        // override to REMITENTE (store pays) regardless of amount.
-        if (tenant.consolidateConsecutiveOrders && order.email) {
-          const windowMs = (tenant.consolidationWindowMinutes ?? 30) * 60 * 1000;
-          const windowStart = new Date(Date.now() - windowMs);
-          const priorOrder = await db.label.findFirst({
-            where: {
-              tenantId,
-              customerEmail: order.email,
-              status: { in: ['PENDING', 'COMPLETED', 'CREATED'] },
-              shopifyOrderId: { not: String(order.id) },
-              createdAt: { gte: windowStart },
-            },
-            orderBy: { createdAt: 'desc' },
-          });
-          if (priorOrder) {
-            paymentType = 'REMITENTE';
-            slog.info('order-payment', `Consolidation: customer ${order.email} has prior order ${priorOrder.shopifyOrderName} within ${tenant.consolidationWindowMinutes}min window — overriding to REMITENTE`);
+        const ruleResult = await evaluateShippingRules(
+          tenant.shippingRules as unknown as ShippingRuleRow[],
+          { order, tenantId, db },
+        );
+
+        if (ruleResult.paymentType === 'REMITENTE' && ruleResult.matchedRule) {
+          paymentType = 'REMITENTE';
+          slog.info(
+            'order-payment',
+            `ShippingRule matched: "${ruleResult.matchedRule.name}" (${ruleResult.matchedRule.ruleType}) → REMITENTE`,
+            { orderName: order.name },
+          );
+        } else {
+          // Legacy path — unchanged
+          paymentType = determinePaymentType(order, tenant.paymentThreshold, tenant.paymentRuleEnabled);
+
+          if (tenant.consolidateConsecutiveOrders && order.email) {
+            const windowMs = (tenant.consolidationWindowMinutes ?? 30) * 60 * 1000;
+            const windowStart = new Date(Date.now() - windowMs);
+            const priorOrder = await db.label.findFirst({
+              where: {
+                tenantId,
+                customerEmail: order.email,
+                status: { in: ['PENDING', 'COMPLETED', 'CREATED'] },
+                shopifyOrderId: { not: String(order.id) },
+                createdAt: { gte: windowStart },
+              },
+              orderBy: { createdAt: 'desc' },
+            });
+            if (priorOrder) {
+              paymentType = 'REMITENTE';
+              slog.info('order-payment', `Consolidation: customer ${order.email} has prior order ${priorOrder.shopifyOrderName} within ${tenant.consolidationWindowMinutes}min window — overriding to REMITENTE`);
+            }
           }
         }
 
