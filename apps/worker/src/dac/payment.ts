@@ -379,7 +379,6 @@ export async function handlePaymentFlow(
       await dumpDiagnostic(page, slog, 'brand-tile-not-found');
       return { status: 'pending_manual', reason: 'selector_failure' };
     }
-    await page.waitForTimeout(800); // let the section expand
   } catch (err) {
     slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV, `[pay] brand tile click failed: ${(err as Error).message}`);
     await dumpDiagnostic(page, slog, 'brand-tile-error');
@@ -387,37 +386,107 @@ export async function handlePaymentFlow(
   }
 
   // --- Step 2: select the saved-card radio identified by last4 ---
-  const savedCardSelected = await page.evaluate((last4: string) => {
-    // Find text "**** {last4}" in the document, walk up to the radio input
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-      const txt = node.textContent ?? '';
-      if (txt.includes(last4) && /\*{2,}/.test(txt)) {
-        let el: HTMLElement | null = node.parentElement;
-        // Search up to 6 ancestors for an <input type=radio>
-        for (let i = 0; i < 6 && el; i++) {
-          const radio = el.querySelector('input[type=radio]') as HTMLInputElement | null;
-          if (radio) {
-            radio.checked = true;
-            radio.dispatchEvent(new Event('change', { bubbles: true }));
-            radio.dispatchEvent(new Event('click', { bubbles: true }));
-            radio.click();
-            return true;
-          }
-          el = el.parentElement;
+  //
+  // Historical failures (#11365 saved_card_not_found) were caused by four
+  // bugs stacked together:
+  //   1. 800ms blind sleep after the brand tile click — insufficient when
+  //      Plexo lazy-loads the saved-card list from its backend
+  //   2. TreeWalker required a SINGLE text node containing both the last4
+  //      AND the asterisks — React frequently splits text into separate
+  //      <span> nodes, breaking this
+  //   3. Regex hardcoded `*` as the masking character — if Plexo renders
+  //      `•••• 3294` (bullet) or `XXXX 3294` we'd never match
+  //   4. Only looked for <input type=radio> — modern Plexo variants use
+  //      clickable div cards with role=button or [role=radio]
+  //
+  // The replacement below: poll with waitForFunction until the last4 is
+  // visibly rendered anywhere in body.innerText (up to 15s), then scan
+  // using flat innerText + multiple interactive targets.
+  const cardListReady = await page
+    .waitForFunction(
+      (last4: string) => {
+        const text = (document.body.innerText ?? '');
+        return text.includes(last4);
+      },
+      cfg.last4,
+      { timeout: 15_000, polling: 300 },
+    )
+    .then(() => true)
+    .catch(() => false);
+
+  if (!cardListReady) {
+    slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV, `[pay] saved-card list never rendered last4 ${cfg.last4} within 15s`);
+    await dumpDiagnostic(page, slog, 'saved-card-list-not-rendered');
+    return { status: 'pending_manual', reason: 'saved_card_not_found' };
+  }
+
+  const savedCardResult = await page.evaluate((last4: string) => {
+    // Find all elements whose visible innerText contains the last4.
+    // Prefer the narrowest element (smallest text footprint) — that's the
+    // actual card label, not the whole page.
+    const maskingCharClass = '[*•●xX\u2022\u25CF]'; // * • ● x X bullet big-bullet
+    const maskingRegex = new RegExp(`${maskingCharClass}{2,}`);
+
+    const all = Array.from(document.querySelectorAll<HTMLElement>('body *'));
+    const candidates = all.filter((el) => {
+      const text = (el.innerText ?? el.textContent ?? '').trim();
+      if (!text || text.length > 200) return false;
+      if (!text.includes(last4)) return false;
+      // Must either have a masking pattern OR be a short label (<40 chars)
+      // The short-label check catches UIs that just show "Visa 3294" without asterisks.
+      return maskingRegex.test(text) || text.length < 40;
+    });
+    if (candidates.length === 0) return 'no-candidates';
+
+    candidates.sort((a, b) => (a.innerText?.length ?? 0) - (b.innerText?.length ?? 0));
+
+    for (const cand of candidates) {
+      // Walk up to 8 ancestors looking for an interactive target
+      let node: HTMLElement | null = cand;
+      for (let i = 0; i < 8 && node; i++) {
+        // 1. Native radio input
+        const radio = node.querySelector<HTMLInputElement>('input[type=radio]');
+        if (radio) {
+          if (!radio.checked) radio.click();
+          radio.dispatchEvent(new Event('change', { bubbles: true }));
+          return 'radio';
         }
+        // 2. ARIA radio
+        const ariaRadio = node.querySelector<HTMLElement>('[role=radio]');
+        if (ariaRadio) {
+          ariaRadio.click();
+          return 'aria-radio';
+        }
+        // 3. Label pointing to a radio
+        if (node.tagName === 'LABEL') {
+          node.click();
+          return 'label';
+        }
+        // 4. Button or role=button or clickable container
+        if (node.matches('button, [role=button], [onclick], [tabindex]')) {
+          node.click();
+          return 'clickable-ancestor';
+        }
+        // 5. Class name hints at card/option
+        if (/card|option|saved|tarjeta/i.test(node.className || '')) {
+          node.click();
+          return 'class-hint';
+        }
+        node = node.parentElement;
       }
+      // Last resort: click the candidate itself
+      cand.click();
+      return 'fallback-click';
     }
-    return false;
+    return 'none';
   }, cfg.last4);
 
-  if (!savedCardSelected) {
-    slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV, `[pay] saved card ending in ${cfg.last4} not found on Plexo page`);
+  if (savedCardResult === 'no-candidates' || savedCardResult === 'none') {
+    slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV, `[pay] saved card ending in ${cfg.last4} not found on Plexo page (result=${savedCardResult})`);
     await dumpDiagnostic(page, slog, 'saved-card-not-found');
     return { status: 'pending_manual', reason: 'saved_card_not_found' };
   }
-  slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, `[pay] saved card **** ${cfg.last4} selected`);
+  slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, `[pay] saved card **** ${cfg.last4} selected (via=${savedCardResult})`);
   await page.waitForTimeout(300);
 
   // --- Step 3: click CONTINUAR, expect navigation to /cvv ---
