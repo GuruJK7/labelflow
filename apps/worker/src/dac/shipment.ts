@@ -252,24 +252,25 @@ export function detectCityIntelligent(
     return { barrio: aliasBarrio, department: zipDept ?? 'Montevideo', source: 'alias', confidence: 'medium' };
   }
 
-  // Strategy 3: ZIP + street cross-reference (no explicit Shopify barrio)
+  // No explicit barrio from the customer — do NOT guess.
+  // Previous versions inferred a barrio from ZIP alone (picking zipBarrios[0]) or
+  // from street-name heuristics. In practice Uruguayan ZIPs map to 3-4 barrios
+  // (e.g. 11400 → la blanqueada / goes / reducto / brazo oriental), so picking
+  // the first candidate was wrong most of the time. Per product decision on
+  // 2026-04-20: when the customer did not name a barrio, submit DAC with
+  // department only and leave barrio blank.
+  //
+  // We still return the ZIP-derived department (and Montevideo as fallback for
+  // Montevideo-only street matches) so routing is correct; we just keep
+  // confidence high so the AI fallback isn't invoked to hallucinate a barrio.
   if (zipBarrios && zipBarrios.length > 0) {
-    if (streetBarrios) {
-      const overlap = zipBarrios.filter(b => streetBarrios.includes(b));
-      if (overlap.length > 0) {
-        return { barrio: overlap[0], department: zipDept, source: 'zip', confidence: 'high' };
-      }
-    }
-    // ZIP alone — single signal, pick first candidate
-    return { barrio: zipBarrios[0], department: zipDept, source: 'zip', confidence: 'high' };
+    return { barrio: null, department: zipDept, source: 'zip', confidence: 'high' };
   }
-
-  // Strategy 4: Street name detection alone
   if (streetBarrios && streetBarrios.length > 0) {
-    return { barrio: streetBarrios[0], department: zipDept ?? 'Montevideo', source: 'street', confidence: 'medium' };
+    return { barrio: null, department: zipDept ?? 'Montevideo', source: 'street', confidence: 'high' };
   }
 
-  // Fallback: only department from ZIP
+  // Fallback: only department from ZIP (or null if ZIP didn't match anything)
   return { barrio: null, department: zipDept, source: 'none', confidence: 'low' };
 }
 

@@ -730,15 +730,20 @@ describe('detectCityIntelligent — Shopify barrio priority over ZIP', () => {
     expect(result.source).toBe('zip'); // ZIP confirms the alias — high confidence
   });
 
-  it('No alias barrio from Shopify, ZIP 11300 → uses ZIP candidate (tres cruces)', () => {
+  // Product decision 2026-04-20: when customer did not name a barrio, do NOT guess.
+  // Uruguayan ZIPs map to 3-4 barrios (e.g. 11300 → tres cruces/la comercial/la figurita/jacinto vera),
+  // so picking zipBarrios[0] was wrong more often than right. Submit DAC with department only.
+  it('No alias barrio from Shopify, ZIP 11300 → barrio null, department only', () => {
     const result = detectCityIntelligent('Montevideo', 'Calle X 100', '', '11300');
-    expect(result.barrio).toBe('tres cruces');
+    expect(result.barrio).toBeNull();
+    expect(result.department).toBe('Montevideo');
     expect(result.source).toBe('zip');
   });
 
-  it('Empty city, ZIP 11500 → falls back to ZIP barrio', () => {
+  it('Empty city, ZIP 11500 → barrio null, department only', () => {
     const result = detectCityIntelligent('', '21 de Setiembre 2900', '', '11500');
-    expect(result.barrio).toBe('pocitos');
+    expect(result.barrio).toBeNull();
+    expect(result.department).toBe('Montevideo');
     expect(result.source).toBe('zip');
   });
 });
@@ -797,9 +802,12 @@ describe('Regression #11117 — Av. Libertador zone detection', () => {
     expect(barrios![0]).toBe('parque batlle');
   });
 
-  it('detectCityIntelligent with Av. Libertador returns parque batlle', () => {
+  // Product decision 2026-04-20: when customer did not name a barrio, do NOT guess even from
+  // street-name heuristics. Av. Libertador overlaps several barrios; submit department only.
+  it('detectCityIntelligent with Av. Libertador returns barrio null (no guessing)', () => {
     const result = detectCityIntelligent('Montevideo', 'Av. Libertador 1748', '', '');
-    expect(result.barrio).toBe('parque batlle');
+    expect(result.barrio).toBeNull();
+    expect(result.department).toBe('Montevideo');
   });
 });
 
@@ -811,9 +819,13 @@ describe('Regression #11120 — Rbla. abbreviation zone detection', () => {
     expect(barrios).toContain('pocitos');
   });
 
-  it('detectCityIntelligent with Rbla. address detects barrio via street', () => {
+  // Product decision 2026-04-20: no barrio guessing from street heuristics when the
+  // customer didn't name one. The getBarriosFromStreet helper still works (used elsewhere),
+  // but detectCityIntelligent returns null and relies on department only.
+  it('detectCityIntelligent with Rbla. address returns barrio null (no guessing)', () => {
     const result = detectCityIntelligent('Montevideo', 'Rbla. República de Chile 4507 002', '', '');
-    expect(result.barrio).not.toBeNull();
+    expect(result.barrio).toBeNull();
+    expect(result.department).toBe('Montevideo');
     expect(result.source).toBe('street');
   });
 });

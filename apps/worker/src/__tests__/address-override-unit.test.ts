@@ -227,9 +227,12 @@ describe('detectCityIntelligent — regression guard (existing pipeline)', () =>
     expect(result.department).toBe('Maldonado');
   });
 
-  it('Empty city, ZIP 11500 → falls back to ZIP barrio (pocitos)', () => {
+  // Product decision 2026-04-20: no barrio guessing when customer didn't name one.
+  // ZIP 11500 maps to multiple barrios; submit with department only.
+  it('Empty city, ZIP 11500 → barrio null, department only (no guessing)', () => {
     const result = detectCityIntelligent('', '21 de Setiembre 2900', '', '11500');
-    expect(result.barrio).toBe('pocitos');
+    expect(result.barrio).toBeNull();
+    expect(result.department).toBe('Montevideo');
     expect(result.source).toBe('zip');
   });
 
