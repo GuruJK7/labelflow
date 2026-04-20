@@ -31,5 +31,11 @@ RUN mkdir -p dist/dac && cp src/dac/dac-geo-map.json dist/dac/dac-geo-map.json
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV NODE_ENV=production
 
+# Cap Node's V8 heap so a leak surfaces as a clean out-of-memory error from
+# the runtime (which we log + recover from) instead of Render's SIGTERM. On
+# Render Standard (2 GB), 768 MB for Node + ~400 MB for Chromium leaves ~800
+# MB of headroom for buffers, kernel, and spikes.
+ENV NODE_OPTIONS="--max-old-space-size=768"
+
 # Run the compiled JS
 CMD ["node", "dist/index.js"]

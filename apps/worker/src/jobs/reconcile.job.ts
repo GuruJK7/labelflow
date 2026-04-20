@@ -1,19 +1,23 @@
 /**
  * Reconciliation job: automatically fixes stuck/failed labels.
  *
- * Runs periodically (every 30 minutes) and handles:
+ * Runs periodically (every 10 minutes) and handles:
  *
  * 1. FAILED labels with network errors (ERR_ABORTED, timeout) → resets to allow retry
  * 2. CREATED labels with PENDING guia → tries to find the real guia in DAC historial
- * 3. Stale RUNNING jobs (stuck > 30 min) → marks as FAILED so they don't block the queue
+ * 3. Stale RUNNING jobs (stuck > 10 min) → marks as FAILED so they don't block the queue
  *
  * This replaces a human operator who would check on stuck orders and fix them.
  */
 import { db } from '../db';
 import logger from '../logger';
 
-const RECONCILE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-const STALE_JOB_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+// Cadence: a typical order finishes in 20–60 s (YELLOW with AI resolver can go
+// up to ~90 s). 10 min is ~10× the worst case, so anything older than that is
+// almost certainly orphaned by an OOM/SIGTERM/crash. Shortened from 30 min so
+// the queue unblocks faster after an incident.
+const RECONCILE_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const STALE_JOB_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_AUTO_RETRIES = 3;
 
 /**
@@ -143,12 +147,11 @@ export async function runReconciliation(): Promise<void> {
  * Runs every 30 minutes, independent of the main processing loop.
  */
 export function startReconciliationLoop(): void {
-  // First run after 5 minutes (let the worker warm up first)
-  setTimeout(() => {
-    runReconciliation();
-    setInterval(runReconciliation, RECONCILE_INTERVAL_MS);
-  }, 5 * 60 * 1000);
+  // A boot-time reconcile runs in index.ts before we begin polling. After
+  // that, run every 10 min. No initial delay here — index.ts already fired
+  // the first pass before calling us.
+  setInterval(runReconciliation, RECONCILE_INTERVAL_MS);
 
   logger.info({ intervalMs: RECONCILE_INTERVAL_MS },
-    '[Reconcile] Reconciliation loop scheduled (first run in 5 min, then every 30 min)');
+    '[Reconcile] Reconciliation loop scheduled (every 10 min; boot pass fires separately from index.ts)');
 }

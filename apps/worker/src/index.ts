@@ -10,7 +10,27 @@ import logger from './logger';
 import { processAdUploadJob } from './ads/upload-job';
 import { processAdMonitorJob } from './ads/monitor-job';
 import { processRecoverMessage } from './recover/process-message';
-import { startReconciliationLoop } from './jobs/reconcile.job';
+import { startReconciliationLoop, runReconciliation } from './jobs/reconcile.job';
+
+// Emit memory usage every 60 s so we can catch leaks / OOM risk in Render
+// logs before the container gets killed. Numbers are in MB for readability.
+const MEMORY_LOG_INTERVAL_MS = 60_000;
+function startMemoryLogging(): void {
+  setInterval(() => {
+    const mem = process.memoryUsage();
+    const toMB = (n: number) => Math.round(n / 1024 / 1024);
+    logger.info(
+      {
+        rssMB: toMB(mem.rss),
+        heapUsedMB: toMB(mem.heapUsed),
+        heapTotalMB: toMB(mem.heapTotal),
+        externalMB: toMB(mem.external),
+        arrayBuffersMB: toMB(mem.arrayBuffers),
+      },
+      '[memory] worker memory snapshot',
+    );
+  }, MEMORY_LOG_INTERVAL_MS);
+}
 
 const RECOVER_POLL_INTERVAL_MS = 10_000; // Check for recover jobs every 10 seconds
 
@@ -253,8 +273,18 @@ async function main(): Promise<void> {
   // Start cron scheduler (checks every minute, validates all 5 cron fields)
   startScheduler();
 
+  // Run reconciliation immediately on boot so any RUNNING job orphaned by a
+  // previous crash/SIGTERM gets cleaned up before we start picking up new
+  // work. Fire-and-forget — errors are logged inside runReconciliation.
+  runReconciliation().catch((err) =>
+    logger.error({ error: (err as Error).message }, '[Reconcile] Boot-time reconciliation failed'),
+  );
+
   // Start reconciliation loop (auto-fixes FAILED labels every 30 min)
   startReconciliationLoop();
+
+  // Memory telemetry so we can spot leaks / OOM risk in Render logs.
+  startMemoryLogging();
 
   logger.info('LabelFlow Worker ready and polling for jobs');
 
