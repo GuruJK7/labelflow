@@ -7,6 +7,7 @@ import { fulfillOrderWithTracking } from '../shopify/fulfillment';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress } from '../dac/shipment';
+import type { AutoPayConfig } from '../dac/payment';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { getDepartmentForCity, getDepartmentForCityAsync } from '../dac/uruguay-geo';
@@ -222,6 +223,31 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     );
     slog.info('guia-protection', `Loaded ${usedGuias.size} existing guias from DB to prevent re-assignment`);
 
+    // Build the auto-pay config once per cycle. Gated on all 4 fields being set so
+    // we never call Plexo with half-configured settings (which would hang on the
+    // CVV step and leave the guía in pago-pendiente).
+    let autoPayConfig: AutoPayConfig | undefined;
+    if (
+      tenant.paymentAutoEnabled &&
+      tenant.paymentCardBrand &&
+      tenant.paymentCardLast4 &&
+      tenant.paymentCardCvc
+    ) {
+      const cvc = decryptIfPresent(tenant.paymentCardCvc);
+      if (cvc) {
+        autoPayConfig = {
+          brand: tenant.paymentCardBrand as 'mastercard' | 'visa' | 'oca',
+          last4: tenant.paymentCardLast4,
+          cvc,
+        };
+        slog.info('autopay', `Auto-pay enabled: ${autoPayConfig.brand} **** ${autoPayConfig.last4}`);
+      } else {
+        slog.warn('autopay', 'paymentCardCvc present but decryption returned null — auto-pay disabled for this cycle');
+      }
+    } else if (tenant.paymentAutoEnabled) {
+      slog.warn('autopay', 'paymentAutoEnabled=true but brand/last4/cvc missing — auto-pay skipped');
+    }
+
     for (let i = 0; i < orders.length; i++) {
       const order = orders[i];
       const addr = order.shipping_address;
@@ -266,7 +292,14 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         continue;
       }
 
-      let result: { guia: string; trackingUrl?: string; screenshotPath?: string; aiResolutionHash?: string } | undefined;
+      let result: {
+        guia: string;
+        trackingUrl?: string;
+        screenshotPath?: string;
+        aiResolutionHash?: string;
+        paymentStatus?: 'paid' | 'pending_manual' | 'failed_rejected' | 'not_required';
+        paymentFailureReason?: string;
+      } | undefined;
       try {
         // a) Determine payment type
         //
@@ -331,8 +364,22 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           usedGuias.add(result.guia);
         } else {
           // Create shipment in DAC (NO full-form retry — guia extraction retries internally)
-          // Re-submitting the entire form on error creates DUPLICATE shipments in DAC
-          result = await createShipment(page, order, paymentType, dacUsername, dacPassword, tenantId, jobId, usedGuias);
+          // Re-submitting the entire form on error creates DUPLICATE shipments in DAC.
+          // Pass autoPayConfig only for REMITENTE — handlePaymentFlow will be a no-op for
+          // DESTINATARIO anyway, but keeping it gated here avoids a misleading "awaiting
+          // Plexo redirect" log on every DESTINATARIO order.
+          result = await createShipment(
+            page,
+            order,
+            paymentType,
+            dacUsername,
+            dacPassword,
+            tenantId,
+            jobId,
+            usedGuias,
+            undefined, // addressOverride
+            paymentType === 'REMITENTE' ? autoPayConfig : undefined,
+          );
 
           // Track this guia so it won't be assigned to another order in this batch
           if (result.guia && !result.guia.startsWith('PENDING-')) {
@@ -356,6 +403,13 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
           province: addr.province,
           resolvedDepartment: resolvedDeptRaw,
         });
+        // Persist the payment outcome alongside the label. The status is already
+        // set by createShipment based on paymentType + autoPayConfig availability;
+        // default to 'not_required' if missing so the column is never null for new rows.
+        const resolvedPaymentStatus = result.paymentStatus ?? 'not_required';
+        const resolvedPaymentFailureReason = result.paymentFailureReason ?? null;
+        const paymentAttemptedAt = paymentType === 'REMITENTE' && autoPayConfig ? new Date() : null;
+
         const labelRecord = await db.label.upsert({
           where: {
             tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
@@ -372,6 +426,9 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             department: resolvedDept,
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType,
+            paymentStatus: resolvedPaymentStatus,
+            paymentFailureReason: resolvedPaymentFailureReason,
+            paymentAttemptedAt,
             dacGuia: result.guia,
             status: 'CREATED',
           },
@@ -380,10 +437,33 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             dacGuia: result.guia,
             status: 'CREATED',
             errorMessage: null,
+            paymentStatus: resolvedPaymentStatus,
+            paymentFailureReason: resolvedPaymentFailureReason,
+            paymentAttemptedAt,
           },
         });
 
-        slog.info('order-db', `Label record saved: ${labelRecord.id}`, { guia: result.guia });
+        slog.info('order-db', `Label record saved: ${labelRecord.id}`, {
+          guia: result.guia,
+          paymentStatus: resolvedPaymentStatus,
+        });
+
+        // If the auto-pay attempt was inconclusive, leave a highlighted note on
+        // the Shopify order so the operator knows to finish the payment in DAC.
+        if (paymentType === 'REMITENTE' && autoPayConfig && resolvedPaymentStatus !== 'paid') {
+          const reasonText = resolvedPaymentFailureReason ? ` (${resolvedPaymentFailureReason})` : '';
+          const note = `⚠ LabelFlow: pago DAC PENDIENTE${reasonText}. Guía ${result.guia} creada, completar pago a mano en DAC.`;
+          try {
+            await addOrderNote(shopifyClient, order.id, note);
+            slog.warn('order-payment', `Payment not completed — Shopify note added`, {
+              guia: result.guia,
+              paymentStatus: resolvedPaymentStatus,
+              reason: resolvedPaymentFailureReason,
+            });
+          } catch {
+            // Non-fatal — the DB record is already marked as pending_manual
+          }
+        }
 
         // d) Download PDF label (skip if guia is temporary/pending)
         if (result.guia && !result.guia.startsWith('PENDING-')) {

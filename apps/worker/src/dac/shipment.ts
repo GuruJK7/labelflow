@@ -9,6 +9,7 @@ import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
 import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet } from './uruguay-geo';
 import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
+import { handlePaymentFlow, AutoPayConfig, PaymentOutcome } from './payment';
 
 // ---- Helpers ----
 
@@ -856,7 +857,8 @@ export async function createShipment(
   tenantId: string,
   jobId?: string,
   usedGuias?: Set<string>,
-  addressOverride?: AddressOverride
+  addressOverride?: AddressOverride,
+  autoPay?: AutoPayConfig
 ): Promise<DacShipmentResult> {
   const slog = createStepLogger(jobId ?? 'manual', tenantId);
   const addr = order.shipping_address;
@@ -1632,8 +1634,33 @@ export async function createShipment(
     slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV, 'Finalizar button not found — item may only be in cart, not finalized');
   }
 
-  // Wait for redirect to confirmation page
-  await page.waitForTimeout(5000);
+  // ===== AUTO PAYMENT (Plexo) for REMITENTE shipments when tenant has auto-pay on =====
+  // DAC's Finalizar click triggers one of two flows depending on TipoGuia:
+  //   - DESTINATARIO (4): DAC creates the guía directly and redirects to /envios/guiacreada
+  //   - REMITENTE   (1): DAC initiates /envios/initiate_payWithFiserv and redirects to
+  //                      secure.plexo.com.uy/{hash}. Payment must complete before the
+  //                      guía page renders.
+  // We invoke handlePaymentFlow ONLY when both paymentType = REMITENTE AND autoPay is
+  // configured. On any non-success outcome, we continue to guía extraction anyway —
+  // DAC may have created the guía with "pago pendiente" which the caller can then
+  // mark as pending_manual in the Label record.
+  let paymentOutcome: PaymentOutcome | null = null;
+  if (paymentType === 'REMITENTE' && autoPay) {
+    try {
+      paymentOutcome = await handlePaymentFlow(page, autoPay, slog);
+      slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, `[pay] outcome: ${paymentOutcome.status}`, {
+        reason: 'reason' in paymentOutcome ? paymentOutcome.reason : undefined,
+      });
+    } catch (payErr) {
+      slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV, `[pay] handler threw — treating as pending_manual: ${(payErr as Error).message}`);
+      paymentOutcome = { status: 'pending_manual', reason: 'unknown' };
+    }
+    // Short settle after Plexo; extractGuiaWithRetry will also wait internally.
+    await page.waitForTimeout(2000);
+  } else {
+    // Original behavior for DESTINATARIO or when auto-pay is off
+    await page.waitForTimeout(5000);
+  }
 
   const currentUrl = page.url();
   slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, `Current URL after Finalizar: ${currentUrl}`);
@@ -1643,12 +1670,32 @@ export async function createShipment(
   // ===== EXTRACT GUIA (with built-in retry — NEVER re-submit the form) =====
   const guiaResult = await extractGuiaWithRetry(page, slog, order.name, usedGuias);
 
+  // Resolve the payment status to persist on the Label:
+  //   - DESTINATARIO                     → 'not_required'
+  //   - REMITENTE + auto-pay off         → 'not_required' (tenant will pay manually)
+  //   - REMITENTE + auto-pay + outcome   → mirror the Plexo outcome
+  let paymentStatus: DacShipmentResult['paymentStatus'];
+  let paymentFailureReason: string | undefined;
+  if (paymentType === 'DESTINATARIO') {
+    paymentStatus = 'not_required';
+  } else if (!autoPay) {
+    paymentStatus = 'not_required';
+  } else if (paymentOutcome) {
+    paymentStatus = paymentOutcome.status;
+    paymentFailureReason = 'reason' in paymentOutcome ? paymentOutcome.reason : undefined;
+  } else {
+    paymentStatus = 'pending_manual';
+    paymentFailureReason = 'unknown';
+  }
+
   return {
     guia: guiaResult.guia,
     trackingUrl: guiaResult.trackingUrl,
     screenshotPath: '',
     // Pass the AI resolution hash back to the job runner for feedback recording
     aiResolutionHash: aiResolution?.inputHash,
+    paymentStatus,
+    paymentFailureReason,
   };
 }
 

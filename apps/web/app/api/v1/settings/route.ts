@@ -41,6 +41,11 @@ const updateSchema = z.object({
   autoPrintEnabled: z.boolean().optional(),
   orderSortDirection: z.enum(['oldest_first', 'newest_first']).optional(),
   allowedProductTypes: z.array(z.string().min(1).max(100)).max(50).nullable().optional(),
+  // Auto-payment (DAC/Plexo)
+  paymentAutoEnabled: z.boolean().optional(),
+  paymentCardBrand: z.enum(['mastercard', 'visa', 'oca']).nullable().optional(),
+  paymentCardLast4: z.string().regex(/^\d{4}$/, 'Deben ser 4 digitos').nullable().optional(),
+  paymentCardCvc: z.string().regex(/^\d{3,4}$/, 'CVC debe ser 3 o 4 digitos').optional(),
 }).partial();
 
 export async function GET() {
@@ -83,6 +88,10 @@ export async function GET() {
       productTypeCache: true,
       consolidateConsecutiveOrders: true,
       consolidationWindowMinutes: true,
+      paymentAutoEnabled: true,
+      paymentCardBrand: true,
+      paymentCardLast4: true,
+      paymentCardCvc: true,
     },
   });
 
@@ -138,6 +147,11 @@ export async function GET() {
     productTypeCache: tenant.productTypeCache,
     consolidateConsecutiveOrders: tenant.consolidateConsecutiveOrders,
     consolidationWindowMinutes: tenant.consolidationWindowMinutes,
+    // Auto-payment config — never leak CVC, return boolean "set" instead
+    paymentAutoEnabled: tenant.paymentAutoEnabled,
+    paymentCardBrand: tenant.paymentCardBrand,
+    paymentCardLast4: tenant.paymentCardLast4,
+    paymentCardCvcSet: !!tenant.paymentCardCvc,
   });
 }
 
@@ -180,10 +194,16 @@ export async function PUT(req: NextRequest) {
   if (input.consolidateConsecutiveOrders !== undefined) data.consolidateConsecutiveOrders = input.consolidateConsecutiveOrders;
   if (input.consolidationWindowMinutes !== undefined) data.consolidationWindowMinutes = input.consolidationWindowMinutes;
 
+  // Auto-payment (plain fields)
+  if (input.paymentAutoEnabled !== undefined) data.paymentAutoEnabled = input.paymentAutoEnabled;
+  if (input.paymentCardBrand !== undefined) data.paymentCardBrand = input.paymentCardBrand;
+  if (input.paymentCardLast4 !== undefined) data.paymentCardLast4 = input.paymentCardLast4;
+
   // Encrypted fields
   if (input.shopifyToken !== undefined) data.shopifyToken = encryptIfPresent(input.shopifyToken);
   if (input.dacPassword !== undefined) data.dacPassword = encryptIfPresent(input.dacPassword);
   if (input.emailPass !== undefined) data.emailPass = encryptIfPresent(input.emailPass);
+  if (input.paymentCardCvc !== undefined) data.paymentCardCvc = encryptIfPresent(input.paymentCardCvc);
 
   // Verify Shopify connection if token provided
   if (input.shopifyToken && input.shopifyStoreUrl) {

@@ -31,6 +31,10 @@ interface SettingsData {
   orderSortDirection?: string;
   allowedProductTypes?: string[] | null;
   productTypeCache?: Record<string, string> | null;
+  paymentAutoEnabled?: boolean;
+  paymentCardBrand?: 'mastercard' | 'visa' | 'oca' | null;
+  paymentCardLast4?: string | null;
+  paymentCardCvcSet?: boolean;
 }
 
 export default function SettingsPage() {
@@ -56,6 +60,12 @@ export default function SettingsPage() {
   const [scanning, setScanning] = useState(false);
   const [consolidateConsecutiveOrders, setConsolidateConsecutiveOrders] = useState(false);
   const [consolidationWindowMinutes, setConsolidationWindowMinutes] = useState(30);
+
+  // Auto-payment (DAC / Plexo)
+  const [paymentAutoEnabled, setPaymentAutoEnabled] = useState(false);
+  const [paymentCardBrand, setPaymentCardBrand] = useState<'mastercard' | 'visa' | 'oca' | ''>('');
+  const [paymentCardLast4, setPaymentCardLast4] = useState('');
+  const [paymentCardCvc, setPaymentCardCvc] = useState('');
 
   const DAYS = [
     { value: 0, label: 'Dom', short: 'D' },
@@ -171,6 +181,9 @@ export default function SettingsPage() {
           setAllowedProductTypes(data.allowedProductTypes ?? []);
           setConsolidateConsecutiveOrders(data.consolidateConsecutiveOrders ?? false);
           setConsolidationWindowMinutes(data.consolidationWindowMinutes ?? 30);
+          setPaymentAutoEnabled(data.paymentAutoEnabled ?? false);
+          setPaymentCardBrand((data.paymentCardBrand as 'mastercard' | 'visa' | 'oca' | null) ?? '');
+          setPaymentCardLast4(data.paymentCardLast4 ?? '');
           if (data.productTypeCache) {
             const types = [...new Set(Object.values(data.productTypeCache) as string[])].sort();
             setAvailableProductTypes(types);
@@ -357,6 +370,113 @@ export default function SettingsPage() {
               {saving === 'consolidation' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar consolidación
             </button>
             <InlineMessage section="consolidation" />
+          </div>
+
+          {/* Auto-pago en DAC (Plexo) */}
+          <div className="mt-5 pt-5 border-t border-white/[0.06]">
+            <div className="flex items-center justify-between mb-3 p-3 rounded-lg bg-zinc-800/30 border border-white/[0.04]">
+              <div>
+                <p className="text-sm text-white font-medium">Auto-pago en DAC (remitente)</p>
+                <p className="text-[10px] text-zinc-500 mt-0.5">
+                  {paymentAutoEnabled
+                    ? 'LabelFlow pagará automáticamente los envíos REMITENTE con tu tarjeta guardada en Plexo'
+                    : 'Desactivado — los envíos REMITENTE quedarán con pago pendiente para pagar a mano en DAC'}
+                </p>
+              </div>
+              <button
+                onClick={() => setPaymentAutoEnabled(!paymentAutoEnabled)}
+                disabled={!paymentRuleEnabled}
+                title={!paymentRuleEnabled ? 'Activá primero "Pagar con tarjeta precargada"' : ''}
+                className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
+                  paymentAutoEnabled ? 'bg-cyan-600' : 'bg-zinc-700'
+                } ${!paymentRuleEnabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${paymentAutoEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+              </button>
+            </div>
+
+            {paymentAutoEnabled && (
+              <>
+                <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-200 leading-relaxed">
+                  <strong className="text-amber-100">⚠ Advertencia PCI:</strong> almacenar el CVC viola PCI DSS 3.2.
+                  Al activar esta opción aceptás la responsabilidad de cumplir las políticas del comercio.
+                  El CVC se guarda encriptado AES-256-GCM pero no es auditable por terceros. Cambialo si renovás la tarjeta.
+                  <br /><br />
+                  <strong>Primera vez:</strong> hacé un pago manual en DAC para que Plexo registre el dispositivo y no dispare 3DS en las corridas automáticas.
+                </div>
+
+                {/* Tipo de tarjeta */}
+                <div className="mb-4">
+                  <label className={labelClass}>Tipo de tarjeta</label>
+                  <div className="flex gap-2 mt-1">
+                    {([
+                      { value: 'mastercard' as const, label: 'Mastercard' },
+                      { value: 'visa' as const, label: 'VISA' },
+                      { value: 'oca' as const, label: 'OCA' },
+                    ]).map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setPaymentCardBrand(opt.value)}
+                        className={`px-4 py-2.5 rounded-lg text-xs font-medium border transition-all ${
+                          paymentCardBrand === opt.value
+                            ? 'bg-cyan-600 border-cyan-500 text-white'
+                            : 'bg-zinc-800/50 border-white/[0.06] text-zinc-400 hover:text-white hover:border-white/[0.15]'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-zinc-600 mt-1">La marca debe coincidir con la tarjeta guardada en tu cuenta Plexo.</p>
+                </div>
+
+                {/* Last 4 */}
+                <div className="mb-4 max-w-xs">
+                  <label className={labelClass}>Últimos 4 dígitos</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={paymentCardLast4}
+                    onChange={(e) => setPaymentCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder="3294"
+                    className={inputClass}
+                  />
+                  <p className="text-[10px] text-zinc-600 mt-1">Para identificar la tarjeta correcta en Plexo si tenés varias.</p>
+                </div>
+
+                {/* CVC */}
+                <div className="mb-3 max-w-xs">
+                  <label className={labelClass}>Código de seguridad (CVC)</label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={paymentCardCvc}
+                    onChange={(e) => setPaymentCardCvc(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder={settings?.paymentCardCvcSet ? '***' : '3 o 4 dígitos'}
+                    className={inputClass}
+                    autoComplete="off"
+                  />
+                  <p className="text-[10px] text-zinc-600 mt-1">
+                    {settings?.paymentCardCvcSet ? 'CVC configurado. Dejá vacío para no cambiarlo.' : 'Requerido para completar pagos automáticamente.'}
+                  </p>
+                </div>
+              </>
+            )}
+
+            <button
+              onClick={() => saveSection('autopay', {
+                paymentAutoEnabled,
+                paymentCardBrand: paymentCardBrand || null,
+                paymentCardLast4: paymentCardLast4 || null,
+                ...(paymentCardCvc ? { paymentCardCvc } : {}),
+              })}
+              disabled={saving === 'autopay'}
+              className="mt-2 inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
+              {saving === 'autopay' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar auto-pago
+            </button>
+            <InlineMessage section="autopay" />
           </div>
         </div>
 

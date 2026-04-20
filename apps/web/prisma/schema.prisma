@@ -117,6 +117,16 @@ model Tenant {
   consolidateConsecutiveOrders Boolean @default(false) // When same customer places 2+ orders in window, 2nd+ = REMITENTE
   consolidationWindowMinutes   Int     @default(30)    // Window in minutes to look back for same-customer orders
 
+  // Auto payment on DAC (Plexo gateway) for REMITENTE shipments
+  // When enabled, worker drives the Plexo "saved-card + CVC" flow after clicking
+  // Finalizar. Requires paymentRuleEnabled (or a ShippingRule) to produce REMITENTE.
+  // PCI NOTE: storing CVC (even encrypted) is a PCI DSS 3.2 violation. Tenant
+  // accepts responsibility by toggling paymentAutoEnabled. See settings UI.
+  paymentAutoEnabled Boolean @default(false)
+  paymentCardBrand   String? // "mastercard" | "visa" | "oca" — which brand tile to click on Plexo
+  paymentCardLast4   String? // e.g. "3294" — used to find the right saved-card radio
+  paymentCardCvc     String? // AES-256-GCM encrypted
+
   // Printing
   defaultPrinter   String?
   autoPrintEnabled Boolean @default(false)
@@ -231,6 +241,16 @@ model Label {
   department       String
   totalUyu         Float
   paymentType      PaymentType
+  // Auto-payment outcome on the DAC/Plexo side. Relevant only when
+  // paymentType = REMITENTE AND tenant.paymentAutoEnabled = true.
+  // Values:
+  //   "not_required"     — DESTINATARIO (customer pays COD) or auto-pay off
+  //   "paid"             — Plexo confirmed charge + redirect back to DAC ok
+  //   "pending_manual"   — needs human to complete payment (3DS, timeout, etc.)
+  //   "failed_rejected"  — Plexo explicitly rejected (bad CVC, no funds, etc.)
+  paymentStatus        String?   @default("not_required")
+  paymentFailureReason String?   // "3ds_required" | "card_rejected" | "timeout" | "saved_card_not_found" | "selector_failure"
+  paymentAttemptedAt   DateTime?
   dacGuia          String?     @unique
   pdfPath          String?
   pdfUrl           String?

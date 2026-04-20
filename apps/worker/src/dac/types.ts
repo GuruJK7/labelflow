@@ -6,6 +6,10 @@ export interface DacShipmentResult {
   // allows process-orders.job.ts to mark the resolution as accepted/rejected
   // after the DAC form fill completes.
   aiResolutionHash?: string;
+  // Auto-payment outcome (Plexo). Only set when paymentType === REMITENTE and
+  // tenant.paymentAutoEnabled = true. See apps/worker/src/dac/payment.ts.
+  paymentStatus?: 'paid' | 'pending_manual' | 'failed_rejected' | 'not_required';
+  paymentFailureReason?: string;
 }
 
 export interface DacCredentials {
