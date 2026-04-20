@@ -122,9 +122,15 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
       (tenant.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first',
     );
 
-    // 2. Filter already-processed
+    // 2. Filter already-processed. Only skip orders with a truly COMPLETED
+    // label (real guía, not PENDING-{ts} placeholder). Stuck CREATED/FAILED
+    // labels get retried so Shopify "unfulfilled" orders always reprocess.
     const existingLabels = await db.label.findMany({
-      where: { tenantId, status: { in: ['CREATED', 'COMPLETED'] } },
+      where: {
+        tenantId,
+        status: 'COMPLETED',
+        NOT: { dacGuia: { startsWith: 'PENDING-' } },
+      },
       select: { shopifyOrderId: true },
     });
     const existingIds = new Set(existingLabels.map((l) => l.shopifyOrderId));

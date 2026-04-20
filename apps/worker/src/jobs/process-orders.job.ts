@@ -122,12 +122,15 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
 
     slog.info('shopify', `Fetched ${orders.length} unfulfilled orders from Shopify (sort: ${orderSortDirection})`);
 
-    // BUG FIX 5: Filter out orders with existing CREATED/COMPLETED labels
-    // BUT allow retry of FAILED labels (previously blocked by unique constraint)
+    // User-requested behavior: if Shopify still says "unfulfilled", reprocess it
+    // regardless of DB state. Only skip when we have a truly COMPLETED label
+    // with a real (non-placeholder) guía. This unsticks orders whose dacGuia is
+    // a PENDING-{ts} placeholder or whose status is CREATED/FAILED.
     const existingLabels = await db.label.findMany({
       where: {
         tenantId,
-        status: { in: ['CREATED', 'COMPLETED'] },
+        status: 'COMPLETED',
+        NOT: { dacGuia: { startsWith: 'PENDING-' } },
       },
       select: { shopifyOrderId: true },
     });
@@ -136,7 +139,7 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     orders = orders.filter(o => !processedIds.has(String(o.id)));
     const filteredOut = beforeFilter - orders.length;
     if (filteredOut > 0) {
-      slog.info('filter', `Filtered out ${filteredOut} orders with existing CREATED/COMPLETED labels`);
+      slog.info('filter', `Filtered out ${filteredOut} orders with truly COMPLETED labels (real guía)`);
     }
 
     // Product type filter: only process orders containing allowed product types
