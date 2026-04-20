@@ -302,6 +302,45 @@ export async function handlePaymentFlow(
 
   slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, `[pay] on Plexo: ${page.url()}`);
 
+  // Plexo is an SPA — after the redirect the body is empty for ~500-2000ms
+  // while the JS hydrates. Historically we jumped straight into the brand-tile
+  // evaluate() and found `buttons=[] labels=[] checkboxes=0 inputs=0` (order
+  // #11434 was the canonical failure). Wait for any of the expected tile
+  // signals BEFORE scanning the DOM. `networkidle` first (covers the typical
+  // hydration flush) and then a content-based check as belt-and-suspenders.
+  try {
+    await page.waitForLoadState('networkidle', { timeout: PLEXO_STEP_TIMEOUT_MS });
+  } catch (err) {
+    slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV, `[pay] networkidle wait on Plexo timed out (${(err as Error).message}) — continuing`);
+  }
+
+  const spaReady = await page
+    .waitForFunction(
+      () => {
+        const text = (document.body.innerText ?? '').toLowerCase();
+        // Any of these signals means the Plexo UI has rendered at least the
+        // payment-method selection screen.
+        return (
+          text.includes('tarjeta de débito') ||
+          text.includes('tarjeta de debito') ||
+          text.includes('medio de pago') ||
+          text.includes('método de pago') ||
+          text.includes('metodo de pago') ||
+          document.querySelectorAll('button, [role=button]').length >= 1
+        );
+      },
+      { timeout: PLEXO_STEP_TIMEOUT_MS, polling: 200 },
+    )
+    .then(() => true)
+    .catch(() => false);
+
+  if (!spaReady) {
+    slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV, '[pay] Plexo SPA never rendered brand-tile content');
+    await dumpDiagnostic(page, slog, 'plexo-spa-not-rendered');
+    return { status: 'pending_manual', reason: 'selector_failure' };
+  }
+  slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, '[pay] Plexo SPA rendered — scanning for brand tile');
+
   // --- Step 1: click the brand tile (Mastercard/VISA/OCA) ---
   // The tile acts as a section toggle revealing the saved-card list.
   // On the initial Plexo page the CONTINUAR is disabled until a section opens.
