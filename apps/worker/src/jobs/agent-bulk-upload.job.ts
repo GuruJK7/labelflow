@@ -43,7 +43,7 @@ import { sendShipmentNotification } from '../notifier/email';
 import fsSync from 'fs';
 
 import type { AgentJobPayload } from './process-orders-bulk.job';
-import { invokeClaudeForAddressCorrection } from '../agent/invoke-claude';
+import { resolveAddressCorrection } from '../agent/invoke-claude';
 
 const DELAY_BETWEEN_ORDERS_MS = 500;
 
@@ -250,7 +250,7 @@ export async function agentBulkUploadJob(job: {
           // YELLOW: Claude corrects ambiguous address fields, worker fills DAC
           // form via the standard Playwright path. Claude never touches DAC.
           const correctionStart = Date.now();
-          const override = await invokeClaudeForAddressCorrection({
+          const override = await resolveAddressCorrection({
             entry,
             jobId: job.id,
             slog,

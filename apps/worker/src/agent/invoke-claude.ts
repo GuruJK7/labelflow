@@ -1,28 +1,28 @@
 /**
  * invoke-claude.ts
  *
- * Two spawn strategies for YELLOW-classified orders on the Mac Mini.
+ * Strategies for YELLOW-classified orders.
  *
- * invokeClaudeForAddressCorrection() — active YELLOW path
- *   Spawns `claude -p` with Read+Write only. Claude reasons about ambiguous
- *   address fields (city→dept mapping, apt extraction, phone normalisation) and
- *   returns an AddressOverride. The worker then calls createShipment() with
- *   that override — Claude never touches DAC directly.
- *   Timeout: 90 s. Files: /tmp/labelflow-addr-{context,result}.json.
+ * resolveAddressCorrection() — the public dispatcher used by jobs.
+ *   Tries, in order:
+ *     1. Tailscale bridge (Mac Mini Claude Max, $0)       [prod primary]
+ *     2. Anthropic API (haiku via SDK)                    [prod fallback]
+ *     3. Local CLI spawn (for dev on the Mac Mini itself) [dev/local]
+ *   Falls through on any failure (network, timeout, non-2xx, missing env).
+ *   Returns null if ALL strategies fail → caller marks order NEEDS_REVIEW.
  *
- * invokeClaudeForYellow() — legacy path (kept for reference / A-B testing)
- *   Spawns `claude -p` with the `process-bulk-dac` Playwright skill.
- *   Claude opens its own Chromium, fills the DAC form, and returns the guía.
- *   Timeout: 600 s. Files: /tmp/labelflow-order-{context,result}.json.
+ * invokeClaudeForAddressCorrection() — legacy CLI-spawn path, unchanged.
+ *   Kept for unit-test compatibility and as the local-dev fallback strategy.
+ *   Spawns `claude -p` with Read+Write only, reads the result JSON.
  *
- * Uses the Claude Max subscription installed on the Mac Mini — NO API key.
- * The user must have run `claude /login` once on that machine.
- * One invocation per order. The outer loop is sequential so fixed /tmp
- * paths are safe within each function.
+ * invokeClaudeForYellow() — earliest path (kept for reference / A-B testing).
+ *   Spawns `claude -p` with the `process-bulk-dac` Playwright skill where
+ *   Claude drives the DAC form itself. Not used in the current flow.
  */
 
 import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
+import Anthropic from '@anthropic-ai/sdk';
 
 import type { AgentJobPayload } from '../jobs/process-orders-bulk.job';
 import type { createStepLogger } from '../logger';
@@ -389,4 +389,229 @@ export async function invokeClaudeForAddressCorrection(
   }
 
   return result.override;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared helpers for bridge + API strategies.
+//
+// The CLI path above writes the context JSON to disk because `claude -p` reads
+// it with the Read tool. The bridge forwards the same context over HTTP; the
+// direct-API path inlines it into the prompt. All three produce the same
+// ClaudeAddressResult shape so the dispatcher doesn't care which ran.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildAddressContext(entry: Entry, jobId: string) {
+  const addr = entry.order.shipping_address;
+  return {
+    jobId,
+    orderId: String(entry.order.id),
+    orderName: entry.order.name,
+    classificationReasons: entry.classification.reasons,
+    shipping_address: {
+      first_name: addr?.first_name ?? '',
+      last_name: addr?.last_name ?? '',
+      address1: addr?.address1 ?? '',
+      address2: addr?.address2 ?? '',
+      city: addr?.city ?? '',
+      province: addr?.province ?? '',
+      zip: addr?.zip ?? '',
+      phone: addr?.phone ?? '',
+      country: addr?.country ?? '',
+    },
+    validDepartments: VALID_DEPARTMENTS,
+  };
+}
+
+// Shared instructions — identical semantics across strategies so a YELLOW
+// order produces the same override regardless of which path ran it.
+const CORRECTION_RULES =
+  'You are correcting a Shopify shipping address for Uruguay courier DAC.\n' +
+  'Resolve: (1) map city to the correct DAC department from validDepartments, ' +
+  '(2) strip apartment/floor markers from address1 and put them in notes, ' +
+  '(3) normalize phone to 8 digits only (use "00000000" if clearly invalid). ' +
+  'Only include fields in override that actually need correcting.\n' +
+  'Response schema (JSON):\n' +
+  '  Success: {"success":true,"override":{"address1":"...","notes":"...","department":"...","city":"...","phone":"...","recipientName":"..."},"reasoning":"..."}\n' +
+  '  Failure: {"success":false,"reasoning":"cannot resolve — <reason>"}';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Strategy 1: Tailscale bridge → Mac Mini Claude Max ($0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BRIDGE_DEFAULT_TIMEOUT_MS = 120_000;
+
+async function invokeClaudeViaBridge(
+  entry: Entry,
+  jobId: string,
+  slog: StepLogger,
+): Promise<{ outcome: 'resolved' | 'unresolvable' | 'unavailable'; override: AddressOverride | null }> {
+  const url = process.env.LABELFLOW_BRIDGE_URL;
+  const secret = process.env.LABELFLOW_BRIDGE_SECRET;
+  if (!url || !secret) {
+    return { outcome: 'unavailable', override: null };
+  }
+
+  const timeoutMs = Number(process.env.LABELFLOW_BRIDGE_TIMEOUT_MS) || BRIDGE_DEFAULT_TIMEOUT_MS;
+  const context = buildAddressContext(entry, jobId);
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const t0 = Date.now();
+
+  try {
+    const res = await fetch(`${url.replace(/\/+$/, '')}/correct-address`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-labelflow-secret': secret,
+      },
+      body: JSON.stringify(context),
+      signal: ctrl.signal,
+    });
+
+    if (!res.ok) {
+      slog.warn(
+        'bridge-non-2xx',
+        `Bridge ${res.status} ${res.statusText} in ${Date.now() - t0}ms — falling back`,
+      );
+      return { outcome: 'unavailable', override: null };
+    }
+
+    const parsed = (await res.json()) as ClaudeAddressResult;
+    slog.info(
+      'bridge-result',
+      `success=${parsed.success} ms=${Date.now() - t0}`,
+    );
+
+    if (parsed.success && parsed.override) {
+      return { outcome: 'resolved', override: parsed.override };
+    }
+    // Claude resolved the call but couldn't correct — deterministic refusal,
+    // don't waste the API fallback on it.
+    return { outcome: 'unresolvable', override: null };
+  } catch (err) {
+    slog.warn(
+      'bridge-error',
+      `Bridge unreachable in ${Date.now() - t0}ms: ${(err as Error).message} — falling back`,
+    );
+    return { outcome: 'unavailable', override: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Strategy 2: direct Anthropic API (haiku) — the always-available fallback
+// ─────────────────────────────────────────────────────────────────────────────
+
+const API_DEFAULT_TIMEOUT_MS = 30_000;
+const API_MODEL = 'claude-haiku-4-5-20251001';
+
+async function invokeClaudeViaAnthropicAPI(
+  entry: Entry,
+  jobId: string,
+  slog: StepLogger,
+): Promise<{ outcome: 'resolved' | 'unresolvable' | 'unavailable'; override: AddressOverride | null }> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    slog.warn('api-no-key', 'ANTHROPIC_API_KEY not set — no fallback available');
+    return { outcome: 'unavailable', override: null };
+  }
+
+  const timeoutMs = Number(process.env.LABELFLOW_API_TIMEOUT_MS) || API_DEFAULT_TIMEOUT_MS;
+  const context = buildAddressContext(entry, jobId);
+
+  const client = new Anthropic({ apiKey, timeout: timeoutMs });
+
+  const system =
+    CORRECTION_RULES +
+    '\n\nRespond with ONLY the JSON object — no prose, no markdown fences. ' +
+    'Your entire output must parse as JSON.';
+
+  const userMessage =
+    `YELLOW classification reasons: ${entry.classification.reasons.join(', ')}\n\n` +
+    `Context:\n${JSON.stringify(context, null, 2)}`;
+
+  const t0 = Date.now();
+  let rawText: string;
+  try {
+    const resp = await client.messages.create({
+      model: API_MODEL,
+      max_tokens: 512,
+      system,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+    const block = resp.content.find((c) => c.type === 'text');
+    if (!block || block.type !== 'text') {
+      slog.warn('api-no-text', 'Anthropic response had no text block');
+      return { outcome: 'unavailable', override: null };
+    }
+    rawText = block.text;
+  } catch (err) {
+    slog.warn(
+      'api-error',
+      `Anthropic API failed in ${Date.now() - t0}ms: ${(err as Error).message}`,
+    );
+    return { outcome: 'unavailable', override: null };
+  }
+
+  let parsed: ClaudeAddressResult;
+  try {
+    // Tolerate accidental ```json fences if the model adds them despite
+    // the instruction not to.
+    const cleaned = rawText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    parsed = JSON.parse(cleaned) as ClaudeAddressResult;
+  } catch (err) {
+    slog.warn(
+      'api-bad-json',
+      `API returned non-JSON (${(err as Error).message}): ${rawText.slice(0, 200)}`,
+    );
+    return { outcome: 'unavailable', override: null };
+  }
+
+  slog.info(
+    'api-result',
+    `success=${parsed.success} ms=${Date.now() - t0}`,
+  );
+  if (parsed.success && parsed.override) {
+    return { outcome: 'resolved', override: parsed.override };
+  }
+  return { outcome: 'unresolvable', override: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public dispatcher — use this from jobs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ResolveAddressCorrectionParams {
+  entry: Entry;
+  jobId: string;
+  slog: StepLogger;
+  timeoutMs?: number; // applies only to the CLI fallback
+}
+
+export async function resolveAddressCorrection(
+  params: ResolveAddressCorrectionParams,
+): Promise<AddressOverride | null> {
+  const { entry, jobId, slog, timeoutMs } = params;
+
+  // 1. Bridge (Mac Mini Claude Max, $0)
+  if (process.env.LABELFLOW_BRIDGE_URL && process.env.LABELFLOW_BRIDGE_SECRET) {
+    const bridge = await invokeClaudeViaBridge(entry, jobId, slog);
+    if (bridge.outcome === 'resolved') return bridge.override;
+    if (bridge.outcome === 'unresolvable') return null; // don't burn API on refusals
+    // else 'unavailable' → try API
+  }
+
+  // 2. Anthropic API fallback
+  if (process.env.ANTHROPIC_API_KEY) {
+    const api = await invokeClaudeViaAnthropicAPI(entry, jobId, slog);
+    if (api.outcome === 'resolved') return api.override;
+    if (api.outcome === 'unresolvable') return null;
+    // 'unavailable' → try CLI
+  }
+
+  // 3. Local CLI spawn (dev / running directly on the Mac Mini)
+  //    This is what the existing unit tests exercise — signature unchanged.
+  return invokeClaudeForAddressCorrection({ entry, jobId, slog, timeoutMs });
 }
