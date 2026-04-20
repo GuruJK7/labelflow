@@ -262,6 +262,21 @@ CONTEXTO GEOGRAFICO CLAVE:
 - "Young" es una ciudad en Rio Negro
 - "Minas" es la capital de Lavalleja
 
+LOCALIDADES DE CANELONES (NO son barrios de Montevideo — NUNCA las clasifiques como Montevideo):
+- Costa de Oro (este-oeste): Barra de Carrasco, Paso Carrasco, Shangrila, Lagomar, Solymar, El Pinar, Neptunia, Salinas, Marindia, Pinamar, San Luis, Parque del Plata, Las Toscas, Atlantida, Las Vegas, La Floresta, Cuchilla Alta
+- Interior Canelones: Ciudad de la Costa, Pando, Las Piedras, La Paz, Progreso, Barros Blancos, Joaquin Suarez, Toledo, Sauce, Canelones (capital), Santa Lucia, Las Toscas, Empalme Olmos, Tala, San Ramon, San Bautista, Migues
+Si ves cualquiera de estas palabras en address1/address2/city, department es "Canelones" y barrio es null.
+
+LOCALIDADES DE SAN JOSE (NO son Montevideo):
+- Ciudad del Plata, Delta del Tigre, Playa Pascual, Rincon de la Bolsa, Libertad, Rodriguez, Ecilda Paullier, Mal Abrigo, San Jose de Mayo
+Si ves estas palabras, department es "San Jose".
+
+LOCALIDADES DE MALDONADO (NO son Montevideo):
+- Punta del Este, Maldonado, San Carlos, Piriapolis, Pan de Azucar, Aigua, Punta Ballena, La Barra, Manantiales, Jose Ignacio
+Si ves estas palabras, department es "Maldonado".
+
+IMPORTANTE: si la dirección contiene el nombre de una localidad NO-Montevideo (de las listas de arriba) y VOS dudás, es MUCHO mejor clasificarla por su department real con barrio=null que forzar un barrio de Montevideo inventado. Un barrio inventado hace que DAC rechace el envío entero.
+
 BARRIOS VALIDOS DE MONTEVIDEO (58 total):
 Si department es "Montevideo", barrio DEBE ser EXACTAMENTE uno de estos (en lowercase):
 ${VALID_MVD_BARRIOS.join(', ')}

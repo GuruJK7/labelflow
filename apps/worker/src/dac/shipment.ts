@@ -1670,6 +1670,18 @@ export async function createShipment(
   // ===== EXTRACT GUIA (with built-in retry — NEVER re-submit the form) =====
   const guiaResult = await extractGuiaWithRetry(page, slog, order.name, usedGuias);
 
+  // Safeguard: if we ended up with a PENDING- placeholder AND the URL never
+  // moved away from /envios/nuevo, DAC almost certainly rejected the form
+  // silently (bad address/department, validation error, etc.). Throwing here
+  // prevents a stale PENDING- record from blocking future retries and surfaces
+  // the order as FAILED in the Label so the user can investigate.
+  if (guiaResult.guia.startsWith('PENDING-') && currentUrl.includes('/envios/nuevo')) {
+    throw new Error(
+      `DAC rejected the shipment form for ${order.name} (URL stayed on /envios/nuevo and no guía was extracted). ` +
+      `Likely cause: address could not be classified into a valid department/barrio. Review the customer address in Shopify.`,
+    );
+  }
+
   // Resolve the payment status to persist on the Label:
   //   - DESTINATARIO                     → 'not_required'
   //   - REMITENTE + auto-pay off         → 'not_required' (tenant will pay manually)
