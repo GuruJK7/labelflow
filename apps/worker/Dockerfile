@@ -6,8 +6,11 @@ WORKDIR /app
 COPY package.json ./
 COPY prisma/ ./prisma/
 
-# Install deps (dev deps needed for tsc during build)
-RUN npm install --legacy-peer-deps
+# Install ALL deps (prod + dev) — tsc lives in devDependencies and we need it
+# for the build step below. --include=dev forces dev deps even if the base
+# image sets NODE_ENV=production (which would otherwise silently skip them
+# and break `npm run build`).
+RUN npm install --legacy-peer-deps --include=dev
 
 # Generate Prisma client
 RUN npx prisma generate --schema=./prisma/schema.prisma
