@@ -65,7 +65,11 @@ export async function downloadLabel(
         });
 
         const buffer = Buffer.from(response.data);
-        const contentType = response.headers['content-type'] || '';
+        // Axios header values are typed as `string | number | true | AxiosHeaders`,
+        // so we coerce to string before calling .includes(). Older axios versions
+        // have looser types that happen to compile locally, which is why this
+        // only surfaced in the Docker build.
+        const contentType = String(response.headers['content-type'] ?? '');
         const isPdf = contentType.includes('application/pdf') ||
           (buffer.length >= 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46); // %PDF
 

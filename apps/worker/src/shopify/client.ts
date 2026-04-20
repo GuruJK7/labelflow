@@ -12,7 +12,10 @@ export function createShopifyClient(storeUrl: string, token: string): AxiosInsta
   });
 
   client.interceptors.response.use((response) => {
-    const callLimit = response.headers['x-shopify-shop-api-call-limit'];
+    // Axios header values are `string | number | true | AxiosHeaders`, so we
+    // coerce to string before string methods. See label.ts for the same fix.
+    const callLimitRaw = response.headers['x-shopify-shop-api-call-limit'];
+    const callLimit = typeof callLimitRaw === 'string' ? callLimitRaw : null;
     if (callLimit) {
       const [used, max] = callLimit.split('/').map(Number);
       if (used > max * 0.8) {
