@@ -218,9 +218,20 @@ export function JobFeedPanel({ jobId, onClose }: Props) {
     setDismissed(false);
   }, [jobId]);
 
-  // Auto-scroll
+  // Auto-scroll — only the inner order list, NEVER the page. The previous
+  // `scrollIntoView` scrolled window ancestors too, which pulled the whole
+  // dashboard down every time a new order/log arrived. Also: only snap to
+  // bottom if the user was already there, so reading upwards isn't fighting
+  // the auto-scroll.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const end = bottomRef.current;
+    const container = end?.parentElement;
+    if (!container) return;
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom < 40) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [orderTracks.length, logs.length]);
 
   // Nothing to show

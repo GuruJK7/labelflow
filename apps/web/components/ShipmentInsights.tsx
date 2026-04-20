@@ -134,8 +134,19 @@ export function ShipmentInsights() {
   }, [fetchInsights]);
 
   useEffect(() => {
-    if (data?.activeJob?.status === 'RUNNING') {
-      logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (data?.activeJob?.status !== 'RUNNING') return;
+    // Scroll ONLY the inner log container — NEVER the page. The previous
+    // `scrollIntoView({ behavior: 'smooth' })` also scrolled window ancestors,
+    // which is why every new log line yanked the whole page down.
+    // Also: respect the user's position. If they scrolled up to read
+    // something, don't pull them back to the bottom.
+    const end = logsEndRef.current;
+    const container = end?.parentElement;
+    if (!container) return;
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom < 40) {
+      container.scrollTop = container.scrollHeight;
     }
   }, [data?.activeLogs?.length, data?.activeJob?.status]);
 
