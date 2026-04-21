@@ -1,23 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import crypto from 'crypto'
 import { db } from '@/lib/db'
-import { decryptIfPresent } from '@/lib/encryption'
 import { normalizePhone, buildCheckoutUrl, maskPhone } from '@/lib/recover-utils'
+import { verifyShopifyWebhook } from '@/lib/shopify-webhook'
 import type { CartItem } from '@/types/recover'
-function verifyHmac(body: string, hmacHeader: string, secret: string): boolean {
-  const digest = crypto
-    .createHmac('sha256', secret)
-    .update(body, 'utf8')
-    .digest('base64')
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(hmacHeader, 'base64'),
-      Buffer.from(digest, 'base64')
-    )
-  } catch {
-    return false
-  }
-}
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -27,6 +12,12 @@ export async function POST(req: NextRequest) {
 
   if (!hmacHeader || !topic || !shopDomain) {
     return NextResponse.json({ error: 'Missing headers' }, { status: 401 })
+  }
+
+  // C-1/C-2 (2026-04-21 audit): verify HMAC with the app shared secret BEFORE
+  // any DB lookup. See apps/web/lib/shopify-webhook.ts for the full rationale.
+  if (!verifyShopifyWebhook(body, hmacHeader)) {
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
 
   // Only process checkout events
@@ -42,7 +33,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Find tenant with active recover module
+  // Find tenant with active recover module (post-HMAC — shopDomain is now trusted)
   const tenant = await db.tenant.findFirst({
     where: {
       shopifyStoreUrl: shopDomain,
@@ -50,7 +41,6 @@ export async function POST(req: NextRequest) {
     },
     select: {
       id: true,
-      shopifyToken: true,
       shopifyStoreUrl: true,
       recoverConfig: {
         select: {
@@ -66,18 +56,9 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  if (!tenant || !tenant.shopifyToken) {
+  if (!tenant) {
+    // Signature valid but shop not (no longer?) a tenant — ack and move on.
     return NextResponse.json({ ok: true })
-  }
-
-  // Verify HMAC with safe decryption
-  const shopifySecret = decryptIfPresent(tenant.shopifyToken)
-  if (!shopifySecret) {
-    console.error('[Recover Webhook] Failed to decrypt shopifyToken for tenant', tenant.id)
-    return NextResponse.json({ ok: true })
-  }
-  if (!verifyHmac(body, hmacHeader, shopifySecret)) {
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
 
   // Recover module must be active with valid subscription

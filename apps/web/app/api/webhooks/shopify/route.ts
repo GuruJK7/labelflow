@@ -1,23 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import crypto from 'crypto';
 import { db } from '@/lib/db';
 import { enqueueProcessOrders } from '@/lib/queue';
-import { decrypt } from '@/lib/encryption';
-
-function verifyHmac(body: string, hmacHeader: string, secret: string): boolean {
-  const digest = crypto
-    .createHmac('sha256', secret)
-    .update(body, 'utf8')
-    .digest('base64');
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(hmacHeader, 'base64'),
-      Buffer.from(digest, 'base64')
-    );
-  } catch {
-    return false;
-  }
-}
+import { verifyShopifyWebhook } from '@/lib/shopify-webhook';
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -29,29 +13,40 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing headers' }, { status: 401 });
   }
 
+  // C-1/C-2 (2026-04-21 audit):
+  //  - C-1: verify with the app shared secret (SHOPIFY_API_SECRET), not the
+  //    per-tenant Admin API access token. Shopify signs webhooks with the
+  //    app-level secret; verifying with the access token rejected legitimate
+  //    traffic and (inversely) would accept forged payloads from anyone who
+  //    had ever leaked an access token.
+  //  - C-2: verify BEFORE the tenant lookup. Doing the tenant lookup first
+  //    let attackers enumerate valid shop domains by probing the endpoint
+  //    and observing timing/response differences.
+  if (!verifyShopifyWebhook(body, hmacHeader)) {
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+  }
+
   // Only process order/paid events
   if (topic !== 'orders/paid') {
     return NextResponse.json({ ok: true });
   }
 
-  // Find tenant by shop domain
+  // Tenant lookup happens AFTER HMAC passes — untrusted shopDomain header is
+  // now safe to use as a DB filter since we've proven Shopify (with our app
+  // secret) actually signed this payload.
   const tenant = await db.tenant.findFirst({
     where: {
       shopifyStoreUrl: shopDomain,
       isActive: true,
       subscriptionStatus: 'ACTIVE',
     },
-    select: { id: true, shopifyToken: true },
+    select: { id: true },
   });
 
-  if (!tenant || !tenant.shopifyToken) {
+  if (!tenant) {
+    // Signature valid but we don't recognise the shop (e.g. uninstalled). Return
+    // 200 so Shopify stops retrying; nothing to do on our side.
     return NextResponse.json({ ok: true });
-  }
-
-  // Verify HMAC using the tenant's Shopify token as webhook secret
-  const shopifySecret = decrypt(tenant.shopifyToken);
-  if (!verifyHmac(body, hmacHeader, shopifySecret)) {
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
   try {

@@ -40,66 +40,109 @@ const AGENT_POLL_INTERVAL_MS = 30_000; // Agent polls less aggressively
 // AGENT_MODE=true → this worker is running on Adrian's Mac, only picks up WAITING_FOR_AGENT jobs
 const AGENT_MODE = process.env.AGENT_MODE === 'true';
 
+/**
+ * C-6 (2026-04-21 audit): atomic claim of the oldest PENDING job.
+ *
+ * Previously `findFirst({ status: 'PENDING' })` would return the same row to
+ * two workers polling simultaneously; both would then call the processor,
+ * both would UPDATE to RUNNING, and both would start hitting Shopify/DAC
+ * concurrently for the same tenant. The fix uses a single atomic SQL
+ * statement — `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED
+ * LIMIT 1)` — so Postgres row-locking guarantees exactly one worker wins the
+ * claim; any concurrent poller sees the row as locked and skips it.
+ *
+ * Returns the claimed row (now in RUNNING state) or null if nothing pending.
+ * Processors MUST NOT re-mark the job as RUNNING — that's already done here.
+ */
+async function claimPendingJob(): Promise<
+  { id: string; tenantId: string; type: string } | null
+> {
+  const rows = await db.$queryRaw<
+    Array<{ id: string; tenantId: string; type: string }>
+  >`
+    UPDATE "Job"
+    SET status = 'RUNNING', "startedAt" = NOW()
+    WHERE id = (
+      SELECT id FROM "Job"
+      WHERE status = 'PENDING'
+      ORDER BY "createdAt" ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT 1
+    )
+    RETURNING id, "tenantId", type;
+  `;
+  return rows.length > 0 ? rows[0] : null;
+}
+
 async function pollForJobs(): Promise<void> {
   try {
-    // Find PENDING jobs
-    const pendingJob = await db.job.findFirst({
-      where: { status: 'PENDING' },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    if (!pendingJob) return;
+    const claimed = await claimPendingJob();
+    if (!claimed) return;
 
     logger.info(
-      { jobId: pendingJob.id, tenantId: pendingJob.tenantId },
-      'Found pending job, processing...'
+      { jobId: claimed.id, tenantId: claimed.tenantId, type: claimed.type },
+      'Claimed pending job, processing...'
     );
 
     // Route to correct processor based on job type
-    if (pendingJob.type === 'TEST_DAC') {
-      logger.info({ jobId: pendingJob.id }, 'Routing to TEST_DAC processor');
-      await testDacJob(pendingJob.tenantId, pendingJob.id);
-    } else if (pendingJob.type === 'PROCESS_ORDERS_BULK') {
-      logger.info({ jobId: pendingJob.id }, 'Routing to BULK processor');
-      await processOrdersBulkJob(pendingJob.tenantId, pendingJob.id);
+    if (claimed.type === 'TEST_DAC') {
+      logger.info({ jobId: claimed.id }, 'Routing to TEST_DAC processor');
+      await testDacJob(claimed.tenantId, claimed.id);
+    } else if (claimed.type === 'PROCESS_ORDERS_BULK') {
+      logger.info({ jobId: claimed.id }, 'Routing to BULK processor');
+      await processOrdersBulkJob(claimed.tenantId, claimed.id);
     } else {
-      await processOrdersJob(pendingJob.tenantId, pendingJob.id);
+      await processOrdersJob(claimed.tenantId, claimed.id);
     }
 
-    logger.info({ jobId: pendingJob.id }, 'Job completed');
+    logger.info({ jobId: claimed.id }, 'Job completed');
   } catch (err) {
     logger.error({ error: (err as Error).message }, 'Error in poll cycle');
   }
 }
 
-async function pollForAdUploadJobs(): Promise<void> {
-  const pendingJob = await db.adUploadJob.findFirst({
-    where: { status: 'PENDING' },
-    orderBy: { createdAt: 'asc' },
-  });
+/**
+ * C-6: atomic claim for AdUploadJob — same pattern as claimPendingJob.
+ */
+async function claimPendingAdUploadJob(): Promise<
+  { id: string; metaAdAccountId: string } | null
+> {
+  const rows = await db.$queryRaw<
+    Array<{ id: string; metaAdAccountId: string }>
+  >`
+    UPDATE "AdUploadJob"
+    SET status = 'RUNNING', "startedAt" = NOW()
+    WHERE id = (
+      SELECT id FROM "AdUploadJob"
+      WHERE status = 'PENDING'
+      ORDER BY "createdAt" ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT 1
+    )
+    RETURNING id, "metaAdAccountId";
+  `;
+  return rows.length > 0 ? rows[0] : null;
+}
 
-  if (!pendingJob) return;
+async function pollForAdUploadJobs(): Promise<void> {
+  const claimed = await claimPendingAdUploadJob();
+  if (!claimed) return;
 
   logger.info(
-    { jobId: pendingJob.id, metaAdAccountId: pendingJob.metaAdAccountId },
-    'Found pending ad upload job, processing...'
+    { jobId: claimed.id, metaAdAccountId: claimed.metaAdAccountId },
+    'Claimed ad upload job, processing...'
   );
 
-  await db.adUploadJob.update({
-    where: { id: pendingJob.id },
-    data: { status: 'RUNNING', startedAt: new Date() },
-  });
-
   try {
-    await processAdUploadJob(pendingJob.id, pendingJob.metaAdAccountId);
+    await processAdUploadJob(claimed.id, claimed.metaAdAccountId);
   } catch (err) {
     logger.error(
-      { jobId: pendingJob.id, error: (err as Error).message },
+      { jobId: claimed.id, error: (err as Error).message },
       'Unhandled error in ad upload job — marking FAILED'
     );
     await db.adUploadJob
       .update({
-        where: { id: pendingJob.id },
+        where: { id: claimed.id },
         data: { status: 'FAILED', finishedAt: new Date(), errorMessage: ((err as Error).message ?? 'Unhandled error').slice(0, 500) },
       })
       .catch(() => {});
@@ -112,39 +155,42 @@ async function pollForAdUploadJobs(): Promise<void> {
  * Completely independent of DAC and Ads loops.
  */
 async function pollForRecoverJobs(): Promise<void> {
-  const now = new Date();
-
-  const pendingJob = await db.recoverJob.findFirst({
-    where: {
-      status: 'PENDING',
-      scheduledFor: { lte: now },
-    },
-    orderBy: { scheduledFor: 'asc' },
-  });
-
-  if (!pendingJob) return;
+  // C-6: atomic claim. Two workers can no longer both pick up the same recover
+  // job and double-send the same WhatsApp message. We keep the scheduledFor
+  // filter inside the inner SELECT so not-yet-due jobs aren't locked.
+  const rows = await db.$queryRaw<
+    Array<{ id: string; cartId: string; messageNumber: number }>
+  >`
+    UPDATE "RecoverJob"
+    SET status = 'RUNNING', "startedAt" = NOW()
+    WHERE id = (
+      SELECT id FROM "RecoverJob"
+      WHERE status = 'PENDING' AND "scheduledFor" <= NOW()
+      ORDER BY "scheduledFor" ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT 1
+    )
+    RETURNING id, "cartId", "messageNumber";
+  `;
+  const claimed = rows.length > 0 ? rows[0] : null;
+  if (!claimed) return;
 
   logger.info(
-    { jobId: pendingJob.id, cartId: pendingJob.cartId, messageNumber: pendingJob.messageNumber },
-    '[Recover] Found pending recover job, processing...'
+    { jobId: claimed.id, cartId: claimed.cartId, messageNumber: claimed.messageNumber },
+    '[Recover] Claimed recover job, processing...'
   );
 
-  await db.recoverJob.update({
-    where: { id: pendingJob.id },
-    data: { status: 'RUNNING', startedAt: new Date() },
-  });
-
   try {
-    await processRecoverMessage(pendingJob.id);
+    await processRecoverMessage(claimed.id);
   } catch (err) {
     // Ensure the job never stays stuck in RUNNING state
     logger.error(
-      { jobId: pendingJob.id, error: (err as Error).message },
+      { jobId: claimed.id, error: (err as Error).message },
       '[Recover] Unhandled error in processRecoverMessage — marking job FAILED'
     );
     await db.recoverJob
       .update({
-        where: { id: pendingJob.id },
+        where: { id: claimed.id },
         data: {
           status: 'FAILED',
           finishedAt: new Date(),
@@ -156,33 +202,39 @@ async function pollForRecoverJobs(): Promise<void> {
 }
 
 async function pollForAdMonitorJobs(): Promise<void> {
-  const pendingJob = await db.adMonitorQueue.findFirst({
-    where: { status: 'PENDING' },
-    orderBy: { createdAt: 'asc' },
-  });
-
-  if (!pendingJob) return;
+  // C-6: atomic claim — see pollForJobs for the rationale.
+  const rows = await db.$queryRaw<
+    Array<{ id: string; metaAdAccountId: string }>
+  >`
+    UPDATE "AdMonitorQueue"
+    SET status = 'RUNNING', "startedAt" = NOW()
+    WHERE id = (
+      SELECT id FROM "AdMonitorQueue"
+      WHERE status = 'PENDING'
+      ORDER BY "createdAt" ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT 1
+    )
+    RETURNING id, "metaAdAccountId";
+  `;
+  const claimed = rows.length > 0 ? rows[0] : null;
+  if (!claimed) return;
 
   logger.info(
-    { jobId: pendingJob.id, metaAdAccountId: pendingJob.metaAdAccountId },
-    'Found pending ad monitor job, processing...'
+    { jobId: claimed.id, metaAdAccountId: claimed.metaAdAccountId },
+    'Claimed ad monitor job, processing...'
   );
 
-  await db.adMonitorQueue.update({
-    where: { id: pendingJob.id },
-    data: { status: 'RUNNING', startedAt: new Date() },
-  });
-
   try {
-    await processAdMonitorJob(pendingJob.id, pendingJob.metaAdAccountId);
+    await processAdMonitorJob(claimed.id, claimed.metaAdAccountId);
   } catch (err) {
     logger.error(
-      { jobId: pendingJob.id, error: (err as Error).message },
+      { jobId: claimed.id, error: (err as Error).message },
       'Unhandled error in ad monitor job — marking FAILED'
     );
     await db.adMonitorQueue
       .update({
-        where: { id: pendingJob.id },
+        where: { id: claimed.id },
         data: { status: 'FAILED', finishedAt: new Date(), errorMessage: ((err as Error).message ?? 'Unhandled error').slice(0, 500) },
       })
       .catch(() => {});

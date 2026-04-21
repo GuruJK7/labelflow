@@ -43,6 +43,52 @@ const VALID_DEPARTMENTS = [
   'Salto', 'Paysandu', 'Rio Negro', 'Soriano', 'Tacuarembo',
 ];
 
+/**
+ * H-8 (2026-04-21 audit): filter env vars passed to spawned `claude` CLI.
+ *
+ * Previously we did `env: { ...process.env }`, which handed the child process
+ * (and anything it loads — MCP servers, user skills, inline tool invocations)
+ * EVERY secret the worker has access to: DATABASE_URL, ENCRYPTION_KEY,
+ * STRIPE_SECRET_KEY, SUPABASE_SERVICE_ROLE_KEY, LABELFLOW_BRIDGE_SECRET,
+ * WHATSAPP_API_TOKEN, and more. If a prompt injection ever coaxed the CLI
+ * into shelling out (`Bash` is one of our allowed tools in the YELLOW flow),
+ * the attacker would own the entire infrastructure.
+ *
+ * Whitelist approach: only the env vars the CLI actually needs to run are
+ * forwarded. Anything else (DAC creds, per-call overrides) is passed in via
+ * the `extra` argument and layered on top, so callers remain in control of
+ * what the child sees.
+ */
+const CLAUDE_ENV_WHITELIST: ReadonlySet<string> = new Set([
+  'PATH',            // find `claude` / `node` / `sh`
+  'HOME',            // ~/.claude/ (config, auth)
+  'USER',            // ps / logs
+  'LOGNAME',         // same
+  'SHELL',           // some CLI paths check this
+  'TMPDIR',          // for the CLI's own temp files
+  'LANG',            // UTF-8 output
+  'LC_ALL',          // ditto
+  'LC_CTYPE',        // ditto
+  'TERM',            // cosmetic — the CLI checks this
+  'ANTHROPIC_API_KEY', // CLI's API auth (only matters on the Mac Mini dev path)
+  'CLAUDE_BIN',      // self-reference; harmless
+  'CLAUDE_CONFIG_DIR', // if the operator customized it
+]);
+
+function buildClaudeChildEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const filtered: NodeJS.ProcessEnv = {};
+  for (const key of Object.keys(process.env)) {
+    if (CLAUDE_ENV_WHITELIST.has(key)) {
+      filtered[key] = process.env[key];
+    }
+  }
+  // Per-call additions (DAC credentials, etc.) override any whitelist entry.
+  for (const [k, v] of Object.entries(extra)) {
+    filtered[k] = v;
+  }
+  return filtered;
+}
+
 type Entry = AgentJobPayload['orders'][number];
 type StepLogger = ReturnType<typeof createStepLogger>;
 
@@ -151,12 +197,13 @@ export async function invokeClaudeForYellow(
     result = await new Promise<ClaudeYellowResult>((resolve) => {
       const child = spawn(CLAUDE_BIN, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          // Credentials injected as env vars — never written to disk
+        // H-8: whitelist-filtered env (NOT {...process.env}) so the child can't
+        // read STRIPE_SECRET_KEY et al. if prompt-injected into running Bash.
+        // DAC credentials are the only worker-held secrets the skill needs.
+        env: buildClaudeChildEnv({
           DAC_USERNAME: tenant.dacUsername,
           DAC_PASSWORD: tenant.dacPassword,
-        },
+        }),
       });
 
       let stdout = '';
@@ -319,7 +366,11 @@ export async function invokeClaudeForAddressCorrection(
         prompt,
       ], {
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env },
+        // H-8: whitelist-filtered env. The address-correction path only has
+        // Read+Write allowed (no Bash, no network) so the attack surface is
+        // smaller than the YELLOW path, but keeping the same minimal env
+        // everywhere makes the invariant easier to audit.
+        env: buildClaudeChildEnv(),
       });
 
       let stdout = '';
