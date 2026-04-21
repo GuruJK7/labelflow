@@ -1084,6 +1084,14 @@ export async function createShipment(
         zip: addr.zip ?? '',
         province: addr.province ?? '',
         orderNotes: order.note ?? '',
+        // Phase-1 enrichment (2026-04-21): customer identity + country. These
+        // let the AI look up prior successful shipments and use phone/landline
+        // prefixes + country defense as additional disambiguation signals.
+        customerEmail: order.email ?? '',
+        customerPhone: addr.phone ?? '',
+        customerFirstName: addr.first_name ?? '',
+        customerLastName: addr.last_name ?? '',
+        country: addr.country ?? '',
       });
       if (aiResolution) {
         slog.success(DAC_STEPS.STEP3_SELECT_DEPT,

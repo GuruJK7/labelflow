@@ -21,6 +21,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import crypto from 'crypto';
 import { db } from '../db';
 import logger from '../logger';
+import {
+  DAC_CITIES_PROMPT_BLOCK,
+  canonicalizeCityName,
+} from './dac-city-constraints';
+import { resolveDepartmentDeterministic } from './dac-dept-resolver';
+import { resolveCityDeterministic } from './dac-city-resolver';
+import { geocodeAddressToDepartment } from './geocode-fallback';
 
 // ───────────────────────────────────────────────────────────────────────────
 // Constants
@@ -42,6 +49,9 @@ const PRICE_OUTPUT_PER_MTOK = 5.0;
 // this yields ~70% savings on the cached portion after the first call.
 const PRICE_CACHE_WRITE_PER_MTOK = 1.25;
 const PRICE_CACHE_READ_PER_MTOK = 0.1;
+// Server-side web_search tool: $10 per 1000 requests = $0.01/request.
+// Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+const PRICE_WEB_SEARCH_PER_REQUEST = 0.01;
 
 // 19 departments of Uruguay — AI MUST return one of these exactly
 export const VALID_DEPARTMENTS = [
@@ -140,6 +150,21 @@ export interface AIResolverInput {
   zip?: string;
   province?: string;
   orderNotes?: string;
+  // ── Phase-1 enrichment (2026-04-21) ──
+  // Extra signals passed to the AI so it can disambiguate addresses that the
+  // city+address tuple alone cannot resolve. None of these are part of the
+  // cache hash — the address tuple is still the cache key — but they change
+  // how confidently the AI can answer on a cache MISS.
+  /** Shopify customer email — used to look up prior successful shipments. */
+  customerEmail?: string;
+  /** Customer phone (any format) — Uruguayan landline prefixes hint at region. */
+  customerPhone?: string;
+  /** Customer first name (for matching prior orders and as a mild signal). */
+  customerFirstName?: string;
+  /** Customer last name. */
+  customerLastName?: string;
+  /** ISO country from Shopify shipping address (defensive: reject non-UY). */
+  country?: string;
 }
 
 export interface AIResolverResult {
@@ -150,9 +175,21 @@ export interface AIResolverResult {
   extraObservations: string;
   confidence: 'high' | 'medium' | 'low';
   reasoning: string;
-  source: 'ai' | 'cache';
+  /**
+   * Origin of the resolution:
+   *   - 'deterministic' — resolved by rules (ZIP prefix, capital/major city
+   *     scan, DAC whitelist match). Zero cost, zero latency. Only possible
+   *     for non-Montevideo orders (MVD needs AI for barrio selection).
+   *   - 'ai'            — Claude Haiku call succeeded.
+   *   - 'cache'         — prior AI result reused from AddressResolution table.
+   */
+  source: 'ai' | 'cache' | 'deterministic';
   inputHash: string;
   aiCostUsd?: number;
+  /** Count of server-side web_search tool invocations in this call (0 on cache hits). */
+  webSearchRequests?: number;
+  /** Count of prior shipments from this customer fed to the AI as context. */
+  priorShipmentsUsed?: number;
 }
 
 interface AIToolResponse {
@@ -174,6 +211,8 @@ export interface TokenUsage {
   output_tokens: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
+  /** Number of web_search tool requests billed in this API call. */
+  web_search_requests?: number;
 }
 
 /**
@@ -186,11 +225,13 @@ export interface TokenUsage {
 export function calculateAICost(usage: TokenUsage): number {
   const cacheCreation = usage.cache_creation_input_tokens ?? 0;
   const cacheRead = usage.cache_read_input_tokens ?? 0;
+  const webSearches = usage.web_search_requests ?? 0;
   return (
     (usage.input_tokens / 1_000_000) * PRICE_INPUT_PER_MTOK +
     (cacheCreation / 1_000_000) * PRICE_CACHE_WRITE_PER_MTOK +
     (cacheRead / 1_000_000) * PRICE_CACHE_READ_PER_MTOK +
-    (usage.output_tokens / 1_000_000) * PRICE_OUTPUT_PER_MTOK
+    (usage.output_tokens / 1_000_000) * PRICE_OUTPUT_PER_MTOK +
+    webSearches * PRICE_WEB_SEARCH_PER_REQUEST
   );
 }
 
@@ -237,7 +278,34 @@ REGLAS ESTRICTAS:
 11. Si la direccion es una descripcion sin calle/numero ("al lado del super el dorado", "casa amarilla frente al kiosco"), setear confidence="low" y poner la descripcion entera en extraObservations. En deliveryAddress poner lo mejor posible (nombre del lugar o calle cercana) o "S/N" si no hay nada.
 12. Si falta el numero de puerta, usar "S/N" al final del deliveryAddress.
 13. En reasoning explicar en 1-2 oraciones cortas por que decidiste asi. Sirve para auditoria.
-14. NUNCA inventes datos. Si no podes con certeza, confidence="low" y dejas claro por que en reasoning.
+14. ANTES de rendirte: usá la tool web_search. Una consulta tipo '"<nombre calle>" "<ciudad o barrio>" Uruguay' casi siempre te da el barrio/departamento correcto (OSM, Google Maps, Mercadolibre, paginas amarillas locales). NO INVENTES datos, pero TAMPOCO te rindas antes de intentar buscar. Solo despues de haber buscado con web_search y seguir sin certeza — usá confidence="low" y explicá en reasoning QUE buscaste y por que igual no pudiste resolver. confidence="low" sin haber intentado web_search antes es ERROR tuyo.
+14b. INTERPRETACION DE RESULTADOS DE WEB_SEARCH: los resultados te dan la UBICACION de la calle (ej: "Calle Ellauri está en el barrio Punta Carretas, Montevideo"). Tu trabajo es MAPEAR esa ubicacion al barrio CORRECTO de la lista oficial de 58 barrios. NUNCA devuelvas el nombre de la calle como barrio — "Ellauri" es una calle, "Punta Carretas" es el barrio. Si el resultado de web_search menciona un barrio que NO esta en la lista oficial (ej: web_search dice "Villa Biarritz" pero esa no esta en la lista), elegi el barrio OFICIAL mas cercano de la lista (en ese ejemplo "punta carretas") y pone confidence="medium" con reasoning que explique la correspondencia. Nunca inventes barrios fuera de la lista.
+15. HISTORIAL DEL CLIENTE: son envios PREVIOS del mismo cliente, NO necesariamente su residencia. Si la direccion actual coincide o es consistente con el historial (misma calle, mismo barrio, mismo department) es evidencia FUERTE de que este pedido va al mismo lugar → confidence="high". Si la direccion actual CLARAMENTE apunta a otro lado (otra ciudad, otra calle, otro barrio, otro department), DESCARTA el historial — el cliente pudo haberse mudado, puede estar mandando un regalo, o puede estar comprando para otra persona. La direccion actual SIEMPRE gana sobre el historial cuando hay contradiccion clara. Usa el historial como TIEBREAKER, no como override.
+16. customerPhone NO es señal del destino. Es el contacto del cliente, no la ubicacion del envio. Un cliente en Montevideo puede mandar un regalo a Salto; una empresa puede enviar a cualquier departamento. No pases el telefono por un filtro geografico. Si address2 u orderNotes contienen un numero telefonico, descartalo (regla 9). NUNCA dejes que el prefijo del customerPhone influya en el department/barrio del envio.
+17a. PRIORIDAD DEL CAMPO address2/address1 POR SOBRE city CUANDO HAY CONTRADICCION:
+    El campo "city" en Shopify muchas veces viene mal llenado (cliente puso "Montevideo" por default aunque vive en el interior). Si:
+    - city="Montevideo" (o similar), Y
+    - address1 o address2 contiene claramente un nombre de ciudad/localidad reconocible de OTRO departamento (ej: "Tacuarembó", "Paysandú", "Salto", "Rivera", "Melo", "Minas", "Durazno", "Florida", "Trinidad", "Colonia", "Mercedes", "Fray Bentos", "Young", "Maldonado", "Punta del Este", "San José", "Rocha", "La Paloma", "Treinta y Tres", etc.)
+    → el department CORRECTO es el de esa ciudad del interior, NO Montevideo.
+    Capitales departamentales para disambiguar:
+    - Artigas=Artigas, Canelones=Canelones, Cerro Largo=Melo, Colonia=Colonia del Sacramento, Durazno=Durazno, Flores=Trinidad, Florida=Florida, Lavalleja=Minas, Maldonado=Maldonado, Paysandú=Paysandú, Río Negro=Fray Bentos, Rivera=Rivera, Rocha=Rocha, Salto=Salto, San José=San José de Mayo, Soriano=Mercedes, Tacuarembó=Tacuarembó, Treinta y Tres=Treinta y Tres.
+    Ciudades grandes NO-capital que también son fuertes señales: Young (Río Negro), Juan Lacaze y Carmelo (Colonia), Dolores y Nueva Palmira (Soriano), Bella Unión (Artigas), Paso de los Toros (Tacuarembó), Chuy (Rocha), Piriápolis y San Carlos (Maldonado).
+    Si ves cualquiera de estos nombres claramente en address1/address2, PRIORIZA el department correcto sobre lo que diga el campo city.
+
+17. NOMBRES AMBIGUOS ENTRE DEPARTAMENTOS: varios nombres de ciudad/pueblo/barrio existen en 2+ departamentos de Uruguay. Casos reales confirmados (no exhaustivo):
+    - "Las Piedras" = Canelones (ciudad grande, muy comun) O Artigas (pueblito chico). Casi siempre Canelones salvo que address1/ZIP indique claramente Artigas.
+    - "Toledo" = Canelones (conocida) O Cerro Largo (pueblito). Casi siempre Canelones.
+    - "Santa Catalina" = barrio de Montevideo O pueblo en Soriano.
+    - "La Paz" = Canelones (conocida) O Colonia (pueblo chico).
+    - "Ituzaingo" = barrio de Montevideo O localidad de San Jose.
+    - "La Paloma" = Rocha (balneario famoso) O Durazno (pueblito). Casi siempre Rocha.
+    - "Cerro Chato" = Durazno, Florida, Paysandu, O Treinta y Tres (4 departamentos).
+    - "San Antonio" = Canelones, Rocha, O Salto.
+    - "Barros Blancos" = Canelones (comun).
+    - "Las Toscas" = Canelones (balneario Costa de Oro) O Tacuarembo.
+    - "Bella Vista" = Maldonado O Paysandu.
+    - "Agraciada" = Colonia O Soriano.
+    Cuando veas uno de estos: (a) usa el ZIP como desempate (ver la REGLA HARD SOBRE ZIP arriba — la tabla completa cubre los 19 departamentos); (b) si el ZIP no ayuda, prioriza la version mas grande/conocida; (c) si la province de Shopify contradice la city de forma OBVIA (ej: city="San Jose", province="Montevideo"), casi siempre la city es correcta y la province es typo del cliente — VERIFICA con web_search antes de decidir; (d) si despues de todo lo anterior sigue ambiguo, usa web_search con '"<nombre>" "<calle>" Uruguay' para resolver.
 
 ABREVIATURAS URUGUAYAS COMUNES:
 - "Rbla" / "Rmbla" = Rambla (expandir a "Rambla")
@@ -249,11 +317,34 @@ ABREVIATURAS URUGUAYAS COMUNES:
 - "Cnel" = Coronel
 - "Pta" = Punta
 
+REGLA HARD SOBRE ZIP CODE (máxima prioridad):
+Uruguay usa CPs de 5 dígitos. Los PRIMEROS DOS dígitos determinan el department con ALTA CONFIABILIDAD. Si el ZIP está presente y es válido (5 dígitos numéricos), el department SE DETERMINA por el prefijo — NUNCA lo override con city="Montevideo" (el cliente suele ponerlo por default en Shopify) ni con web_search.
+
+Tabla OFICIAL de prefijos → department (Correo Uruguayo, confirmada contra 30 envíos reales en producción):
+- 11 → Montevideo
+- 15 → Canelones (este: Pando, Las Piedras, Las Toscas, Neptunia, Cuchilla Alta)
+- 20 → Maldonado (Maldonado, Punta del Este, San Carlos, Piriápolis, Portezuelo)
+- 27 → Rocha (Rocha, Chuy, La Paloma, Castillos)
+- 30 → Lavalleja (Minas, José Batlle y Ordóñez)
+- 33 → Treinta y Tres
+- 37 → Cerro Largo (Melo, Río Branco)
+- 40 → Rivera (Rivera, Tranqueras, Vichadero)
+- 45 → Tacuarembó (Tacuarembó, Paso de los Toros)
+- 50 → Salto (Salto, Constitución, Belén)
+- 55 → Artigas (Artigas, Bella Unión)
+- 60 → Paysandú (Paysandú, Guichón)
+- 65 → Rio Negro (Fray Bentos, Young)
+- 70 → Colonia (Colonia del Sacramento, Carmelo, Juan Lacaze)
+- 75 → Soriano (Mercedes, Dolores, Cardona, Palmitas)
+- 80 → San José (San José de Mayo, Libertad, Ciudad del Plata)
+- 85 → Flores (Trinidad)
+- 90/91 → Canelones (Ciudad de la Costa, Solymar, Lagomar, Atlántida, Canelones capital)
+- 94 → Florida (Florida, Sarandí Grande)
+- 97 → Durazno (Durazno, Sarandí del Yí)
+
+Si ZIP existe y su prefijo está en esta tabla: USALO COMO department. Solo ignoralo si el ZIP es claramente corrupto (p.ej. "00000", "12345" genérico, menos de 5 dígitos).
+
 CONTEXTO GEOGRAFICO CLAVE:
-- Codigos postales 11xxx = Montevideo
-- Codigos postales 90xxx = Canelones (Ciudad de la Costa, Pando, Las Piedras, etc.)
-- Codigos postales 20xxx = Maldonado (Punta del Este, San Carlos, Piriapolis)
-- Codigos postales 70xxx = Colonia
 - 18 de Julio es la avenida principal de Montevideo Centro
 - La Rambla bordea todo Montevideo (barrios Pocitos, Buceo, Malvin, Punta Gorda, Carrasco)
 - "Ciudad de la Costa" pertenece a Canelones, no Montevideo
@@ -277,11 +368,46 @@ Si ves estas palabras, department es "Maldonado".
 
 IMPORTANTE: si la dirección contiene el nombre de una localidad NO-Montevideo (de las listas de arriba) y VOS dudás, es MUCHO mejor clasificarla por su department real con barrio=null que forzar un barrio de Montevideo inventado. Un barrio inventado hace que DAC rechace el envío entero.
 
+CALLES FAMOSAS DE MONTEVIDEO → BARRIO (usar directamente, confidence="high", sin web_search):
+- "18 de Julio" (avenida): tramo 900-1500 = centro; 1500-2200 = cordon. Default = centro (tramo mas conocido y largo).
+- "Colonia" (calle): tramo 1000-1800 = centro; tramo mas alto = cordon. Default = centro.
+- "Rivera" (avenida): atraviesa Pocitos, Punta Carretas, Buceo, Malvin, Punta Gorda, Carrasco. Usar numero de puerta para decidir (ver tramos en web_search si dudas).
+- "Av. Brasil" / "Avenida Brasil" = pocitos (atraviesa pocitos nuevo tambien, pero default pocitos).
+- "Av. Italia" / "Avenida Italia": 0-2500 = tres cruces/la blanqueada; 2500-5000 = buceo/malvin; 5000+ = malvin norte/carrasco norte. Si dudas, web_search.
+- "Ellauri" (Jose Ellauri) = punta carretas.
+- "Sarandi" (calle peatonal) = ciudad vieja.
+- "Bacacay" = ciudad vieja.
+- "Buenos Aires" (calle) = ciudad vieja.
+- "Perez Castellano" = ciudad vieja.
+- "Solis" = ciudad vieja.
+- "Gonzalo Ramirez" = cordon (principalmente) o parque rodo.
+- "Constituyente" = cordon / centro.
+- "Canelones" (calle en MVD) = centro / cordon.
+- "Mercedes" (calle) = centro / cordon.
+- "Uruguay" (calle) = centro.
+- "San Jose" (calle en MVD) = centro.
+- "Rambla Gandhi" = punta carretas.
+- "Rambla Pte. Wilson" = pocitos.
+- "Rambla Rep. del Peru" = pocitos.
+- "Rambla Armenia" = malvin.
+- "Rambla O'Higgins" = buceo / malvin.
+- "Propios" (avenida) = atraviesa jacinto vera/larrañaga/la blanqueada. Usar tramo.
+- "Garibaldi" (avenida) = la figurita / jacinto vera / la comercial.
+- "8 de Octubre" (avenida) = la blanqueada / union / flor de maronas. Usar tramo.
+- "Millan" (avenida) = prado / paso de las duranas / sayago. Usar tramo.
+- "Agraciada" (avenida) = aguada / reducto / belvedere. Usar tramo.
+- "Luis Alberto de Herrera" (avenida) = tres cruces / parque batlle / buceo. Usar tramo.
+- "Bulevar Artigas" = atraviesa parque rodo/pocitos/tres cruces/parque batlle. Usar tramo.
+
 BARRIOS VALIDOS DE MONTEVIDEO (58 total):
 Si department es "Montevideo", barrio DEBE ser EXACTAMENTE uno de estos (en lowercase):
 ${VALID_MVD_BARRIOS.join(', ')}
 
-Si no podes determinar el barrio con certeza de esta lista exacta, devolve barrio=null y confidence="low".`;
+Si no podes determinar el barrio con certeza de esta lista exacta, devolve barrio=null y confidence="low". NUNCA devuelvas un nombre de calle como barrio. NUNCA inventes barrios que no estan en la lista.
+
+CIUDADES VALIDAS DE DAC (dropdown oficial del sistema de envios):
+Para department != "Montevideo", el campo "city" DEBE coincidir EXACTAMENTE (o muy cerca, sin acentos) con una de las ciudades listadas debajo para ese department. Si la direccion menciona un balneario, barrio, o localidad que NO esta en la lista del department correspondiente, elegi la ciudad/cabecera mas cercana que SI este en la lista (normalmente la capital departamental o la ciudad cabecera de zona) y explicalo en reasoning. Para Montevideo el campo city es siempre "Montevideo".
+${DAC_CITIES_PROMPT_BLOCK}`;
 
 const ADDRESS_RESOLVER_TOOL: Anthropic.Tool = {
   name: 'resolve_address',
@@ -298,7 +424,7 @@ const ADDRESS_RESOLVER_TOOL: Anthropic.Tool = {
       city: {
         type: 'string',
         description:
-          'Ciudad normalizada. Para Montevideo es siempre "Montevideo". Para otros departamentos es la ciudad/pueblo especifico como aparece en el dropdown de DAC.',
+          'Ciudad/localidad normalizada. Para Montevideo es siempre "Montevideo". Para el resto DEBE ser una de las ciudades de la lista "CIUDADES VALIDAS DE DAC" del system prompt correspondiente al department elegido (sin acentos, con la capitalizacion de la lista). Si la direccion real es un balneario/pueblito que NO aparece en la lista para ese department, elegi la ciudad/cabecera mas cercana que SI este en la lista y explica en reasoning.',
       },
       department: {
         type: 'string',
@@ -353,6 +479,134 @@ export async function resolveAddressWithAI(
 ): Promise<AIResolverResult | null> {
   const hash = hashAddressInput(input);
 
+  // 0. Deterministic-first shortcut — the fast path.
+  //
+  // Most real orders have ONE strong, unambiguous signal that pins down the
+  // department: the ZIP prefix, a capital-city name in address2, or a major
+  // interior city like "Punta del Este" or "Young". When we catch that
+  // signal AND the target is NOT Montevideo, we can resolve the whole
+  // address without ever invoking Claude — saving ~$0.002 per call and ~2s
+  // of latency.
+  //
+  // Why we skip Montevideo here: MVD uses a 58-option barrio dropdown, and
+  // picking the right barrio from a street + number is genuinely hard for
+  // rules. The existing AI path (with its prompt + web_search fallback)
+  // does a good job on that. So for MVD we keep the legacy flow intact.
+  //
+  // Why we skip cache write for deterministic hits: recomputing rules is
+  // free. Writing cache rows for every deterministic hit would bloat the
+  // AddressResolution table without reducing future cost. The cache remains
+  // useful for AI-resolved rows (which are expensive to recompute).
+  try {
+    const deptRes = resolveDepartmentDeterministic({
+      city: input.city,
+      address1: input.address1,
+      address2: input.address2 ?? '',
+      zip: input.zip,
+      province: input.province,
+      orderNotes: input.orderNotes,
+    });
+
+    if (
+      deptRes &&
+      deptRes.confidence === 'high' &&
+      deptRes.department !== 'Montevideo'
+    ) {
+      const cityRes = resolveCityDeterministic(deptRes.department, {
+        city: input.city,
+        address1: input.address1,
+        address2: input.address2 ?? '',
+        orderNotes: input.orderNotes,
+      });
+
+      if (cityRes) {
+        logger.info(
+          {
+            hash,
+            tenantId: input.tenantId,
+            dept: deptRes.department,
+            city: cityRes.city,
+            deptReason: deptRes.reason,
+            deptVia: deptRes.matchedVia,
+            cityReason: cityRes.reason,
+            cityVia: cityRes.matchedVia,
+          },
+          'AI resolver deterministic shortcut — no AI invocation needed',
+        );
+        return {
+          // Non-Montevideo shipments don't use barrio.
+          barrio: null,
+          city: cityRes.city,
+          department: deptRes.department,
+          // Leaving deliveryAddress empty signals the caller (shipment.ts) to
+          // keep whatever mergeAddress() already produced. The caller only
+          // overwrites fullAddress when aiResolution.deliveryAddress is
+          // non-empty (see shipment.ts:1102).
+          deliveryAddress: '',
+          extraObservations: '',
+          confidence: 'high',
+          reasoning: `determ: ${deptRes.reason}; ${cityRes.reason}`,
+          source: 'deterministic',
+          inputHash: hash,
+          aiCostUsd: 0,
+          webSearchRequests: 0,
+          priorShipmentsUsed: 0,
+        };
+      }
+      // dept was decided but city wasn't. If the dept signal is strong enough
+      // to trust by itself — ZIP prefix or an explicit capital/major-city
+      // match inside address2/orderNotes — we short-circuit with an empty
+      // city rather than letting the AI override our dept.
+      //
+      // Why: Shopify customers commonly leave city="Montevideo" on autofill
+      // even when the ZIP or address2 clearly says "Canelones". When the AI
+      // sees city="Montevideo" as the dominant signal, it ignores the ZIP
+      // (regression category I01/I02/I05/I08 in the fixture suite). Since UY
+      // ZIP prefixes are very reliable (11xx=MVD, 90xx=Canelones coast, etc.)
+      // and address2 mentions of a capital like "Tacuarembó" are essentially
+      // unambiguous, we commit to the deterministic dept and let the
+      // operator pick the DAC canonical city from the dropdown. Wrong dept →
+      // package ships to the wrong department (costly); empty city with
+      // right dept → operator picks in two seconds (cheap).
+      const deptViaIsAuthoritative =
+        deptRes.matchedVia === 'zip' ||
+        deptRes.matchedVia === 'address-capital' ||
+        deptRes.matchedVia === 'address-major-city';
+      if (deptViaIsAuthoritative) {
+        logger.info(
+          {
+            hash,
+            tenantId: input.tenantId,
+            dept: deptRes.department,
+            deptReason: deptRes.reason,
+            deptVia: deptRes.matchedVia,
+          },
+          'AI resolver deterministic shortcut — dept authoritative, city deferred to operator',
+        );
+        return {
+          barrio: null,
+          city: '',
+          department: deptRes.department,
+          deliveryAddress: '',
+          extraObservations: '',
+          confidence: deptRes.confidence,
+          reasoning: `determ (dept-only): ${deptRes.reason}`,
+          source: 'deterministic',
+          inputHash: hash,
+          aiCostUsd: 0,
+          webSearchRequests: 0,
+          priorShipmentsUsed: 0,
+        };
+      }
+    }
+  } catch (err) {
+    // Never let the shortcut throw — always degrade to the legacy AI path.
+    logger.debug(
+      { hash, error: (err as Error).message },
+      'Deterministic shortcut threw — falling through to AI',
+    );
+  }
+
   // 1. Cache lookup — accept if no feedback yet or feedback was positive
   try {
     const cached = await db.addressResolution.findUnique({
@@ -377,6 +631,108 @@ export async function resolveAddressWithAI(
     }
   } catch (err) {
     logger.warn({ error: (err as Error).message }, 'Cache lookup failed, continuing');
+  }
+
+  // 1b. Geocoding fallback — OpenStreetMap Nominatim.
+  //
+  // Runs when the deterministic shortcut could not pin the department
+  // (no ZIP, no capital-city name, no major-city match) and the cache is
+  // cold. Free (1 req/s, shared rate limiter in geocode-fallback.ts),
+  // but adds up to ~1s latency to the ~10% of calls that reach this
+  // point. Worth it because this layer catches the classic "Shopify
+  // autofilled city=Montevideo but the customer actually lives in the
+  // interior" failure mode before we spend an AI call.
+  //
+  // We only trust Nominatim for NON-Montevideo results. Montevideo needs
+  // a barrio pick from the 58-entry DAC list, and Nominatim's "suburb"
+  // field rarely matches DAC barrios cleanly — so MVD keeps falling
+  // through to the AI (which has the full barrio-to-street mapping in
+  // its prompt).
+  //
+  // On a hit for the interior we canonicalize the Nominatim-returned
+  // locality against DAC's city dropdown. If that also resolves, we
+  // answer with confidence="medium" and skip the AI entirely. If only
+  // the department resolves, we still commit (operator picks the city
+  // in two seconds — wrong department is far costlier).
+  try {
+    const geo = await geocodeAddressToDepartment({
+      city: input.city,
+      address1: input.address1,
+      address2: input.address2,
+      zip: input.zip,
+    });
+    if (geo && geo.department !== 'Montevideo') {
+      const cityRes = resolveCityDeterministic(geo.department, {
+        // Feed Nominatim's locality as the candidate city — it's usually
+        // more accurate than Shopify's city field on the cases we reach
+        // here. Address fields stay as originally provided so
+        // `resolveCityDeterministic` can still scan them as a fallback.
+        city: geo.locality || input.city,
+        address1: input.address1,
+        address2: input.address2 ?? '',
+        orderNotes: input.orderNotes,
+      });
+      if (cityRes) {
+        logger.info(
+          {
+            hash,
+            tenantId: input.tenantId,
+            dept: geo.department,
+            city: cityRes.city,
+            nominatimLocality: geo.locality,
+            displayName: geo.displayName,
+          },
+          'AI resolver Nominatim shortcut — no AI invocation needed',
+        );
+        return {
+          barrio: null,
+          city: cityRes.city,
+          department: geo.department,
+          deliveryAddress: '',
+          extraObservations: '',
+          confidence: 'medium',
+          reasoning: `nominatim: ${geo.displayName}; ${cityRes.reason}`,
+          source: 'deterministic',
+          inputHash: hash,
+          aiCostUsd: 0,
+          webSearchRequests: 0,
+          priorShipmentsUsed: 0,
+        };
+      }
+      // Dept resolved but locality didn't match a DAC city. Still a
+      // net win: the operator only has to pick the city from the DAC
+      // dropdown — everything else is correct.
+      logger.info(
+        {
+          hash,
+          tenantId: input.tenantId,
+          dept: geo.department,
+          nominatimLocality: geo.locality,
+          displayName: geo.displayName,
+        },
+        'AI resolver Nominatim shortcut — dept only (city deferred to operator)',
+      );
+      return {
+        barrio: null,
+        city: '',
+        department: geo.department,
+        deliveryAddress: '',
+        extraObservations: '',
+        confidence: 'medium',
+        reasoning: `nominatim (dept-only): ${geo.displayName}`,
+        source: 'deterministic',
+        inputHash: hash,
+        aiCostUsd: 0,
+        webSearchRequests: 0,
+        priorShipmentsUsed: 0,
+      };
+    }
+  } catch (err) {
+    // Nominatim is best-effort. Never let it block the AI path.
+    logger.debug(
+      { hash, error: (err as Error).message },
+      'Nominatim fallback threw — falling through to AI',
+    );
   }
 
   // 2. Tenant opt-in + quota check
@@ -416,8 +772,61 @@ export async function resolveAddressWithAI(
     return null;
   }
 
-  // 4. Build user message — kept minimal so the cache-stable prefix (system + tools)
-  // dominates the request. The barrios list lives in the system prompt now.
+  // 4a. Customer-history lookup — strongest available signal for returning customers.
+  //
+  // If this customer (matched by email, falling back to phone) has shipped
+  // successfully before, those prior resolutions are usually the right answer
+  // for today's order too. We pass up to 3 prior destinations to the AI as
+  // evidence. Kept cheap: single indexed query on Label, capped at 3 rows.
+  let priorShipments: Array<{ department: string; city: string; deliveryAddress: string }> = [];
+  try {
+    const customerKey = (input.customerEmail || '').trim().toLowerCase();
+    const phoneDigits = (input.customerPhone || '').replace(/\D/g, '');
+    if (customerKey || phoneDigits.length >= 7) {
+      priorShipments = await db.label.findMany({
+        where: {
+          tenantId: input.tenantId,
+          status: { in: ['CREATED', 'COMPLETED'] },
+          OR: [
+            customerKey ? { customerEmail: customerKey } : undefined,
+            phoneDigits.length >= 7 ? { customerPhone: { contains: phoneDigits } } : undefined,
+          ].filter(Boolean) as any,
+        },
+        select: { department: true, city: true, deliveryAddress: true },
+        orderBy: { createdAt: 'desc' },
+        take: 3,
+      });
+    }
+  } catch (err) {
+    logger.debug(
+      { error: (err as Error).message },
+      'Customer history lookup failed — continuing without it',
+    );
+  }
+
+  // 4b. Build enriched user message.
+  //
+  // Still small enough that the cached prefix (system + tools) dominates cost.
+  // Fields added in Phase 1 (2026-04-21): customer name/email/phone, country,
+  // and prior shipments. The address tuple alone is not enough for hard cases
+  // like "José María Silva 4058" — these extra signals give the AI the context
+  // it needs to answer with high confidence, or to decide to use web_search.
+  const customerFullName = [input.customerFirstName, input.customerLastName]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  const historyBlock =
+    priorShipments.length > 0
+      ? [
+          '',
+          'HISTORIAL DEL CLIENTE (envios previos exitosos, mas recientes primero):',
+          ...priorShipments.map(
+            (p, i) =>
+              `  ${i + 1}. ${p.department} / ${p.city || '(sin ciudad)'} / ${p.deliveryAddress}`,
+          ),
+          '',
+        ].join('\n')
+      : '';
   const userMessage = [
     'Resolve this Uruguayan delivery address:',
     '',
@@ -426,50 +835,117 @@ export async function resolveAddressWithAI(
     `Address line 2: ${input.address2 || '(empty)'}`,
     `ZIP: ${input.zip || '(empty)'}`,
     `Province (from Shopify): ${input.province || '(empty)'}`,
+    `Country: ${input.country || '(empty)'}`,
+    customerFullName ? `Customer name: ${customerFullName}` : '',
+    input.customerEmail ? `Customer email: ${input.customerEmail}` : '',
+    // customerPhone is INTENTIONALLY NOT passed to the AI — see system prompt
+    // rule 16. The phone is the customer's contact, not the destination. We
+    // still keep it in AIResolverInput because it is used for the DB history
+    // lookup (matching prior shipments by phone digits when email is absent).
     input.orderNotes ? `Order notes: ${input.orderNotes.slice(0, 400)}` : '',
-    '',
-    'Use the resolve_address tool to provide the structured resolution.',
+    historyBlock,
+    'If the address is unambiguous or matches the customer history, respond directly with the resolve_address tool.',
+    'If the street/city is unfamiliar, ambiguous, or you are about to return confidence="low", FIRST use the web_search tool to look it up, THEN respond with resolve_address.',
   ]
     .filter(Boolean)
     .join('\n');
 
-  // 5. Call Claude Haiku with tool use + prompt caching
+  // 5. Call Claude Haiku with tool use + web_search + prompt caching.
   //
-  // We place a single cache_control breakpoint on the tool definition, which
-  // tells Anthropic to cache everything up to and including the tools (system
-  // prompt + tool schemas). The user message stays uncached since it changes
-  // per request. After the first call, each subsequent call within 5 minutes
-  // pays only 10% of the base rate on the cached ~2000 tokens — a 70% savings
-  // on the dominant cost.
+  // Tool set:
+  //   - resolve_address: our structured-output tool (final answer)
+  //   - web_search: Anthropic server-side tool, auto-executes. Capped at 2 uses
+  //     per request to keep latency + cost bounded.
+  //
+  // tool_choice = "auto" (not forced). Claude picks web_search when uncertain
+  // and resolve_address when it has enough info. For clear addresses, only the
+  // resolve_address call happens (same latency/cost as before). For ambiguous
+  // ones, 1–2 server-side web searches add ~2–5s latency and ~$0.01/search but
+  // turn otherwise-manual review cases into automatic resolutions.
+  //
+  // Cache breakpoint stays on the last tool so system + tool schemas cache.
+  // The user message remains uncached (changes per request). After first call
+  // in a 5-min window, cached portion pays 0.1x base input.
   //
   // For implementation details see:
   //   https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+  //   https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
   const client = new Anthropic({ apiKey });
-  let response: Anthropic.Message;
-  try {
-    response = await client.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      system: [
-        {
-          type: 'text',
-          text: SYSTEM_PROMPT,
-        },
-      ],
-      tools: [
-        {
-          ...ADDRESS_RESOLVER_TOOL,
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
-      tool_choice: { type: 'tool', name: 'resolve_address' },
-      messages: [{ role: 'user', content: userMessage }],
-    });
-  } catch (err) {
-    logger.error(
-      { hash, error: (err as Error).message },
-      'AI resolver API call failed',
-    );
+  const requestBody = {
+    model: MODEL,
+    max_tokens: MAX_TOKENS,
+    system: [
+      {
+        type: 'text' as const,
+        text: SYSTEM_PROMPT,
+      },
+    ],
+    tools: [
+      // web_search: Anthropic server-side tool. user_location is intentionally
+      // omitted — Anthropic only accepts a short list of supported country
+      // codes for user_location.country (UY is not in it, the API returns a
+      // 400). Rule 14 in the system prompt already tells the AI to include
+      // "Uruguay" in every search query, which achieves the same geo-bias
+      // without needing the location hint.
+      {
+        type: 'web_search_20250305' as const,
+        name: 'web_search' as const,
+        max_uses: 2,
+      },
+      {
+        ...ADDRESS_RESOLVER_TOOL,
+        cache_control: { type: 'ephemeral' as const },
+      },
+    ],
+    tool_choice: { type: 'auto' as const },
+    messages: [{ role: 'user' as const, content: userMessage }],
+  };
+
+  // Retry with exponential backoff. Anthropic's input-token-per-minute rate
+  // limit (50k tpm on our tier) is per-organization and bursty batches can
+  // hit it even though steady-state throughput is fine. We also retry on
+  // transient 5xx and overloaded_error (529). Non-retryable errors (400, 401,
+  // 403, 404) return null immediately so we don't waste time on them.
+  let response: Anthropic.Message | null = null;
+  const MAX_ATTEMPTS = 4;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      response = await client.messages.create(requestBody);
+      break;
+    } catch (err) {
+      const e = err as any;
+      const status: number | undefined = e?.status;
+      const retryable =
+        status === 429 ||
+        status === 529 ||
+        (typeof status === 'number' && status >= 500 && status < 600);
+      if (!retryable || attempt === MAX_ATTEMPTS) {
+        logger.error(
+          { hash, status, attempt, error: (err as Error).message },
+          'AI resolver API call failed (non-retryable or out of attempts)',
+        );
+        return null;
+      }
+      // Exponential backoff: 1s, 4s, 16s, 64s — capped at 60s. For 429 we
+      // honor the retry-after header if the SDK surfaces it. The long upper
+      // bound lets us ride out a full 1-minute token-rate window.
+      const retryAfterHeader = e?.headers?.['retry-after'];
+      const retryAfterSec =
+        retryAfterHeader && !isNaN(parseFloat(retryAfterHeader))
+          ? Math.min(60, parseFloat(retryAfterHeader))
+          : null;
+      const backoffMs = retryAfterSec
+        ? Math.ceil(retryAfterSec * 1000)
+        : Math.min(60_000, Math.pow(4, attempt - 1) * 1_000);
+      logger.warn(
+        { hash, status, attempt, backoffMs, error: (err as Error).message },
+        'AI resolver retry after transient error',
+      );
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+  if (!response) {
+    logger.error({ hash }, 'AI resolver failed after all retries');
     return null;
   }
 
@@ -494,13 +970,22 @@ export async function resolveAddressWithAI(
   if (result.department === 'Montevideo' && result.barrio) {
     const barrioLower = result.barrio.toLowerCase();
     if (!VALID_MVD_BARRIOS.includes(barrioLower as any)) {
-      logger.error(
+      // The AI sometimes returns a street name or an obscure locality as the
+      // barrio. Instead of rejecting the whole response (which throws away
+      // the valid department/address and forces a full fallback), we null
+      // the barrio and downgrade confidence. This matches rule 3 in the
+      // system prompt ("if unsure, return null") and keeps the rest of the
+      // resolution usable — the caller can still ship to Montevideo and let
+      // DAC's barrio dropdown do the final pick.
+      logger.warn(
         { hash, barrio: result.barrio },
-        'AI returned invalid Montevideo barrio — rejected',
+        'AI returned invalid Montevideo barrio — clearing to null, downgrading confidence',
       );
-      return null;
+      result.barrio = null;
+      if (result.confidence === 'high') result.confidence = 'medium';
+    } else {
+      result.barrio = barrioLower;
     }
-    result.barrio = barrioLower;
   }
   if (result.department !== 'Montevideo' && result.barrio !== null) {
     logger.warn(
@@ -509,13 +994,60 @@ export async function resolveAddressWithAI(
     );
     result.barrio = null;
   }
+
+  // 7b. Canonicalize city against DAC's dropdown whitelist.
+  //
+  // The prompt now includes the full DAC city list per department, but models
+  // occasionally return a balneario/pueblito that isn't the canonical DAC
+  // name, or a slight spelling variant ("Colonia del Sacramento" vs DAC's
+  // "Colonia Del Sacramento"). We try to round-trip the AI's city through
+  // canonicalizeCityName so downstream DAC-ID resolution gets an exact match.
+  //
+  // For Montevideo we force city="Montevideo" (the DAC map only has one
+  // entry for the capital — barrios drive the routing, not city).
+  //
+  // If we can't find any match, we DON'T reject — we keep the AI's original
+  // city value but downgrade confidence, so the downstream fuzzy resolver in
+  // dac-geo-resolver.ts still gets a chance. Rejecting would discard an
+  // otherwise-correct department/address pair.
+  if (result.department === 'Montevideo') {
+    result.city = 'Montevideo';
+  } else {
+    const canonical = canonicalizeCityName(result.department, result.city);
+    if (canonical) {
+      if (canonical !== result.city) {
+        logger.info(
+          { hash, from: result.city, to: canonical, dept: result.department },
+          'AI city normalized to DAC canonical spelling',
+        );
+        result.city = canonical;
+      }
+    } else {
+      logger.warn(
+        { hash, dept: result.department, city: result.city },
+        'AI city is not in DAC dropdown for this department — downgrading confidence',
+      );
+      if (result.confidence === 'high') result.confidence = 'medium';
+    }
+  }
+
   if (!result.deliveryAddress || result.deliveryAddress.trim().length === 0) {
     logger.error({ hash }, 'AI returned empty deliveryAddress — rejected');
     return null;
   }
-  if (!['high', 'medium', 'low'].includes(result.confidence)) {
-    logger.error({ hash, confidence: result.confidence }, 'Invalid confidence value');
-    return null;
+  // Normalize confidence: AI occasionally returns casing/whitespace variants
+  // ("HIGH", "Medium ", etc.) or a synonym ("certain", "maybe"). Map to the
+  // canonical set, defaulting to "low" rather than rejecting the whole
+  // response — a low-confidence resolution is still useful downstream.
+  const rawConf = (result.confidence ?? '').toString().toLowerCase().trim();
+  if (rawConf === 'high' || rawConf === 'medium' || rawConf === 'low') {
+    result.confidence = rawConf as 'high' | 'medium' | 'low';
+  } else {
+    logger.warn(
+      { hash, confidence: result.confidence },
+      'AI returned non-canonical confidence — defaulting to "low"',
+    );
+    result.confidence = 'low';
   }
 
   // 8. Cost tracking — includes cache accounting
@@ -537,12 +1069,15 @@ export async function resolveAddressWithAI(
     (response.usage as any).cache_creation_input_tokens ?? 0;
   const cacheReadTokens =
     (response.usage as any).cache_read_input_tokens ?? 0;
+  const webSearchRequests =
+    (response.usage as any).server_tool_use?.web_search_requests ?? 0;
 
   const costUsd = calculateAICost({
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     cache_creation_input_tokens: cacheCreationTokens,
     cache_read_input_tokens: cacheReadTokens,
+    web_search_requests: webSearchRequests,
   });
 
   // 9. Persist to cache + audit log
@@ -615,6 +1150,8 @@ export async function resolveAddressWithAI(
       cacheCreationTokens,
       cacheReadTokens,
       cacheHit: cacheReadTokens > 0,
+      webSearchRequests,
+      priorShipmentsUsed: priorShipments.length,
     },
     'AI resolver SUCCESS',
   );
@@ -630,6 +1167,8 @@ export async function resolveAddressWithAI(
     source: 'ai',
     inputHash: hash,
     aiCostUsd: costUsd,
+    webSearchRequests,
+    priorShipmentsUsed: priorShipments.length,
   };
 }
 
