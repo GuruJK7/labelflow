@@ -144,6 +144,63 @@ describe('stripTrailingKnownPlaces', () => {
   it('handles addresses without commas', () => {
     expect(stripTrailingKnownPlaces('Calle X 100')).toBe('Calle X 100');
   });
+
+  // --- H-5 (2026-04-21 audit): expansion + safeguards ---
+  describe('H-5 safeguards', () => {
+    it('strips expanded list — "Calle X 100, Paso Carrasco" (wasn\'t in the old 53)', () => {
+      // Paso Carrasco is in CITY_TO_DEPARTMENT (Canelones) — now reachable.
+      expect(stripTrailingKnownPlaces('Calle X 100, Paso Carrasco')).toBe('Calle X 100');
+    });
+
+    it('strips "Salinas" (Canelones) — also a new addition from CITY_TO_DEPARTMENT', () => {
+      expect(stripTrailingKnownPlaces('Av del Mar 2345, Salinas')).toBe('Av del Mar 2345');
+    });
+
+    it('DENY-LIST: "sur" is a direction, not a place — do NOT strip', () => {
+      // "sur" IS in CITY_TO_DEPARTMENT (a rural locality in Artigas) but deny-list wins.
+      expect(stripTrailingKnownPlaces('Av Cerro 1200, sur')).toBe('Av Cerro 1200, sur');
+    });
+
+    it('DENY-LIST: "centro" stays in the address (ambiguous term)', () => {
+      expect(stripTrailingKnownPlaces('Calle X 100, centro')).toBe('Calle X 100, centro');
+    });
+
+    it('DENY-LIST: "rambla" is a street-name component, not a strippable place', () => {
+      expect(stripTrailingKnownPlaces('Rbla Gandhi 500, rambla')).toBe('Rbla Gandhi 500, rambla');
+    });
+
+    it('DENY-LIST: "cerro" (MVD barrio but generic) stays', () => {
+      expect(stripTrailingKnownPlaces('Av Italia 4500, cerro')).toBe('Av Italia 4500, cerro');
+    });
+
+    it('SAFEGUARD A: prefix with no digit → strip aborted', () => {
+      // "Pocitos, Montevideo" → stripping "Montevideo" would leave bare "Pocitos"
+      // with no door number. Abort to keep the ambiguity visible to human review.
+      expect(stripTrailingKnownPlaces('Pocitos, Montevideo')).toBe('Pocitos, Montevideo');
+    });
+
+    it('SAFEGUARD B: prefix with no alphabetic word → strip aborted', () => {
+      // "1234, Montevideo" → stripping would leave bare "1234" (no street).
+      expect(stripTrailingKnownPlaces('1234, Montevideo')).toBe('1234, Montevideo');
+    });
+
+    it('multi-pass strip still works when safeguards pass at each step', () => {
+      const input = 'Av Italia 4500, El Pinar, Ciudad de la Costa';
+      expect(stripTrailingKnownPlaces(input)).toBe('Av Italia 4500');
+    });
+
+    it('multi-pass stops when safeguard trips mid-chain', () => {
+      // Stripping "El Pinar" is fine (prefix has digit + alpha).
+      // Stripping next-to-last "Pocitos" would leave "1234" → abort there.
+      // Result: "1234, Pocitos"  (after stripping El Pinar once).
+      expect(stripTrailingKnownPlaces('1234, Pocitos, El Pinar')).toBe('1234, Pocitos');
+    });
+
+    it('regression: known 53-item cases still strip', () => {
+      expect(stripTrailingKnownPlaces('Calle X 100, montevideo')).toBe('Calle X 100');
+      expect(stripTrailingKnownPlaces('Av X 200, pocitos')).toBe('Av X 200');
+    });
+  });
 });
 
 describe('isAddress2DuplicateOfDoor', () => {

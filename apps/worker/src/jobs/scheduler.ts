@@ -6,7 +6,7 @@ import { resetAllDailyQuotas } from '../dac/ai-resolver';
  * Converts a UTC Date to a Date-like object in a given IANA timezone.
  * Returns { minutes, hours, date, month (1-based), dayOfWeek (0=Sun) }
  */
-function toTimezone(utcDate: Date, tz: string): { minutes: number; hours: number; date: number; month: number; dayOfWeek: number } {
+function toTimezone(utcDate: Date, tz: string): { minutes: number; hours: number; date: number; month: number; year: number; dayOfWeek: number } {
   // Use Intl to get parts in the target timezone
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
@@ -25,6 +25,13 @@ function toTimezone(utcDate: Date, tz: string): { minutes: number; hours: number
     hours: parseInt(get('hour'), 10),
     date: parseInt(get('day'), 10),
     month: parseInt(get('month'), 10),
+    // M-6 (2026-04-21 audit): year is returned alongside month/date so callers
+    // can build a single-timezone date key. Previously the consumer mixed UTC
+    // year with UY month/date — fine on most days, but on Dec 31 UTC
+    // transitioning to Jan 1 UY (or vice versa at year-end) the date key
+    // would skip or duplicate a day and the AI-quota reset would either fire
+    // twice or not at all.
+    year: parseInt(get('year'), 10),
     dayOfWeek: weekdayMap[get('weekday')] ?? 0,
   };
 }
@@ -119,7 +126,10 @@ export function startScheduler(): void {
       const nowForReset = new Date();
       const tzNow = toTimezone(nowForReset, 'America/Montevideo');
       if (tzNow.hours === 0) {
-        const todayKey = `${nowForReset.getUTCFullYear()}-${tzNow.month}-${tzNow.date}`;
+        // M-6: every component of the key comes from tzNow so the boundary is
+        // consistent — no UTC year mixed with UY month/date (the old bug that
+        // would break on year-end transitions).
+        const todayKey = `${tzNow.year}-${tzNow.month}-${tzNow.date}`;
         if (lastAiQuotaResetDate !== todayKey) {
           try {
             const count = await resetAllDailyQuotas();

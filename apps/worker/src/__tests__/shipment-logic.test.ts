@@ -480,6 +480,33 @@ describe('mergeAddress', () => {
     expect(result.fullAddress).toBe('Rivera 3274');
     expect(result.extraObs).toBe('Apto 801');
   });
+
+  // --- H-6 (2026-04-21 audit): slash apt edge cases ---
+  it('H-6: slash apt with letter-only — "Herrera 1183/B" → door + Apto B', () => {
+    const result = mergeAddress('Luis A de Herrera 1183/B', null);
+    expect(result.fullAddress).toBe('Luis A de Herrera 1183');
+    expect(result.extraObs).toBe('Apto B');
+  });
+
+  it('H-6: slash apt with number+letter — "Herrera 1183/6B" → door + Apto 6B', () => {
+    const result = mergeAddress('Luis A de Herrera 1183/6B', null);
+    expect(result.fullAddress).toBe('Luis A de Herrera 1183');
+    expect(result.extraObs).toBe('Apto 6B');
+  });
+
+  it('H-6: km sub-marker must NOT be split — "Ruta 9 km 120/5" stays intact', () => {
+    // Highway kilometer sub-markers look like slash apts but are NOT apts.
+    // The regex used to swallow them incorrectly and produce door=120,apt=5.
+    const result = mergeAddress('Ruta 9 km 120/5', null);
+    expect(result.fullAddress).toBe('Ruta 9 km 120/5');
+    expect(result.extraObs).toBe('');
+  });
+
+  it('H-6: "KM" uppercase also guarded', () => {
+    const result = mergeAddress('Ruta Interbalnearia KM 60/2', null);
+    expect(result.fullAddress).toBe('Ruta Interbalnearia KM 60/2');
+    expect(result.extraObs).toBe('');
+  });
 });
 
 // ============================================================

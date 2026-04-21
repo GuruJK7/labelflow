@@ -7,7 +7,7 @@ import { dacBrowser } from './browser';
 import { DAC_STEPS } from './steps';
 import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
-import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet } from './uruguay-geo';
+import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT } from './uruguay-geo';
 import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 import { handlePaymentFlow, AutoPayConfig, PaymentOutcome } from './payment';
 
@@ -332,33 +332,102 @@ export function stripTrailingPorteriaPattern(addr: string): { cleaned: string; p
  * city/barrio name. Iterates up to 5 times in case multiple known names are
  * stacked at the end.
  */
-const KNOWN_PLACES_FOR_STRIP = new Set([
-  // Departamentos
-  'montevideo', 'canelones', 'maldonado', 'salto', 'paysandu', 'rivera', 'tacuarembo',
-  'colonia', 'soriano', 'rocha', 'florida', 'durazno', 'artigas', 'treinta y tres',
-  'cerro largo', 'lavalleja', 'san jose', 'flores', 'rio negro',
-  // Ciudades / barrios comunes
-  'pocitos', 'buceo', 'carrasco', 'punta carretas', 'centro', 'cordon', 'parque rodo',
-  'malvin', 'union', 'la blanqueada', 'tres cruces', 'prado', 'lagomar', 'la floresta',
-  'las piedras', 'ciudad de la costa', 'pando', 'barros blancos', 'piriapolis', 'punta del este',
-  'minas', 'fray bentos', 'mercedes', 'nueva palmira', 'young', 'carmelo',
-  'el pinar', 'solymar', 'atlantida', 'parque del plata', 'sauce', 'progreso',
-  'la paz', 'delta del tigre', 'san carlos', 'pan de azucar', 'castillos',
+/**
+ * H-5 (2026-04-21 audit): STRIP_DENY_LIST contains entries from
+ * CITY_TO_DEPARTMENT that are ALSO common Spanish words, cardinal directions,
+ * or street-name components. Even though ANTEL/INE lists them as real
+ * localities, stripping them as trailing "place names" in a freeform
+ * customer-typed address causes more harm than good:
+ *
+ *   "Av Cerro 1200, sur"          — "sur" is a cardinal direction
+ *                                   (note: Artigas has a rural locality
+ *                                   literally named "sur"). Stripping it
+ *                                   would mangle a valid MVD address.
+ *   "Rbla Gandhi 500, rambla"     — "rambla" is part of street naming
+ *                                   convention; treating it as a "place"
+ *                                   to strip is always wrong.
+ *   "Calle X 100, centro"         — "centro" is ambiguous; keeping it
+ *                                   in the address text is safer.
+ *
+ * Any future maintenance of CITY_TO_DEPARTMENT must re-evaluate this list:
+ * if an entry added there looks like a common-word collision, add it here.
+ */
+const STRIP_DENY_LIST = new Set<string>([
+  // Cardinal directions (generic)
+  'sur', 'norte', 'este', 'oeste',
+  // Downtown / generic (also MVD barrio)
+  'centro',
+  // Waterfront / coast (used in Montevideo street addressing)
+  'rambla', 'rbla',
+  'playa', 'costa',
+  // Hill / port (generic geography)
+  'cerro', 'puerto',
+  // Very short / highly ambiguous entries (1–3 chars)
+  'chuy', 'melo', 'tala', 'soca', 'goes', 'risso',
 ]);
 
+/**
+ * H-5: build KNOWN_PLACES_FOR_STRIP from CITY_TO_DEPARTMENT (~540 entries)
+ * MINUS the deny-list. The previous hardcoded list of 53 missed dozens of
+ * real trailing cities like "Paso Carrasco", "Lomas de Solymar", "Salinas",
+ * leaving them in the DAC street field even though K_Ciudad already covers
+ * them. Expanding from CITY_TO_DEPARTMENT guarantees strip coverage aligns
+ * with the department resolver's coverage.
+ */
+const KNOWN_PLACES_FOR_STRIP: ReadonlySet<string> = new Set(
+  Object.keys(CITY_TO_DEPARTMENT).filter((k) => !STRIP_DENY_LIST.has(k)),
+);
+
+/**
+ * Strip trailing ", place" suffixes while defending against the three most
+ * likely ways an over-eager stripper can corrupt an address:
+ *
+ *   Safeguard A — the REMAINING prefix must contain at least one digit.
+ *       Blocks "1234, Montevideo" → "" or "Pocitos, Montevideo" → "Pocitos"
+ *       (no door number, courier can't find it).
+ *
+ *   Safeguard B — the REMAINING prefix must contain at least one alphabetic
+ *       word of length ≥ 2. Blocks "1234, Montevideo" → "1234" (no street
+ *       name, courier only has a number).
+ *
+ *   Deny-list  — STRIP_DENY_LIST above stops stripping for direction words,
+ *       beach/hill/port geography, and ambiguous 3–4 letter city names.
+ *
+ * Each successful strip is logged at info level with the before/after text
+ * so we can audit behavior in production for 1 week before trusting it.
+ */
 export function stripTrailingKnownPlaces(addr: string): string {
   if (!addr) return addr;
   let cleaned = addr;
   for (let i = 0; i < 5; i++) {
-    // Match LAST ", segment" at end of string
+    // Match LAST ", segment" at end of string.
     const m = cleaned.match(/^(.+),\s*([^,]+)$/);
     if (!m) break;
+    const prefix = m[1].trim();
     const lastSegment = m[2].trim().toLowerCase();
-    if (KNOWN_PLACES_FOR_STRIP.has(lastSegment)) {
-      cleaned = m[1].trim();
-    } else {
+    if (!KNOWN_PLACES_FOR_STRIP.has(lastSegment)) break;
+
+    // Safeguard A — remaining prefix must have a digit (real door number).
+    if (!/\d/.test(prefix)) {
+      logger.debug({
+        input: cleaned, segment: lastSegment, reason: 'prefix_has_no_digit',
+      }, 'stripTrailingKnownPlaces: skipped — prefix has no door number');
       break;
     }
+
+    // Safeguard B — remaining prefix must have a real alphabetic word.
+    // `[a-záéíóúñ]{2,}` handles accented UY street names (Río, España, Peñarol).
+    if (!/[a-záéíóúñ]{2,}/i.test(prefix)) {
+      logger.debug({
+        input: cleaned, segment: lastSegment, reason: 'prefix_has_no_alpha_word',
+      }, 'stripTrailingKnownPlaces: skipped — prefix has no street name');
+      break;
+    }
+
+    logger.info({
+      input: cleaned, segment: lastSegment, result: prefix,
+    }, 'stripTrailingKnownPlaces: stripped trailing known place');
+    cleaned = prefix;
   }
   return cleaned;
 }
@@ -510,7 +579,18 @@ function mergeAddressCore(address1: string, address2: string | undefined | null)
   // Customer wrote "Luis a de Herrera 1183/204" which is street + door/apt slash form.
   // Split into "Luis a de Herrera 1183" + "Apto 204" so the address line is clean.
   // The address2 content (if any) is appended to the obs.
-  const slashApt = /(\d+)\s*\/\s*(\d+)\s*$/.exec(a1);
+  //
+  // H-6 (2026-04-21 audit): two refinements to the slash detection:
+  //   1. Accept LETTER and NUMBER+LETTER apts: "1183/B" → Apto B,
+  //      "1183/6B" → Apto 6B. The old pattern required `\d+` on both sides.
+  //   2. Guard against "Ruta X km N/Q" patterns (rural km sub-markers). The
+  //      old regex happily split "Ruta 9 km 120/5" into door=120 apt=5, which
+  //      is wrong — that's a kilometer sub-section on a highway, not an apt.
+  //      The `\bkm\b` check rejects the split without breaking normal street
+  //      addresses (Kimberley, kilogramos, etc. all fail word-boundary test).
+  const SLASH_APT_RX = /(\d+)\s*\/\s*(\d+[A-Za-z]?|[A-Za-z])\s*$/;
+  const hasKmMarker = /\bkm\b/i.test(a1);
+  const slashApt = hasKmMarker ? null : SLASH_APT_RX.exec(a1);
   if (slashApt) {
     const cleanedA1 = a1.slice(0, slashApt.index).trim() + ' ' + slashApt[1];
     const aptObs = `Apto ${slashApt[2]}`;

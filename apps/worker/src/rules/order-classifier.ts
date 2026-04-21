@@ -31,27 +31,81 @@ export interface ClassifiedOrder {
   summary: string;
 }
 
-const APT_MARKERS = [
-  'apto', 'apt.', 'apt ', 'apartamento',
-  'piso ', 'p.', 'p ', 'planta ',
-  ' bis', ' ter',
-  'torre ', 'block ', 'blq',
-  'casa ', 'cs ',
+/**
+ * H-4 (2026-04-21 audit): the old substring-based APT detector produced
+ * false positives on several common UY address patterns — "Rivera 2345
+ * bis", "Av. Brasil Ter", "Dr. P. Russo 5678", "Torres de Carrasco 1500".
+ * The strict regex form below uses word-boundary anchors so "aptos" and
+ * "torres" (plural forms that are NOT apt markers) don't trigger. Number-
+ * modifier suffixes "bis" and "ter" were removed entirely — they are part
+ * of the door number, not apartment info. The honorific abbreviation
+ * "p." was dropped because it collides with "Dr. P." style names. The
+ * word "casa" (house) was also dropped — it's the OPPOSITE of apartment
+ * info; a value like "Casa portones blancos" in address2 is a landmark
+ * description that the courier should see in observaciones, so it should
+ * correctly trigger ADDRESS2_PRESENT (not be suppressed as a fake apt).
+ *
+ * Coverage matrix:
+ *   apto 5 / Apto 5 / apto5 / APTO5  → matches (lookahead: \b or digit)
+ *   aptos / apartamentos             → NO match (plural, no word boundary)
+ *   1er piso, / piso 3 / piso:4      → matches via \bpiso\b
+ *   pisotearon                       → NO match (no \b after piso)
+ *   Torre 2 Apto 5                   → matches (\btorre\b + \s*\d)
+ *   Torres de Carrasco 1500          → NO match (plural, \b breaks)
+ *   Block A2                         → matches (\bblock\b + \s*\d)
+ *   Casa portones blancos            → NO match (casa is landmark, not apt)
+ */
+const APT_MARKER_PATTERNS: RegExp[] = [
+  // apto/apt/apartamento/depto/dpto/departamento — standalone word OR immediately
+  // followed by a digit (handles "apto5" without space).
+  /\b(apto|apt|apartamento|depto|dpto|departamento)(?=\b|\d)/i,
+  // piso/planta — standalone word. Catches "1er piso" and "piso 3" alike. Does
+  // not require a following digit because "piso" as a bare word is signal enough.
+  /\b(piso|planta)\b/i,
+  // torre/block/blq — standalone word followed by whitespace and a digit.
+  // "Torres de Carrasco" does not match (plural has no word boundary after "torre").
+  /\b(torre|block|blq)\b\s*\d/i,
 ];
 
 const URUGUAY_COUNTRIES = new Set(['uruguay', 'uy', 'ury', '']);
 
 function hasAptMarker(address: string): boolean {
-  const lower = address.toLowerCase();
-  return APT_MARKERS.some((m) => lower.includes(m));
+  return APT_MARKER_PATTERNS.some((rx) => rx.test(address));
 }
+
+/**
+ * H-3 (2026-04-21 audit): the old permissive "7–13 digits" check silently
+ * accepted anything vaguely phone-shaped, including random 7-digit strings
+ * and misformatted numbers. DAC accepts the call but couriers get bounce-
+ * backs for numbers that don't reach UY carriers.
+ *
+ * Uruguayan numbering plan (ANTEL/MOV):
+ *   Móvil (cell)     — 8 digits starting with 9, commonly written as
+ *                      "09X XXX XXX" (9-digit local with leading 0).
+ *   Fijo Montevideo  — 8 digits starting with 2.
+ *   Fijo interior    — 8 digits starting with 4.
+ *   Country code     — 598 (may appear as "+598", "598", or "00598").
+ *                      Stripping the prefix yields the 8- or 9-digit local
+ *                      form above.
+ *
+ * Anything else (7-digit, 10-digit random, numbers starting with 3/5/6/7/8,
+ * toll-free 0800, 3-digit emergency services) is flagged WEIRD_PHONE — the
+ * order is still shippable (we fall back to "00000000") but someone should
+ * double-check before the courier is dispatched.
+ */
+const UY_MOVIL_LOCAL_RX = /^0?9\d{7}$/;         // 9XXXXXXX or 09XXXXXXX
+const UY_FIJO_LOCAL_RX = /^[24]\d{7}$/;         // 2XXXXXXX or 4XXXXXXX
 
 function looksLikeUyPhone(raw: string | null | undefined): boolean {
   if (!raw) return false;
-  const digits = raw.replace(/\D/g, '');
-  // UY phones are 8–9 local digits (cell typically 9 digits starting 09).
-  // With country code +598 it becomes 11–12 digits.
-  return digits.length >= 7 && digits.length <= 13;
+  let digits = raw.replace(/\D/g, '');
+  if (digits.length === 0) return false;
+
+  // Strip UY country-code prefixes before validating the local form.
+  if (digits.startsWith('00598')) digits = digits.slice(5);
+  else if (digits.startsWith('598')) digits = digits.slice(3);
+
+  return UY_MOVIL_LOCAL_RX.test(digits) || UY_FIJO_LOCAL_RX.test(digits);
 }
 
 /**

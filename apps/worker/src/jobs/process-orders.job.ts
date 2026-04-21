@@ -226,6 +226,25 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
     );
     slog.info('guia-protection', `Loaded ${usedGuias.size} existing guias from DB to prevent re-assignment`);
 
+    // H-7 (2026-04-21 audit): batch-load the Label rows for every order in this
+    // cycle into an in-memory Map. The inner per-order path previously did one
+    // `findUnique` per iteration to check for a PRIOR guia from a failed run —
+    // 100 orders → 100 extra DB round-trips. For a single-writer worker that's
+    // survivable, but under concurrent workers (C-6 fix will enable this soon)
+    // it becomes a connection-pool bottleneck, and the query is trivially
+    // batchable through the (tenantId, shopifyOrderId) unique index.
+    const orderIdStrs = orders.map(o => String(o.id));
+    const priorLabels = orderIdStrs.length > 0
+      ? await db.label.findMany({
+          where: { tenantId, shopifyOrderId: { in: orderIdStrs } },
+          select: { shopifyOrderId: true, dacGuia: true, status: true },
+        })
+      : [];
+    const priorLabelByOrderId = new Map<string, { dacGuia: string | null; status: string }>(
+      priorLabels.map(l => [l.shopifyOrderId, { dacGuia: l.dacGuia, status: l.status }]),
+    );
+    slog.info('label-preload', `Preloaded ${priorLabels.length} prior labels for this batch (out of ${orderIdStrs.length} orders)`);
+
     // Build the auto-pay config once per cycle. Gated on all 4 fields being set so
     // we never call Plexo with half-configured settings (which would hang on the
     // CVV step and leave the guía in pago-pendiente).
@@ -353,11 +372,12 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         slog.info('order-payment', `Payment type: ${paymentType}`, { orderName: order.name });
 
         // b) Check if this order already has a REAL guia from a previous failed attempt
-        //    This prevents creating DUPLICATE DAC shipments when the DB write failed before
-        const existingLabel = await db.label.findUnique({
-          where: { tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) } },
-          select: { dacGuia: true, status: true },
-        });
+        //    This prevents creating DUPLICATE DAC shipments when the DB write failed before.
+        //
+        // H-7: read from the pre-loaded Map instead of issuing a fresh `findUnique`
+        // per order. The Map was populated once at job start via a single
+        // `findMany WHERE shopifyOrderId IN (...)` query — same result, O(1) lookup.
+        const existingLabel = priorLabelByOrderId.get(String(order.id));
 
         if (existingLabel?.dacGuia && !existingLabel.dacGuia.startsWith('PENDING-') && existingLabel.status === 'FAILED') {
           // This order already has a real DAC guia from a previous run that failed downstream.
