@@ -241,6 +241,80 @@ describe('resolveDepartmentDeterministic — ambiguous names defer to AI', () =>
   });
 });
 
+describe('resolveDepartmentDeterministic — address2 tiebreaker rule (Rule 3.5)', () => {
+  // Classic Shopify autofill bug: customer leaves city="Montevideo" (default)
+  // but writes the real locality in address2. The duplicate-city tiebreaker
+  // resolves the ambiguity by picking the most-populated dept for that name.
+  it('city="Montevideo" + address2="La Paz" → Canelones (medium)', () => {
+    const r = resolveDepartmentDeterministic({
+      city: 'Montevideo',
+      address1: '25 de Agosto 300',
+      address2: 'La Paz',
+      zip: '',
+      province: 'Montevideo',
+    });
+    expect(r).not.toBeNull();
+    expect(r!.department).toBe('Canelones');
+    expect(r!.matchedVia).toBe('address2-tiebreaker');
+    expect(r!.confidence).toBe('medium');
+  });
+
+  it('city="Montevideo" + address2="Las Piedras" → Canelones (medium)', () => {
+    const r = resolveDepartmentDeterministic({
+      city: 'Montevideo',
+      address1: 'Av. Artigas 500',
+      address2: 'Las Piedras',
+      zip: '',
+      province: 'Montevideo',
+    });
+    expect(r).not.toBeNull();
+    expect(r!.department).toBe('Canelones');
+    expect(r!.matchedVia).toBe('address2-tiebreaker');
+  });
+
+  it('city="Montevideo" + address2="Toledo" → Canelones (medium)', () => {
+    const r = resolveDepartmentDeterministic({
+      city: 'Montevideo',
+      address1: 'Rivadavia 500',
+      address2: 'Toledo',
+      zip: '',
+      province: 'Montevideo',
+    });
+    expect(r).not.toBeNull();
+    expect(r!.department).toBe('Canelones');
+    expect(r!.matchedVia).toBe('address2-tiebreaker');
+  });
+
+  it('city="Montevideo" + orderNotes mentions "La Paloma" → Rocha', () => {
+    const r = resolveDepartmentDeterministic({
+      city: 'Montevideo',
+      address1: 'Av. del Navío 500',
+      address2: '',
+      zip: '',
+      province: 'Montevideo',
+      orderNotes: 'Entregar en La Paloma , cerca del faro',
+    });
+    expect(r).not.toBeNull();
+    expect(r!.department).toBe('Rocha');
+    expect(r!.matchedVia).toBe('address2-tiebreaker');
+  });
+
+  it('does NOT fire when city != Montevideo — lets other rules handle it', () => {
+    // city="Pando" + address2="La Paz" → Rule 3 (major city "Pando") wins
+    const r = resolveDepartmentDeterministic({
+      city: 'Pando',
+      address1: '',
+      address2: 'La Paz',
+      zip: '',
+      province: 'Canelones',
+    });
+    expect(r).not.toBeNull();
+    // Rule 3 catches "Pando" first (it's in MAJOR_NON_CAPITAL_CITIES).
+    expect(r!.department).toBe('Canelones');
+    expect(r!.matchedVia).not.toBe('address2-tiebreaker');
+  });
+});
+
 describe('resolveDepartmentDeterministic — city-exact-unique rule', () => {
   it('city="Piriapolis" → Maldonado (via DAC unique match)', () => {
     // "Piriápolis" without accent, matches DAC "Piriapolis" exactly.

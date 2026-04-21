@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { normalizePhone, buildCheckoutUrl, maskPhone } from '@/lib/recover-utils'
 import { verifyShopifyWebhook } from '@/lib/shopify-webhook'
@@ -9,6 +10,7 @@ export async function POST(req: NextRequest) {
   const hmacHeader = req.headers.get('x-shopify-hmac-sha256')
   const topic = req.headers.get('x-shopify-topic')
   const shopDomain = req.headers.get('x-shopify-shop-domain')
+  const webhookId = req.headers.get('x-shopify-webhook-id')
 
   if (!hmacHeader || !topic || !shopDomain) {
     return NextResponse.json({ error: 'Missing headers' }, { status: 401 })
@@ -65,6 +67,34 @@ export async function POST(req: NextRequest) {
   const config = tenant.recoverConfig
   if (!config || !config.isActive || config.subscriptionStatus !== 'ACTIVE') {
     return NextResponse.json({ ok: true })
+  }
+
+  // C-3 (2026-04-21 audit): idempotency. See orders webhook route.ts for the
+  // full rationale. For `checkouts/update` this is especially important —
+  // Shopify emits an update on every field change, and our processCheckout
+  // upserts the cart and schedules recover jobs; re-playing the same update
+  // won't create duplicate jobs (the upsert.where guards that) but it DOES
+  // re-enter the DB transactions unnecessarily. Dedupe-at-the-edge is cheap.
+  if (webhookId) {
+    try {
+      await db.webhookReceipt.create({
+        data: {
+          source: 'shopify',
+          topic,
+          webhookId,
+          shopDomain,
+          tenantId: tenant.id,
+        },
+      })
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        return NextResponse.json({ ok: true, duplicate: true })
+      }
+      console.error('[Recover Webhook] WebhookReceipt insert failed:', err)
+    }
   }
 
   try {

@@ -2175,7 +2175,7 @@
     {
       "id": "I08",
       "category": "I",
-      "description": "ZIP 45000 → Paysandú (prompt hint)",
+      "description": "ZIP 45000 → Tacuarembó (Correos UY official)",
       "input": {
         "city": "Montevideo",
         "address1": "Calle Uruguay 100",
@@ -2190,11 +2190,11 @@
         "orderNotes": ""
       },
       "expected": {
-        "department": "Paysandu",
+        "department": "Tacuarembo",
         "barrio": null,
         "minConfidence": "medium"
       },
-      "source": "UY ZIP prefixes from prompt (11=MVD, 90=Canelones, 20=Maldonado, 70=Colonia, 45=Paysandú)"
+      "source": "Correos Uruguayo CP: 45000=Tacuarembó capital. Fixture corrected 2026-04-21 (originally had wrong expected=Paysandú)."
     },
     {
       "id": "J01",

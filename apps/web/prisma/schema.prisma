@@ -154,6 +154,9 @@ model Tenant {
   // Shipping rules (first-match-wins rule engine for REMITENTE/DESTINATARIO selection)
   shippingRules ShippingRule[]
 
+  // H-9: DAC session cookies (AES-encrypted), one row per tenant
+  dacSession DacSession?
+
   @@index([slug])
   @@index([stripeCustomerId])
   @@index([apiKey])
@@ -688,11 +691,81 @@ model AddressResolution {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  // H-2 (2026-04-21 audit): TTL on cache entries.
+  //
+  // Without an expiry, an address that resolved CORRECTLY last year keeps
+  // getting served from cache forever — but DAC department boundaries,
+  // postal codes, and the MVD_STREET_RANGES dictionary drift over time,
+  // and cached "Italia 4500 → Montevideo/Pocitos" can silently become
+  // stale the day we update the ranges. The dacAccepted feedback loop
+  // catches entries that fail at DAC, but not entries that DAC accepts
+  // yet deliver to the wrong barrio. Forcing a refresh after N days
+  // bounds that blast radius. Nullable so legacy rows (pre-H-2) don't
+  // need a backfill — the reader treats null as "no expiry set, treat
+  // as the default TTL from createdAt".
+  expiresAt DateTime?
+
   @@unique([tenantId, inputHash])
   @@index([tenantId, createdAt(sort: Desc)])
   @@index([inputHash])
   @@index([dacAccepted])
   @@index([source])
+  @@index([expiresAt]) // cleanup sweeper scans by expiry
+}
+
+// --- WEBHOOK IDEMPOTENCY ---
+//
+// C-3 (2026-04-21 audit): Shopify retries webhooks aggressively (every 5
+// minutes for 48h) if we take too long to respond or return 5xx. Without
+// idempotency, a legitimate-but-slow response to `orders/paid` for the same
+// order can enqueue the processing job N times, leading to duplicate labels
+// in DAC (the ordered classifier runs before we hit the "already shipped"
+// guard, so each run can call Shopify and potentially create duplicate
+// guías).
+//
+// Shopify sets `X-Shopify-Webhook-Id` (a stable UUID per webhook delivery).
+// We INSERT a row here keyed on (topic, webhookId) before enqueuing the job;
+// a unique-violation means "already seen this delivery — ACK 200 and do
+// nothing."
+model WebhookReceipt {
+  id         String   @id @default(cuid())
+  source     String   // 'shopify' | 'mercadopago' | 'whatsapp' | 'stripe' — scope the (topic, id) namespace
+  topic      String   // e.g. 'orders/paid' or 'checkouts/update'
+  webhookId  String   // X-Shopify-Webhook-Id (or equivalent for other sources)
+  shopDomain String?  // 'acme.myshopify.com' — helpful for debugging, not part of the unique key
+  tenantId   String?  // nullable: webhook may arrive for an unknown tenant
+  receivedAt DateTime @default(now())
+
+  @@unique([source, topic, webhookId]) // the idempotency key
+  @@index([receivedAt]) // for cleanup sweeper
+  @@index([tenantId, receivedAt(sort: Desc)])
+}
+
+// --- DAC SESSION ---
+//
+// H-9 (2026-04-21 audit): DAC session cookies used to live in a generic
+// RunLog row with `message = 'dac_cookies'` and `meta = { ... }` as plain
+// JSON. Two problems:
+//   1. Cookies include DAC session tokens — equivalent to login credentials
+//      for anyone with DB read access. Plaintext storage violated the
+//      "encrypt credentials at rest" rule the rest of the codebase follows.
+//   2. Storing in RunLog meant the row was treated as a generic log and
+//      could be swept by retention policies that would accidentally
+//      invalidate the session.
+//
+// The dedicated model holds an encrypted JSON blob (AES-256-GCM via the
+// same helpers used for shopifyToken/dacPassword) with a one-row-per-tenant
+// invariant. `savedAt` replaces the RunLog createdAt used for the 4-hour
+// expiry check.
+model DacSession {
+  id               String   @id @default(cuid())
+  tenantId         String   @unique
+  cookiesEncrypted String   // AES-256-GCM ciphertext of JSON.stringify(cookies[])
+  savedAt          DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([savedAt])
 }
 
 // --- SHIPPING RULES ---

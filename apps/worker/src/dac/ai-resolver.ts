@@ -28,6 +28,11 @@ import {
 import { resolveDepartmentDeterministic } from './dac-dept-resolver';
 import { resolveCityDeterministic } from './dac-city-resolver';
 import { geocodeAddressToDepartment } from './geocode-fallback';
+import {
+  candidateDeptsFor,
+  nonPreferredConflict,
+} from './duplicate-city-tiebreaker';
+import { mvdBarrioFromStreet, parseMvdAddress } from './mvd-street-ranges';
 
 // ───────────────────────────────────────────────────────────────────────────
 // Constants
@@ -238,6 +243,111 @@ export function calculateAICost(usage: TokenUsage): number {
 // ───────────────────────────────────────────────────────────────────────────
 // Hashing
 // ───────────────────────────────────────────────────────────────────────────
+//
+// The cache key (AddressResolution.inputHash) has one job: collapse the
+// many equivalent spellings Shopify emits for the SAME physical address
+// into the same hash, so the second order from the same house hits cache
+// instead of re-spending an AI call.
+//
+// Equivalences we want to collapse (same hash):
+//   - "Av. Italia 4500"         == "Avenida Italia 4500"
+//   - "Italia 4500"             == "Italia 4500 apto 2"
+//   - "Italia 4500"             == "Italia 4500, piso 3"
+//   - "Italia 4500"             == "italia 4500"
+//   - "Gral. Flores 2400"       == "General Flores 2400"
+//   - "Rambla Tomás Berreta 8000" == "Rambla Tomas Berreta 8000"
+//   - "18 de Julio 1000"        == "Avda 18 de Julio 1000"
+//
+// Distinctions we must preserve (different hash):
+//   - "Italia 4500"             vs "Italia 45"    (different house)
+//   - "Italia 4500" in MVD      vs "Italia 4500" in Paysandú
+//     → city is part of the hash tuple
+//   - "Italia 4500" with zip 11400 vs zip 60000
+//     → zip is part of the hash tuple
+//
+// Collisions we accept: two genuinely different addresses whose city,
+// normalized address1, address2, and zip all agree — that shouldn't
+// happen in real data, and if it does, the DAC feedback loop
+// (dacAccepted=false) invalidates the cache entry.
+//
+// Changing this function invalidates all existing cache entries. That's
+// fine — the cache rebuilds from normal traffic within hours/days, and
+// correctness isn't affected (stale entries fail the dacAccepted gate
+// and bypass cache).
+
+// Prefix words that are pure noise for cache keying. Stripping collapses
+// "Av. Italia" / "Avenida Italia" / "Italia" into one key. Keep the list
+// conservative — only prefixes that are genuinely redundant. Do NOT add
+// "don", "san", "santa" etc. — those are part of the street name.
+const HASH_STRIP_PREFIXES = new Set([
+  'av',
+  'avda',
+  'avenida',
+  'bvar',
+  'bulevar',
+  'blvd',
+  'boulevard',
+  'calle',
+  'camino',
+  'cno',
+  'pasaje',
+  'pje',
+  'peatonal',
+  'rambla',
+  'ruta',
+  'general',
+  'gral',
+  'doctor',
+  'dr',
+  'plaza',
+  'pza',
+  'teniente',
+  'tte',
+  'capitan',
+  'cap',
+  'ing',
+  'ingeniero',
+  'prof',
+  'profesor',
+]);
+
+// Apartment/unit trailers ONLY. Everything from here to EOL is dropped
+// before hashing — it doesn't identify the building, just the unit
+// inside. We explicitly do NOT strip intersection trailers
+// (esq/esquina/casi/entre/y) because in grid cities like Atlántida the
+// cross-street IS the address: "Calle 11 esquina 22" and "Calle 11
+// esquina 33" are different houses. Stripping those would collide them
+// in the cache and propagate wrong answers.
+const HASH_STRIP_TRAILER =
+  /(^|\s+)(apto|apt|dpto|depto|piso|bis|unidad|of|oficina|local)\b.*$/i;
+
+function normalizeAddressForHash(s: string | null | undefined): string {
+  const base = (s ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // accents
+    .replace(/['´`]/g, '') // apostrophes ("o'higgins" → "ohiggins")
+    .replace(/[^a-z0-9\s]/g, ' ') // punctuation → space
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!base) return '';
+
+  // Drop apto/piso/esq/etc. trailers (keep house number, lose unit info).
+  const noTrailer = base.replace(HASH_STRIP_TRAILER, '').trim();
+
+  // Strip leading prefix words recursively (handles "Av. Gral Flores" →
+  // "flores"). Cap at 3 iterations so a pathological all-prefix string
+  // can't loop forever.
+  const words = noTrailer.split(' ').filter(Boolean);
+  for (let i = 0; i < 3 && words.length > 1; i++) {
+    if (HASH_STRIP_PREFIXES.has(words[0])) {
+      words.shift();
+    } else {
+      break;
+    }
+  }
+  return words.join(' ');
+}
 
 function normalizeForHash(s: string | null | undefined): string {
   return (s ?? '')
@@ -248,15 +358,219 @@ function normalizeForHash(s: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Normalize a free-form `province` input to one of our 19 DAC canonical
+ * department names, or empty string if we cannot recognize it. Handles
+ * accent folding ("Paysandú" → "Paysandu"), case, and a few common
+ * spelling variations ("San José" → "San Jose"). Returns '' (not null)
+ * so callers can compare with `===` without worrying about nullish.
+ */
+function normalizeInputDept(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const n = (raw ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+  if (!n) return '';
+  for (const dept of VALID_DEPARTMENTS) {
+    if (dept.toLowerCase() === n) return dept;
+  }
+  // Common aliases seen in Shopify input
+  const aliases: Record<string, (typeof VALID_DEPARTMENTS)[number]> = {
+    'san jose': 'San Jose',
+    'rio negro': 'Rio Negro',
+    'treinta y tres': 'Treinta y Tres',
+    'cerro largo': 'Cerro Largo',
+  };
+  return aliases[n] ?? '';
+}
+
+/**
+ * H-1 (2026-04-21 audit): cache-key version tag.
+ *
+ * Every entry in AddressResolution is keyed by `hashAddressInput(input)`. If
+ * we change the hashing dictionary (HASH_STRIP_PREFIXES, HASH_STRIP_TRAILER,
+ * the MVD_STREET_RANGES used by the resolver, or any of the canonicalization
+ * rules), old cache entries silently map the SAME physical address to a hash
+ * the new code would never generate — and worse, they may map DIFFERENT
+ * physical addresses to a hash the new code uses for something else.
+ *
+ * Bumping DICT_VERSION invalidates every prior cache entry in one step (new
+ * code can't collide with old hashes). The cache rebuilds naturally from
+ * traffic; correctness during the transition is preserved because the
+ * dacAccepted feedback loop filters stale answers anyway.
+ *
+ * Bump this integer whenever you change:
+ *   - HASH_STRIP_PREFIXES / HASH_STRIP_TRAILER
+ *   - normalizeAddressForHash / normalizeForHash / normalizeInputDept
+ *   - the set of fields included in the hash tuple below
+ */
+const DICT_VERSION = 2;
+
+/**
+ * H-2 (2026-04-21 audit): TTL for AddressResolution cache entries.
+ *
+ * 90 days is long enough that real traffic patterns keep the cache warm
+ * (90% of a customer's subsequent orders arrive within ~40 days) and short
+ * enough that when we update MVD_STREET_RANGES, CITY_TO_DEPARTMENT, or DAC's
+ * department boundaries, the cache self-heals within a quarter — no manual
+ * flush needed. Stale-but-DAC-accepted entries are the failure mode this
+ * bounds; the dacAccepted=false gate already handles outright-bad entries.
+ *
+ * Exported for use in a cleanup sweeper.
+ */
+export const ADDRESS_RESOLUTION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** H-2: derive the expiry timestamp for a newly-written/updated cache row. */
+export function computeAddressResolutionExpiry(now: Date = new Date()): Date {
+  return new Date(now.getTime() + ADDRESS_RESOLUTION_TTL_MS);
+}
+
 export function hashAddressInput(input: AIResolverInput): string {
+  // H-1: `p` (province) is part of the tuple. Previously "Italia 4500,
+  // Montevideo" and "Italia 4500, Paysandú" (if the 'city' slot happened to
+  // contain "Italia 4500" for both) could collide. We fold via
+  // normalizeInputDept so "paysandu", "Paysandú", and "Paysandu " all hash
+  // the same; unknown/empty province hashes to '' so pre-H-1 callers that
+  // don't pass province still get a consistent key (distinct from any
+  // valid-province key because '' !== 'Montevideo' etc.).
   const normalized = JSON.stringify({
+    v: DICT_VERSION,
+    p: normalizeInputDept(input.province),
     c: normalizeForHash(input.city),
-    a1: normalizeForHash(input.address1),
-    a2: normalizeForHash(input.address2),
+    a1: normalizeAddressForHash(input.address1),
+    a2: normalizeAddressForHash(input.address2),
     z: (input.zip ?? '').trim(),
   });
   return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// Customer-recurrence shortcut (Tier 3)
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Match today's address against a customer's prior-shipment history.
+ *
+ * Intent:
+ *   A returning customer ordering from "Rambla O'Higgins 14500" when they
+ *   already received shipments at "Rambla O'Higgins 14000" is almost
+ *   certainly shipping to the same destination (same building or block).
+ *   The AI sometimes gets confused by borderline geography ("14500 is on the
+ *   Punta Gorda / Carrasco line") and picks the wrong barrio; the customer
+ *   pattern cuts through that ambiguity.
+ *
+ * We match on two tiers:
+ *   - EXACT: same normalized street, same house number → confidence 'high'
+ *   - NEAR:  same normalized street, number within ±MAX_DIFF → 'medium'
+ *
+ * Street comparison is lenient-accurate: `parseMvdAddress` strips
+ * case, accents, apostrophes, and street-type prefixes ("Av.", "Rambla",
+ * "Bulevar", etc.), so variants like "Av. Italia 4500" and "italia 4500"
+ * collide as intended. Number drift ≤ MAX_DIFF covers typo variants
+ * ("4500" vs "4501") and legitimately-same-block drift (a customer ordering
+ * alternately from their home at 4500 and their office at 4520).
+ *
+ * Returns null when:
+ *   - no prior shipments
+ *   - current address cannot be parsed (no street / no number)
+ *   - no prior shipment shares a street with today's address
+ *   - the closest same-street match differs by > MAX_DIFF
+ */
+export function resolveByCustomerRecurrence(
+  input: AIResolverInput,
+  priorShipments: ReadonlyArray<{
+    department: string;
+    city: string;
+    deliveryAddress: string;
+  }>,
+  hash: string,
+): AIResolverResult | null {
+  if (priorShipments.length === 0) return null;
+  const current = parseMvdAddress(input.address1);
+  if (!current) return null;
+
+  // Tolerance for house-number drift. 2000 is a compromise: it catches
+  // legitimate same-block variation (a customer ordering from home and
+  // office a few houses apart) without collapsing genuinely-different
+  // addresses on a long avenue. Av. Italia 4500 vs 6000 = different barrios.
+  const MAX_DIFF = 2000;
+
+  let best: {
+    prior: (typeof priorShipments)[number];
+    parsed: { street: string; number: number };
+    delta: number;
+  } | null = null;
+
+  for (const p of priorShipments) {
+    const parsed = parseMvdAddress(p.deliveryAddress);
+    if (!parsed) continue;
+    if (parsed.street !== current.street) continue;
+    const delta = Math.abs(parsed.number - current.number);
+    if (delta > MAX_DIFF) continue;
+    if (!best || delta < best.delta) {
+      best = { prior: p, parsed, delta };
+    }
+  }
+  if (!best) return null;
+
+  const dept = best.prior.department;
+  // Derive barrio for MVD from the NEW address (not the prior). MVD_STREET_RANGES
+  // is the single source of truth — using the prior's address would be circular
+  // and couldn't handle the case where the customer moves one block and the new
+  // number falls in a different barrio range.
+  let barrio: string | null = null;
+  if (dept === 'Montevideo') {
+    const hit = mvdBarrioFromStreet(input.address1);
+    if (hit) barrio = hit.barrio;
+  }
+
+  // confidence: exact number match = 'high' (same physical address);
+  // near match = 'medium' (same block, probably same destination but not
+  // guaranteed). We never return 'low' from here — if the signal is that
+  // weak we'd have returned null already.
+  const confidence: 'high' | 'medium' = best.delta === 0 ? 'high' : 'medium';
+
+  logger.info(
+    {
+      hash,
+      tenantId: input.tenantId,
+      dept,
+      barrio,
+      priorAddress: best.prior.deliveryAddress,
+      currentAddress: input.address1,
+      delta: best.delta,
+      priorCount: priorShipments.length,
+      confidence,
+    },
+    'AI resolver customer-recurrence shortcut — no AI invocation needed',
+  );
+
+  return {
+    barrio,
+    // MVD orders always ship with city="Montevideo" (DAC uses barrio as the
+    // finer-grained field). For the interior, trust the prior's city —
+    // DAC has already canonicalized it on the prior successful shipment.
+    city: dept === 'Montevideo' ? 'Montevideo' : best.prior.city,
+    department: dept,
+    deliveryAddress: '',
+    extraObservations: '',
+    confidence,
+    reasoning:
+      best.delta === 0
+        ? `customer-recurrence: exact match with prior shipment "${best.prior.deliveryAddress}"`
+        : `customer-recurrence: same street as "${best.prior.deliveryAddress}", number drift ${best.delta} ≤ ${MAX_DIFF}`,
+    source: 'deterministic',
+    inputHash: hash,
+    aiCostUsd: 0,
+    webSearchRequests: 0,
+    priorShipmentsUsed: priorShipments.length,
+  };
+}
+
+// Exported for unit tests only — do not use at call sites.
+export const _testing = { normalizeAddressForHash };
 
 // ───────────────────────────────────────────────────────────────────────────
 // System prompt + tool definition
@@ -507,10 +821,150 @@ export async function resolveAddressWithAI(
       orderNotes: input.orderNotes,
     });
 
+    // ─── MVD barrio shortcut (Tier 2) ───────────────────────────────────
+    //
+    // When the department is clearly Montevideo AND the address1 matches a
+    // hand-curated street-range in MVD_STREET_RANGES, answer
+    // deterministically with the barrio. Skips Nominatim + AI entirely.
+    //
+    // We gate on confidence='high' (city-exact-mvd or zip prefix) so we
+    // never apply the shortcut on weak dept signals like province alone.
+    // On miss, we fall through to the normal flow — the lookup is free
+    // and failure is indistinguishable from the current behavior.
     if (
       deptRes &&
-      deptRes.confidence === 'high' &&
-      deptRes.department !== 'Montevideo'
+      deptRes.department === 'Montevideo' &&
+      deptRes.confidence === 'high'
+    ) {
+      const barrioHit = mvdBarrioFromStreet(input.address1);
+      if (barrioHit) {
+        logger.info(
+          {
+            hash,
+            tenantId: input.tenantId,
+            dept: 'Montevideo',
+            barrio: barrioHit.barrio,
+            matchedStreet: barrioHit.matchedStreet,
+            number: barrioHit.number,
+            rangeNote: barrioHit.note,
+            deptVia: deptRes.matchedVia,
+          },
+          'AI resolver MVD barrio shortcut — no AI invocation needed',
+        );
+        return {
+          barrio: barrioHit.barrio,
+          // city is always "Montevideo" for MVD orders — the DAC form only
+          // cares about barrio inside MVD.
+          city: 'Montevideo',
+          department: 'Montevideo',
+          deliveryAddress: '',
+          extraObservations: '',
+          // High: every range in MVD_STREET_RANGES is hand-verified
+          // against the canonical fixture address it serves. A hit means
+          // the address is well inside a known barrio interval, not on a
+          // fuzzy boundary. The operator can still override via the DAC
+          // form before printing if the edge case slipped through.
+          confidence: 'high',
+          reasoning: `determ MVD: "${barrioHit.matchedStreet}" #${barrioHit.number} → ${barrioHit.barrio}${barrioHit.note ? ` (${barrioHit.note})` : ''}`,
+          source: 'deterministic',
+          inputHash: hash,
+          aiCostUsd: 0,
+          webSearchRequests: 0,
+          priorShipmentsUsed: 0,
+        };
+      }
+    }
+
+    // ─── MVD shortcut via explicit province (Tier 2 follow-up) ──────────
+    //
+    // When city is ambiguous (e.g. "Santa Catalina" exists in both Soriano
+    // and as an MVD peripheral zona) or empty but `province="Montevideo"`
+    // is explicitly set by the customer, the dept resolver returns
+    // Montevideo with matchedVia='province' / confidence='medium'. We
+    // bypass the AI in two steps:
+    //   1. Try the MVD street-range barrio lookup first (e.g. H04's
+    //      "Rambla Tomás Berreta 8000" resolves to Carrasco). Confidence
+    //      stays 'medium' because the dept signal came from province —
+    //      without city confirmation we can't claim 'high'.
+    //   2. Fall back to dept-only if no barrio match (e.g. L07's "Camino
+    //      Colman" in a peripheral zona). Operator fills the barrio in
+    //      two seconds from the DAC dropdown.
+    // Both beat the alternative (AI ignoring province and guessing a
+    // different dept from street-name heuristics).
+    if (
+      deptRes &&
+      deptRes.department === 'Montevideo' &&
+      deptRes.matchedVia === 'province'
+    ) {
+      const barrioHit = mvdBarrioFromStreet(input.address1);
+      if (barrioHit) {
+        logger.info(
+          {
+            hash,
+            tenantId: input.tenantId,
+            dept: 'Montevideo',
+            barrio: barrioHit.barrio,
+            matchedStreet: barrioHit.matchedStreet,
+            number: barrioHit.number,
+            rangeNote: barrioHit.note,
+            deptVia: deptRes.matchedVia,
+          },
+          'AI resolver MVD barrio shortcut (via province) — no AI invocation needed',
+        );
+        return {
+          barrio: barrioHit.barrio,
+          city: 'Montevideo',
+          department: 'Montevideo',
+          deliveryAddress: '',
+          extraObservations: '',
+          // Medium: street-range is hand-verified, but dept came from
+          // province (medium) not a canonical city signal. Downgrading
+          // to match the weakest link keeps the contract honest.
+          confidence: 'medium',
+          reasoning: `determ MVD (via province): "${barrioHit.matchedStreet}" #${barrioHit.number} → ${barrioHit.barrio}${barrioHit.note ? ` (${barrioHit.note})` : ''}`,
+          source: 'deterministic',
+          inputHash: hash,
+          aiCostUsd: 0,
+          webSearchRequests: 0,
+          priorShipmentsUsed: 0,
+        };
+      }
+      logger.info(
+        {
+          hash,
+          tenantId: input.tenantId,
+          dept: 'Montevideo',
+          deptReason: deptRes.reason,
+          deptVia: deptRes.matchedVia,
+        },
+        'AI resolver MVD dept-only shortcut (explicit province) — no AI invocation needed',
+      );
+      return {
+        barrio: null,
+        city: 'Montevideo',
+        department: 'Montevideo',
+        deliveryAddress: '',
+        extraObservations: '',
+        confidence: deptRes.confidence,
+        reasoning: `determ MVD (dept-only, province): ${deptRes.reason}`,
+        source: 'deterministic',
+        inputHash: hash,
+        aiCostUsd: 0,
+        webSearchRequests: 0,
+        priorShipmentsUsed: 0,
+      };
+    }
+
+    // Gate: high confidence OR address2-tiebreaker (which is legitimately
+    // medium confidence but still deterministic enough to beat AI guessing).
+    // Without the tiebreaker carve-out, Shopify-autofilled `city=Montevideo`
+    // orders whose real locality lives in address2 (e.g. "La Paz" meaning
+    // Canelones) fall through to the AI and get mis-routed to Montevideo.
+    if (
+      deptRes &&
+      deptRes.department !== 'Montevideo' &&
+      (deptRes.confidence === 'high' ||
+        deptRes.matchedVia === 'address2-tiebreaker')
     ) {
       const cityRes = resolveCityDeterministic(deptRes.department, {
         city: input.city,
@@ -571,7 +1025,8 @@ export async function resolveAddressWithAI(
       const deptViaIsAuthoritative =
         deptRes.matchedVia === 'zip' ||
         deptRes.matchedVia === 'address-capital' ||
-        deptRes.matchedVia === 'address-major-city';
+        deptRes.matchedVia === 'address-major-city' ||
+        deptRes.matchedVia === 'address2-tiebreaker';
       if (deptViaIsAuthoritative) {
         logger.info(
           {
@@ -608,11 +1063,18 @@ export async function resolveAddressWithAI(
   }
 
   // 1. Cache lookup — accept if no feedback yet or feedback was positive
+  //    AND the entry has not passed its TTL (H-2, 2026-04-21 audit).
+  //    Expired rows are left in place; the sweeper deletes them asynchronously
+  //    (see cleanupExpiredAddressResolutions below). An expired row here is
+  //    treated exactly like a cache miss — we fall through to the AI path,
+  //    which will rewrite the row with a fresh expiry via the upsert.
   try {
     const cached = await db.addressResolution.findUnique({
       where: { tenantId_inputHash: { tenantId: input.tenantId, inputHash: hash } },
     });
-    if (cached && cached.dacAccepted !== false) {
+    const now = new Date();
+    const notExpired = !cached?.expiresAt || cached.expiresAt > now;
+    if (cached && cached.dacAccepted !== false && notExpired) {
       logger.info(
         { hash, tenantId: input.tenantId, dacAccepted: cached.dacAccepted },
         'AI resolver cache HIT',
@@ -661,8 +1123,96 @@ export async function resolveAddressWithAI(
       address2: input.address2,
       zip: input.zip,
     });
+
+    // ─── Post-Nominatim MVD barrio retry (Tier 2 follow-up) ─────────────
+    //
+    // The pre-Nominatim barrio shortcut at line ~553 only fires when the
+    // deterministic dept resolver can already pin Montevideo with high
+    // confidence (city-exact-mvd or ZIP). For addresses that arrive with
+    // empty city/province (Shopify does this on returning customers who
+    // didn't retype), the dept resolver gives up and we end up here. If
+    // Nominatim confirms dept=Montevideo, retry the barrio lookup before
+    // spending an AI call. Same table, same confidence rules, just a
+    // different entry point.
+    if (geo && geo.department === 'Montevideo') {
+      const barrioHit = mvdBarrioFromStreet(input.address1);
+      if (barrioHit) {
+        logger.info(
+          {
+            hash,
+            tenantId: input.tenantId,
+            dept: 'Montevideo',
+            barrio: barrioHit.barrio,
+            matchedStreet: barrioHit.matchedStreet,
+            number: barrioHit.number,
+            rangeNote: barrioHit.note,
+            nominatimLocality: geo.locality,
+          },
+          'AI resolver MVD barrio shortcut (post-nominatim) — no AI invocation needed',
+        );
+        return {
+          barrio: barrioHit.barrio,
+          city: 'Montevideo',
+          department: 'Montevideo',
+          deliveryAddress: '',
+          extraObservations: '',
+          confidence: 'high',
+          reasoning: `determ MVD (post-nominatim): "${barrioHit.matchedStreet}" #${barrioHit.number} → ${barrioHit.barrio}${barrioHit.note ? ` (${barrioHit.note})` : ''}`,
+          source: 'deterministic',
+          inputHash: hash,
+          aiCostUsd: 0,
+          webSearchRequests: 0,
+          priorShipmentsUsed: 0,
+        };
+      }
+    }
+
     if (geo && geo.department !== 'Montevideo') {
-      const cityRes = resolveCityDeterministic(geo.department, {
+      // ─── duplicate-city tiebreaker ───────────────────────────────────
+      //
+      // 34 DAC city names exist in >1 dept ("La Paz" is in Canelones AND
+      // Colonia, "Las Piedras" is in Canelones AND Artigas, etc.).
+      // Nominatim picks ONE of those based on search-score heuristics —
+      // often the tiny pueblo when the customer almost certainly meant
+      // the major city of the same name. We override ONLY when:
+      //   (a) the locality is in our duplicate-city table AND
+      //   (b) Nominatim's dept is NOT the preferred default AND
+      //   (c) the user-provided `province` does not corroborate Nominatim
+      //       (an explicit province always wins — customer's own claim).
+      const provinceDept = normalizeInputDept(input.province);
+      const tiebreakerLocality = geo.locality || input.city;
+      let effectiveDept = geo.department;
+      let tiebreakerNote = '';
+      if (tiebreakerLocality && provinceDept !== geo.department) {
+        const preferred = nonPreferredConflict(
+          tiebreakerLocality,
+          geo.department,
+        );
+        // Only switch if the preferred dept doesn't contradict province
+        // (when province is set). When province is empty, we accept the
+        // tiebreaker unconditionally — that's exactly the case it was
+        // built for.
+        if (
+          preferred &&
+          (provinceDept === '' || provinceDept === preferred)
+        ) {
+          effectiveDept = preferred;
+          tiebreakerNote = ` [tiebreaker: "${tiebreakerLocality}" → ${preferred} over ${geo.department}]`;
+          logger.info(
+            {
+              hash,
+              tenantId: input.tenantId,
+              locality: tiebreakerLocality,
+              nominatimDept: geo.department,
+              preferredDept: preferred,
+              provinceInput: input.province,
+            },
+            'Nominatim dept overridden by duplicate-city tiebreaker',
+          );
+        }
+      }
+
+      const cityRes = resolveCityDeterministic(effectiveDept, {
         // Feed Nominatim's locality as the candidate city — it's usually
         // more accurate than Shopify's city field on the cases we reach
         // here. Address fields stay as originally provided so
@@ -672,14 +1222,38 @@ export async function resolveAddressWithAI(
         address2: input.address2 ?? '',
         orderNotes: input.orderNotes,
       });
+
+      // ─── confidence scoring ──────────────────────────────────────────
+      //
+      // Upgrade to 'high' when we have strong agreement between
+      // independent signals:
+      //   1. DAC canonical city resolved via exact match (not fuzzy scan)
+      //   2. AND at least one of:
+      //      - user-provided province matches the final effective dept
+      //      - the locality is NOT in the duplicate-city table (truly
+      //        unambiguous city name)
+      //
+      // When both conditions hold, there is effectively zero room for
+      // error: Nominatim + DAC + Shopify's province all agree, or the
+      // locality is so uniquely named that confusion is impossible.
+      const confidence: 'high' | 'medium' | 'low' =
+        cityRes?.matchedVia === 'city-exact' &&
+        (provinceDept === effectiveDept ||
+          !candidateDeptsFor(tiebreakerLocality))
+          ? 'high'
+          : 'medium';
+
       if (cityRes) {
         logger.info(
           {
             hash,
             tenantId: input.tenantId,
-            dept: geo.department,
+            dept: effectiveDept,
             city: cityRes.city,
             nominatimLocality: geo.locality,
+            nominatimDept: geo.department,
+            tiebreakerApplied: !!tiebreakerNote,
+            confidence,
             displayName: geo.displayName,
           },
           'AI resolver Nominatim shortcut — no AI invocation needed',
@@ -687,11 +1261,11 @@ export async function resolveAddressWithAI(
         return {
           barrio: null,
           city: cityRes.city,
-          department: geo.department,
+          department: effectiveDept,
           deliveryAddress: '',
           extraObservations: '',
-          confidence: 'medium',
-          reasoning: `nominatim: ${geo.displayName}; ${cityRes.reason}`,
+          confidence,
+          reasoning: `nominatim: ${geo.displayName}; ${cityRes.reason}${tiebreakerNote}`,
           source: 'deterministic',
           inputHash: hash,
           aiCostUsd: 0,
@@ -706,8 +1280,10 @@ export async function resolveAddressWithAI(
         {
           hash,
           tenantId: input.tenantId,
-          dept: geo.department,
+          dept: effectiveDept,
           nominatimLocality: geo.locality,
+          nominatimDept: geo.department,
+          tiebreakerApplied: !!tiebreakerNote,
           displayName: geo.displayName,
         },
         'AI resolver Nominatim shortcut — dept only (city deferred to operator)',
@@ -715,11 +1291,11 @@ export async function resolveAddressWithAI(
       return {
         barrio: null,
         city: '',
-        department: geo.department,
+        department: effectiveDept,
         deliveryAddress: '',
         extraObservations: '',
         confidence: 'medium',
-        reasoning: `nominatim (dept-only): ${geo.displayName}`,
+        reasoning: `nominatim (dept-only): ${geo.displayName}${tiebreakerNote}`,
         source: 'deterministic',
         inputHash: hash,
         aiCostUsd: 0,
@@ -734,6 +1310,57 @@ export async function resolveAddressWithAI(
       'Nominatim fallback threw — falling through to AI',
     );
   }
+
+  // 1c. Customer-history fetch + recurrence shortcut.
+  //
+  // We hoist the Label-history query ABOVE the tenant/quota/api-key checks so
+  // that (a) the recurrence shortcut can short-circuit even for tenants with
+  // AI disabled (this is strictly better than returning null → falling back
+  // to rules that already failed), and (b) we only query the DB once even
+  // when the shortcut misses and the AI path reuses the result.
+  //
+  // The shortcut fires when TODAY's address shares a street with a prior
+  // successful shipment from the same customer. See resolveByCustomerRecurrence
+  // for matching semantics. On a hit we return immediately with
+  // source='deterministic' — no AI call, no tenant quota charged.
+  let priorShipments: Array<{
+    department: string;
+    city: string;
+    deliveryAddress: string;
+  }> = [];
+  try {
+    const customerKey = (input.customerEmail || '').trim().toLowerCase();
+    const phoneDigits = (input.customerPhone || '').replace(/\D/g, '');
+    if (customerKey || phoneDigits.length >= 7) {
+      priorShipments = await db.label.findMany({
+        where: {
+          tenantId: input.tenantId,
+          status: { in: ['CREATED', 'COMPLETED'] },
+          OR: [
+            customerKey ? { customerEmail: customerKey } : undefined,
+            phoneDigits.length >= 7
+              ? { customerPhone: { contains: phoneDigits } }
+              : undefined,
+          ].filter(Boolean) as any,
+        },
+        select: { department: true, city: true, deliveryAddress: true },
+        orderBy: { createdAt: 'desc' },
+        take: 3,
+      });
+    }
+  } catch (err) {
+    logger.debug(
+      { error: (err as Error).message },
+      'Customer history lookup failed — continuing without it',
+    );
+  }
+
+  const recurrenceHit = resolveByCustomerRecurrence(
+    input,
+    priorShipments,
+    hash,
+  );
+  if (recurrenceHit) return recurrenceHit;
 
   // 2. Tenant opt-in + quota check
   const tenant = await db.tenant.findUnique({
@@ -772,37 +1399,8 @@ export async function resolveAddressWithAI(
     return null;
   }
 
-  // 4a. Customer-history lookup — strongest available signal for returning customers.
-  //
-  // If this customer (matched by email, falling back to phone) has shipped
-  // successfully before, those prior resolutions are usually the right answer
-  // for today's order too. We pass up to 3 prior destinations to the AI as
-  // evidence. Kept cheap: single indexed query on Label, capped at 3 rows.
-  let priorShipments: Array<{ department: string; city: string; deliveryAddress: string }> = [];
-  try {
-    const customerKey = (input.customerEmail || '').trim().toLowerCase();
-    const phoneDigits = (input.customerPhone || '').replace(/\D/g, '');
-    if (customerKey || phoneDigits.length >= 7) {
-      priorShipments = await db.label.findMany({
-        where: {
-          tenantId: input.tenantId,
-          status: { in: ['CREATED', 'COMPLETED'] },
-          OR: [
-            customerKey ? { customerEmail: customerKey } : undefined,
-            phoneDigits.length >= 7 ? { customerPhone: { contains: phoneDigits } } : undefined,
-          ].filter(Boolean) as any,
-        },
-        select: { department: true, city: true, deliveryAddress: true },
-        orderBy: { createdAt: 'desc' },
-        take: 3,
-      });
-    }
-  } catch (err) {
-    logger.debug(
-      { error: (err as Error).message },
-      'Customer history lookup failed — continuing without it',
-    );
-  }
+  // 4a. priorShipments was already fetched above (1c) — reuse it here so the
+  // AI sees the customer history as context even when recurrence missed.
 
   // 4b. Build enriched user message.
   //
@@ -1102,6 +1700,12 @@ export async function resolveAddressWithAI(
         aiModel: MODEL,
         aiReasoning: result.reasoning,
         aiCostUsd: costUsd,
+        // H-2 (2026-04-21 audit): TTL cap so stale AI resolutions don't live
+        // forever. DAC address validity drifts (new barrios, renumbered
+        // streets, typo corrections in prior AI calls); without expiry, a
+        // confidently-wrong answer from today can haunt this tenant for years.
+        // 90 days balances cache-hit rate against staleness risk.
+        expiresAt: computeAddressResolutionExpiry(),
       },
       update: {
         resolvedBarrio: result.barrio,
@@ -1115,6 +1719,7 @@ export async function resolveAddressWithAI(
         aiReasoning: result.reasoning,
         aiCostUsd: costUsd,
         dacAccepted: null, // reset feedback on re-resolution
+        expiresAt: computeAddressResolutionExpiry(), // refresh TTL
       },
     });
   } catch (err) {
@@ -1222,5 +1827,28 @@ export async function resetAllDailyQuotas(): Promise<number> {
     },
   });
   logger.info({ count: result.count }, 'AI resolver daily quotas reset');
+  return result.count;
+}
+
+/**
+ * H-2 (2026-04-21 audit): delete AddressResolution rows whose `expiresAt`
+ * has passed. The cache-read guard at line ~1077 already ignores expired
+ * entries, so stale rows are harmless for correctness — this sweeper just
+ * keeps the table from growing without bound over time.
+ *
+ * Call from a daily cron (same schedule as resetAllDailyQuotas is fine).
+ * Rows with `expiresAt = null` are legacy (pre-H-2) entries and are left
+ * alone; they will be overwritten on the next re-resolution for that hash.
+ */
+export async function cleanupExpiredAddressResolutions(): Promise<number> {
+  const result = await db.addressResolution.deleteMany({
+    where: {
+      expiresAt: { lt: new Date() },
+    },
+  });
+  logger.info(
+    { count: result.count },
+    'AddressResolution expired rows deleted',
+  );
   return result.count;
 }

@@ -1,11 +1,23 @@
 import { Browser, BrowserContext, Page, chromium, Cookie } from 'playwright';
 import { getConfig } from '../config';
 import { db } from '../db';
+import { encrypt, decrypt } from '../encryption';
 import logger from '../logger';
 import fs from 'fs';
 import path from 'path';
 
+// Legacy key used for RunLog-based cookie storage (pre-H-9). Still read on
+// load for backward compatibility during the migration window, but never
+// written anymore — all new saves go to DacSession with AES-256-GCM.
 const COOKIE_STORAGE_KEY = 'dac_cookies';
+
+// H-9 (2026-04-21 audit): DAC session cookies are bearer credentials — anyone
+// who has them can impersonate the tenant against dac.com.uy for the 4h
+// validity window. They used to live in RunLog.meta as JSON plaintext, which
+// meant any read-only DB dump (debugging snapshot, analytics replica) leaked
+// them. They now live in the dedicated DacSession table encrypted at rest
+// with the same ENCRYPTION_KEY that protects dacPassword/shopifyToken.
+const COOKIE_TTL_MS = 4 * 60 * 60 * 1000; // 4h — matches DAC session length
 
 // Memory management: restart browser every N orders to prevent memory leaks
 // Render Starter tier has 512MB RAM, Chromium uses ~200-400MB, each page adds ~100MB
@@ -95,64 +107,114 @@ class DacBrowserManager {
   }
 
   /**
-   * Save current cookies to DB for a tenant (to reuse session later).
+   * Save current DAC session cookies for a tenant. H-9: writes are AES-GCM
+   * encrypted and live in the dedicated DacSession table (one row per tenant,
+   * upsert semantics — the newest session always wins).
    */
   async saveCookies(tenantId: string): Promise<void> {
     if (!this.context) return;
     try {
       const cookies = await this.context.cookies();
       const dacCookies = cookies.filter(c => c.domain.includes('dac.com.uy'));
-      if (dacCookies.length > 0) {
-        await db.tenant.update({
-          where: { id: tenantId },
-          data: {
-            // Store cookies in a JSON field (we use the storeName field temporarily
-            // or we can add a proper field. For now, store as a RunLog entry)
-          },
-        });
-        // Store in a RunLog with special level for retrieval
-        await db.runLog.create({
-          data: {
-            tenantId,
-            level: 'INFO',
-            message: COOKIE_STORAGE_KEY,
-            meta: JSON.parse(JSON.stringify(dacCookies)),
-          },
-        });
-        logger.info({ count: dacCookies.length, tenantId }, 'DAC cookies saved');
-      }
+      if (dacCookies.length === 0) return;
+
+      const cookiesEncrypted = encrypt(JSON.stringify(dacCookies));
+      await db.dacSession.upsert({
+        where: { tenantId },
+        create: { tenantId, cookiesEncrypted },
+        update: { cookiesEncrypted, savedAt: new Date() },
+      });
+      logger.info({ count: dacCookies.length, tenantId }, 'DAC cookies saved (encrypted)');
     } catch (err) {
       logger.warn({ error: (err as Error).message }, 'Failed to save cookies');
     }
   }
 
   /**
-   * Load previously saved cookies for a tenant.
-   * Returns true if cookies were loaded successfully.
+   * Load previously saved cookies for a tenant. Returns true on hit.
+   *
+   * H-9 migration path: try the new DacSession row first; if missing, fall
+   * back to the legacy RunLog entry (plaintext). After a successful legacy
+   * read we migrate the cookies forward by re-saving via the new path, then
+   * delete the legacy RunLog rows so each tenant's plaintext trail is wiped
+   * the first time they hit this code in production.
    */
   async loadCookies(tenantId: string): Promise<boolean> {
     if (!this.context) return false;
     try {
+      // ── Primary: new DacSession row ────────────────────────────────────
+      const session = await db.dacSession.findUnique({ where: { tenantId } });
+      if (session) {
+        const age = Date.now() - session.savedAt.getTime();
+        if (age > COOKIE_TTL_MS) {
+          logger.info('Saved cookies are too old (>4h), will re-login');
+          return false;
+        }
+
+        let cookies: Cookie[] = [];
+        try {
+          cookies = JSON.parse(decrypt(session.cookiesEncrypted)) as Cookie[];
+        } catch (decryptErr) {
+          logger.warn(
+            { error: (decryptErr as Error).message },
+            'DacSession decrypt failed — discarding and forcing re-login',
+          );
+          // Fail-closed: nuke the unusable row so a re-login writes a fresh one.
+          await db.dacSession.delete({ where: { tenantId } }).catch(() => {});
+          return false;
+        }
+
+        if (Array.isArray(cookies) && cookies.length > 0) {
+          await this.context.addCookies(cookies);
+          logger.info(
+            { count: cookies.length, ageMinutes: Math.round(age / 60000) },
+            'DAC cookies loaded from DacSession',
+          );
+          return true;
+        }
+        return false;
+      }
+
+      // ── Fallback: legacy RunLog-based storage (pre-H-9) ────────────────
       const cookieLog = await db.runLog.findFirst({
         where: { tenantId, message: COOKIE_STORAGE_KEY },
         orderBy: { createdAt: 'desc' },
       });
-
       if (!cookieLog?.meta) return false;
 
-      // Check if cookies are less than 4 hours old
       const age = Date.now() - cookieLog.createdAt.getTime();
-      if (age > 4 * 60 * 60 * 1000) {
+      if (age > COOKIE_TTL_MS) {
         logger.info('Saved cookies are too old (>4h), will re-login');
         return false;
       }
 
       const cookies = cookieLog.meta as unknown as Cookie[];
-      if (Array.isArray(cookies) && cookies.length > 0) {
-        await this.context.addCookies(cookies);
-        logger.info({ count: cookies.length, ageMinutes: Math.round(age / 60000) }, 'DAC cookies loaded from DB');
-        return true;
+      if (!Array.isArray(cookies) || cookies.length === 0) return false;
+
+      await this.context.addCookies(cookies);
+      logger.info(
+        { count: cookies.length, ageMinutes: Math.round(age / 60000) },
+        'DAC cookies loaded from legacy RunLog — migrating to DacSession',
+      );
+
+      // Migrate forward and scrub plaintext.
+      try {
+        const cookiesEncrypted = encrypt(JSON.stringify(cookies));
+        await db.dacSession.upsert({
+          where: { tenantId },
+          create: { tenantId, cookiesEncrypted },
+          update: { cookiesEncrypted, savedAt: cookieLog.createdAt },
+        });
+        await db.runLog.deleteMany({
+          where: { tenantId, message: COOKIE_STORAGE_KEY },
+        });
+      } catch (migErr) {
+        logger.warn(
+          { error: (migErr as Error).message },
+          'Legacy cookie migration failed (non-fatal)',
+        );
       }
+      return true;
     } catch (err) {
       logger.warn({ error: (err as Error).message }, 'Failed to load cookies');
     }

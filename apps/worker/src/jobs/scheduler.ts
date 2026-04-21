@@ -1,6 +1,9 @@
 import { db } from '../db';
 import logger from '../logger';
-import { resetAllDailyQuotas } from '../dac/ai-resolver';
+import {
+  resetAllDailyQuotas,
+  cleanupExpiredAddressResolutions,
+} from '../dac/ai-resolver';
 
 /**
  * Converts a UTC Date to a Date-like object in a given IANA timezone.
@@ -137,6 +140,24 @@ export function startScheduler(): void {
             logger.info({ tenantsReset: count, date: todayKey }, 'Daily AI quota reset completed');
           } catch (resetErr) {
             logger.error({ error: (resetErr as Error).message }, 'Failed to reset AI quotas');
+          }
+
+          // H-2 (2026-04-21 audit): piggy-back on the once-per-day guard to
+          // sweep expired AddressResolution rows. Runs after the quota reset
+          // so that a failure here doesn't skip the (more important) reset.
+          try {
+            const deleted = await cleanupExpiredAddressResolutions();
+            if (deleted > 0) {
+              logger.info(
+                { deleted, date: todayKey },
+                'Expired AddressResolution rows swept',
+              );
+            }
+          } catch (sweepErr) {
+            logger.error(
+              { error: (sweepErr as Error).message },
+              'Failed to sweep expired AddressResolution rows',
+            );
           }
         }
       }

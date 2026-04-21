@@ -1,11 +1,31 @@
 import crypto from 'crypto';
 
 const ALGORITHM = 'aes-256-gcm';
+const IV_LENGTH = 16;
 
 function getKey(): Buffer {
   const key = process.env.ENCRYPTION_KEY;
   if (!key) throw new Error('ENCRYPTION_KEY is required');
   return Buffer.from(key, 'hex');
+}
+
+/**
+ * Encrypts plaintext using AES-256-GCM.
+ * Output format matches the web app's helper (apps/web/lib/encryption.ts):
+ *   iv_hex:tag_hex:ciphertext_hex
+ * so worker-encrypted values can be decrypted server-side (and vice-versa)
+ * as long as both processes read the same ENCRYPTION_KEY.
+ */
+export function encrypt(plaintext: string): string {
+  const key = getKey();
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+
+  let encrypted = cipher.update(plaintext, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+
+  const tag = cipher.getAuthTag();
+  return `${iv.toString('hex')}:${tag.toString('hex')}:${encrypted}`;
 }
 
 export function decrypt(ciphertext: string): string {
@@ -21,6 +41,11 @@ export function decrypt(ciphertext: string): string {
   let decrypted = decipher.update(encryptedHex, 'hex', 'utf8');
   decrypted += decipher.final('utf8');
   return decrypted;
+}
+
+export function encryptIfPresent(value: string | null | undefined): string | null {
+  if (!value || value.trim() === '') return null;
+  return encrypt(value);
 }
 
 export function decryptIfPresent(value: string | null | undefined): string | null {

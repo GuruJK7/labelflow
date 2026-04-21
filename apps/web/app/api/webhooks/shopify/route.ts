@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { enqueueProcessOrders } from '@/lib/queue';
 import { verifyShopifyWebhook } from '@/lib/shopify-webhook';
@@ -8,6 +9,7 @@ export async function POST(req: NextRequest) {
   const hmacHeader = req.headers.get('x-shopify-hmac-sha256');
   const topic = req.headers.get('x-shopify-topic');
   const shopDomain = req.headers.get('x-shopify-shop-domain');
+  const webhookId = req.headers.get('x-shopify-webhook-id');
 
   if (!hmacHeader || !topic || !shopDomain) {
     return NextResponse.json({ error: 'Missing headers' }, { status: 401 });
@@ -47,6 +49,45 @@ export async function POST(req: NextRequest) {
     // Signature valid but we don't recognise the shop (e.g. uninstalled). Return
     // 200 so Shopify stops retrying; nothing to do on our side.
     return NextResponse.json({ ok: true });
+  }
+
+  // C-3 (2026-04-21 audit): idempotency. Shopify retries webhooks for up to 48h
+  // on any response slower than 5s or not-200. Without this guard, a slow
+  // response to `orders/paid` for the same order could enqueue the job twice
+  // and produce duplicate DAC guías.
+  //
+  // Pattern: try to INSERT a receipt row; a P2002 unique violation means
+  // "already processed — ACK 200, do nothing." The unique key is
+  // (source, topic, webhookId) so re-delivery of the SAME Shopify webhook is
+  // deduped, but different events with the same shop/order ID are NOT (that's
+  // what `tenantId` is for in logs/debug).
+  //
+  // If the `x-shopify-webhook-id` header is missing (edge case: Shopify only
+  // guarantees it post-2021), we fall through without deduping — better to
+  // process a possible duplicate than to drop a legitimate webhook.
+  if (webhookId) {
+    try {
+      await db.webhookReceipt.create({
+        data: {
+          source: 'shopify',
+          topic,
+          webhookId,
+          shopDomain,
+          tenantId: tenant.id,
+        },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        // Duplicate delivery — already acked the first one, silently succeed.
+        return NextResponse.json({ ok: true, duplicate: true });
+      }
+      // Any other DB error: log but DON'T fail the webhook (Shopify would
+      // retry, causing more duplicates). Best-effort idempotency.
+      console.error('[Shopify Webhook] WebhookReceipt insert failed:', err);
+    }
   }
 
   try {

@@ -25,6 +25,7 @@
  */
 
 import dacGeoMap from './dac-geo-map.json';
+import { preferredDeptFor } from './duplicate-city-tiebreaker';
 
 // ─── types ─────────────────────────────────────────────────────────────
 
@@ -47,6 +48,7 @@ export interface DeptResolution {
     | 'address-major-city'
     | 'city-exact-unique'
     | 'city-exact-mvd'
+    | 'address2-tiebreaker'
     | 'province'
     | 'default-mvd';
   reason: string;
@@ -394,6 +396,40 @@ export function resolveDepartmentDeterministic(input: DeptInput): DeptResolution
       matchedVia: 'address-major-city',
       reason: `Major city "${majorHit.matched}" found in ${majorHit.field}`,
     };
+  }
+
+  // Rule 3.5: ambiguous locality in address2 with tiebreaker preference.
+  //
+  // Classic Shopify autofill bug: customer leaves `city="Montevideo"` (the
+  // default) but writes the real locality in address2 — "La Paz", "Toledo",
+  // "Las Piedras", "Bella Vista". Rules 2 and 3 filter those names out
+  // because they are AMBIGUOUS_LOCALITIES (exist in multiple depts). But
+  // when city="Montevideo" AND address2 contains one of these AND the
+  // duplicate-city tiebreaker has a clear preferred dept, we can confidently
+  // pick the preferred one. Limiting the trigger to city="Montevideo" keeps
+  // this rule from misfiring on customers who legitimately live in one of
+  // the ambiguous locations (their city field would say the correct dept).
+  const cityNormEarly = norm(input.city);
+  if (cityNormEarly === 'montevideo') {
+    const address2Norm = norm(input.address2);
+    const orderNotesNorm = norm(input.orderNotes ?? '');
+    for (const ambiguousName of AMBIGUOUS_LOCALITIES) {
+      const needle = ` ${ambiguousName} `;
+      const inAddr2 = ` ${address2Norm} `.includes(needle);
+      const inNotes = ` ${orderNotesNorm} `.includes(needle);
+      if (!inAddr2 && !inNotes) continue;
+      const preferred = preferredDeptFor(ambiguousName);
+      if (!preferred || preferred === 'Montevideo') continue;
+      const field = inAddr2 ? 'address2' : 'orderNotes';
+      return {
+        department: preferred,
+        // Medium — we're overriding an explicit (but likely autofilled)
+        // city signal. Operator should eyeball before printing.
+        confidence: 'medium',
+        matchedVia: 'address2-tiebreaker',
+        reason: `ambiguous "${ambiguousName}" in ${field} + city=Montevideo → tiebreaker → ${preferred}`,
+      };
+    }
   }
 
   // Rule 4: exact match of city field against DAC city list (single-dept only)
