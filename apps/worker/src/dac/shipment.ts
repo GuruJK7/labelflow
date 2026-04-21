@@ -1,4 +1,6 @@
+import crypto from 'crypto';
 import { Page } from 'playwright';
+import { Prisma } from '@prisma/client';
 import { ShopifyOrder } from '../shopify/types';
 import { DacShipmentResult } from './types';
 import { DAC_SELECTORS, DAC_URLS } from './selectors';
@@ -7,9 +9,159 @@ import { dacBrowser } from './browser';
 import { DAC_STEPS } from './steps';
 import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
+import { db } from '../db';
 import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT } from './uruguay-geo';
 import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 import { handlePaymentFlow, AutoPayConfig, PaymentOutcome } from './payment';
+
+// ---- C-4 (2026-04-21 audit): duplicate-guia defense ----
+//
+// DAC's Finalizar click is irreversible. If we crash between the click and
+// a successful guía extraction, DAC has created a shipment and we have no
+// record — a retry would create a second shipment and bill the customer
+// twice.
+//
+// Mitigation:
+//   1. `assertNoPriorSubmit` runs BEFORE entering the form. If a
+//      PendingShipment row already exists for (tenantId, shopifyOrderId),
+//      we refuse to proceed and surface a dedicated error type the caller
+//      (process-orders.job.ts) can map to Label.status = NEEDS_REVIEW.
+//   2. `markSubmitAttempted` runs RIGHT BEFORE the Finalizar click. Inserts
+//      status=PENDING. If two workers race, the unique constraint makes
+//      exactly one win; the loser gets the duplicate-submit error.
+//   3. `markSubmitResolved` runs AFTER extraction succeeds, flipping
+//      status=RESOLVED and storing the real guía for the audit trail.
+//   4. reconcile.job.ts step 2 sweeps PENDING rows older than a threshold
+//      and marks them ORPHANED — those are the ones that need an operator
+//      to manually reconcile against DAC historial.
+
+export class DuplicateSubmitError extends Error {
+  readonly isDuplicateSubmit = true as const;
+  constructor(
+    message: string,
+    readonly existingStatus: string,
+    readonly existingGuia: string | null,
+  ) {
+    super(message);
+    this.name = 'DuplicateSubmitError';
+  }
+}
+
+/** Stable idempotency key for a tenant+order pair. */
+function computeIdempotencyKey(tenantId: string, shopifyOrderId: string): string {
+  return crypto
+    .createHash('sha256')
+    .update(`${tenantId}:${shopifyOrderId}`)
+    .digest('hex');
+}
+
+/**
+ * C-4 guard. Throws DuplicateSubmitError if a PendingShipment row already
+ * exists for this (tenant, order). Safe to call multiple times — always
+ * read-only.
+ */
+async function assertNoPriorSubmit(
+  tenantId: string,
+  shopifyOrderId: string,
+  slog: StepLogger,
+): Promise<void> {
+  const prior = await db.pendingShipment.findUnique({
+    where: {
+      tenantId_shopifyOrderId: { tenantId, shopifyOrderId },
+    },
+    select: {
+      status: true,
+      resolvedGuia: true,
+      submitAttemptedAt: true,
+    },
+  });
+  if (!prior) return;
+
+  slog.warn(
+    DAC_STEPS.SUBMIT_WAIT_NAV,
+    `Refusing to re-submit order ${shopifyOrderId}: prior attempt exists (status=${prior.status}, guia=${prior.resolvedGuia ?? 'n/a'})`,
+    {
+      priorStatus: prior.status,
+      priorGuia: prior.resolvedGuia,
+      priorAttemptAgoMs: Date.now() - prior.submitAttemptedAt.getTime(),
+    },
+  );
+  throw new DuplicateSubmitError(
+    `Order ${shopifyOrderId} was already submitted to DAC (PendingShipment.status=${prior.status}). Manual reconciliation required — check DAC historial for the real guía before retrying.`,
+    prior.status,
+    prior.resolvedGuia,
+  );
+}
+
+/**
+ * C-4: insert the pre-Finalizar marker. On unique-constraint conflict (a
+ * concurrent worker beat us) we throw DuplicateSubmitError — the caller
+ * must NOT click Finalizar in that case.
+ */
+async function markSubmitAttempted(
+  tenantId: string,
+  shopifyOrderId: string,
+  labelId: string | null,
+): Promise<void> {
+  const idempotencyKey = computeIdempotencyKey(tenantId, shopifyOrderId);
+  try {
+    await db.pendingShipment.create({
+      data: {
+        tenantId,
+        shopifyOrderId,
+        labelId,
+        idempotencyKey,
+        status: 'PENDING',
+      },
+    });
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === 'P2002'
+    ) {
+      throw new DuplicateSubmitError(
+        `Concurrent submit detected for order ${shopifyOrderId}; PendingShipment row was created by another worker.`,
+        'PENDING',
+        null,
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * C-4: mark the submit resolved once the real guía is in hand. Safe no-op
+ * if the row doesn't exist (e.g. the insert at markSubmitAttempted got
+ * rolled back but extraction still succeeded — shouldn't happen but we
+ * don't want that edge case to throw).
+ */
+async function markSubmitResolved(
+  tenantId: string,
+  shopifyOrderId: string,
+  resolvedGuia: string,
+): Promise<void> {
+  try {
+    await db.pendingShipment.updateMany({
+      where: {
+        tenantId,
+        shopifyOrderId,
+        status: { in: ['PENDING', 'ORPHANED'] },
+      },
+      data: {
+        status: 'RESOLVED',
+        resolvedGuia,
+        resolvedAt: new Date(),
+      },
+    });
+  } catch (err) {
+    // Non-fatal — we already have the real guía, the PendingShipment row
+    // is for audit only. Log and continue.
+    logger.warn(
+      { error: (err as Error).message, tenantId, shopifyOrderId, resolvedGuia },
+      '[C-4] Failed to mark PendingShipment as RESOLVED',
+    );
+  }
+}
 
 // ---- Helpers ----
 
@@ -947,6 +1099,15 @@ export async function createShipment(
     throw new Error(`Order ${order.name} has no shipping address`);
   }
 
+  // C-4 (2026-04-21 audit): refuse to re-enter the DAC form if a prior
+  // submit attempt for this exact (tenant, order) has a PendingShipment
+  // row. That row is written pre-click, so its existence means either a
+  // previous submit succeeded (RESOLVED — Label should already have the
+  // guía), or a previous submit clicked Finalizar and we don't know if a
+  // guía was created (PENDING/ORPHANED — needs operator reconcile).
+  // Re-entering the form in either case risks a duplicate DAC shipment.
+  await assertNoPriorSubmit(tenantId, String(order.id), slog);
+
   await ensureLoggedIn(page, dacUsername, dacPassword, tenantId);
 
   slog.info(DAC_STEPS.NAV_NEW_SHIPMENT, `Navigating to new shipment form for ${order.name}`, {
@@ -1688,6 +1849,14 @@ export async function createShipment(
   slog.info(DAC_STEPS.STEP4_OK, 'Item added to cart');
 
   // ===== CLICK "Finalizar envio" (BUG C: separate button after Agregar) =====
+  // C-4 (2026-04-21 audit): write the PendingShipment marker BEFORE clicking
+  // Finalizar. If the worker crashes between this insert and the guía
+  // extraction below, reconcile.job.ts step 2 picks up the PENDING row and
+  // the operator can manually match it against DAC historial. If a second
+  // worker re-enters createShipment for the same order, the guard above
+  // will see this row and throw DuplicateSubmitError before Finalizar can
+  // fire twice.
+  await markSubmitAttempted(tenantId, String(order.id), null);
   slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, 'Looking for Finalizar envio button');
 
   let finalizarResult: string;
@@ -1763,11 +1932,32 @@ export async function createShipment(
   // silently (bad address/department, validation error, etc.). Throwing here
   // prevents a stale PENDING- record from blocking future retries and surfaces
   // the order as FAILED in the Label so the user can investigate.
+  //
+  // Important for C-4: we delete the PendingShipment row on this path because
+  // a form rejection means DAC did NOT create a shipment — no risk of a
+  // duplicate on retry, and we want the next attempt to succeed without
+  // hitting the duplicate-submit guard.
   if (guiaResult.guia.startsWith('PENDING-') && currentUrl.includes('/envios/nuevo')) {
+    try {
+      await db.pendingShipment.deleteMany({
+        where: { tenantId, shopifyOrderId: String(order.id), status: 'PENDING' },
+      });
+    } catch (clearErr) {
+      logger.warn(
+        { error: (clearErr as Error).message, orderId: order.id },
+        '[C-4] Failed to clear PendingShipment after rejected-form path',
+      );
+    }
     throw new Error(
       `DAC rejected the shipment form for ${order.name} (URL stayed on /envios/nuevo and no guía was extracted). ` +
       `Likely cause: address could not be classified into a valid department/barrio. Review the customer address in Shopify.`,
     );
+  }
+
+  // C-4: DAC accepted the form and we have a real guía. Mark the
+  // PendingShipment row resolved so reconcile won't orphan it.
+  if (!guiaResult.guia.startsWith('PENDING-')) {
+    await markSubmitResolved(tenantId, String(order.id), guiaResult.guia);
   }
 
   // Resolve the payment status to persist on the Label:

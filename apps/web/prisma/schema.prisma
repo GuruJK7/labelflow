@@ -768,6 +768,101 @@ model DacSession {
   @@index([savedAt])
 }
 
+// --- PENDING SHIPMENT (duplicate-guia defense) ---
+//
+// C-4 (2026-04-21 audit): DAC's Finalizar click is irreversible — once it
+// fires, the guía exists in DAC's system. If the worker crashes (OOM,
+// SIGTERM from a deploy, browser target-closed) between the click and our
+// successful extraction from the confirmation page, we end up with a
+// PENDING-{timestamp} placeholder in Label.dacGuia and a REAL guía in DAC
+// with no local record. Retrying the order then creates a second DAC
+// shipment — the customer gets two labels, pays double, and we get a
+// support ticket.
+//
+// The defense is a pre-click marker: before clicking Finalizar, INSERT a
+// row here keyed on (tenantId, shopifyOrderId). The unique constraint
+// makes "has this order already been submitted?" a single SELECT. On
+// rerun, if a PENDING row exists, refuse to re-submit and surface the
+// label as NEEDS_REVIEW so a human can confirm against DAC historial.
+//
+// Once extraction succeeds we set status=RESOLVED + resolvedGuia. The
+// reconcile step 2 (runs every 10 min) picks up rows that stayed PENDING
+// for > 10 min and marks them ORPHANED — those are the ones that need
+// the operator to manually look up DAC historial and either attach the
+// real guía to the Label or confirm no shipment was created.
+model PendingShipment {
+  id                String                @id @default(cuid())
+  tenantId          String
+  shopifyOrderId    String
+  labelId           String?               // set once the Label row is known
+  idempotencyKey    String                @unique // sha256(tenantId + shopifyOrderId)
+  submitAttemptedAt DateTime              @default(now())
+  resolvedAt        DateTime?
+  resolvedGuia      String?               // set when status=RESOLVED
+  status            PendingShipmentStatus @default(PENDING)
+  errorNote         String?               // operator note on how it was fulfilled
+
+  @@unique([tenantId, shopifyOrderId])
+  @@index([status, submitAttemptedAt])
+  @@index([tenantId, submitAttemptedAt(sort: Desc)])
+}
+
+enum PendingShipmentStatus {
+  PENDING   // Finalizar clicked, guía extraction still in-flight or failed
+  RESOLVED  // extraction succeeded; resolvedGuia is the real DAC guía
+  ORPHANED  // stayed PENDING past threshold — operator must reconcile manually
+}
+
+// --- GDPR COMPLIANCE (Shopify mandatory privacy webhooks) ---
+//
+// C-5 (2026-04-21 audit): Shopify requires every app listed in the App
+// Store to implement three privacy webhooks with signed HMAC verification:
+//
+//   - customers/data_request — a customer (via the merchant) requests an
+//     export of their personal data. We have 30 days to respond.
+//   - customers/redact       — a merchant requests deletion of a specific
+//     customer's data. We have 30 days to delete.
+//   - shop/redact            — 48 hours after app uninstall, Shopify asks
+//     us to delete all data for the shop. We have 30 days to comply.
+//
+// The route handler signs the request off as received (HMAC + idempotency)
+// and persists the payload here. Actual fulfillment (data export email,
+// record deletion) is tracked via `status` and `fulfilledAt` so the
+// operator can audit the compliance trail without scraping logs.
+//
+// payload is the raw JSON body Shopify sent — keep it as-is for audit even
+// if the shape changes later.
+model GdprRequest {
+  id           String            @id @default(cuid())
+  topic        GdprRequestTopic
+  shopDomain   String
+  tenantId     String?           // nullable — shop/redact can arrive AFTER uninstall
+  customerId   String?           // present on customers/* events
+  customerEmail String?          // present on customers/* events, useful for ops
+  payload      Json              // the raw webhook body — source of truth for audit
+  webhookId    String?           // X-Shopify-Webhook-Id — cross-ref with WebhookReceipt
+  status       GdprRequestStatus @default(PENDING)
+  receivedAt   DateTime          @default(now())
+  fulfilledAt  DateTime?         // when we finished the data export / deletion
+  notes        String?           // operator notes on how it was fulfilled
+
+  @@index([status, receivedAt])
+  @@index([tenantId, receivedAt(sort: Desc)])
+  @@index([shopDomain, receivedAt(sort: Desc)])
+}
+
+enum GdprRequestTopic {
+  CUSTOMERS_DATA_REQUEST
+  CUSTOMERS_REDACT
+  SHOP_REDACT
+}
+
+enum GdprRequestStatus {
+  PENDING      // received — waiting for operator / sweep to fulfill
+  FULFILLED    // data exported / deleted
+  FAILED       // fulfillment errored; see `notes`
+}
+
 // --- SHIPPING RULES ---
 //
 // Ordered list of per-tenant rules that decide whether an order ships as

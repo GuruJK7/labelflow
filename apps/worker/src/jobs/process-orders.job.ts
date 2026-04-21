@@ -6,7 +6,7 @@ import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopi
 import { fulfillOrderWithTracking } from '../shopify/fulfillment';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
-import { createShipment, mergeAddress } from '../dac/shipment';
+import { createShipment, mergeAddress, DuplicateSubmitError } from '../dac/shipment';
 import type { AutoPayConfig } from '../dac/payment';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
@@ -620,12 +620,25 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         }
 
         const isDacGuiaConstraint = errorMsg.includes('Unique constraint') && errorMsg.includes('dacGuia');
+        // C-4: distinguish a duplicate-submit guard trip from a real failure.
+        // When createShipment refuses to re-enter the form because a
+        // PendingShipment row already exists, we want the Label parked as
+        // NEEDS_REVIEW (not FAILED) so the operator treats it as "look this
+        // up in DAC historial" rather than "retry from scratch".
+        const isDuplicateSubmit = err instanceof DuplicateSubmitError;
 
         if (isDacGuiaConstraint) {
           slog.warn('order-fail', `Order ${order.name}: guia already assigned to another order, skipping`, {
             orderId: order.id,
             orderName: order.name,
             error: errorMsg.substring(0, 200),
+          });
+        } else if (isDuplicateSubmit) {
+          slog.warn('order-fail', `Order ${order.name}: duplicate submit blocked (C-4) — needs operator review`, {
+            orderId: order.id,
+            orderName: order.name,
+            priorStatus: (err as DuplicateSubmitError).existingStatus,
+            priorGuia: (err as DuplicateSubmitError).existingGuia,
           });
         } else {
           slog.error('order-fail', `Order ${order.name} failed: ${errorMsg}`);
@@ -634,7 +647,10 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
         // BUG FIX 5: Upsert instead of create to handle retries
         const labelErrorMsg = isDacGuiaConstraint
           ? 'Guia already assigned to another order'
-          : errorMsg.substring(0, 500);
+          : isDuplicateSubmit
+            ? `C-4: prior submit exists (status=${(err as DuplicateSubmitError).existingStatus}, guia=${(err as DuplicateSubmitError).existingGuia ?? 'n/a'}); check DAC historial`
+            : errorMsg.substring(0, 500);
+        const labelTargetStatus: 'FAILED' | 'NEEDS_REVIEW' = isDuplicateSubmit ? 'NEEDS_REVIEW' : 'FAILED';
 
         const { fullAddress: mergedAddrErr } = mergeAddress(addr.address1, addr.address2);
         // Same null-safety as the success path — Label.city/department are required (non-null)
@@ -659,12 +675,12 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             department: resolvedDeptErr,
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType: 'DESTINATARIO',
-            status: 'FAILED',
+            status: labelTargetStatus,
             errorMessage: labelErrorMsg,
           },
           update: {
             jobId,
-            status: 'FAILED',
+            status: labelTargetStatus,
             errorMessage: labelErrorMsg,
           },
         }).catch(() => {});

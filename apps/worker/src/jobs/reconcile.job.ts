@@ -4,7 +4,9 @@
  * Runs periodically (every 10 minutes) and handles:
  *
  * 1. FAILED labels with network errors (ERR_ABORTED, timeout) → resets to allow retry
- * 2. CREATED labels with PENDING guia → tries to find the real guia in DAC historial
+ * 2. Stale PendingShipment rows (>10 min in PENDING) → marked ORPHANED and the
+ *    linked Label is parked as NEEDS_REVIEW so the operator can match against
+ *    DAC historial before anything gets retried. (C-4, 2026-04-21 audit.)
  * 3. Stale RUNNING jobs (stuck > 10 min) → marks as FAILED so they don't block the queue
  *
  * This replaces a human operator who would check on stuck orders and fix them.
@@ -18,6 +20,12 @@ import logger from '../logger';
 // the queue unblocks faster after an incident.
 const RECONCILE_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 const STALE_JOB_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+// C-4: PendingShipment rows still in PENDING this long after the Finalizar
+// click are almost certainly orphaned — either the worker crashed between
+// click and extraction, or the extraction bailed on a form rejection path
+// that didn't delete the row. 15 min gives slow DAC flows (YELLOW path with
+// captcha + Plexo + historial probe) plenty of room before we intervene.
+const ORPHAN_PENDING_SHIPMENT_MS = 15 * 60 * 1000;
 const MAX_AUTO_RETRIES = 3;
 
 /**
@@ -111,7 +119,75 @@ export async function runReconciliation(): Promise<void> {
     }
 
     // ================================================
-    // 2. Fix stale RUNNING jobs (stuck > 30 minutes)
+    // 2. C-4: orphan stale PendingShipment rows
+    // ================================================
+    //
+    // A PendingShipment in PENDING means the worker clicked Finalizar in DAC
+    // but didn't complete guía extraction. The shipment EXISTS in DAC —
+    // retrying would double-bill. We don't auto-probe DAC historial here
+    // (that lives in a future step 2b once the probe is tested); we just
+    // mark the row ORPHANED and park the linked Label as NEEDS_REVIEW so
+    // the operator sees it in the dashboard and knows to manually reconcile.
+    const orphanCutoff = new Date(Date.now() - ORPHAN_PENDING_SHIPMENT_MS);
+    const orphans = await db.pendingShipment.findMany({
+      where: {
+        status: 'PENDING',
+        submitAttemptedAt: { lt: orphanCutoff },
+      },
+      select: {
+        id: true,
+        tenantId: true,
+        shopifyOrderId: true,
+        submitAttemptedAt: true,
+      },
+    });
+
+    for (const orphan of orphans) {
+      try {
+        // Flip the marker to ORPHANED so the next pass doesn't re-park the
+        // same Label and so the operator has a stable id to triage against.
+        await db.pendingShipment.update({
+          where: { id: orphan.id },
+          data: { status: 'ORPHANED' },
+        });
+
+        // Park the linked Label (if any) in NEEDS_REVIEW. We use updateMany
+        // (not update) so a missing Label — shouldn't happen, but can —
+        // doesn't throw.
+        const labelUpdate = await db.label.updateMany({
+          where: {
+            tenantId: orphan.tenantId,
+            shopifyOrderId: orphan.shopifyOrderId,
+            status: { notIn: ['COMPLETED', 'NEEDS_REVIEW'] },
+          },
+          data: {
+            status: 'NEEDS_REVIEW',
+            errorMessage:
+              'C-4: DAC submit attempted but no guía extracted within 15 min — manual reconciliation required (check DAC historial).',
+          },
+        });
+
+        fixed += 1;
+        logger.warn(
+          {
+            pendingShipmentId: orphan.id,
+            tenantId: orphan.tenantId,
+            shopifyOrderId: orphan.shopifyOrderId,
+            ageMs: Date.now() - orphan.submitAttemptedAt.getTime(),
+            labelsParked: labelUpdate.count,
+          },
+          '[Reconcile] Orphaned PendingShipment — Label parked for review',
+        );
+      } catch (orphErr) {
+        logger.error(
+          { error: (orphErr as Error).message, pendingShipmentId: orphan.id },
+          '[Reconcile] Failed to orphan PendingShipment row',
+        );
+      }
+    }
+
+    // ================================================
+    // 3. Fix stale RUNNING jobs (stuck > 10 minutes)
     // ================================================
     const staleThreshold = new Date(Date.now() - STALE_JOB_THRESHOLD_MS);
     const staleJobs = await db.job.updateMany({
@@ -121,7 +197,7 @@ export async function runReconciliation(): Promise<void> {
       },
       data: {
         status: 'FAILED',
-        errorMessage: 'Auto-reconciled: job was stuck in RUNNING for >30 minutes',
+        errorMessage: 'Auto-reconciled: job was stuck in RUNNING for >10 minutes',
         finishedAt: new Date(),
       },
     });
@@ -132,7 +208,7 @@ export async function runReconciliation(): Promise<void> {
     }
 
     // ================================================
-    // 3. Log summary
+    // 4. Log summary
     // ================================================
     const durationMs = Date.now() - startTime;
     logger.info({ fixed, durationMs }, '[Reconcile] Reconciliation complete');
