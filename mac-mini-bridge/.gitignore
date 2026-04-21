@@ -1,0 +1,4 @@
+# Secrets + runtime artifacts — never commit these.
+bridge.env
+bridge.log
+bridge.err

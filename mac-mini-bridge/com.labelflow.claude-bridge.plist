@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.labelflow.claude-bridge</string>
+
+  <!-- User agent (per-user). Replace HOME_PATH placeholder via install.sh. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>HOME_PATH/labelflow-bridge/run.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>HOME_PATH/labelflow-bridge</string>
+
+  <!-- Start on load + restart on crash / exit. Respects KeepAlive always. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Don't spin forever on a broken install: wait 10s between restarts. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Redirect stdout/stderr for debugging. JSON logs go to bridge.log. -->
+  <key>StandardOutPath</key>
+  <string>HOME_PATH/labelflow-bridge/bridge.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>HOME_PATH/labelflow-bridge/bridge.err</string>
+
+  <!-- Ensure child processes (claude CLI) can find Homebrew / ~/.local/bin.
+       bridge-server.mjs also does its own lookup but having PATH helps. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>HOME_PATH/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- Inherit the GUI session keychain so `claude` can read its stored
+       subscription token. launchd user agents loaded via `launchctl load`
+       from a logged-in GUI session get this by default; no extra config
+       needed. -->
+</dict>
+</plist>

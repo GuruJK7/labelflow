@@ -1,0 +1,4573 @@
+{
+  "ranAt": "2026-04-21T21:53:10.914Z",
+  "results": [
+    {
+      "id": "A01",
+      "category": "A",
+      "description": "Pocitos — Av. Brasil icónica",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Brasil 2500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a01@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "pocitos",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "pocitos",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"brasil\" #2500 → pocitos (A01: Av. Brasil 2500)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 2,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A02",
+      "category": "A",
+      "description": "Punta Carretas — calle Ellauri",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Ellauri 1000",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a02@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "punta carretas",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "punta carretas",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"ellauri\" #1000 → punta carretas (A02)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 2,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A03",
+      "category": "A",
+      "description": "Cordón — 18 de Julio al 2000",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. 18 de Julio 2000",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a03@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "cordon",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "cordon",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"18 de julio\" #2000 → cordon (A03: 2000; E104: 1400)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A04",
+      "category": "A",
+      "description": "Centro — calle Colonia",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Colonia 1200",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a04@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "centro",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "centro",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"colonia\" #1200 → centro (A04/F08: 1200)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A05",
+      "category": "A",
+      "description": "Ciudad Vieja — peatonal Sarandí",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Sarandí 700",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a05@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "ciudad vieja",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "ciudad vieja",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"sarandi\" #700 → ciudad vieja (A05: Sarandí 700)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A06",
+      "category": "A",
+      "description": "Carrasco — Arocena 1500",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Arocena 1500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a06@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "carrasco",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "carrasco",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"arocena\" #1500 → carrasco (A06)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A07",
+      "category": "A",
+      "description": "Buceo — Av. Bolivia",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Bolivia 1200",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a07@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "buceo",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "buceo",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"bolivia\" #1200 → buceo (A07)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A08",
+      "category": "A",
+      "description": "Malvín — Av. Italia al 4500",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Italia 4500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a08@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "malvin",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "malvin",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"italia\" #4500 → malvin (A08/F04: Italia 4500)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 22,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A09",
+      "category": "A",
+      "description": "Parque Batlle — Av. Italia al 2700",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Italia 2700",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a09@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "parque batlle",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "parque batlle",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"italia\" #2700 → parque batlle (A09: Italia 2700)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A10",
+      "category": "A",
+      "description": "Parque Rodó — Bvar. Artigas",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Bulevar Artigas 1300",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a10@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "parque rodo",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "parque rodo",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"artigas\" #1300 → parque rodo (A10: Artigas 1300)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A11",
+      "category": "A",
+      "description": "Prado — Av. Agraciada al 3900",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Agraciada 3900",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a11@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "prado",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "prado",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"agraciada\" #3900 → prado (A11: Agraciada 3900)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 2,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A12",
+      "category": "A",
+      "description": "Aguada — Av. Agraciada al 2000",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Agraciada 2000",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a12@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "aguada",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "aguada",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"agraciada\" #2000 → aguada (A12: Agraciada 2000)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A13",
+      "category": "A",
+      "description": "La Blanqueada — 8 de Octubre",
+      "input": {
+        "city": "Montevideo",
+        "address1": "8 de Octubre 3500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a13@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "la blanqueada",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "la blanqueada",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"8 de octubre\" #3500 → la blanqueada (A13: 8 de Octubre 3500)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A14",
+      "category": "A",
+      "description": "Tres Cruces — terminal Tres Cruces",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Bulevar Artigas 1575",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a14@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "tres cruces",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "tres cruces",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"artigas\" #1575 → tres cruces (A14: Artigas 1575 (Terminal))",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A15",
+      "category": "A",
+      "description": "Unión — 8 de Octubre al 4200",
+      "input": {
+        "city": "Montevideo",
+        "address1": "8 de Octubre 4200",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a15@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "union",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "union",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"8 de octubre\" #4200 → union (A15: 8 de Octubre 4200)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A16",
+      "category": "A",
+      "description": "La Teja — Ramírez calle principal",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Carlos María Ramírez 1500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a16@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "la teja",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "la teja",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"carlos maria ramirez\" #1500 → la teja (A16)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A17",
+      "category": "A",
+      "description": "Peñarol — Av. Instrucciones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. de las Instrucciones 1500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a17@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "peñarol",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "peñarol",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"de las instrucciones\" #1500 → peñarol (A17: Instrucciones 1500)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A18",
+      "category": "A",
+      "description": "Sayago — Av. Millán al 4200",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Millán 4200",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a18@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "sayago",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "sayago",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"millan\" #4200 → sayago (A18: Millán 4200)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A19",
+      "category": "A",
+      "description": "Palermo — Gonzalo Ramírez",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Gonzalo Ramírez 1400",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a19@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "palermo",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "palermo",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"gonzalo ramirez\" #1400 → palermo (A19)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "A20",
+      "category": "A",
+      "description": "Goes — Gral. Flores",
+      "input": {
+        "city": "Montevideo",
+        "address1": "General Flores 2400",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Juan",
+        "customerLastName": "Pérez",
+        "customerEmail": "test+a20@labelflow.local",
+        "customerPhone": "099123456",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "goes",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "goes",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"flores\" #2400 → goes (A20: General Flores 2400)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B01",
+      "category": "B",
+      "description": "Lagomar — MVD dice pero es Canelones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Giannattasio km 20,500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b01@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "Web search confirms Avenida Giannattasio km 20.500 is in Ciudad de la Costa, Canelones, not Montevideo. Address line 1 takes priority over the city field when they contradict. Ciudad de la Costa is a valid city for Canelones department.",
+        "deliveryAddress": "Avenida Giannattasio km 20.500",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 7071,
+      "costUsd": 0.0648975,
+      "usedHistory": 0,
+      "webSearches": 1,
+      "cacheHit": false
+    },
+    {
+      "id": "B02",
+      "category": "B",
+      "description": "Solymar — MVD dice pero es Canelones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Giannattasio km 24",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b02@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "Web search confirms Avenida Giannattasio km 24 is in Ciudad de la Costa, Canelones (not Montevideo). Multiple transit/location sources consistently place this address in the Costa de Oro area of Canelones department. The customer's city field defaulted to Montevideo in Shopify, but the actual address clearly belongs to Canelones.",
+        "deliveryAddress": "Avenida Giannattasio km 24",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 6375,
+      "costUsd": 0.051881800000000006,
+      "usedHistory": 0,
+      "webSearches": 1,
+      "cacheHit": false
+    },
+    {
+      "id": "B03",
+      "category": "B",
+      "description": "El Pinar (Canelones) en address2",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle Las Vertientes 500",
+        "address2": "El Pinar",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b03@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"el pinar\" found in address2; DAC city \"El Pinar\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B04",
+      "category": "B",
+      "description": "Atlántida grid típico — es Canelones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle 11 esquina 22",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b04@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "centro",
+        "confidence": "medium",
+        "reasoning": "Calle 11 y Calle 22 are numbered streets in Montevideo's central grid. Barrio Centro chosen as default for central intersection of numbered streets (typical location in downtown Montevideo). No street number provided, so S/N used; intersection detail placed in extraObservations.",
+        "deliveryAddress": "Calle 11 S/N",
+        "extraObservations": "Esquina Calle 22",
+        "rejected": false
+      },
+      "verdict": "FAIL",
+      "verdictReason": "department mismatch: expected \"Canelones\", got \"Montevideo\"",
+      "latencyMs": 9688,
+      "costUsd": 0.05400665,
+      "usedHistory": 0,
+      "webSearches": 2,
+      "cacheHit": false
+    },
+    {
+      "id": "B05",
+      "category": "B",
+      "description": "Pando ciudad — Canelones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Tomás Berreta 200",
+        "address2": "Pando",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b05@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"pando\" found in address2; DAC city \"Pando\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 10,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B06",
+      "category": "B",
+      "description": "Las Piedras — dept Canelones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Artigas 500",
+        "address2": "Las Piedras",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b06@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: ambiguous \"las piedras\" in address2 + city=Montevideo → tiebreaker → Canelones; DAC city \"Las Piedras\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 2,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B07",
+      "category": "B",
+      "description": "La Paz (Canelones) — ciudad grande conocida",
+      "input": {
+        "city": "Montevideo",
+        "address1": "25 de Agosto 300",
+        "address2": "La Paz",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b07@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: ambiguous \"la paz\" in address2 + city=Montevideo → tiebreaker → Canelones; DAC city \"La Paz\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B08",
+      "category": "B",
+      "description": "Barros Blancos — dept Canelones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Ruta 8 km 22",
+        "address2": "Barros Blancos",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b08@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"barros blancos\" found in address2; DAC city \"Barros Blancos\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B09",
+      "category": "B",
+      "description": "Joaquín Suárez — Canelones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Carlos Casaravilla 200",
+        "address2": "Joaquín Suárez",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b09@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"joaquin suarez\" found in address2; DAC city \"Joaquin Suarez\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B10",
+      "category": "B",
+      "description": "Ciudad de la Costa explícita en address2",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Racine 1200",
+        "address2": "Ciudad de la Costa",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b10@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"ciudad de la costa\" found in address2; DAC city \"Ciudad De La Costa\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B11",
+      "category": "B",
+      "description": "Shangrilá — balneario Canelones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Giannattasio km 14",
+        "address2": "Shangrilá",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b11@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"shangrila\" found in address2; DAC city \"Shangrila\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B12",
+      "category": "B",
+      "description": "Paso Carrasco — Canelones (cruzando arroyo)",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle Gutenberg 1700",
+        "address2": "Paso Carrasco",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b12@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"paso carrasco\" found in address2; DAC city \"Paso Carrasco\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B13",
+      "category": "B",
+      "description": "Salinas — Canelones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle 27 esquina 18",
+        "address2": "Salinas",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b13@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"salinas\" found in address2; DAC city \"Salinas\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B14",
+      "category": "B",
+      "description": "Progreso — Canelones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Ruta 5 km 22",
+        "address2": "Progreso",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b14@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"progreso\" found in address2; DAC city \"Progreso\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "B15",
+      "category": "B",
+      "description": "Las Toscas Canelones (no Tacuarembó)",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle Costa Rica 500",
+        "address2": "Las Toscas Costa de Oro",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "María",
+        "customerLastName": "González",
+        "customerEmail": "test+b15@labelflow.local",
+        "customerPhone": "099222333",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: ambiguous \"las toscas\" in address2 + city=Montevideo → tiebreaker → Canelones; DAC city \"Las Toscas\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "C01",
+      "category": "C",
+      "description": "Gorlero es Punta del Este — Maldonado",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Gorlero 500",
+        "address2": "Punta del Este",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Carlos",
+        "customerLastName": "Silva",
+        "customerEmail": "test+c01@labelflow.local",
+        "customerPhone": "099333444",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"punta del este\" found in address2; DAC city \"Punta Del Este\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "C02",
+      "category": "C",
+      "description": "Maldonado capital — Sarandí calle céntrica",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Sarandí 600",
+        "address2": "Maldonado capital",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Carlos",
+        "customerLastName": "Silva",
+        "customerEmail": "test+c02@labelflow.local",
+        "customerPhone": "099333444",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"maldonado\" found in address2; DAC city \"Maldonado\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "C03",
+      "category": "C",
+      "description": "San Carlos — Maldonado",
+      "input": {
+        "city": "Montevideo",
+        "address1": "25 de Agosto 700",
+        "address2": "San Carlos",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Carlos",
+        "customerLastName": "Silva",
+        "customerEmail": "test+c03@labelflow.local",
+        "customerPhone": "099333444",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"san carlos\" found in address2; DAC city \"San Carlos\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "C04",
+      "category": "C",
+      "description": "Piriápolis — balneario Maldonado",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Rambla de los Argentinos 1200",
+        "address2": "Piriápolis",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Carlos",
+        "customerLastName": "Silva",
+        "customerEmail": "test+c04@labelflow.local",
+        "customerPhone": "099333444",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"piriapolis\" found in address2; DAC city \"Piriapolis\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "C05",
+      "category": "C",
+      "description": "La Barra — Maldonado",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Ruta 10 km 160",
+        "address2": "La Barra",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Carlos",
+        "customerLastName": "Silva",
+        "customerEmail": "test+c05@labelflow.local",
+        "customerPhone": "099333444",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"la barra\" found in address2; DAC city \"La Barra\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "C06",
+      "category": "C",
+      "description": "Manantiales — Maldonado",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Ruta 10 km 170",
+        "address2": "Manantiales",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Carlos",
+        "customerLastName": "Silva",
+        "customerEmail": "test+c06@labelflow.local",
+        "customerPhone": "099333444",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"manantiales\" found in address2; DAC city \"Manantiales\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "C07",
+      "category": "C",
+      "description": "José Ignacio — Maldonado",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Los Teros 150",
+        "address2": "José Ignacio",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Carlos",
+        "customerLastName": "Silva",
+        "customerEmail": "test+c07@labelflow.local",
+        "customerPhone": "099333444",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"jose ignacio\" found in address2; DAC city \"Jose Ignacio\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "C08",
+      "category": "C",
+      "description": "Pan de Azúcar — Maldonado",
+      "input": {
+        "city": "Montevideo",
+        "address1": "18 de Julio 600",
+        "address2": "Pan de Azúcar",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Carlos",
+        "customerLastName": "Silva",
+        "customerEmail": "test+c08@labelflow.local",
+        "customerPhone": "099333444",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"pan de azucar\" found in address2; DAC city \"Pan De Azucar\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "D01",
+      "category": "D",
+      "description": "Tacuarembó capital",
+      "input": {
+        "city": "Montevideo",
+        "address1": "18 de Julio 200",
+        "address2": "Tacuarembó",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ana",
+        "customerLastName": "Martínez",
+        "customerEmail": "test+d01@labelflow.local",
+        "customerPhone": "099444555",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Tacuarembo",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Tacuarembo",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"tacuarembo\" found in address2; DAC city \"Tacuarembo\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "D02",
+      "category": "D",
+      "description": "Paysandú capital",
+      "input": {
+        "city": "Montevideo",
+        "address1": "18 de Julio 900",
+        "address2": "Paysandú",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ana",
+        "customerLastName": "Martínez",
+        "customerEmail": "test+d02@labelflow.local",
+        "customerPhone": "099444555",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Paysandu",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Paysandu",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"paysandu\" found in address2; DAC city \"Paysandu\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "D03",
+      "category": "D",
+      "description": "Young — Río Negro",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. 18 de Julio 2000",
+        "address2": "Young",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ana",
+        "customerLastName": "Martínez",
+        "customerEmail": "test+d03@labelflow.local",
+        "customerPhone": "099444555",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Rio Negro",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Rio Negro",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"young\" found in address2; DAC city \"Young\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "D04",
+      "category": "D",
+      "description": "Rivera capital",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Sarandí 600",
+        "address2": "Rivera",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ana",
+        "customerLastName": "Martínez",
+        "customerEmail": "test+d04@labelflow.local",
+        "customerPhone": "099444555",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Rivera",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Rivera",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"rivera\" found in address2; DAC city \"Rivera\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "D05",
+      "category": "D",
+      "description": "Salto capital",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Uruguay 1200",
+        "address2": "Salto",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ana",
+        "customerLastName": "Martínez",
+        "customerEmail": "test+d05@labelflow.local",
+        "customerPhone": "099444555",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Salto",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Salto",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"salto\" found in address2; DAC city \"Salto\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "D06",
+      "category": "D",
+      "description": "Durazno capital",
+      "input": {
+        "city": "Montevideo",
+        "address1": "18 de Julio 500",
+        "address2": "Durazno",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ana",
+        "customerLastName": "Martínez",
+        "customerEmail": "test+d06@labelflow.local",
+        "customerPhone": "099444555",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Durazno",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Durazno",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"durazno\" found in address2; DAC city \"Durazno\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "D07",
+      "category": "D",
+      "description": "Fray Bentos — Río Negro",
+      "input": {
+        "city": "Montevideo",
+        "address1": "18 de Julio 1300",
+        "address2": "Fray Bentos",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ana",
+        "customerLastName": "Martínez",
+        "customerEmail": "test+d07@labelflow.local",
+        "customerPhone": "099444555",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Rio Negro",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Rio Negro",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"fray bentos\" found in address2; DAC city \"Fray Bentos\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "D08",
+      "category": "D",
+      "description": "Juan Lacaze — Colonia",
+      "input": {
+        "city": "Montevideo",
+        "address1": "19 de Abril 400",
+        "address2": "Juan Lacaze",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ana",
+        "customerLastName": "Martínez",
+        "customerEmail": "test+d08@labelflow.local",
+        "customerPhone": "099444555",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Colonia",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Colonia",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"juan lacaze\" found in address2; DAC city \"Juan Lacaze\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "D09",
+      "category": "D",
+      "description": "Trinidad — capital de Flores",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Treinta y Tres 100",
+        "address2": "Trinidad",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ana",
+        "customerLastName": "Martínez",
+        "customerEmail": "test+d09@labelflow.local",
+        "customerPhone": "099444555",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Flores",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Flores",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"trinidad\" found in address2; DAC city \"Trinidad\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "D10",
+      "category": "D",
+      "description": "Florida capital",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Independencia 700",
+        "address2": "Florida",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ana",
+        "customerLastName": "Martínez",
+        "customerEmail": "test+d10@labelflow.local",
+        "customerPhone": "099444555",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Florida",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Florida",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"florida\" found in address2; DAC city \"Independencia\" found in address1",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "E101",
+      "category": "E1",
+      "description": "Av. Artigas en Las Piedras (Canelones)",
+      "input": {
+        "city": "Las Piedras",
+        "address1": "Av. Artigas 200",
+        "address2": "",
+        "zip": "",
+        "province": "Canelones",
+        "country": "Uruguay",
+        "customerFirstName": "Luis",
+        "customerLastName": "Rodríguez",
+        "customerEmail": "test+e101@labelflow.local",
+        "customerPhone": "099555666",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "nominatim: Avenida General Artigas, Las Piedras, Municipio de Las Piedras, Canelones, 90200, Uruguay; city=\"Las Piedras\" matches DAC \"Las Piedras\" in Canelones",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 635,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "E102",
+      "category": "E1",
+      "description": "Bvar. Artigas MVD (mismo nombre distinta calle)",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Bulevar Artigas 1500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Luis",
+        "customerLastName": "Rodríguez",
+        "customerEmail": "test+e102@labelflow.local",
+        "customerPhone": "099555666",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "tres cruces",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"artigas\" #1500 → tres cruces (A14: Artigas 1575 (Terminal))",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "E103",
+      "category": "E1",
+      "description": "18 de Julio en Paysandú (no MVD)",
+      "input": {
+        "city": "Paysandú",
+        "address1": "18 de Julio 900",
+        "address2": "",
+        "zip": "",
+        "province": "Paysandú",
+        "country": "Uruguay",
+        "customerFirstName": "Luis",
+        "customerLastName": "Rodríguez",
+        "customerEmail": "test+e103@labelflow.local",
+        "customerPhone": "099555666",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Paysandu",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Paysandu",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"paysandu\" found in city; city=\"Paysandú\" matches DAC \"Paysandu\" in Paysandu",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "E104",
+      "category": "E1",
+      "description": "18 de Julio en MVD",
+      "input": {
+        "city": "Montevideo",
+        "address1": "18 de Julio 1400",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Luis",
+        "customerLastName": "Rodríguez",
+        "customerEmail": "test+e104@labelflow.local",
+        "customerPhone": "099555666",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "cordon",
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "cordon",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"18 de julio\" #1400 → cordon (A03: 2000; E104: 1400)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "E105",
+      "category": "E1",
+      "description": "Sarandí en Rivera capital",
+      "input": {
+        "city": "Rivera",
+        "address1": "Sarandí 600",
+        "address2": "",
+        "zip": "",
+        "province": "Rivera",
+        "country": "Uruguay",
+        "customerFirstName": "Luis",
+        "customerLastName": "Rodríguez",
+        "customerEmail": "test+e105@labelflow.local",
+        "customerPhone": "099555666",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Rivera",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Rivera",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"rivera\" found in city; city=\"Rivera\" matches DAC \"Rivera\" in Rivera",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "E201",
+      "category": "E2",
+      "description": "Carrasco Norte — calle menos conocida",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Don Pedro de Mendoza 900",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Sofía",
+        "customerLastName": "Torres",
+        "customerEmail": "test+e201@labelflow.local",
+        "customerPhone": "099666777",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "carrasco norte",
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "carrasco norte",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"don pedro de mendoza\" #900 → carrasco norte (E201)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "E202",
+      "category": "E2",
+      "description": "Buceo/Malvín — Zum Felde",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Zum Felde 1500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Sofía",
+        "customerLastName": "Torres",
+        "customerEmail": "test+e202@labelflow.local",
+        "customerPhone": "099666777",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "las canteras",
+        "confidence": "high",
+        "reasoning": "Avenida Alberto Zum Felde está ubicada en el barrio Las Canteras de Montevideo según fuentes de mapeo local (OpenAlfa callejero). La dirección es clara y completa con número de puerta.",
+        "deliveryAddress": "Avenida Zum Felde 1500",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 8523,
+      "costUsd": 0.0511956,
+      "usedHistory": 0,
+      "webSearches": 2,
+      "cacheHit": false
+    },
+    {
+      "id": "E203",
+      "category": "E2",
+      "description": "Camino Carrasco peri — Manga/Carrasco Norte",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Camino Carrasco 5000",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Sofía",
+        "customerLastName": "Torres",
+        "customerEmail": "test+e203@labelflow.local",
+        "customerPhone": "099666777",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "carrasco norte",
+        "confidence": "medium",
+        "reasoning": "Camino Carrasco 5000 is in La Cruz de Carrasco area (not an official barrio name), which is between Carrasco Norte and Malvín Norte. Mapped to Carrasco Norte, the closest official barrio in the DAC system.",
+        "deliveryAddress": "Camino Carrasco 5000",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 9541,
+      "costUsd": 0.0377783,
+      "usedHistory": 0,
+      "webSearches": 1,
+      "cacheHit": false
+    },
+    {
+      "id": "E204",
+      "category": "E2",
+      "description": "Pocitos — calle menos central",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Comodoro Coe 2100",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Sofía",
+        "customerLastName": "Torres",
+        "customerEmail": "test+e204@labelflow.local",
+        "customerPhone": "099666777",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "pocitos",
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "pocitos",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"comodoro coe\" #2100 → pocitos (E204)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "E205",
+      "category": "E2",
+      "description": "Parque Rodó/Palermo — calle poco conocida",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Mataojo 900",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Sofía",
+        "customerLastName": "Torres",
+        "customerEmail": "test+e205@labelflow.local",
+        "customerPhone": "099666777",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "malvin norte",
+        "confidence": "high",
+        "reasoning": "Calle Mataojo se encuentra en el barrio Malvin Norte de Montevideo (confirmado por web_search). Número de puerta 900 está claro. No hay información adicional (apartamento, piso, referencias).",
+        "deliveryAddress": "Mataojo 900",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 5884,
+      "costUsd": 0.03854655,
+      "usedHistory": 0,
+      "webSearches": 1,
+      "cacheHit": false
+    },
+    {
+      "id": "F01",
+      "category": "F",
+      "description": "Cliente frecuente en Pocitos — historial confirma",
+      "input": {
+        "city": "",
+        "address1": "Guayaquí 2800",
+        "address2": "",
+        "zip": "",
+        "province": "",
+        "country": "Uruguay",
+        "customerFirstName": "Historial",
+        "customerLastName": "F01",
+        "customerEmail": "repeat+f01@labelflow.local",
+        "customerPhone": "099777888",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "pocitos",
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "pocitos",
+        "confidence": "high",
+        "reasoning": "determ MVD (post-nominatim): \"guayaqui\" #2800 → pocitos (F01)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 803,
+      "costUsd": 0,
+      "usedHistory": 3,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "F02",
+      "category": "F",
+      "description": "Historial ratifica Atlántida frente a city=MVD erróneo",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle 11 esquina 22",
+        "address2": "Atlántida",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Historial",
+        "customerLastName": "F02",
+        "customerEmail": "repeat+f02@labelflow.local",
+        "customerPhone": "099777888",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"atlantida\" found in address2; DAC city \"Atlantida\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 2,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "F03",
+      "category": "F",
+      "description": "Historial en Carrasco reafirma",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Rambla O'Higgins 14500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Historial",
+        "customerLastName": "F03",
+        "customerEmail": "repeat+f03@labelflow.local",
+        "customerPhone": "099777888",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "carrasco",
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "carrasco",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"o higgins\" #14500 → carrasco (F03: O'Higgins 14000+ = Carrasco)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 3,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "F04",
+      "category": "F",
+      "description": "Historial Malvín + addr igual",
+      "input": {
+        "city": "",
+        "address1": "Av. Italia 4500",
+        "address2": "",
+        "zip": "",
+        "province": "",
+        "country": "Uruguay",
+        "customerFirstName": "Historial",
+        "customerLastName": "F04",
+        "customerEmail": "repeat+f04@labelflow.local",
+        "customerPhone": "099777888",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "malvin",
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "malvin",
+        "confidence": "high",
+        "reasoning": "determ MVD (post-nominatim): \"italia\" #4500 → malvin (A08/F04: Italia 4500)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1156,
+      "costUsd": 0,
+      "usedHistory": 2,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "F05",
+      "category": "F",
+      "description": "Historial Punta del Este",
+      "input": {
+        "city": "Maldonado",
+        "address1": "Av. Roosevelt 2500",
+        "address2": "",
+        "zip": "",
+        "province": "Maldonado",
+        "country": "Uruguay",
+        "customerFirstName": "Historial",
+        "customerLastName": "F05",
+        "customerEmail": "repeat+f05@labelflow.local",
+        "customerPhone": "099777888",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"maldonado\" found in city; city=\"Maldonado\" matches DAC \"Maldonado\" in Maldonado",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 2,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "F06",
+      "category": "F",
+      "description": "Las Piedras — historial confirma es Canelones (no Artigas)",
+      "input": {
+        "city": "Las Piedras",
+        "address1": "Av. Artigas 1200",
+        "address2": "",
+        "zip": "",
+        "province": "Canelones",
+        "country": "Uruguay",
+        "customerFirstName": "Historial",
+        "customerLastName": "F06",
+        "customerEmail": "repeat+f06@labelflow.local",
+        "customerPhone": "099777888",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "nominatim: Avenida General Artigas, Las Piedras, Municipio de Las Piedras, Canelones, 90200, Uruguay; city=\"Las Piedras\" matches DAC \"Las Piedras\" in Canelones",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1108,
+      "costUsd": 0,
+      "usedHistory": 2,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "F07",
+      "category": "F",
+      "description": "Historial MVD pero NUEVA dirección es claramente Punta del Este — override",
+      "input": {
+        "city": "",
+        "address1": "Av. Gorlero 800",
+        "address2": "Punta del Este",
+        "zip": "",
+        "province": "Maldonado",
+        "country": "Uruguay",
+        "customerFirstName": "Historial",
+        "customerLastName": "F07",
+        "customerEmail": "repeat+f07@labelflow.local",
+        "customerPhone": "099777888",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"punta del este\" found in address2; DAC city \"Punta Del Este\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 2,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "F08",
+      "category": "F",
+      "description": "Historial Canelones pero NUEVA dirección centro MVD — override",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Colonia 1200",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Historial",
+        "customerLastName": "F08",
+        "customerEmail": "repeat+f08@labelflow.local",
+        "customerPhone": "099777888",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "centro",
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "centro",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"colonia\" #1200 → centro (A04/F08: 1200)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 2,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "H01",
+      "category": "H",
+      "description": "Costa de Oro en address2",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle Los Ceibos 200",
+        "address2": "Costa de Oro - Pinamar",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Paula",
+        "customerLastName": "Méndez",
+        "customerEmail": "test+h01@labelflow.local",
+        "customerPhone": "099888999",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ (dept-only): Major city \"pinamar\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "H02",
+      "category": "H",
+      "description": "Shangrilá (Canelones) en addr2",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Ruta 10 km 30",
+        "address2": "Shangrilá",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Paula",
+        "customerLastName": "Méndez",
+        "customerEmail": "test+h02@labelflow.local",
+        "customerPhone": "099888999",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"shangrila\" found in address2; DAC city \"Shangrila\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "H03",
+      "category": "H",
+      "description": "Ciudad de la Costa en addr2",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle Las Violetas 50",
+        "address2": "Ciudad de la Costa",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Paula",
+        "customerLastName": "Méndez",
+        "customerEmail": "test+h03@labelflow.local",
+        "customerPhone": "099888999",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"ciudad de la costa\" found in address2; DAC city \"Ciudad De La Costa\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "H04",
+      "category": "H",
+      "description": "Carrasco en addr2",
+      "input": {
+        "city": "",
+        "address1": "Rambla Tomás Berreta 8000",
+        "address2": "Carrasco",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Paula",
+        "customerLastName": "Méndez",
+        "customerEmail": "test+h04@labelflow.local",
+        "customerPhone": "099888999",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "carrasco",
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "carrasco",
+        "confidence": "medium",
+        "reasoning": "determ MVD (via province): \"tomas berreta\" #8000 → carrasco (H04)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "H05",
+      "category": "H",
+      "description": "Punta del Este en addr2",
+      "input": {
+        "city": "",
+        "address1": "Parada 2",
+        "address2": "Punta del Este",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Paula",
+        "customerLastName": "Méndez",
+        "customerEmail": "test+h05@labelflow.local",
+        "customerPhone": "099888999",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"punta del este\" found in address2; DAC city \"Punta Del Este\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "H06",
+      "category": "H",
+      "description": "Solymar en addr2",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Giannattasio 10000",
+        "address2": "Solymar",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Paula",
+        "customerLastName": "Méndez",
+        "customerEmail": "test+h06@labelflow.local",
+        "customerPhone": "099888999",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"solymar\" found in address2; DAC city \"Solymar\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "H07",
+      "category": "H",
+      "description": "La Barra en addr2",
+      "input": {
+        "city": "",
+        "address1": "Ruta 10 km 165",
+        "address2": "La Barra",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Paula",
+        "customerLastName": "Méndez",
+        "customerEmail": "test+h07@labelflow.local",
+        "customerPhone": "099888999",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"la barra\" found in address2; DAC city \"La Barra\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "H08",
+      "category": "H",
+      "description": "Canelones explícito en addr2",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle Melo 300",
+        "address2": "Las Piedras, Canelones",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Paula",
+        "customerLastName": "Méndez",
+        "customerEmail": "test+h08@labelflow.local",
+        "customerPhone": "099888999",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"canelones\" found in address2; DAC city \"Las Piedras\" found in address2",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "I01",
+      "category": "I",
+      "description": "ZIP 91600 → Canelones",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle Sirio 500",
+        "address2": "",
+        "zip": "91600",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Rodrigo",
+        "customerLastName": "López",
+        "customerEmail": "test+i01@labelflow.local",
+        "customerPhone": "099999000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ (dept-only): ZIP prefix 91xxx → Canelones",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "I02",
+      "category": "I",
+      "description": "ZIP 90100 → Canelones (Ciudad de la Costa)",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle Los Nogales 100",
+        "address2": "",
+        "zip": "90100",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Rodrigo",
+        "customerLastName": "López",
+        "customerEmail": "test+i02@labelflow.local",
+        "customerPhone": "099999000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ (dept-only): ZIP prefix 90xxx → Canelones",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "I03",
+      "category": "I",
+      "description": "ZIP 20100 → Maldonado",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Roosevelt 1000",
+        "address2": "",
+        "zip": "20100",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Rodrigo",
+        "customerLastName": "López",
+        "customerEmail": "test+i03@labelflow.local",
+        "customerPhone": "099999000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ (dept-only): ZIP prefix 20xxx → Maldonado",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "I04",
+      "category": "I",
+      "description": "ZIP 20001 → Maldonado",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Gorlero 100",
+        "address2": "",
+        "zip": "20001",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Rodrigo",
+        "customerLastName": "López",
+        "customerEmail": "test+i04@labelflow.local",
+        "customerPhone": "099999000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ (dept-only): ZIP prefix 20xxx → Maldonado",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "I05",
+      "category": "I",
+      "description": "ZIP 70000 → Colonia",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle Real 500",
+        "address2": "",
+        "zip": "70000",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Rodrigo",
+        "customerLastName": "López",
+        "customerEmail": "test+i05@labelflow.local",
+        "customerPhone": "099999000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Colonia",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Colonia",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ (dept-only): ZIP prefix 70xxx → Colonia",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "I06",
+      "category": "I",
+      "description": "ZIP 11300 — MVD sanity",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Italia 3500",
+        "address2": "",
+        "zip": "11300",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Rodrigo",
+        "customerLastName": "López",
+        "customerEmail": "test+i06@labelflow.local",
+        "customerPhone": "099999000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "parque batlle",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"italia\" #3500 → parque batlle (Italia 4000 still feels parque batlle (court house area))",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "I07",
+      "category": "I",
+      "description": "ZIP 11700 → Carrasco",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Rambla R. Fernández 12500",
+        "address2": "",
+        "zip": "11700",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Rodrigo",
+        "customerLastName": "López",
+        "customerEmail": "test+i07@labelflow.local",
+        "customerPhone": "099999000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "carrasco",
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "carrasco",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"r fernandez\" #12500 → carrasco (I07)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "I08",
+      "category": "I",
+      "description": "ZIP 45000 → Tacuarembó (Correos UY official)",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Calle Uruguay 100",
+        "address2": "",
+        "zip": "45000",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Rodrigo",
+        "customerLastName": "López",
+        "customerEmail": "test+i08@labelflow.local",
+        "customerPhone": "099999000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Tacuarembo",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Tacuarembo",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ (dept-only): ZIP prefix 45xxx → Tacuarembo",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J01",
+      "category": "J",
+      "description": "Pocitos feliz",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. Brasil 2500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j01@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": "pocitos",
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "pocitos",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"brasil\" #2500 → pocitos (A01: Av. Brasil 2500)",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J02",
+      "category": "J",
+      "description": "Canelones capital",
+      "input": {
+        "city": "Canelones",
+        "address1": "Treinta y Tres 200",
+        "address2": "",
+        "zip": "",
+        "province": "Canelones",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j02@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"canelones\" found in city; city=\"Canelones\" matches DAC \"Canelones\" in Canelones",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J03",
+      "category": "J",
+      "description": "Atlántida/Canelones explícito",
+      "input": {
+        "city": "Atlántida",
+        "address1": "Calle 11 esquina 22",
+        "address2": "",
+        "zip": "",
+        "province": "Canelones",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j03@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"atlantida\" found in city; city=\"Atlántida\" matches DAC \"Atlantida\" in Canelones",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J04",
+      "category": "J",
+      "description": "PdE/Maldonado explícito",
+      "input": {
+        "city": "Punta del Este",
+        "address1": "Av. Gorlero 800",
+        "address2": "",
+        "zip": "",
+        "province": "Maldonado",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j04@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"punta del este\" found in city; city=\"Punta del Este\" matches DAC \"Punta Del Este\" in Maldonado",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J05",
+      "category": "J",
+      "description": "Maldonado/Maldonado",
+      "input": {
+        "city": "Maldonado",
+        "address1": "Sarandí 500",
+        "address2": "",
+        "zip": "",
+        "province": "Maldonado",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j05@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Maldonado",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Maldonado",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"maldonado\" found in city; city=\"Maldonado\" matches DAC \"Maldonado\" in Maldonado",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J06",
+      "category": "J",
+      "description": "Paysandú/Paysandú",
+      "input": {
+        "city": "Paysandú",
+        "address1": "Uruguay 1000",
+        "address2": "",
+        "zip": "",
+        "province": "Paysandú",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j06@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Paysandu",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Paysandu",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"paysandu\" found in city; city=\"Paysandú\" matches DAC \"Paysandu\" in Paysandu",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J07",
+      "category": "J",
+      "description": "Salto/Salto",
+      "input": {
+        "city": "Salto",
+        "address1": "18 de Julio 500",
+        "address2": "",
+        "zip": "",
+        "province": "Salto",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j07@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Salto",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Salto",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"salto\" found in city; city=\"Salto\" matches DAC \"Salto\" in Salto",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J08",
+      "category": "J",
+      "description": "Rocha capital",
+      "input": {
+        "city": "Rocha",
+        "address1": "25 de Mayo 500",
+        "address2": "",
+        "zip": "",
+        "province": "Rocha",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j08@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Rocha",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Rocha",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"rocha\" found in city; city=\"Rocha\" matches DAC \"Rocha\" in Rocha",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J09",
+      "category": "J",
+      "description": "Colonia del Sacramento",
+      "input": {
+        "city": "Colonia",
+        "address1": "General Flores 300",
+        "address2": "",
+        "zip": "",
+        "province": "Colonia",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j09@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Colonia",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Colonia",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "nominatim: 300, General Flores, Carmelo, Colonia, 70100, Uruguay; city=\"Carmelo\" matches DAC \"Carmelo\" in Colonia",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1043,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J10",
+      "category": "J",
+      "description": "La Paloma/Rocha (balneario)",
+      "input": {
+        "city": "La Paloma",
+        "address1": "Av. del Navío 500",
+        "address2": "",
+        "zip": "",
+        "province": "Rocha",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j10@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Rocha",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Rocha",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "nominatim: Avenida del Navío, La Paloma, Rocha, 27001, Uruguay; city=\"La Paloma\" matches DAC \"La Paloma\" in Rocha",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 396,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J11",
+      "category": "J",
+      "description": "Florida/Florida",
+      "input": {
+        "city": "Florida",
+        "address1": "Independencia 500",
+        "address2": "",
+        "zip": "",
+        "province": "Florida",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j11@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Florida",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Florida",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"florida\" found in city; city=\"Florida\" matches DAC \"Florida\" in Florida",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J12",
+      "category": "J",
+      "description": "SJ de Mayo/SJ",
+      "input": {
+        "city": "San José de Mayo",
+        "address1": "Treinta y Tres 200",
+        "address2": "",
+        "zip": "",
+        "province": "San José",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j12@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "San Jose",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "San Jose",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"san jose de mayo\" found in city; city=\"San José de Mayo\" matches DAC \"San Jose De Mayo\" in San Jose",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J13",
+      "category": "J",
+      "description": "Tacuarembó capital",
+      "input": {
+        "city": "Tacuarembó",
+        "address1": "18 de Julio 300",
+        "address2": "",
+        "zip": "",
+        "province": "Tacuarembó",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j13@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Tacuarembo",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Tacuarembo",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"tacuarembo\" found in city; city=\"Tacuarembó\" matches DAC \"Tacuarembo\" in Tacuarembo",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J14",
+      "category": "J",
+      "description": "Rivera/Rivera",
+      "input": {
+        "city": "Rivera",
+        "address1": "Sarandí 400",
+        "address2": "",
+        "zip": "",
+        "province": "Rivera",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j14@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Rivera",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Rivera",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"rivera\" found in city; city=\"Rivera\" matches DAC \"Rivera\" in Rivera",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "J15",
+      "category": "J",
+      "description": "Durazno capital",
+      "input": {
+        "city": "Durazno",
+        "address1": "18 de Julio 500",
+        "address2": "",
+        "zip": "",
+        "province": "Durazno",
+        "country": "Uruguay",
+        "customerFirstName": "Test",
+        "customerLastName": "Control",
+        "customerEmail": "test+j15@labelflow.local",
+        "customerPhone": "099111000",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Durazno",
+        "barrio": null,
+        "minConfidence": "high"
+      },
+      "actual": {
+        "department": "Durazno",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"durazno\" found in city; city=\"Durazno\" matches DAC \"Durazno\" in Durazno",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "K01",
+      "category": "K",
+      "description": "MVD Instrucciones zona Santa Catalina/Borro",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. de las Instrucciones 2900",
+        "address2": "",
+        "zip": "11000",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Gap",
+        "customerLastName": "Test",
+        "customerEmail": "test+k01@labelflow.local",
+        "customerPhone": "099222111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": null,
+        "minConfidence": "low",
+        "allowNull": true
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "casavalle",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"de las instrucciones\" #2900 → casavalle",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "K02",
+      "category": "K",
+      "description": "MVD Flores al 5500 — zona Marconi/Cerro Norte",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. General Flores 5500",
+        "address2": "",
+        "zip": "11000",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Gap",
+        "customerLastName": "Test",
+        "customerEmail": "test+k02@labelflow.local",
+        "customerPhone": "099222111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": null,
+        "minConfidence": "low",
+        "allowNull": true
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "jardines del hipódromo",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"flores\" #5500 → jardines del hipódromo",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "K03",
+      "category": "K",
+      "description": "MVD Ruta 1 zona Paso de la Arena/La Paloma-Tomkinson",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Ruta 1 km 14",
+        "address2": "",
+        "zip": "11000",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Gap",
+        "customerLastName": "Test",
+        "customerEmail": "test+k03@labelflow.local",
+        "customerPhone": "099222111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": null,
+        "minConfidence": "low",
+        "allowNull": true
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "paso de la arena",
+        "confidence": "medium",
+        "reasoning": "Ruta 1 km 14 is in western Montevideo, starting point of the national route. ZIP 11000 confirms Montevideo department. Assigned to Paso de la Arena barrio as most likely based on route geography, but ruta addresses in outlying areas of Montevideo can span multiple barrios; used web_search to confirm Ruta 1's path.",
+        "deliveryAddress": "Ruta 1 S/N",
+        "extraObservations": "km 14",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 7759,
+      "costUsd": 0.04453005,
+      "usedHistory": 0,
+      "webSearches": 1,
+      "cacheHit": false
+    },
+    {
+      "id": "K04",
+      "category": "K",
+      "description": "MVD Cibils zona peri (Villa del Cerro/Casabó)",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Camino Cibils 4500",
+        "address2": "",
+        "zip": "11000",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Gap",
+        "customerLastName": "Test",
+        "customerEmail": "test+k04@labelflow.local",
+        "customerPhone": "099222111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": null,
+        "minConfidence": "low",
+        "allowNull": true
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": null,
+        "confidence": "medium",
+        "reasoning": "Camino Cibils 4500 is located in barrio Maracaná according to multiple official Montevideo sources and geographic databases. ZIP 11000 confirms Montevideo department. The street number 4500 places it in the northern tramo near Ruta Nacional Nº 1, where Maracaná is situated.",
+        "deliveryAddress": "Camino Cibils 4500",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 10280,
+      "costUsd": 0.06482685,
+      "usedHistory": 0,
+      "webSearches": 2,
+      "cacheHit": false
+    },
+    {
+      "id": "K05",
+      "category": "K",
+      "description": "MVD San Martín — Brazo Oriental",
+      "input": {
+        "city": "Montevideo",
+        "address1": "Av. San Martín 3500",
+        "address2": "",
+        "zip": "11000",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Gap",
+        "customerLastName": "Test",
+        "customerEmail": "test+k05@labelflow.local",
+        "customerPhone": "099222111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": null,
+        "minConfidence": "low",
+        "allowNull": true
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": "union",
+        "confidence": "high",
+        "reasoning": "determ MVD: \"san martin\" #3500 → union",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "L01",
+      "category": "L",
+      "description": "Las Piedras sin hint — default Canelones",
+      "input": {
+        "city": "Las Piedras",
+        "address1": "Av. Artigas 200",
+        "address2": "",
+        "zip": "",
+        "province": "",
+        "country": "Uruguay",
+        "customerFirstName": "Ambi",
+        "customerLastName": "Guidad",
+        "customerEmail": "test+l01@labelflow.local",
+        "customerPhone": "099000111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "medium",
+        "reasoning": "nominatim: Avenida General Artigas, Las Piedras, Municipio de Las Piedras, Canelones, 90200, Uruguay; city=\"Las Piedras\" matches DAC \"Las Piedras\" in Canelones",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "L02",
+      "category": "L",
+      "description": "Toledo — default Canelones (no Cerro Largo)",
+      "input": {
+        "city": "Toledo",
+        "address1": "Rivadavia 500",
+        "address2": "",
+        "zip": "",
+        "province": "",
+        "country": "Uruguay",
+        "customerFirstName": "Ambi",
+        "customerLastName": "Guidad",
+        "customerEmail": "test+l02@labelflow.local",
+        "customerPhone": "099000111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "Toledo in Canelones is the main city with this name in Uruguay (6,520+ inhabitants), while Toledo in Cerro Largo is a small locality (132 inhabitants). Web search confirmed Toledo as a Canelones municipality. Rivadavia 500 is a clear street address with number.",
+        "deliveryAddress": "Rivadavia 500",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 7584,
+      "costUsd": 0.0483853,
+      "usedHistory": 0,
+      "webSearches": 2,
+      "cacheHit": false
+    },
+    {
+      "id": "L03",
+      "category": "L",
+      "description": "La Paz — default Canelones",
+      "input": {
+        "city": "La Paz",
+        "address1": "25 de Agosto 400",
+        "address2": "",
+        "zip": "",
+        "province": "",
+        "country": "Uruguay",
+        "customerFirstName": "Ambi",
+        "customerLastName": "Guidad",
+        "customerEmail": "test+l03@labelflow.local",
+        "customerPhone": "099000111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "medium",
+        "reasoning": "nominatim: 25 de Agosto, La Paz, Colonia, 70203, Uruguay; city=\"La Paz\" matches DAC \"La Paz\" in Canelones [tiebreaker: \"La Paz\" → Canelones over Colonia]",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1092,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "L04",
+      "category": "L",
+      "description": "city=San José + province=MVD → San José dept",
+      "input": {
+        "city": "San José",
+        "address1": "25 de Mayo 500",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ambi",
+        "customerLastName": "Guidad",
+        "customerEmail": "test+l04@labelflow.local",
+        "customerPhone": "099000111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "San Jose",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "San Jose",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ (dept-only): Capital \"san jose\" found in city",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "L05",
+      "category": "L",
+      "description": "San José de Mayo — unambiguous",
+      "input": {
+        "city": "San José de Mayo",
+        "address1": "Treinta y Tres 200",
+        "address2": "",
+        "zip": "",
+        "province": "",
+        "country": "Uruguay",
+        "customerFirstName": "Ambi",
+        "customerLastName": "Guidad",
+        "customerEmail": "test+l05@labelflow.local",
+        "customerPhone": "099000111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "San Jose",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "San Jose",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Capital \"san jose de mayo\" found in city; city=\"San José de Mayo\" matches DAC \"San Jose De Mayo\" in San Jose",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "L06",
+      "category": "L",
+      "description": "La Paloma — default Rocha (balneario)",
+      "input": {
+        "city": "La Paloma",
+        "address1": "Av. del Navío 500",
+        "address2": "",
+        "zip": "",
+        "province": "",
+        "country": "Uruguay",
+        "customerFirstName": "Ambi",
+        "customerLastName": "Guidad",
+        "customerEmail": "test+l06@labelflow.local",
+        "customerPhone": "099000111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Rocha",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Rocha",
+        "barrio": null,
+        "confidence": "medium",
+        "reasoning": "nominatim: Avenida del Navío, La Paloma, Rocha, 27001, Uruguay; city=\"La Paloma\" matches DAC \"La Paloma\" in Rocha",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "L07",
+      "category": "L",
+      "description": "Santa Catalina MVD — barrio (low c. OK)",
+      "input": {
+        "city": "Santa Catalina",
+        "address1": "Camino Colman 1200",
+        "address2": "",
+        "zip": "",
+        "province": "Montevideo",
+        "country": "Uruguay",
+        "customerFirstName": "Ambi",
+        "customerLastName": "Guidad",
+        "customerEmail": "test+l07@labelflow.local",
+        "customerPhone": "099000111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Montevideo",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Montevideo",
+        "barrio": null,
+        "confidence": "medium",
+        "reasoning": "determ MVD (dept-only, province): Shopify province field = \"Montevideo\"",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "L08",
+      "category": "L",
+      "description": "Bella Vista + province=Paysandú → Paysandú",
+      "input": {
+        "city": "Bella Vista",
+        "address1": "Calle Principal 100",
+        "address2": "",
+        "zip": "",
+        "province": "Paysandú",
+        "country": "Uruguay",
+        "customerFirstName": "Ambi",
+        "customerLastName": "Guidad",
+        "customerEmail": "test+l08@labelflow.local",
+        "customerPhone": "099000111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Paysandu",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Paysandu",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "Bella Vista is a confirmed locality in Paysandú department (part of Chapicuy municipality). The address contains a clear street name and number. The province field correctly indicates Paysandú.",
+        "deliveryAddress": "Calle Principal 100",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 8004,
+      "costUsd": 0.04903285,
+      "usedHistory": 0,
+      "webSearches": 2,
+      "cacheHit": false
+    },
+    {
+      "id": "L09",
+      "category": "L",
+      "description": "Barros Blancos — default Canelones",
+      "input": {
+        "city": "Barros Blancos",
+        "address1": "Ruta 8 km 22",
+        "address2": "",
+        "zip": "",
+        "province": "",
+        "country": "Uruguay",
+        "customerFirstName": "Ambi",
+        "customerLastName": "Guidad",
+        "customerEmail": "test+l09@labelflow.local",
+        "customerPhone": "099000111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Canelones",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Canelones",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"barros blancos\" found in city; city=\"Barros Blancos\" matches DAC \"Barros Blancos\" in Canelones",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 1,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    },
+    {
+      "id": "L10",
+      "category": "L",
+      "description": "Juan Lacaze — unambiguous Colonia",
+      "input": {
+        "city": "Juan Lacaze",
+        "address1": "19 de Abril 400",
+        "address2": "",
+        "zip": "",
+        "province": "",
+        "country": "Uruguay",
+        "customerFirstName": "Ambi",
+        "customerLastName": "Guidad",
+        "customerEmail": "test+l10@labelflow.local",
+        "customerPhone": "099000111",
+        "orderNotes": ""
+      },
+      "expected": {
+        "department": "Colonia",
+        "barrio": null,
+        "minConfidence": "medium"
+      },
+      "actual": {
+        "department": "Colonia",
+        "barrio": null,
+        "confidence": "high",
+        "reasoning": "determ: Major city \"juan lacaze\" found in city; city=\"Juan Lacaze\" matches DAC \"Juan Lacaze\" in Colonia",
+        "deliveryAddress": "",
+        "extraObservations": "",
+        "rejected": false
+      },
+      "verdict": "PASS",
+      "verdictReason": "ok",
+      "latencyMs": 0,
+      "costUsd": 0,
+      "usedHistory": 0,
+      "webSearches": 0,
+      "cacheHit": false
+    }
+  ]
+}
