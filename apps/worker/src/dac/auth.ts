@@ -8,7 +8,16 @@ const RECAPTCHA_SITEKEY = '6LeKGrIaAAAAAANa6NZk_i6xkQD-c-_U3Bt-OffC';
 const FAST_TIMEOUT = 5_000; // 5s instead of 30s for fail-fast
 
 /**
- * Solve reCAPTCHA v2 via 2Captcha service.
+ * Solve reCAPTCHA v2 INVISIBLE via 2Captcha service.
+ *
+ * DAC's login page uses reCAPTCHA v2 INVISIBLE (data-size="invisible"), not the
+ * classic checkbox variant. Without the `invisible: true` flag, 2Captcha solves
+ * the checkbox variant — Google rejects the token at submit time, and the
+ * library surfaces the error as "ERROR_API / An Unexpected Error has occured".
+ *
+ * If 2Captcha returns an error, we log the full error payload (name + message
+ * + any APIError code) so that future outages are debuggable without having to
+ * grep the library source.
  */
 async function solveRecaptcha(pageUrl: string): Promise<string> {
   const apiKey = process.env.CAPTCHA_API_KEY;
@@ -19,13 +28,33 @@ async function solveRecaptcha(pageUrl: string): Promise<string> {
   logger.info('Solving reCAPTCHA via 2Captcha...');
   const solver = new Solver(apiKey);
 
-  const result = await solver.recaptcha({
-    pageurl: pageUrl,
-    googlekey: RECAPTCHA_SITEKEY,
-  });
+  try {
+    const result = await solver.recaptcha({
+      pageurl: pageUrl,
+      googlekey: RECAPTCHA_SITEKEY,
+      invisible: true,
+    });
 
-  logger.info({ taskId: result.id }, 'reCAPTCHA solved');
-  return result.data;
+    logger.info({ taskId: result.id }, 'reCAPTCHA solved');
+    return result.data;
+  } catch (err) {
+    // 2captcha-ts wraps errors in an APIError class; include everything we can
+    // so the failure mode is unambiguous next time (balance vs. key vs. ip
+    // block vs. invisible-mismatch vs. google-side rejection).
+    const e = err as Error & { code?: string; data?: unknown };
+    logger.error(
+      {
+        errName: e.name,
+        errMessage: e.message,
+        errCode: e.code ?? null,
+        errData: e.data ?? null,
+        pageUrl,
+        sitekey: RECAPTCHA_SITEKEY,
+      },
+      '2Captcha solve failed — see errMessage/errCode for root cause',
+    );
+    throw err;
+  }
 }
 
 /**
