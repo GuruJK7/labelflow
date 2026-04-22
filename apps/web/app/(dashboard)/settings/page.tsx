@@ -61,11 +61,10 @@ export default function SettingsPage() {
   const [consolidateConsecutiveOrders, setConsolidateConsecutiveOrders] = useState(false);
   const [consolidationWindowMinutes, setConsolidationWindowMinutes] = useState(30);
 
-  // Auto-payment (DAC / Plexo)
-  const [paymentAutoEnabled, setPaymentAutoEnabled] = useState(false);
-  const [paymentCardBrand, setPaymentCardBrand] = useState<'mastercard' | 'visa' | 'oca' | ''>('');
-  const [paymentCardLast4, setPaymentCardLast4] = useState('');
-  const [paymentCardCvc, setPaymentCardCvc] = useState('');
+  // 2026-04-22 — auto-pago con tarjeta fue retirado. Los pedidos REMITENTE
+  // reciben una nota en Shopify para que el operador los cargue a mano en DAC.
+  // Las columnas paymentCardBrand / paymentCardLast4 / paymentCardCvc siguen
+  // en el schema por si hace falta rollback, pero la UI ya no las toca.
 
   const DAYS = [
     { value: 0, label: 'Dom', short: 'D' },
@@ -181,9 +180,6 @@ export default function SettingsPage() {
           setAllowedProductTypes(data.allowedProductTypes ?? []);
           setConsolidateConsecutiveOrders(data.consolidateConsecutiveOrders ?? false);
           setConsolidationWindowMinutes(data.consolidationWindowMinutes ?? 30);
-          setPaymentAutoEnabled(data.paymentAutoEnabled ?? false);
-          setPaymentCardBrand((data.paymentCardBrand as 'mastercard' | 'visa' | 'oca' | null) ?? '');
-          setPaymentCardLast4(data.paymentCardLast4 ?? '');
           if (data.productTypeCache) {
             const types = [...new Set(Object.values(data.productTypeCache) as string[])].sort();
             setAvailableProductTypes(types);
@@ -304,14 +300,23 @@ export default function SettingsPage() {
         <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
           <h2 className="text-sm font-semibold text-white mb-4">Regla de pago</h2>
 
+          <div className="mb-4 p-3 rounded-lg bg-cyan-500/5 border border-cyan-500/20 text-[11px] text-cyan-100/80 leading-relaxed">
+            Esta regla decide qué pedidos se marcan como <strong>REMITENTE</strong> (los pagás vos en DAC)
+            en lugar de DESTINATARIO (los paga el cliente al recibir).
+            <br /><br />
+            <strong>¿Qué pasa con los pedidos REMITENTE?</strong> Ya no se pagan automáticamente con tarjeta:
+            el worker deja una nota en Shopify avisándote del pedido y el monto, y vos lo cargás a mano en DAC.
+            Cuando lo marques como "Fulfilled" en Shopify sale de la cola.
+          </div>
+
           {/* Toggle */}
           <div className="flex items-center justify-between mb-4 p-3 rounded-lg bg-zinc-800/30 border border-white/[0.04]">
             <div>
-              <p className="text-sm text-white font-medium">Pagar con tarjeta precargada en DAC</p>
+              <p className="text-sm text-white font-medium">Marcar envíos grandes como REMITENTE</p>
               <p className="text-[10px] text-zinc-500 mt-0.5">
                 {paymentRuleEnabled
-                  ? 'Pedidos por encima del umbral se pagan con tu saldo DAC (remitente)'
-                  : 'Desactivado — todos los envios los paga el cliente al recibir (destinatario)'}
+                  ? 'Pedidos por encima del umbral se marcan como REMITENTE (te llega nota en Shopify para cargarlos a mano)'
+                  : 'Desactivado — todos los envíos van como DESTINATARIO (paga el cliente al recibir)'}
               </p>
             </div>
             <button
@@ -331,7 +336,7 @@ export default function SettingsPage() {
             <div className="mb-3">
               <label className={labelClass}>Umbral pago (UYU)</label>
               <input type="number" value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} className={inputClass + ' max-w-xs'} />
-              <p className="text-[10px] text-zinc-600 mt-1">Pedidos por encima: paga tu tienda con saldo DAC. Por debajo: paga el cliente al recibir.</p>
+              <p className="text-[10px] text-zinc-600 mt-1">Pedidos por encima: se marcan REMITENTE (nota en Shopify para cargar a mano). Por debajo: DESTINATARIO (paga el cliente al recibir).</p>
             </div>
           )}
 
@@ -348,8 +353,8 @@ export default function SettingsPage() {
                 <p className="text-sm text-white font-medium">Consolidar pedidos consecutivos</p>
                 <p className="text-[10px] text-zinc-500 mt-0.5">
                   {consolidateConsecutiveOrders
-                    ? `Si el mismo cliente hace 2+ pedidos en ${consolidationWindowMinutes} min, el 2do+ se cobra al remitente`
-                    : 'Desactivado — cada pedido se evalua independientemente'}
+                    ? `Si el mismo cliente hace 2+ pedidos en ${consolidationWindowMinutes} min, el 2do+ se marca REMITENTE (nota en Shopify)`
+                    : 'Desactivado — cada pedido se evalúa independientemente'}
                 </p>
               </div>
               <button
@@ -372,111 +377,17 @@ export default function SettingsPage() {
             <InlineMessage section="consolidation" />
           </div>
 
-          {/* Auto-pago en DAC (Plexo) */}
           <div className="mt-5 pt-5 border-t border-white/[0.06]">
-            <div className="flex items-center justify-between mb-3 p-3 rounded-lg bg-zinc-800/30 border border-white/[0.04]">
-              <div>
-                <p className="text-sm text-white font-medium">Auto-pago en DAC (remitente)</p>
-                <p className="text-[10px] text-zinc-500 mt-0.5">
-                  {paymentAutoEnabled
-                    ? 'LabelFlow pagará automáticamente los envíos REMITENTE con tu tarjeta guardada en Plexo'
-                    : 'Desactivado — los envíos REMITENTE quedarán con pago pendiente para pagar a mano en DAC'}
-                </p>
-              </div>
-              <button
-                onClick={() => setPaymentAutoEnabled(!paymentAutoEnabled)}
-                disabled={!paymentRuleEnabled}
-                title={!paymentRuleEnabled ? 'Activá primero "Pagar con tarjeta precargada"' : ''}
-                className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
-                  paymentAutoEnabled ? 'bg-cyan-600' : 'bg-zinc-700'
-                } ${!paymentRuleEnabled ? 'opacity-40 cursor-not-allowed' : ''}`}
-              >
-                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${paymentAutoEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
-              </button>
-            </div>
-
-            {paymentAutoEnabled && (
-              <>
-                <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-200 leading-relaxed">
-                  <strong className="text-amber-100">⚠ Advertencia PCI:</strong> almacenar el CVC viola PCI DSS 3.2.
-                  Al activar esta opción aceptás la responsabilidad de cumplir las políticas del comercio.
-                  El CVC se guarda encriptado AES-256-GCM pero no es auditable por terceros. Cambialo si renovás la tarjeta.
-                  <br /><br />
-                  <strong>Primera vez:</strong> hacé un pago manual en DAC para que Plexo registre el dispositivo y no dispare 3DS en las corridas automáticas.
-                </div>
-
-                {/* Tipo de tarjeta */}
-                <div className="mb-4">
-                  <label className={labelClass}>Tipo de tarjeta</label>
-                  <div className="flex gap-2 mt-1">
-                    {([
-                      { value: 'mastercard' as const, label: 'Mastercard' },
-                      { value: 'visa' as const, label: 'VISA' },
-                      { value: 'oca' as const, label: 'OCA' },
-                    ]).map((opt) => (
-                      <button
-                        key={opt.value}
-                        onClick={() => setPaymentCardBrand(opt.value)}
-                        className={`px-4 py-2.5 rounded-lg text-xs font-medium border transition-all ${
-                          paymentCardBrand === opt.value
-                            ? 'bg-cyan-600 border-cyan-500 text-white'
-                            : 'bg-zinc-800/50 border-white/[0.06] text-zinc-400 hover:text-white hover:border-white/[0.15]'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[10px] text-zinc-600 mt-1">La marca debe coincidir con la tarjeta guardada en tu cuenta Plexo.</p>
-                </div>
-
-                {/* Last 4 */}
-                <div className="mb-4 max-w-xs">
-                  <label className={labelClass}>Últimos 4 dígitos</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={4}
-                    value={paymentCardLast4}
-                    onChange={(e) => setPaymentCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    placeholder="3294"
-                    className={inputClass}
-                  />
-                  <p className="text-[10px] text-zinc-600 mt-1">Para identificar la tarjeta correcta en Plexo si tenés varias.</p>
-                </div>
-
-                {/* CVC */}
-                <div className="mb-3 max-w-xs">
-                  <label className={labelClass}>Código de seguridad (CVC)</label>
-                  <input
-                    type="password"
-                    inputMode="numeric"
-                    maxLength={4}
-                    value={paymentCardCvc}
-                    onChange={(e) => setPaymentCardCvc(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    placeholder={settings?.paymentCardCvcSet ? '***' : '3 o 4 dígitos'}
-                    className={inputClass}
-                    autoComplete="off"
-                  />
-                  <p className="text-[10px] text-zinc-600 mt-1">
-                    {settings?.paymentCardCvcSet ? 'CVC configurado. Dejá vacío para no cambiarlo.' : 'Requerido para completar pagos automáticamente.'}
-                  </p>
-                </div>
-              </>
-            )}
-
-            <button
-              onClick={() => saveSection('autopay', {
-                paymentAutoEnabled,
-                paymentCardBrand: paymentCardBrand || null,
-                paymentCardLast4: paymentCardLast4 || null,
-                ...(paymentCardCvc ? { paymentCardCvc } : {}),
-              })}
-              disabled={saving === 'autopay'}
-              className="mt-2 inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
-              {saving === 'autopay' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar auto-pago
-            </button>
-            <InlineMessage section="autopay" />
+            <p className="text-[11px] text-zinc-500 leading-relaxed">
+              <span className="text-zinc-300 font-medium">¿Querés reglas más finas?</span>
+              {' '}Además del umbral de monto y la consolidación, podés definir reglas por{' '}
+              <span className="text-zinc-300">tag de cliente</span>,{' '}
+              <span className="text-zinc-300">cantidad de items</span> o{' '}
+              <span className="text-zinc-300">cada N-ésimo envío</span> en la sección{' '}
+              <a href="/settings/shipping-rules" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                Reglas de envío
+              </a>.
+            </p>
           </div>
         </div>
 

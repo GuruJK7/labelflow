@@ -34,6 +34,11 @@ import { sleep } from '../utils';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, DacAddressRejectedError } from '../dac/shipment';
+import {
+  buildRemitenteShopifyNote,
+  REMITENTE_NOTE_DEDUP_PREFIX_LEN,
+  REMITENTE_LABEL_MESSAGE,
+} from '../dac/remitente-manual';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { downloadLabel } from '../dac/label';
 import { createShopifyClient } from '../shopify/client';
@@ -220,6 +225,58 @@ export async function agentBulkUploadJob(job: {
       );
 
       let result: { guia: string; trackingUrl?: string; aiResolutionHash?: string } | undefined;
+
+      // ─ 2026-04-22 — REMITENTE handoff (same policy as process-orders.job.ts) ─
+      //
+      // REMITENTE orders are no longer auto-paid via Plexo. We flip the Label
+      // to NEEDS_REVIEW and drop a Shopify note asking the operator to load
+      // the shipment manually in DAC. Note-write is idempotent (prefix dedup)
+      // so reruns don't spam the order.
+      if (paymentType === 'REMITENTE') {
+        const totalUyuNum = parseFloat(order.total_price) || 0;
+        try {
+          await db.label.update({
+            where: { id: labelId },
+            data: {
+              status: 'NEEDS_REVIEW',
+              errorMessage: REMITENTE_LABEL_MESSAGE,
+            },
+          });
+        } catch {
+          /* non-fatal */
+        }
+
+        if (!dryRun && !skipShopify) {
+          const remNote = buildRemitenteShopifyNote(totalUyuNum);
+          try {
+            const { data } = await shopifyClient.get(`/orders/${order.id}.json`);
+            const currentNote: string = data.order?.note ?? '';
+            if (!currentNote.includes(remNote.substring(0, REMITENTE_NOTE_DEDUP_PREFIX_LEN))) {
+              await addOrderNote(shopifyClient, order.id, remNote);
+              slog.info('order-remitente', `Shopify note added — operator must load ${order.name} manually in DAC`, {
+                orderName: order.name,
+                totalUyu: totalUyuNum,
+              });
+            } else {
+              slog.info('order-remitente', `Shopify note already present for ${order.name} — skipping (dedup)`, {
+                orderName: order.name,
+              });
+            }
+          } catch (noteErr) {
+            slog.warn('order-remitente', `Could not write REMITENTE note for ${order.name}: ${(noteErr as Error).message}`, {
+              orderName: order.name,
+            });
+          }
+        } else {
+          slog.info('order-remitente', `DRY/SKIP_SHOPIFY mode — skipping REMITENTE note for ${order.name}`, {
+            orderName: order.name,
+          });
+        }
+
+        needsReviewCount++;
+        if (i < entries.length - 1) await sleep(DELAY_BETWEEN_ORDERS_MS);
+        continue;
+      }
 
       try {
         // Reuse existing guia if label already has one from a failed downstream run

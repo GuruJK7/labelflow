@@ -8,7 +8,11 @@ import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress, DuplicateSubmitError, DacAddressRejectedError } from '../dac/shipment';
 import { withTenantDacLock, DacLockHeldError } from '../dac/tenant-lock';
-import type { AutoPayConfig } from '../dac/payment';
+import {
+  buildRemitenteShopifyNote,
+  REMITENTE_NOTE_DEDUP_PREFIX_LEN,
+  REMITENTE_LABEL_MESSAGE,
+} from '../dac/remitente-manual';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { getDepartmentForCity, getDepartmentForCityAsync } from '../dac/uruguay-geo';
@@ -327,30 +331,14 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     );
     slog.info('label-preload', `Preloaded ${priorLabels.length} prior labels for this batch (out of ${orderIdStrs.length} orders)`);
 
-    // Build the auto-pay config once per cycle. Gated on all 4 fields being set so
-    // we never call Plexo with half-configured settings (which would hang on the
-    // CVV step and leave the guía in pago-pendiente).
-    let autoPayConfig: AutoPayConfig | undefined;
-    if (
-      tenant.paymentAutoEnabled &&
-      tenant.paymentCardBrand &&
-      tenant.paymentCardLast4 &&
-      tenant.paymentCardCvc
-    ) {
-      const cvc = decryptIfPresent(tenant.paymentCardCvc);
-      if (cvc) {
-        autoPayConfig = {
-          brand: tenant.paymentCardBrand as 'mastercard' | 'visa' | 'oca',
-          last4: tenant.paymentCardLast4,
-          cvc,
-        };
-        slog.info('autopay', `Auto-pay enabled: ${autoPayConfig.brand} **** ${autoPayConfig.last4}`);
-      } else {
-        slog.warn('autopay', 'paymentCardCvc present but decryption returned null — auto-pay disabled for this cycle');
-      }
-    } else if (tenant.paymentAutoEnabled) {
-      slog.warn('autopay', 'paymentAutoEnabled=true but brand/last4/cvc missing — auto-pay skipped');
-    }
+    // 2026-04-22 — auto-pay with stored card (Plexo saved-card + CVC) was
+    // REMOVED. Storing CVC is a PCI DSS 3.2 violation, and REMITENTE orders
+    // that require Plexo payment now get a Shopify note instead, asking the
+    // operator to load the shipment manually in DAC. The gateway, brand, and
+    // last4 tenant fields are intentionally left in the schema for rollback
+    // safety but are no longer read here.
+    //
+    // See the REMITENTE early-skip branch below for the new behavior.
 
     for (let i = 0; i < orders.length; i++) {
       const order = orders[i];
@@ -453,6 +441,84 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
 
         slog.info('order-payment', `Payment type: ${paymentType}`, { orderName: order.name });
 
+        // ─ 2026-04-22 — REMITENTE handoff ────────────────────────────────────
+        //
+        // REMITENTE = the store pays upfront via Plexo (saved card + CVC).
+        // We REMOVED the auto-pay flow (PCI concern + hung sessions on Plexo
+        // when payment couldn't complete). Instead, when a rule marks an
+        // order as REMITENTE we skip DAC entirely and leave a Spanish note on
+        // the Shopify order telling the operator to load the shipment by
+        // hand in DAC.
+        //
+        // The Label is upserted to NEEDS_REVIEW so: (a) the dashboard shows
+        // it in the review column, and (b) the next cycle recognizes it as
+        // already-handled and does NOT re-write the Shopify note (dedup is
+        // enforced both ways: Label status check + note-prefix substring).
+        if (paymentType === 'REMITENTE') {
+          const { fullAddress: remMergedAddr } = mergeAddress(addr.address1, addr.address2);
+          const remDeptRaw = await getDepartmentForCityAsync(addr.city);
+          const { safeCity: remSafeCity, safeDepartment: remSafeDept } = buildSafeLabelGeoFields({
+            city: addr.city,
+            province: addr.province,
+            resolvedDepartment: remDeptRaw,
+          });
+          const totalUyuNum = parseFloat(order.total_price) || 0;
+
+          await db.label.upsert({
+            where: {
+              tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
+            },
+            create: {
+              tenantId, jobId,
+              shopifyOrderId: String(order.id),
+              shopifyOrderName: order.name,
+              customerName,
+              customerEmail: order.email,
+              customerPhone: addr.phone,
+              deliveryAddress: remMergedAddr,
+              city: remSafeCity,
+              department: remSafeDept,
+              totalUyu: totalUyuNum,
+              paymentType: 'REMITENTE',
+              status: 'NEEDS_REVIEW',
+              errorMessage: REMITENTE_LABEL_MESSAGE,
+            },
+            update: {
+              jobId,
+              paymentType: 'REMITENTE',
+              status: 'NEEDS_REVIEW',
+              errorMessage: REMITENTE_LABEL_MESSAGE,
+            },
+          }).catch(() => {});
+
+          // Idempotent Shopify note — skip if the same prefix is already on the
+          // order (same dedup shape as the DacAddressRejectedError path).
+          const remNote = buildRemitenteShopifyNote(totalUyuNum);
+          try {
+            const { data } = await shopifyClient.get(`/orders/${order.id}.json`);
+            const currentNote: string = data.order?.note ?? '';
+            if (!currentNote.includes(remNote.substring(0, REMITENTE_NOTE_DEDUP_PREFIX_LEN))) {
+              await addOrderNote(shopifyClient, order.id, remNote);
+              slog.info('order-remitente', `Shopify note added — operator must load ${order.name} manually in DAC`, {
+                orderName: order.name,
+                totalUyu: totalUyuNum,
+              });
+            } else {
+              slog.info('order-remitente', `Shopify note already present for ${order.name} — skipping note write (dedup)`, {
+                orderName: order.name,
+              });
+            }
+          } catch (noteErr) {
+            slog.warn('order-remitente', `Could not write REMITENTE note for ${order.name}: ${(noteErr as Error).message}`, {
+              orderName: order.name,
+            });
+          }
+
+          skippedCount++;
+          if (i < orders.length - 1) await sleep(DELAY_BETWEEN_ORDERS_MS);
+          continue;
+        }
+
         // b) Check if this order already has a REAL guia from a previous failed attempt
         //    This prevents creating DUPLICATE DAC shipments when the DB write failed before.
         //
@@ -470,9 +536,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         } else {
           // Create shipment in DAC (NO full-form retry — guia extraction retries internally)
           // Re-submitting the entire form on error creates DUPLICATE shipments in DAC.
-          // Pass autoPayConfig only for REMITENTE — handlePaymentFlow will be a no-op for
-          // DESTINATARIO anyway, but keeping it gated here avoids a misleading "awaiting
-          // Plexo redirect" log on every DESTINATARIO order.
+          // Only DESTINATARIO orders reach this branch — REMITENTE short-circuited above.
           result = await createShipment(
             page,
             order,
@@ -482,8 +546,6 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             tenantId,
             jobId,
             usedGuias,
-            undefined, // addressOverride
-            paymentType === 'REMITENTE' ? autoPayConfig : undefined,
           );
 
           // Track this guia so it won't be assigned to another order in this batch
@@ -508,12 +570,13 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           province: addr.province,
           resolvedDepartment: resolvedDeptRaw,
         });
-        // Persist the payment outcome alongside the label. The status is already
-        // set by createShipment based on paymentType + autoPayConfig availability;
-        // default to 'not_required' if missing so the column is never null for new rows.
+        // Persist the payment outcome alongside the label. REMITENTE is now
+        // short-circuited before this block, so every order that reaches here
+        // is DESTINATARIO and `result.paymentStatus` defaults to 'not_required'.
+        // The paymentAttemptedAt column is left null (no auto-pay attempt).
         const resolvedPaymentStatus = result.paymentStatus ?? 'not_required';
         const resolvedPaymentFailureReason = result.paymentFailureReason ?? null;
-        const paymentAttemptedAt = paymentType === 'REMITENTE' && autoPayConfig ? new Date() : null;
+        const paymentAttemptedAt: Date | null = null;
 
         const labelRecord = await db.label.upsert({
           where: {
@@ -557,22 +620,10 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           paymentStatus: resolvedPaymentStatus,
         });
 
-        // If the auto-pay attempt was inconclusive, leave a highlighted note on
-        // the Shopify order so the operator knows to finish the payment in DAC.
-        if (paymentType === 'REMITENTE' && autoPayConfig && resolvedPaymentStatus !== 'paid') {
-          const reasonText = resolvedPaymentFailureReason ? ` (${resolvedPaymentFailureReason})` : '';
-          const note = `⚠ LabelFlow: pago DAC PENDIENTE${reasonText}. Guía ${result.guia} creada, completar pago a mano en DAC.`;
-          try {
-            await addOrderNote(shopifyClient, order.id, note);
-            slog.warn('order-payment', `Payment not completed — Shopify note added`, {
-              guia: result.guia,
-              paymentStatus: resolvedPaymentStatus,
-              reason: resolvedPaymentFailureReason,
-            });
-          } catch {
-            // Non-fatal — the DB record is already marked as pending_manual
-          }
-        }
+        // 2026-04-22 — removed the auto-pay post-success "pago DAC PENDIENTE"
+        // note. REMITENTE orders never reach this point anymore (they are
+        // short-circuited above with their own Shopify note), and
+        // DESTINATARIO orders never require payment at this stage.
 
         // d) Download PDF label (skip if guia is temporary/pending)
         if (result.guia && !result.guia.startsWith('PENDING-')) {

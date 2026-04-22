@@ -54,6 +54,84 @@ const DEFAULT_CONFIG: Record<ShippingRuleType, ConfigDraft> = {
   ITEM_COUNT: { minItems: 3 },
 };
 
+/**
+ * Plantillas de reglas — cinco presets curados que cubren los casos más
+ * comunes. Se muestran arriba del formulario cuando el usuario crea una
+ * regla nueva; un click rellena nombre / tipo / config / prioridad y el
+ * usuario sólo revisa + guarda. Al editar una regla existente las
+ * plantillas no se muestran (no queremos que un click accidental pise
+ * la configuración viva).
+ */
+type RulePreset = {
+  id: string;
+  title: string;
+  summary: string;
+  useCase: string;
+  icon: string;
+  name: string;
+  ruleType: ShippingRuleType;
+  config: ConfigDraft;
+  priority: number;
+};
+
+const RULE_PRESETS: RulePreset[] = [
+  {
+    id: 'high-value',
+    title: 'Envios grandes (> $3.000 UYU)',
+    summary: 'Pedidos con total superior a $3.000 se marcan REMITENTE.',
+    useCase: 'Cuando pagas vos los envios caros en vez de cobrarselos al cliente.',
+    icon: '💰',
+    name: 'Envios grandes (> $3.000 UYU)',
+    ruleType: 'THRESHOLD_TOTAL',
+    config: { minTotalUyu: 3000 },
+    priority: 100,
+  },
+  {
+    id: 'second-order',
+    title: 'Segundo pedido del mismo cliente (60 min)',
+    summary: 'Si un cliente hace 2+ pedidos en 60 min, del 2do en adelante va REMITENTE.',
+    useCase: 'Evitar cobrar envio multiple cuando el cliente compra varios productos seguidos.',
+    icon: '🔁',
+    name: 'Segundo pedido del mismo cliente (60 min)',
+    ruleType: 'CONSECUTIVE_ORDERS',
+    config: { windowMinutes: 60 },
+    priority: 50,
+  },
+  {
+    id: 'vip-tag',
+    title: 'Clientes VIP (tag "vip")',
+    summary: 'Pedidos de clientes con el tag "vip" en Shopify se marcan REMITENTE.',
+    useCase: 'Envio gratis para tus mejores clientes; el tag lo asignas en Shopify.',
+    icon: '⭐',
+    name: 'Clientes VIP (tag "vip")',
+    ruleType: 'CUSTOMER_TAG',
+    config: { tag: 'vip' },
+    priority: 10,
+  },
+  {
+    id: 'bulk-items',
+    title: 'Pedidos mayoristas (5+ items)',
+    summary: 'Pedidos con 5 items o mas se marcan REMITENTE.',
+    useCase: 'Clientes que compran al por mayor o hacen regalos grandes.',
+    icon: '📦',
+    name: 'Pedidos mayoristas (5+ items)',
+    ruleType: 'ITEM_COUNT',
+    config: { minItems: 5 },
+    priority: 80,
+  },
+  {
+    id: 'nth-free',
+    title: 'Cada 10mo envio gratis',
+    summary: 'El envio numero 10, 20, 30... de cada cliente se marca REMITENTE.',
+    useCase: 'Programa de fidelidad simple.',
+    icon: '🎁',
+    name: 'Cada 10mo envio gratis',
+    ruleType: 'NTH_SHIPMENT_FREE',
+    config: { nth: 10 },
+    priority: 60,
+  },
+];
+
 export default function ShippingRulesPage() {
   const [rules, setRules] = useState<ShippingRuleDTO[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -148,9 +226,14 @@ export default function ShippingRulesPage() {
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Reglas de envio</h1>
           <p className="text-sm text-gray-600 mt-1">
-            Configura cuando un pedido se envia como <b>REMITENTE</b> (lo paga la tienda via DAC)
-            en lugar de contra-reembolso. Las reglas se evaluan de arriba hacia abajo; la primera que
-            coincide gana. Si ninguna coincide, se usa el umbral clasico.
+            Configura cuando un pedido se marca como <b>REMITENTE</b> (lo pagas vos en DAC)
+            en lugar de DESTINATARIO (lo paga el cliente al recibir). Las reglas se evaluan de
+            arriba hacia abajo; la primera que coincide gana. Si ninguna coincide, se usa el
+            umbral clasico de la seccion Configuracion.
+          </p>
+          <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+            <b>¿Que pasa con los REMITENTE?</b> El worker deja una nota en Shopify con el monto
+            del pedido y vos lo cargas a mano en DAC. No se usa tarjeta guardada.
           </p>
         </div>
         <button
@@ -293,12 +376,27 @@ function RuleModal({
   const [isActive, setIsActive] = useState<boolean>(initial?.isActive ?? true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Presets visible by default when creating; hidden when editing (would be
+  // dangerous to one-click-pisar an existing rule's config).
+  const [showPresets, setShowPresets] = useState<boolean>(!isEdit);
 
   // When ruleType changes, reset config to that type's default (unless editing
   // and user hasn't changed the type yet).
   const changeRuleType = (next: ShippingRuleType) => {
     setRuleType(next);
     setConfig(DEFAULT_CONFIG[next]);
+  };
+
+  // Apply a preset: fills name / ruleType / config / priority in one shot.
+  // We keep isActive=true (new rule) and collapse the preset picker so the
+  // user gets straight to review-and-save on the filled form.
+  const applyPreset = (preset: RulePreset) => {
+    setName(preset.name);
+    setRuleType(preset.ruleType);
+    setConfig({ ...preset.config });
+    setPriority(preset.priority);
+    setIsActive(true);
+    setShowPresets(false);
   };
 
   const submit = async () => {
@@ -338,6 +436,68 @@ function RuleModal({
         </div>
 
         <div className="p-5 space-y-4">
+          {/* Plantillas — solo visible al crear. Un click rellena el form entero
+              con los valores recomendados y colapsa esta seccion. */}
+          {!isEdit && showPresets && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">
+                    Empezar con una plantilla
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Elegi un preset comun y edita los valores si hace falta. O{' '}
+                    <button
+                      type="button"
+                      onClick={() => setShowPresets(false)}
+                      className="text-gray-700 underline hover:text-black"
+                    >
+                      empezar desde cero
+                    </button>.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {RULE_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => applyPreset(preset)}
+                    className="group text-left rounded-lg border border-gray-200 bg-white p-3 hover:border-black hover:shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-black"
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="text-lg leading-none" aria-hidden="true">
+                        {preset.icon}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 group-hover:text-black">
+                          {preset.title}
+                        </p>
+                        <p className="text-[11px] text-gray-600 mt-0.5 leading-snug">
+                          {preset.summary}
+                        </p>
+                        <p className="text-[10px] text-gray-400 mt-1 leading-snug italic">
+                          {preset.useCase}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!isEdit && !showPresets && (
+            <button
+              type="button"
+              onClick={() => setShowPresets(true)}
+              className="text-xs text-gray-500 hover:text-black underline underline-offset-2"
+            >
+              ← Volver a ver plantillas
+            </button>
+          )}
+
           <Field label="Nombre">
             <input
               value={name}
