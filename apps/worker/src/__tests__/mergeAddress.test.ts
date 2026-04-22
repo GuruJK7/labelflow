@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeAddress } from '../dac/shipment';
+import { mergeAddress, maybeSwapSwappedFields } from '../dac/shipment';
 
 describe('mergeAddress', () => {
   // ====== BASIC CASES ======
@@ -227,5 +227,69 @@ describe('mergeAddress', () => {
     const result = mergeAddress('Av Rivera', 'Apto 5 Montevideo 1234');
     expect(result.fullAddress).toBe('Av Rivera');
     expect(result.extraObs).toBe('Apto 5 Montevideo 1234');
+  });
+
+  // ====== v4 FIELD SWAP DETECTION (2026-04-22 post-run audit) ======
+  // Real case: order #11480 Mariana Gestal. Customer typed the delivery
+  // observation in address1 and the real street in address2.
+
+  it('detects swapped fields: observation in address1, street in address2', () => {
+    const result = mergeAddress(
+      'Portón De Garaje Gris(contenedor De Basura En La Puerta)',
+      'Dolores Pereira De Rosell 1474',
+    );
+    expect(result.fullAddress).toBe('Dolores Pereira De Rosell 1474');
+    expect(result.extraObs).toBe(
+      'Portón De Garaje Gris(contenedor De Basura En La Puerta)',
+    );
+  });
+
+  it('does NOT swap when address1 has a digit (normal case)', () => {
+    // address1 has a number → assumed to be a real street, no swap
+    const result = mergeAddress('Av Italia 500', 'Portón gris con rejas negras');
+    expect(result.fullAddress).toBe('Av Italia 500');
+    expect(result.extraObs).toBe('Portón gris con rejas negras');
+  });
+
+  it('does NOT swap short no-digit address1 (<3 words) — preserves existing Av Rivera case', () => {
+    // "Av Rivera" = 2 alpha words < 3 → not enough to trust as observation.
+    // Matches the existing "real address that contains city" contract above.
+    const swap = maybeSwapSwappedFields('Av Rivera', 'Apto 5 Montevideo 1234');
+    expect(swap.swapped).toBe(false);
+  });
+
+  it('does NOT swap when address2 has no digit', () => {
+    const swap = maybeSwapSwappedFields(
+      'Portón negro con rejas altas de hierro',
+      'Pocitos',
+    );
+    expect(swap.swapped).toBe(false);
+  });
+
+  it('does NOT swap when address2 is a bare phone number', () => {
+    // address2 has digits but no alpha words → 2-word alpha requirement fails.
+    const swap = maybeSwapSwappedFields(
+      'Portón rojo con cerco blanco muy alto',
+      '099123456',
+    );
+    expect(swap.swapped).toBe(false);
+  });
+
+  it('does NOT swap when either field is empty', () => {
+    expect(maybeSwapSwappedFields('', 'Dolores Pereira 1474').swapped).toBe(false);
+    expect(maybeSwapSwappedFields('Portón gris grande largo', '').swapped).toBe(false);
+    expect(maybeSwapSwappedFields('', '').swapped).toBe(false);
+  });
+
+  it('swap exposes correctedAddress1/2 for logging', () => {
+    const swap = maybeSwapSwappedFields(
+      'Casa verde con timbre a la derecha del portón',
+      'Av Italia 1234',
+    );
+    expect(swap.swapped).toBe(true);
+    expect(swap.address1).toBe('Av Italia 1234');
+    expect(swap.address2).toBe(
+      'Casa verde con timbre a la derecha del portón',
+    );
   });
 });

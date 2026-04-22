@@ -694,6 +694,70 @@ export function postProcessAddress(
 }
 
 /**
+ * Detect when the customer swapped address1 and address2 — i.e. the delivery
+ * observation was typed in address1 and the real street went into address2.
+ *
+ * Real-world case (2026-04-22 post-run audit, order #11480 Mariana Gestal):
+ *   address1 = "Portón De Garaje Gris(contenedor De Basura En La Puerta)"  ← obs
+ *   address2 = "Dolores Pereira De Rosell 1474"                             ← street
+ * The label was printed with "Portón De Garaje Gris..." in the street field
+ * and the real address buried in the observations. Courier couldn't deliver.
+ *
+ * Trigger conditions (ALL must hold):
+ *   1. address1 contains NO digits at all — every deliverable Uruguayan
+ *      street address has a door number, so "zero digits" is a strong signal
+ *      that address1 is pure prose (observation).
+ *   2. address1 has ≥ 3 alpha words of length ≥ 2. A bare no-number address1
+ *      like "Av Rivera" (2 words) is a data-incomplete case, NOT a swap —
+ *      the real street might actually be in address1 with a missing door #.
+ *      Observations in the Mariana real case have many words ("Portón De
+ *      Garaje Gris contenedor De Basura En La Puerta" = 10 words) so the
+ *      3-word threshold cleanly separates observation-prose from bare street
+ *      names while preserving the existing "real address that contains city"
+ *      unit-test contract (address1="Av Rivera", 2 words → no swap).
+ *   3. address2 contains at least one digit (candidate door number).
+ *   4. address2 has ≥ 2 alphabetic words of length ≥ 2 (so it's a real
+ *      street phrase like "Dolores Pereira 1474", not just a phone number
+ *      or apt code like "301").
+ *
+ * When all four hold we return the swapped pair so downstream merge logic
+ * treats address2-as-address1 (the real street) and address1-as-address2
+ * (an observation that mergeAddressCore's "EVERYTHING ELSE" branch will
+ * route straight into extraObs).
+ *
+ * Exported for unit testing.
+ */
+export function maybeSwapSwappedFields(
+  address1: string,
+  address2: string | undefined | null,
+): { address1: string; address2: string; swapped: boolean } {
+  const a1 = (address1 ?? '').trim();
+  const a2 = (address2 ?? '').trim();
+  if (!a1 || !a2) return { address1: a1, address2: a2, swapped: false };
+
+  // Condition 1: address1 has no digits
+  if (/\d/.test(a1)) return { address1: a1, address2: a2, swapped: false };
+
+  // Condition 2: address1 has ≥ 3 alpha words
+  const a1AlphaWords = a1
+    .split(/\s+/)
+    .filter((w) => /[a-záéíóúñA-ZÁÉÍÓÚÑ]{2,}/.test(w)).length;
+  if (a1AlphaWords < 3) return { address1: a1, address2: a2, swapped: false };
+
+  // Condition 3: address2 has at least one digit
+  if (!/\d/.test(a2)) return { address1: a1, address2: a2, swapped: false };
+
+  // Condition 4: address2 has ≥ 2 alpha words (≥ 2 chars each)
+  const a2AlphaWords = a2
+    .split(/\s+/)
+    .filter((w) => /[a-záéíóúñA-ZÁÉÍÓÚÑ]{2,}/.test(w)).length;
+  if (a2AlphaWords < 2) return { address1: a1, address2: a2, swapped: false };
+
+  // All four hold → customer swapped the fields. Flip them.
+  return { address1: a2, address2: a1, swapped: true };
+}
+
+/**
  * Merge address1 + address2 into a clean delivery address + observaciones.
  *
  * PHILOSOPHY (v3 — April 2026):
@@ -711,9 +775,28 @@ export function postProcessAddress(
  * v3 also fixes the false-positive case where address1 has exactly one number
  * and address2 contains the same number — previously this was extracted as an
  * "Apto X" duplicate, but it's actually the door number repeated by mistake.
+ *
+ * v4 (2026-04-22 post-run audit): pre-pass detects and flips the "customer
+ * swapped the fields" case via maybeSwapSwappedFields() before any merge
+ * logic runs. See that function for the detection rules and real case.
  */
 export function mergeAddress(address1: string, address2: string | undefined | null): { fullAddress: string; extraObs: string } {
-  const result = mergeAddressCore(address1, address2);
+  // v4 (2026-04-22): pre-pass. If the customer wrote the observation in the
+  // address1 field and the real street in address2, flip them so the rest of
+  // the merge logic operates on the correct-order inputs.
+  const swap = maybeSwapSwappedFields(address1, address2);
+  if (swap.swapped) {
+    logger.info(
+      {
+        originalAddress1: address1,
+        originalAddress2: address2,
+        correctedAddress1: swap.address1,
+        correctedAddress2: swap.address2,
+      },
+      'mergeAddress: detected swapped fields — flipping address1/address2',
+    );
+  }
+  const result = mergeAddressCore(swap.address1, swap.address2);
   // v3 (2026-04-10): post-process the result to strip embedded apt/porteria/city
   // patterns the customer typed inside address1 itself. See postProcessAddress.
   return postProcessAddress(result.fullAddress, result.extraObs);
@@ -2088,6 +2171,32 @@ function pickHighestGuia(results: { guia: string; href: string | null }[]): { gu
 /**
  * Extracts guia with retry logic. ONLY retries the guia extraction navigation,
  * NEVER re-submits the DAC form (the shipment is already created at this point).
+ *
+ * ── GUIA POISONING GUARD (2026-04-22 post-run audit) ───────────────────────
+ * When DAC rejects the shipment form silently, the browser URL stays on
+ * /envios/nuevo — NO shipment was created on DAC's side. Historial lookup
+ * (Method 2 below) is DANGEROUS in that state because it will happily pick
+ * up ANY "new" (not-in-our-DB) guía in the tenant's DAC historial, including:
+ *   • shipments the tenant created manually in the DAC web UI
+ *   • shipments from a previous DAC account / pre-LabelFlow era
+ *   • shipments created by a different integration (if any)
+ * and attribute that orphan guía to the current order. The customer then gets
+ * a tracking email for a COMPLETELY UNRELATED package, and the actual order
+ * was never shipped at all.
+ *
+ * Real-world impact (confirmed 2026-04-22): order #11481 (Noelia Osorio,
+ * Parquizado/San José) failed DAC validation ("Parquizado" wasn't in the
+ * Lavalleja city list because Parquizado actually belongs to San José). URL
+ * stayed on /envios/nuevo. Historial lookup picked the tenant's orphan guía
+ * 8821122926412 (from an older batch range 8821122xxx, while the current
+ * batch was on 8821124xxx), saved it to the DB, and fulfilled Shopify with
+ * the wrong tracking. DAC screenshot confirmed Noelia's shipment was never
+ * created.
+ *
+ * Fix: if the post-Finalizar URL is /envios/nuevo, SKIP Method 2 entirely.
+ * Method 1 (current-page scan) still runs — in rare cases DAC renders the
+ * confirmation inline without changing the URL, and that page's content is
+ * trustworthy because it was produced by THIS submission.
  */
 async function extractGuiaWithRetry(
   page: Page,
@@ -2099,6 +2208,19 @@ async function extractGuiaWithRetry(
   const excludeGuias = usedGuias ? Array.from(usedGuias) : [];
   let guia = '';
   let trackingUrl: string | undefined;
+
+  // Capture the URL at entry — this is the post-Finalizar URL the caller
+  // logged. We snapshot it so later navigations (e.g. go to historial) don't
+  // confuse the poisoning guard.
+  const entryUrl = page.url();
+  const submissionWasRejected = /\/envios\/nuevo(\/?|$|\?)/.test(entryUrl);
+  if (submissionWasRejected) {
+    slog.warn(
+      DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+      'Post-Finalizar URL is /envios/nuevo — DAC rejected the form. Historial lookup disabled to prevent guía poisoning.',
+      { entryUrl, orderName },
+    );
+  }
 
   slog.info(DAC_STEPS.SUBMIT_EXTRACT_GUIA, 'Extracting guia number');
 
@@ -2152,6 +2274,19 @@ async function extractGuiaWithRetry(
         totalOnPage: pageResults.length, excluded: excludeGuias.length,
       });
       break;
+    }
+
+    // GUIA POISONING GUARD (2026-04-22 post-run audit): if DAC rejected the
+    // form (URL stayed on /envios/nuevo), historial lookup is unsafe. Skip it
+    // and let the caller surface this as a rejected-form error. See the
+    // function-level comment for the full rationale.
+    if (submissionWasRejected) {
+      slog.info(
+        DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+        `Attempt ${attempt}/${maxAttempts}: Skipping historial lookup — DAC rejected the form (poisoning guard)`,
+        { orderName },
+      );
+      continue;
     }
 
     // Method 2: Navigate to historial and find the NEW guia

@@ -499,7 +499,7 @@ Evidencia en el código:
 | Riesgo | Probabilidad | Mitigación |
 |---|---|---|
 | Worker viejo en caché si Render no redeploya siempre en push | baja | Confirmado: deploy live post-`ddee6fa` |
-| Drift futuro entre `apps/web/prisma/schema.prisma` y `apps/worker/prisma/schema.prisma` | **alta** (es la 2ª vez que pasa) | **Side-task spawneada** — unificar schemas en un single source of truth |
+| Drift futuro entre `apps/web/prisma/schema.prisma` y `apps/worker/prisma/schema.prisma` | ~~**alta**~~ baja (mitigated) | **RESUELTO** en `cc5eab5` — `scripts/check-schemas.sh` + gate en root `npm run build`. `npm run sync-schemas` para fix rápido. Side-task sigue disponible si querés ir a monorepo-package para defensa en profundidad |
 | 3 órdenes de un tenant (`#3208`, `#3185`, `#3145`) fallan en DAC en cada cron tick — bug de negocio pre-existente | alta | **Side-task spawneada** — investigar por qué el clasificador las sigue mandando si siempre fallan |
 | `ENCRYPTION_KEY` "Needs Attention" en Vercel (posible drift entre Preview y Production) | media | Revisar que Preview tenga misma key o una de test; si no, preview builds pueden 500 al desencriptar data de prod |
 
