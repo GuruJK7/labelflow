@@ -154,29 +154,31 @@ function computeIdempotencyKey(tenantId: string, shopifyOrderId: string): string
  * DAC has a real guía we missed, so a reprocess would risk a duplicate DAC
  * shipment. Those require manual reconciliation via DAC historial.
  *
- * ── 2026-04-22 post-run audit ──────────────────────────────────────────────
- * RESOLVED rows are explicitly NOT treated as duplicates. A RESOLVED marker
- * means the prior run finished cleanly and we already linked the real guía.
- * If we're entering createShipment for this order again, Shopify's
- * `fulfillment_status=unfulfilled` said so — the operator deliberately chose
- * to redo (wrong address printed, courier pickup failed, etc.). We delete
- * the stale RESOLVED row and let `markSubmitAttempted` below write a fresh
- * PENDING marker for the new submit.
+ * ── 2026-04-22 HOTFIX (double-shipping incident) ───────────────────────────
+ * The prior design auto-deleted RESOLVED rows to allow "operator redo" based
+ * on Shopify's `fulfillment_status=unfulfilled`. That assumed our own
+ * Shopify fulfillment call always succeeds after a successful DAC guía —
+ * in prod it DOES NOT: `fulfillOrderWithTracking` throws "No fulfillable
+ * orders" (fulfillment_orders count=0) and `addOrderTag` returns 403,
+ * both logged as non-fatal. The order stays unfulfilled in Shopify, the
+ * next cron tick picks it up again, the RESOLVED row is auto-deleted, and
+ * a second DAC guía is created. Every cron cycle = another duplicate guía
+ * = DAC bills the tenant twice.
  *
- * Why deleting the RESOLVED row is safe:
- *   - DAC's guía from the prior run still exists on DAC's side. That's the
- *     operator's problem, not ours — they cancelled it in DAC before
- *     unfulfilling in Shopify. We don't touch DAC historial from here.
- *   - Label row (different table) gets overwritten via upsert with the new
- *     guía; the prior guía stays in the note/tag on Shopify for audit.
- *   - Two concurrent workers that both see RESOLVED and both delete is fine:
- *     one wins the subsequent markSubmitAttempted INSERT, the loser gets
- *     P2002 and bails via the concurrent-submit DuplicateSubmitError branch.
+ * The safe default is now: a RESOLVED row ALWAYS blocks a re-submit. If
+ * the operator genuinely wants to redo a shipment (wrong address, etc.),
+ * they must delete the PendingShipment + Label rows explicitly (via the
+ * dashboard "redo" action, or via Prisma Studio). A tiny TTL-based escape
+ * hatch (72h) remains so truly stale RESOLVED rows from long-ago cancelled
+ * workflows don't block a fresh manual retry — 72h is far longer than the
+ * Shopify-fulfill failure window, so it can't trigger the cron loop.
  *
- * PENDING / ORPHANED continue to block — if we never got a guía back, there
- * may be one in DAC historial we never linked, and reprocessing would
- * double-ship. Those paths need the operator to manually reconcile first.
+ * PENDING / ORPHANED continue to block — if we never got a guía back,
+ * there may be one in DAC historial we never linked, and reprocessing
+ * would double-ship. Those paths need operator reconciliation first.
  */
+const RESOLVED_TTL_MS = 72 * 60 * 60 * 1000; // 72h
+
 export async function assertNoPriorSubmit(
   tenantId: string,
   shopifyOrderId: string,
@@ -195,12 +197,39 @@ export async function assertNoPriorSubmit(
   if (!prior) return;
 
   if (prior.status === 'RESOLVED') {
+    const ageMs = Date.now() - prior.submitAttemptedAt.getTime();
+
+    // Recent RESOLVED — BLOCK. This is the hotfix: Shopify-fulfill can
+    // fail silently and leave orders unfulfilled, causing the scheduler
+    // to re-pick them every minute. Without this block we'd mint a
+    // duplicate DAC guía on every cron tick.
+    if (ageMs < RESOLVED_TTL_MS) {
+      slog.warn(
+        DAC_STEPS.SUBMIT_WAIT_NAV,
+        `Refusing to re-submit order ${shopifyOrderId}: RESOLVED PendingShipment is still recent (age=${Math.round(ageMs / 1000)}s, guia=${prior.resolvedGuia ?? 'n/a'}). To force a redo, delete the PendingShipment + Label rows for this order.`,
+        {
+          priorStatus: prior.status,
+          priorGuia: prior.resolvedGuia,
+          priorAttemptAgoMs: ageMs,
+          ttlMs: RESOLVED_TTL_MS,
+        },
+      );
+      throw new DuplicateSubmitError(
+        `Order ${shopifyOrderId} was already submitted to DAC (guía=${prior.resolvedGuia ?? 'n/a'}, ${Math.round(ageMs / 60000)} min ago). To reprocess, delete the PendingShipment and Label rows manually.`,
+        prior.status,
+        prior.resolvedGuia,
+      );
+    }
+
+    // Stale RESOLVED (>72h old) — safe escape hatch for legitimate
+    // operator redos that happen long after the Shopify-fulfill-failure
+    // window has passed.
     slog.info(
       DAC_STEPS.SUBMIT_WAIT_NAV,
-      `Reprocessing order ${shopifyOrderId}: clearing prior RESOLVED PendingShipment (old guía=${prior.resolvedGuia ?? 'n/a'}) to allow fresh submit`,
+      `Clearing stale RESOLVED PendingShipment for order ${shopifyOrderId} (age=${Math.round(ageMs / 1000)}s, >72h — safe to redo)`,
       {
         priorGuia: prior.resolvedGuia,
-        priorAttemptAgoMs: Date.now() - prior.submitAttemptedAt.getTime(),
+        priorAttemptAgoMs: ageMs,
       },
     );
     try {
@@ -208,9 +237,6 @@ export async function assertNoPriorSubmit(
         where: { tenantId_shopifyOrderId: { tenantId, shopifyOrderId } },
       });
     } catch (err) {
-      // Row vanished between the findUnique and the delete — either a
-      // concurrent reprocess beat us, or reconcile swept it. Either way
-      // markSubmitAttempted below is the source of truth for the race.
       if (
         !(err instanceof Prisma.PrismaClientKnownRequestError) ||
         err.code !== 'P2025'
