@@ -10,51 +10,84 @@ const FAST_TIMEOUT = 5_000; // 5s instead of 30s for fail-fast
 /**
  * Solve reCAPTCHA v2 INVISIBLE via 2Captcha service.
  *
- * DAC's login page uses reCAPTCHA v2 INVISIBLE (data-size="invisible"), not the
- * classic checkbox variant. Without the `invisible: true` flag, 2Captcha solves
- * the checkbox variant — Google rejects the token at submit time, and the
- * library surfaces the error as "ERROR_API / An Unexpected Error has occured".
+ * DAC's login page uses reCAPTCHA v2 INVISIBLE (data-size="invisible"), not
+ * the classic checkbox variant — 2Captcha needs the `invisible: true` flag
+ * or it won't solve it (surfaces as ERROR_API).
  *
- * If 2Captcha returns an error, we log the full error payload (name + message
- * + any APIError code) so that future outages are debuggable without having to
- * grep the library source.
+ * OUTER RETRY LOOP (this function):
+ *   2Captcha occasionally returns ERROR_CAPTCHA_UNSOLVABLE when its worker
+ *   pool has a bad streak on a specific sitekey (e.g. Google temporarily
+ *   flags some 2Captcha IPs). Each 2Captcha internal attempt already tries
+ *   up to 3 workers. By retrying 3x from our side with a backoff, we get
+ *   up to 9 independent worker pools, which pushes success rate close to
+ *   100% for normal outages. No charge when UNSOLVABLE — 2Captcha refunds.
+ *
+ * DETAILED ERROR LOGGING:
+ *   Every failed attempt logs errName/errMessage/errCode/errData so future
+ *   outages can be diagnosed from Render logs alone without grepping the
+ *   library source.
  */
+const CAPTCHA_OUTER_RETRIES = 3;
+const CAPTCHA_RETRY_BACKOFF_MS = 10_000;
+
 async function solveRecaptcha(pageUrl: string): Promise<string> {
   const apiKey = process.env.CAPTCHA_API_KEY;
   if (!apiKey) {
     throw new Error('CAPTCHA_API_KEY env var is required for DAC login');
   }
 
-  logger.info('Solving reCAPTCHA via 2Captcha...');
   const solver = new Solver(apiKey);
+  let lastErr: Error | null = null;
 
-  try {
-    const result = await solver.recaptcha({
-      pageurl: pageUrl,
-      googlekey: RECAPTCHA_SITEKEY,
-      invisible: true,
-    });
+  for (let attempt = 1; attempt <= CAPTCHA_OUTER_RETRIES; attempt++) {
+    logger.info({ attempt, maxAttempts: CAPTCHA_OUTER_RETRIES }, 'Solving reCAPTCHA via 2Captcha...');
+    try {
+      const result = await solver.recaptcha({
+        pageurl: pageUrl,
+        googlekey: RECAPTCHA_SITEKEY,
+        invisible: true,
+      });
 
-    logger.info({ taskId: result.id }, 'reCAPTCHA solved');
-    return result.data;
-  } catch (err) {
-    // 2captcha-ts wraps errors in an APIError class; include everything we can
-    // so the failure mode is unambiguous next time (balance vs. key vs. ip
-    // block vs. invisible-mismatch vs. google-side rejection).
-    const e = err as Error & { code?: string; data?: unknown };
-    logger.error(
-      {
-        errName: e.name,
-        errMessage: e.message,
-        errCode: e.code ?? null,
-        errData: e.data ?? null,
-        pageUrl,
-        sitekey: RECAPTCHA_SITEKEY,
-      },
-      '2Captcha solve failed — see errMessage/errCode for root cause',
-    );
-    throw err;
+      logger.info({ attempt, taskId: result.id }, 'reCAPTCHA solved');
+      return result.data;
+    } catch (err) {
+      const e = err as Error & { code?: string; data?: unknown };
+      lastErr = e;
+      logger.warn(
+        {
+          attempt,
+          maxAttempts: CAPTCHA_OUTER_RETRIES,
+          errName: e.name,
+          errMessage: e.message,
+          errCode: e.code ?? null,
+          errData: e.data ?? null,
+          pageUrl,
+          sitekey: RECAPTCHA_SITEKEY,
+        },
+        `2Captcha solve attempt ${attempt}/${CAPTCHA_OUTER_RETRIES} failed`,
+      );
+
+      if (attempt < CAPTCHA_OUTER_RETRIES) {
+        await new Promise((r) => setTimeout(r, CAPTCHA_RETRY_BACKOFF_MS));
+      }
+    }
   }
+
+  // All outer retries exhausted — log at error level and throw.
+  const e = lastErr ?? new Error('unknown 2Captcha failure');
+  logger.error(
+    {
+      totalAttempts: CAPTCHA_OUTER_RETRIES,
+      errName: e.name,
+      errMessage: e.message,
+      errCode: (e as any).code ?? null,
+      errData: (e as any).data ?? null,
+      pageUrl,
+      sitekey: RECAPTCHA_SITEKEY,
+    },
+    '2Captcha solve exhausted all outer retries — see errMessage/errCode for root cause',
+  );
+  throw e;
 }
 
 /**
