@@ -6,7 +6,7 @@ import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopi
 import { fulfillOrderWithTracking } from '../shopify/fulfillment';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
-import { createShipment, mergeAddress, DuplicateSubmitError } from '../dac/shipment';
+import { createShipment, mergeAddress, DuplicateSubmitError, DacAddressRejectedError } from '../dac/shipment';
 import { withTenantDacLock, DacLockHeldError } from '../dac/tenant-lock';
 import type { AutoPayConfig } from '../dac/payment';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
@@ -712,6 +712,12 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         // NEEDS_REVIEW (not FAILED) so the operator treats it as "look this
         // up in DAC historial" rather than "retry from scratch".
         const isDuplicateSubmit = err instanceof DuplicateSubmitError;
+        // 2026-04-22 post-run audit: DAC silently rejects the form when the
+        // customer's Shopify address doesn't resolve to a valid department/
+        // barrio (e.g. city="Parquizado", address1="17 metros568"). Surface
+        // this as NEEDS_REVIEW with a Spanish operator-friendly Shopify note
+        // so the operator contacts the customer instead of retrying.
+        const isDacAddressRejected = err instanceof DacAddressRejectedError;
 
         if (isDacGuiaConstraint) {
           slog.warn('order-fail', `Order ${order.name}: guia already assigned to another order, skipping`, {
@@ -726,6 +732,15 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             priorStatus: (err as DuplicateSubmitError).existingStatus,
             priorGuia: (err as DuplicateSubmitError).existingGuia,
           });
+        } else if (isDacAddressRejected) {
+          slog.warn('order-fail', `Order ${order.name}: DAC rejected form — address confusa, needs operator to contact customer`, {
+            orderId: order.id,
+            orderName: order.name,
+            shopifyCity: addr.city,
+            shopifyAddress1: addr.address1,
+            shopifyAddress2: addr.address2,
+            shopifyZip: addr.zip,
+          });
         } else {
           slog.error('order-fail', `Order ${order.name} failed: ${errorMsg}`);
         }
@@ -735,8 +750,11 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           ? 'Guia already assigned to another order'
           : isDuplicateSubmit
             ? `C-4: prior submit exists (status=${(err as DuplicateSubmitError).existingStatus}, guia=${(err as DuplicateSubmitError).existingGuia ?? 'n/a'}); check DAC historial`
-            : errorMsg.substring(0, 500);
-        const labelTargetStatus: 'FAILED' | 'NEEDS_REVIEW' = isDuplicateSubmit ? 'NEEDS_REVIEW' : 'FAILED';
+            : isDacAddressRejected
+              ? 'Dirección del cliente en Shopify no se pudo interpretar — contactar al cliente para corregirla y reprocesar.'
+              : errorMsg.substring(0, 500);
+        const labelTargetStatus: 'FAILED' | 'NEEDS_REVIEW' =
+          isDuplicateSubmit || isDacAddressRejected ? 'NEEDS_REVIEW' : 'FAILED';
 
         const { fullAddress: mergedAddrErr } = mergeAddress(addr.address1, addr.address2);
         // Same null-safety as the success path — Label.city/department are required (non-null)
@@ -772,9 +790,20 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         }).catch(() => {});
 
         // Only write error notes to Shopify for non-constraint errors,
-        // and check for duplicate notes to avoid spamming
+        // and check for duplicate notes to avoid spamming.
+        //
+        // 2026-04-22 post-run audit: for DacAddressRejectedError (Shopify
+        // address the customer typed can't be resolved to a DAC department/
+        // barrio), emit a Spanish operator-friendly note instead of the raw
+        // English error dump. Clearer for whoever is triaging Shopify and
+        // dedupes correctly against itself on repeated reprocess attempts.
         if (!isDacGuiaConstraint) {
-          const noteText = `LabelFlow ERROR: ${errorMsg.substring(0, 200)}`;
+          const noteText = isDacAddressRejected
+            ? `LabelFlow: no se pudo crear el envío en DAC — dirección confusa o incompleta en Shopify ` +
+              `(ciudad="${addr.city ?? ''}", dirección="${addr.address1 ?? ''}"${addr.address2 ? `, referencia="${addr.address2}"` : ''}). ` +
+              `DAC rechazó el formulario porque la localidad/barrio no pudo identificarse. ` +
+              `Acción: contactar al cliente para corregir la dirección en Shopify y el worker la va a reprocesar solo en el próximo ciclo.`
+            : `LabelFlow ERROR: ${errorMsg.substring(0, 200)}`;
           try {
             const { data } = await shopifyClient.get(`/orders/${order.id}.json`);
             const currentNote: string = data.order?.note ?? '';

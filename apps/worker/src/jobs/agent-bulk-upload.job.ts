@@ -33,7 +33,7 @@ import logger from '../logger';
 import { sleep } from '../utils';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
-import { createShipment } from '../dac/shipment';
+import { createShipment, DacAddressRejectedError } from '../dac/shipment';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { downloadLabel } from '../dac/label';
 import { createShopifyClient } from '../shopify/client';
@@ -442,6 +442,13 @@ export async function agentBulkUploadJob(job: {
         }
 
         const errorMsg = (err as Error).message;
+        // 2026-04-22 post-run audit: same treatment as process-orders.job.ts —
+        // when DAC silently rejects the form because the Shopify address can't
+        // be classified into a dept+barrio, mark the Label as NEEDS_REVIEW
+        // (not FAILED) and write a Spanish operator-friendly note instead of
+        // dumping the raw English error on the Shopify order.
+        const isDacAddressRejected = err instanceof DacAddressRejectedError;
+        const shipAddr = order.shipping_address;
 
         if (result?.aiResolutionHash) {
           await markAddressResolutionFeedback(
@@ -453,22 +460,46 @@ export async function agentBulkUploadJob(job: {
           );
         }
 
-        slog.error('order-fail', `Order ${order.name} failed: ${errorMsg}`);
+        if (isDacAddressRejected) {
+          slog.warn('order-fail', `Order ${order.name}: DAC rejected form — address confusa, needs operator to contact customer`, {
+            orderName: order.name,
+            shopifyCity: shipAddr?.city,
+            shopifyAddress1: shipAddr?.address1,
+            shopifyAddress2: shipAddr?.address2,
+            shopifyZip: shipAddr?.zip,
+          });
+        } else {
+          slog.error('order-fail', `Order ${order.name} failed: ${errorMsg}`);
+        }
 
         await db.label
           .update({
             where: { id: labelId },
             data: {
-              status: 'FAILED',
-              errorMessage: errorMsg.slice(0, 500),
+              status: isDacAddressRejected ? 'NEEDS_REVIEW' : 'FAILED',
+              errorMessage: isDacAddressRejected
+                ? 'Dirección del cliente en Shopify no se pudo interpretar — contactar al cliente para corregirla y reprocesar.'
+                : errorMsg.slice(0, 500),
             },
           })
           .catch(() => {});
 
         // Don't pollute real Shopify orders with notes in dry-run
         if (!dryRun) {
+          const noteText = isDacAddressRejected
+            ? `LabelFlow: no se pudo crear el envío en DAC — dirección confusa o incompleta en Shopify ` +
+              `(ciudad="${shipAddr?.city ?? ''}", dirección="${shipAddr?.address1 ?? ''}"${shipAddr?.address2 ? `, referencia="${shipAddr.address2}"` : ''}). ` +
+              `DAC rechazó el formulario porque la localidad/barrio no pudo identificarse. ` +
+              `Acción: contactar al cliente para corregir la dirección en Shopify y el worker la va a reprocesar solo en el próximo ciclo.`
+            : `LabelFlow ERROR: ${errorMsg.slice(0, 200)}`;
           try {
-            await addOrderNote(shopifyClient, order.id, `LabelFlow ERROR: ${errorMsg.slice(0, 200)}`);
+            // Prevent duplicate-note spam across retries: skip if the same
+            // prefix already exists on the order.
+            const { data } = await shopifyClient.get(`/orders/${order.id}.json`);
+            const currentNote: string = data.order?.note ?? '';
+            if (!currentNote.includes(noteText.substring(0, 80))) {
+              await addOrderNote(shopifyClient, order.id, noteText);
+            }
           } catch {
             /* ignore note errors */
           }

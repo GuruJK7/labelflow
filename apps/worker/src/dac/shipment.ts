@@ -47,6 +47,35 @@ export class DuplicateSubmitError extends Error {
   }
 }
 
+/**
+ * Thrown when DAC rejects the shipment form silently — the submit leaves the
+ * browser on `/envios/nuevo` with no guía extracted. In practice this almost
+ * always means the customer's Shopify address fields (city / address / zip)
+ * don't resolve to a valid DAC department+barrio combination — e.g. a city
+ * like "Parquizado" (not a real Uruguay locality) or an address1 that's a
+ * descriptive phrase rather than a real street+number.
+ *
+ * Surfacing this as its own error class lets the job layer write a friendly,
+ * actionable Spanish note on the Shopify order ("dirección del cliente
+ * incompleta o no reconocida — pedir a Noelia la dirección real") and mark
+ * the Label as NEEDS_REVIEW (not FAILED) so the operator treats it as
+ * "contactar cliente" instead of "retry technical failure".
+ *
+ * The guard that throws this also deletes the PENDING PendingShipment row
+ * (see the DAC-rejected-form branch in createShipment), so once the operator
+ * fixes the address in Shopify the next cron tick will reprocess cleanly.
+ */
+export class DacAddressRejectedError extends Error {
+  readonly isDacAddressRejected = true as const;
+  constructor(
+    message: string,
+    readonly orderName: string,
+  ) {
+    super(message);
+    this.name = 'DacAddressRejectedError';
+  }
+}
+
 /** Stable idempotency key for a tenant+order pair. */
 function computeIdempotencyKey(tenantId: string, shopifyOrderId: string): string {
   return crypto
@@ -2082,9 +2111,10 @@ export async function createShipment(
         '[C-4] Failed to clear PendingShipment after rejected-form path',
       );
     }
-    throw new Error(
+    throw new DacAddressRejectedError(
       `DAC rejected the shipment form for ${order.name} (URL stayed on /envios/nuevo and no guía was extracted). ` +
       `Likely cause: address could not be classified into a valid department/barrio. Review the customer address in Shopify.`,
+      order.name,
     );
   }
 
