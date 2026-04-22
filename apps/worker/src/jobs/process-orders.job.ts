@@ -189,17 +189,21 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     // picker returns it again on the next cron tick, and the worker mints
     // a second DAC guía — DAC bills the tenant twice.
     //
-    // Hotfix: if this tenant already has a recent COMPLETED Label for the
-    // order (Label.updatedAt within RECENT_COMPLETED_SKIP_MS), skip it.
-    // That blocks the Shopify-fulfill-failure loop while preserving the
-    // legitimate redo path for truly stale cases: operator wanting to
-    // redo a label <24h old can delete the Label + PendingShipment rows
-    // from the dashboard/Prisma Studio to unlock the order. Older than
-    // the TTL → auto-allowed (the Shopify-fulfill-failure window is
-    // measured in minutes, not days, so 24h is far beyond it).
-    const RECENT_COMPLETED_SKIP_MS = 24 * 60 * 60 * 1000; // 24h
-    const recentSkipCutoff = new Date(Date.now() - RECENT_COMPLETED_SKIP_MS);
-
+    // Skip rule: if the tenant already has ANY COMPLETED Label (with a
+    // real, non-PENDING guía) for this order, skip the order — the DB
+    // says we already shipped it, and Shopify's "unfulfilled" flag is
+    // unreliable while our fulfillment call is broken.
+    //
+    // Operator redo workflow: use the dashboard "Reenviar" action (or
+    // manually delete Label + PendingShipment rows). Deleting the Label
+    // row removes the skip condition — the order flows through on the
+    // next cron tick. No tag/TTL gymnastics.
+    //
+    // Design choice: indefinite skip (no TTL). A time-based escape hatch
+    // would re-open the duplication window exactly when the
+    // Shopify-fulfill bug is unfixed — the failure window has no upper
+    // bound until the root cause (missing write_orders / write_fulfillments
+    // scope) is resolved on the Shopify app side.
     const existingCompletedLabels = await db.label.findMany({
       where: {
         tenantId,
@@ -212,43 +216,23 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       existingCompletedLabels.map((l) => [l.shopifyOrderId, l] as const),
     );
 
-    const beforeRecentSkip = orders.length;
-    const recentlyCompletedSkipped: Array<{ orderName: string; guia: string | null; completedAt: Date }> = [];
+    const beforeCompletedSkip = orders.length;
+    const completedSkipped: Array<{ orderName: string; guia: string | null; completedAt: Date }> = [];
     orders = orders.filter((o) => {
       const prev = completedByOrderId.get(String(o.id));
       if (!prev) return true;
-      if (prev.updatedAt >= recentSkipCutoff) {
-        recentlyCompletedSkipped.push({
-          orderName: o.name,
-          guia: prev.dacGuia,
-          completedAt: prev.updatedAt,
-        });
-        return false;
-      }
-      return true;
+      completedSkipped.push({
+        orderName: o.name,
+        guia: prev.dacGuia,
+        completedAt: prev.updatedAt,
+      });
+      return false;
     });
-    if (recentlyCompletedSkipped.length > 0) {
+    if (completedSkipped.length > 0) {
       slog.warn(
         'filter',
-        `Skipped ${recentlyCompletedSkipped.length} unfulfilled order(s) with a recent COMPLETED Label (<24h) to prevent duplicate DAC shipments. Shopify fulfillment likely failed silently — investigate Shopify scope/fulfillment_orders endpoint. To force a redo, delete the Label + PendingShipment rows for the order.`,
-        { skipped: recentlyCompletedSkipped.slice(0, 10), totalSkipped: recentlyCompletedSkipped.length, beforeRecentSkip },
-      );
-    }
-
-    // Telemetry: surviving reprocess candidates (>=24h old COMPLETED Label).
-    const reprocessCount = orders.filter((o) => completedByOrderId.has(String(o.id))).length;
-    if (reprocessCount > 0) {
-      const reprocessDetails = orders
-        .filter((o) => completedByOrderId.has(String(o.id)))
-        .slice(0, 10)
-        .map((o) => {
-          const prev = completedByOrderId.get(String(o.id))!;
-          return { orderName: o.name, previousGuia: prev.dacGuia, previousCompletedAt: prev.updatedAt };
-        });
-      slog.warn(
-        'filter',
-        `Reprocessing ${reprocessCount} order(s) that were previously COMPLETED (>24h ago) — operator unfulfilled them in Shopify`,
-        { reprocessDetails },
+        `Skipped ${completedSkipped.length} unfulfilled order(s) with a COMPLETED Label already in DB (prevents duplicate DAC shipments). If Shopify still shows them as unfulfilled, the Shopify fulfillment POST is failing — investigate the Shopify app scope (write_orders / write_fulfillments). To force a redo, use the dashboard "Reenviar" action or delete the Label + PendingShipment rows.`,
+        { skipped: completedSkipped.slice(0, 10), totalSkipped: completedSkipped.length, beforeCompletedSkip },
       );
     }
 

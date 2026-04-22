@@ -13,6 +13,7 @@ import {
   Clock,
   Check,
   Minus,
+  RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
@@ -37,6 +38,7 @@ export default function LabelsPage() {
   const [dateFilter, setDateFilter] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState<'print' | 'download' | null>(null);
+  const [redoing, setRedoing] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -159,6 +161,40 @@ export default function LabelsPage() {
       alert('Error de conexion al procesar etiquetas');
     } finally {
       setBulkLoading(null);
+    }
+  };
+
+  // Operator-initiated "Reenviar" — deletes Label + PendingShipment so the
+  // worker's duplicate-shipment guards (see process-orders.job.ts picker
+  // and assertNoPriorSubmit) release the order for reprocessing. The next
+  // cron tick picks it up from Shopify's unfulfilled set and creates a
+  // fresh DAC guía.
+  const handleRedo = async (label: LabelFile) => {
+    const confirmed = window.confirm(
+      `¿Reenviar ${label.shopifyOrderName}?\n\n` +
+        `Guía actual: ${label.dacGuia ?? 'n/a'}\n\n` +
+        `Se borrará el registro de esta etiqueta y la orden se volverá a ` +
+        `procesar en la próxima corrida del worker. La guía DAC anterior ` +
+        `no se cancela automáticamente — si querés anularla, hacelo desde el ` +
+        `panel de DAC antes de continuar.`,
+    );
+    if (!confirmed) return;
+
+    setRedoing(label.id);
+    try {
+      const res = await fetch(`/api/v1/labels/${label.id}/redo`, {
+        method: 'POST',
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        alert(body?.error ?? 'No se pudo reenviar la etiqueta');
+        return;
+      }
+      await fetchData();
+    } catch {
+      alert('Error de conexión al reenviar la etiqueta');
+    } finally {
+      setRedoing(null);
     }
   };
 
@@ -343,6 +379,23 @@ export default function LabelsPage() {
                               Descargar
                             </a>
                             <PrintButton labelId={label.id} pdfPath={label.pdfPath} size="md" />
+                            <button
+                              type="button"
+                              title="Reenviar: borra este registro para que el worker vuelva a procesar la orden"
+                              disabled={redoing === label.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleRedo(label);
+                              }}
+                              className={cn(
+                                'flex items-center justify-center w-9 h-9 rounded-lg border text-xs font-medium transition-colors',
+                                redoing === label.id
+                                  ? 'bg-amber-500/10 border-amber-500/20 text-amber-300 cursor-wait'
+                                  : 'bg-white/[0.03] border-white/[0.06] text-zinc-400 hover:text-amber-300 hover:border-amber-500/30 hover:bg-amber-500/5',
+                              )}
+                            >
+                              <RotateCcw className={cn('w-3.5 h-3.5', redoing === label.id && 'animate-spin')} />
+                            </button>
                           </div>
                         ) : (
                           <div className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-zinc-500/5 border border-white/[0.04] text-zinc-600 text-xs">

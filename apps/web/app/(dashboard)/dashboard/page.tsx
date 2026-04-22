@@ -64,6 +64,11 @@ export default function DashboardPage() {
   const [savingSort, setSavingSort] = useState(false);
   const [fulfillMode, setFulfillMode] = useState<'off' | 'on' | 'always'>('on');
   const [savingFulfill, setSavingFulfill] = useState(false);
+  // Shopify scope diagnostic: if critical write scopes are missing, the
+  // worker's fulfillment POST will 403 / return no fulfillable orders,
+  // which used to trigger the double-shipping loop. Surfacing this here
+  // lets the operator see what needs re-authorizing in Shopify.
+  const [missingShopifyScopes, setMissingShopifyScopes] = useState<string[] | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -130,6 +135,27 @@ export default function DashboardPage() {
     const interval = setInterval(fetchData, 10_000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // Shopify scope probe — runs once on mount (scopes rarely change at
+  // runtime; re-running on every fetchData tick would just hammer the
+  // Shopify /admin/api/.../access_scopes.json endpoint).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/v1/shopify-scopes');
+        if (!res.ok) return; // 400 when Shopify not configured yet — ignore
+        const body = await res.json().catch(() => null);
+        const missing: string[] = body?.data?.missing ?? [];
+        if (!cancelled) setMissingShopifyScopes(missing);
+      } catch {
+        // Silent — banner just won't appear.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Auto-detect active job on page load and when jobs change
   useEffect(() => {
@@ -508,6 +534,26 @@ export default function DashboardPage() {
             <span className="text-xs text-zinc-400">Email SMTP</span>
           </div>
         </div>
+        {missingShopifyScopes && missingShopifyScopes.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-red-500/20">
+            <div className="flex items-start gap-2 text-xs">
+              <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-red-300 font-medium">
+                  Faltan {missingShopifyScopes.length} scope{missingShopifyScopes.length !== 1 ? 's' : ''} en tu app de Shopify
+                </p>
+                <p className="text-zinc-400 mt-0.5">
+                  Sin estos scopes, el fulfillment automático falla silenciosamente
+                  (orden se queda como <em>unfulfilled</em> aunque la guía DAC se haya creado).
+                  Reinstalá la app de Shopify con los scopes completos.
+                </p>
+                <p className="text-zinc-500 mt-1 font-mono text-[10px]">
+                  {missingShopifyScopes.join(', ')}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Automatic Schedule Display */}
