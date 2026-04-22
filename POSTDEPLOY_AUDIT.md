@@ -47,10 +47,10 @@ No verificado desde aquí (no tengo CLI/credenciales):
 | A3 | Encryption modules equivalentes | ✅ **PASS** | `aes-256-gcm` + `iv_hex:tag_hex:ciphertext_hex` + mismo `ENCRYPTION_KEY` | crítica |
 | A4 | Fallback a RunLog en `browser.ts` | ✅ **PASS** | Código self-migrating + 0 cookies legacy en prod (nada que migrar) | media |
 | **X0** | **Schema desync web/worker + prod pre-audit** | 🔴 **FAIL → FIXED** | Ver §0 TL;DR; fix en `ddee6fa` + `prisma db push` aplicado | **P0** |
-| B1 | `SHOPIFY_API_SECRET` en Vercel | ⏸ **PENDING USER** | User action §4 (no tengo `vercel` CLI) | crítica |
+| B1 | `SHOPIFY_API_SECRET` en Vercel | ✅ **N/A** | Arquitectura es Custom-App-per-tenant (cada tenant pega su access token); no hay OAuth ni webhooks globales. El código `verifyShopifyWebhook` queda defensivamente `fail-closed` sin uso actual. Ver §11.1 | — |
 | B2 | Schema aplicado en prod | ✅ **PASS** (post-fix) | Los 8 objetos existen en prod tras `db push`; ver §0 TL;DR | crítica |
-| B3 | Worker health en Render | ⏸ **PENDING USER** | Nuevo build de `ddee6fa` en curso — pegar logs cuando termine | crítica |
-| B4 | Webhooks recibidos | ⚠️ **FLAG** (0 rows) | `SELECT count(*) FROM "WebhookReceipt"` = 0 → o ningún webhook entrante post-Fase 2A, o HMAC rechaza todo. No bloqueante pero sospechoso | alta |
+| B3 | Worker health en Render | ✅ **PASS** | Build `ddee6fa` ok (tsc 9.8s clean, prisma generate 612ms, push ok); runtime boot muestra scheduler + reconcile arrancados, zero Prisma errors | — |
+| B4 | Webhooks recibidos | ✅ **N/A** | Arquitectura per-tenant Custom App no usa webhooks Shopify → 0 rows es correcto. Ver §11.1 | — |
 | C1 | Jobs procesados últimas 4h | ✅ **PASS funcional** + ⚠️ **bug negocio** | Worker viejo corre ok; 10 jobs CRON en 4h, todos FAILED por 3 órdenes DAC-rejected específicas (#3208, #3185, #3145 — tenant `cmnoqzsys0001ot71g5aj1fb8`). Pre-existe a mis commits | alta |
 | C2 | `autoRetryCount` default | ✅ **PASS** | 1070 labels con `autoRetryCount=0` (default). Se empezará a escribir cuando deploy el worker nuevo | media |
 | C3 | PendingShipment | ✅ **PASS** (vacío esperado) | 0 rows; C-4 arranca a poblar cuando `ddee6fa` deploye | alta |
@@ -446,57 +446,76 @@ Si solo tenés un tenant, marcar como **SKIP** (no es FAIL).
 
 ---
 
-## 9 · FAILs encontrados hasta el momento
+## 9 · FAILs encontrados y resueltos
 
-Al momento de escribir este reporte, las únicas verificaciones que pude
-completar (Fase A) **no encontraron FAILs**. Todos los FAIL/PASS restantes
-dependen de tu ejecución de las queries/checklists de arriba.
+**FAIL P0 encontrado y resuelto en esta sesión** (ver §0 TL;DR):
+- Schema prod estaba en estado pre-audit; 6 modelos + 2 columnas missing
+- Root cause: `apps/worker/prisma/schema.prisma` desync 255 líneas vs `apps/web/prisma/schema.prisma` desde Fase 2B
+- Fix: `prisma db push` contra prod + sync worker schema en commit `ddee6fa`
+- Verificación: Render rebuild con `ddee6fa` pasó build (`tsc` 9.8s clean, prisma generate 612ms) y el worker arrancó limpio
 
-**Dos correcciones menores vs. tu pedido original**:
-- C3 tenía nombres de campo/enum incorrectos → corregidos en §7.3
-- C4 tenía un campo `lastHeartbeatAt` inexistente → corregido en §7.4
-
-Esto **no** es un FAIL del deploy — es un FAIL del brief. El código está bien.
+**No hay FAILs abiertos.**
 
 ---
 
-## 10 · Recomendación preliminar
+## 10 · Recomendación FINAL
 
-Basado **solo** en Fase A (lo único que pude verificar):
+> # ✅ SAFE TO KEEP RUNNING
 
-> **SAFE TO KEEP RUNNING — PENDING USER VERIFICATION OF §4–§8**
+Todas las 6 fases de hardening (1, 2A, 2B, 2C, 3, 4) están deployadas en prod con:
+- Schema DB alineado con `schema.prisma` (verificado por query directa)
+- Prisma Client regenerado en el worker Docker image (verificado en build logs)
+- Worker runtime arrancado sin errores de Prisma o crash (verificado en runtime logs)
 
-El código es consistente, los commits están en origin/main, el schema cubre
-todo lo prometido, y los dos módulos de encryption son funcionalmente
-idénticos. **Pero esto no es una luz verde**: si falla §5.1 (schema no
-migrado en prod), §6 (errores de Prisma en Render), o §8.1 (smoke end-to-end
-rotto), la recomendación pasa a **MANUAL INTERVENTION REQUIRED** o
-**ROLLBACK**.
+**Estado del DB al momento del deploy** (baseline para monitoreo):
+- `DacProcessingLease`: 0 rows (esperado; se va a poblar en el próximo cron tick)
+- `ClassifierMetric`: 0 rows (esperado; se pobla en el próximo bulk run)
+- `PendingShipment`: 0 rows (esperado; se pobla con el próximo Finalizar click)
+- `WebhookReceipt`: 0 rows (correcto; arquitectura no usa webhooks)
+- `Label.autoRetryCount`: 1070 labels @ 0 (default; se va a incrementar cuando reconcile resetee un FAILED)
+- `AddressResolution.expiresAt`: 121 rows legacy @ null (esperado; H-2 reader usa createdAt+default TTL para nulls)
 
-**Trigger de rollback automático** (si encontrás cualquiera de estos, pegame
-el output y vemos qué commit revertir):
+---
 
-| Síntoma | Commit sospechoso | Acción |
+## 11 · Addenda arquitectural
+
+### 11.1 · Modelo Shopify: Custom App per tenant (no Public App)
+
+Durante el audit confirmé que la arquitectura es **Custom App per tenant** (cada merchant crea un Custom App en su admin de Shopify y pega el access token en AutoEnvia). **No es un Public App del App Store**.
+
+Evidencia en el código:
+- `Tenant.shopifyToken` (access token encrypted per tenant) en schema
+- `worker/src/shopify/client.ts` usa `X-Shopify-Access-Token: {tokenDelTenant}` — polling con el token del tenant, no OAuth
+- No existen rutas `/api/auth/shopify/callback` ni `/api/auth/shopify/install`
+
+**Implicancias del modelo:**
+- `SHOPIFY_API_SECRET` global **no aplica** (solo hace falta para Public App + OAuth install)
+- `/api/webhooks/shopify/*` es **dead code** defensivo: las rutas existen, `verifyShopifyWebhook` falla cerrado si no hay secret, pero ningún Shopify va a hitterlas en este modelo. Inerte pero harmless, déjenlo por si algún día publican al App Store.
+- `/api/webhooks/shopify/gdpr/*` (implementado en Fase 2C) es dead code por la misma razón: los webhooks GDPR de Shopify solo disparan para apps del App Store. No urge quitarlo.
+- `WebhookReceipt` siempre va a tener 0 rows desde `shopify` source en este modelo.
+
+### 11.2 · Riesgos residuales (no bloqueantes)
+
+| Riesgo | Probabilidad | Mitigación |
 |---|---|---|
-| `table "DacProcessingLease" does not exist` | `c28b3a6` | `git revert c28b3a6 && db push previous` |
-| `column "autoRetryCount" does not exist` | `c28b3a6` | ídem |
-| 401 masivo en `/api/webhooks/shopify/*` | `9966267` + env var | fix env var, NO revertir |
-| Duplicados de guía en DAC | `e4ccb12` (C-4) | revisar PendingShipment antes de revertir |
-| Leases stuck > TTL | `c28b3a6` (Fase 3) | ver §7.4, no es rollback automático |
-| Cookies no loading (login loops masivos) | `52d0826` (H-9) | chequear `ENCRYPTION_KEY` primero |
+| Worker viejo en caché si Render no redeploya siempre en push | baja | Confirmado: deploy live post-`ddee6fa` |
+| Drift futuro entre `apps/web/prisma/schema.prisma` y `apps/worker/prisma/schema.prisma` | **alta** (es la 2ª vez que pasa) | **Side-task spawneada** — unificar schemas en un single source of truth |
+| 3 órdenes de un tenant (`#3208`, `#3185`, `#3145`) fallan en DAC en cada cron tick — bug de negocio pre-existente | alta | **Side-task spawneada** — investigar por qué el clasificador las sigue mandando si siempre fallan |
+| `ENCRYPTION_KEY` "Needs Attention" en Vercel (posible drift entre Preview y Production) | media | Revisar que Preview tenga misma key o una de test; si no, preview builds pueden 500 al desencriptar data de prod |
 
 ---
 
-## 11 · Qué necesito de vos para cerrar este audit
+## 12 · Historial de cambios en esta sesión
 
-Pegame los outputs de:
+| Commit | Autor | Descripción |
+|---|---|---|
+| `c28b3a6` (pre-existente) | — | Fase 3 + Fase 4 audit hardening (pushed antes de esta sesión) |
+| **`ddee6fa`** | Claude | Sync `worker/prisma/schema.prisma` ← `web/prisma/schema.prisma` — **unbreaks Render build** |
+| **`cc9ceb2`** | Claude | docs: `POSTDEPLOY_AUDIT.md` con el finding P0 + fix record |
 
-1. **§4**: `vercel env ls production | grep SHOPIFY_API_SECRET` (o equivalente UI)
-2. **§5.1**: las 3 queries de schema (tables + columns + enums)
-3. **§5.2**: count de tenants con legacy cookies
-4. **§5.3**: webhooks de la última hora
-5. **§6**: últimos 30 min de logs del worker Render (o los patterns que te listé)
-6. **§7.1–7.6**: outputs de las 6 queries funcionales
-7. **§8.1**: resultados del smoke end-to-end (o al menos los pasos que puedas completar)
+**Operación ejecutada contra prod Supabase**:
+- `prisma db push --accept-data-loss=false` (schema sync, 100% aditivo, verificado con `migrate diff`)
 
-Con eso convierto todos los ⏸ a ✅/❌ y emito la recomendación final.
+---
+
+**Audit cerrado.**
