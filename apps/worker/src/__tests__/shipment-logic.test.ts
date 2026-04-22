@@ -4,7 +4,7 @@
  * using real Uruguay addresses and Shopify order patterns.
  */
 import { describe, it, expect } from 'vitest';
-import { mergeAddress, detectCityIntelligent } from '../dac/shipment';
+import { mergeAddress, detectCityIntelligent, shouldInvokeAIResolver } from '../dac/shipment';
 import {
   getDepartmentForCity,
   getBarriosFromZip,
@@ -891,5 +891,104 @@ describe('Regression — street alias completeness', () => {
     const barrios = getBarriosFromStreet('Rambla Gandhi 500');
     expect(barrios).not.toBeNull();
     expect(barrios).toContain('pocitos');
+  });
+});
+
+// ============================================================
+// Bug #11492 (2026-04-22) — DAC rejected Adriana Abeijon's order:
+//   city  = "Mvdo."
+//   addr  = "Juan Ortíz 3315, Apto. 201"
+//   zip   = "11600"
+//
+// Root cause was a false-positive "high confidence" deterministic result:
+//   - detectBarrio("Mvdo.", "Juan Ortíz 3315") → null  (not a known barrio alias)
+//   - getBarriosFromZip("11600") → ['buceo', 'malvin', 'malvin norte'] (ambiguous)
+//   - getBarriosFromStreet("Juan Ortíz 3315") → null (not in MVD_STREET_RANGES)
+//   - Result: { barrio: null, department: "Montevideo", source: "zip",
+//              confidence: "high" }
+//
+// `confidence === "high"` meant the AI fallback did NOT fire. Then the
+// non-AI path in shipment.ts only normalized resolvedCity to "Montevideo"
+// INSIDE an `if (barrio)` block — so resolvedCity stayed as "Mvdo.", which
+// never matched the DAC city dropdown → city empty → form rejected.
+//
+// Two-part fix:
+//   A) shipment.ts: always normalize resolvedCity to "Montevideo" when
+//      geoDept is Montevideo, regardless of whether barrio was detected.
+//   B) shouldInvokeAIResolver(): add a 4th trigger — "Montevideo resolved
+//      but no barrio" — so the AI resolver fills in the barrio that the
+//      deterministic table couldn't disambiguate.
+// ============================================================
+describe('Regression #11492 — Mvdo. + ambiguous ZIP 11600 + non-canonical street', () => {
+  it('detectCityIntelligent returns dept=Montevideo, barrio=null, confidence=high for exact prod input', () => {
+    const result = detectCityIntelligent('Mvdo.', 'Juan Ortíz 3315', 'Apto. 201', '11600');
+    expect(result.department).toBe('Montevideo');
+    expect(result.barrio).toBeNull();
+    // This is the false-positive we're guarding against: deterministic path
+    // reports "high confidence" even though the barrio is unresolved.
+    expect(result.confidence).toBe('high');
+  });
+
+  it('shouldInvokeAIResolver returns true for the #11492 shape', () => {
+    const intelligent = detectCityIntelligent('Mvdo.', 'Juan Ortíz 3315', 'Apto. 201', '11600');
+    // Without the Fix-B clause this would return false → AI never fires →
+    // barrio stays null → DAC rejects. With the fix the AI is invoked and
+    // can resolve "Juan Ortíz 3315" → Buceo.
+    expect(shouldInvokeAIResolver(intelligent)).toBe(true);
+  });
+
+  it('getDepartmentForCity resolves "Mvdo." deterministically to Montevideo (no AI needed for dept)', () => {
+    // Sanity check that the alias table covers the abbreviation that triggered
+    // the regression. The city-selector code in shipment.ts relies on this
+    // mapping to decide it should normalize resolvedCity to "Montevideo".
+    expect(getDepartmentForCity('Mvdo.')).toBe('Montevideo');
+  });
+});
+
+// ============================================================
+// shouldInvokeAIResolver — trigger matrix
+// Documents the full decision table for when the Claude Haiku fallback fires.
+// ============================================================
+describe('shouldInvokeAIResolver — trigger matrix', () => {
+  it('fires on low confidence', () => {
+    expect(shouldInvokeAIResolver({
+      barrio: null, department: null, source: 'none', confidence: 'low',
+    })).toBe(true);
+  });
+
+  it('fires on medium confidence when barrio is null', () => {
+    expect(shouldInvokeAIResolver({
+      barrio: null, department: 'Montevideo', source: 'zip', confidence: 'medium',
+    })).toBe(true);
+  });
+
+  it('does NOT fire on medium confidence with a barrio (customer named it)', () => {
+    expect(shouldInvokeAIResolver({
+      barrio: 'pocitos', department: 'Montevideo', source: 'alias', confidence: 'medium',
+    })).toBe(false);
+  });
+
+  it('fires when both barrio and department are null', () => {
+    expect(shouldInvokeAIResolver({
+      barrio: null, department: null, source: 'none', confidence: 'high',
+    })).toBe(true);
+  });
+
+  it('fires on Montevideo + no barrio, even at high confidence (#11492 clause)', () => {
+    expect(shouldInvokeAIResolver({
+      barrio: null, department: 'Montevideo', source: 'zip', confidence: 'high',
+    })).toBe(true);
+  });
+
+  it('does NOT fire when department is a non-MVD dept with no barrio (we accept dept-only for interior)', () => {
+    expect(shouldInvokeAIResolver({
+      barrio: null, department: 'Canelones', source: 'zip', confidence: 'high',
+    })).toBe(false);
+  });
+
+  it('does NOT fire when deterministic produced a confirmed barrio (high confidence + alias match)', () => {
+    expect(shouldInvokeAIResolver({
+      barrio: 'pocitos', department: 'Montevideo', source: 'zip', confidence: 'high',
+    })).toBe(false);
   });
 });

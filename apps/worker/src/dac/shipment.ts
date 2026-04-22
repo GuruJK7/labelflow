@@ -597,6 +597,34 @@ export function detectCityIntelligent(
   return { barrio: null, department: zipDept, source: 'none', confidence: 'low' };
 }
 
+/**
+ * Decide whether the AI resolver (Claude Haiku, ~1¢/call) should be invoked
+ * for a given deterministic detection result. Extracted from the shipment
+ * pipeline as a pure function so the decision logic is unit-testable.
+ *
+ * Trigger conditions (any one is enough):
+ *  1. Low confidence                          — deterministic is guessing.
+ *  2. Medium confidence + no barrio           — alias matched but no geographic anchor.
+ *  3. No barrio and no department             — deterministic returned nothing useful.
+ *  4. Montevideo resolved but barrio still null — ZIP mapped to Montevideo but the
+ *     ZIP→barrio table is ambiguous (e.g. 11600 → [buceo, malvin, malvin norte])
+ *     and the street is not in MVD_STREET_RANGES. DAC rejects Montevideo forms
+ *     without a barrio, so deterministic "high confidence dept-only" is a false
+ *     positive here. Added 2026-04-22 for the #11492 regression (Adriana Abeijon,
+ *     "Juan Ortíz 3315, Mvdo., 11600" — customer typed a Montevideo alias with
+ *     an ambiguous ZIP and a street not in our hand-verified table).
+ */
+export function shouldInvokeAIResolver(intelligent: IntelligentCityResult): boolean {
+  const mvdWithoutBarrio =
+    normalize(intelligent.department ?? '') === 'montevideo' && !intelligent.barrio;
+  return (
+    intelligent.confidence === 'low' ||
+    (intelligent.confidence === 'medium' && !intelligent.barrio) ||
+    (!intelligent.barrio && !intelligent.department) ||
+    mvdWithoutBarrio
+  );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // mergeAddress — helper utilities (exported for unit testing)
 // ──────────────────────────────────────────────────────────────────────────
@@ -1559,12 +1587,7 @@ export async function createShipment(
   // ask Claude Haiku to resolve it using structured tool use. The AI result
   // overrides the deterministic result for dept/city/barrio/address/obs.
   // See apps/worker/src/dac/ai-resolver.ts for the full implementation.
-  const needsAI =
-    intelligent.confidence === 'low' ||
-    (intelligent.confidence === 'medium' && !intelligent.barrio) ||
-    (!intelligent.barrio && !intelligent.department);
-
-  if (needsAI) {
+  if (shouldInvokeAIResolver(intelligent)) {
     slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
       `Deterministic confidence ${intelligent.confidence} — invoking AI resolver fallback`,
       { city: addr.city, address1: addr.address1, zip: addr.zip }
@@ -1639,14 +1662,26 @@ export async function createShipment(
       } else {
         slog.info(DAC_STEPS.STEP3_SELECT_DEPT, `GEO VERIFIED: City "${addr.city}" correctly in "${geoDept}"`);
       }
-      // If geo resolved to Montevideo, use intelligent barrio (better than basic alias)
+      // If geo resolved to Montevideo, normalize the CITY dropdown selection to
+      // "Montevideo" regardless of what alias the customer typed ("Mvdo.",
+      // "Mdeo", "MVD", etc.). DAC's Montevideo dept has a single city option
+      // ("Montevideo"); the barrio dropdown does the geographic discrimination.
+      //
+      // BEFORE 2026-04-22: resolvedCity was only normalized INSIDE the barrio
+      // branch, so orders with an ambiguous ZIP (e.g. 11600 → buceo / malvin /
+      // malvin norte) left resolvedCity as the raw alias ("Mvdo."), which
+      // never matched the dropdown → city field empty → DAC rejected the form.
+      // Regression: order #11492 (Adriana Abeijon, "Juan Ortíz 3315, Mvdo.").
       if (normalize(geoDept) === 'montevideo') {
+        resolvedCity = 'Montevideo';
         const barrio = intelligent.barrio ?? detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
         if (barrio) {
           resolvedBarrioHint = barrio;
-          resolvedCity = 'Montevideo';
           slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
             `City "${addr.city}" is in Montevideo, barrio="${barrio}" (source: ${intelligent.source}) — will use "Montevideo" as city`);
+        } else {
+          slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
+            `City "${addr.city}" is in Montevideo, no deterministic barrio — will use "Montevideo" as city, barrio left for AI/manual fallback`);
         }
       }
     } else {
