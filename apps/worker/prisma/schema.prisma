@@ -1,3 +1,18 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// DUAL-SCHEMA WARNING — keep apps/web/prisma/schema.prisma and
+// apps/worker/prisma/schema.prisma BYTE-IDENTICAL. Both apps share the same
+// Supabase database and must generate equivalent Prisma Client types. Drift
+// has broken the Render worker build twice (2026-04-19, 2026-04-22).
+//
+// After editing this file, run from repo root:
+//   npm run sync-schemas    # copies this file to apps/worker/prisma/
+//   npm run check-schemas   # verifies they match
+//
+// `npm run build` at the repo root also auto-runs check-schemas.
+// Source of truth: apps/web/prisma/schema.prisma (edit here; never edit the
+// worker copy directly).
+// ─────────────────────────────────────────────────────────────────────────────
+
 generator client {
   provider = "prisma-client-js"
 }
