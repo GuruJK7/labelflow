@@ -67,4 +67,36 @@ describe('DacAddressRejectedError — address-rejected-by-DAC error class', () =
       expect(err instanceof DacAddressRejectedError).toBe(true);
     }
   });
+
+  // ─── dacErrorText — scraped DAC validation text ──────────────────────
+  // 2026-04-22 — the catch-all "dirección confusa" message was misleading
+  // when the real DAC rejection was something else (bad ZIP, missing
+  // barrio, invalid phone length). We now scrape the DAC error box and
+  // pass it through the error so the Shopify note shows the actual
+  // reason. Tests below lock in that contract.
+
+  it('defaults dacErrorText to empty string when not provided (backwards-compat)', () => {
+    const err = new DacAddressRejectedError('msg', '#1');
+    expect(err.dacErrorText).toBe('');
+  });
+
+  it('carries the scraped DAC validation text when provided', () => {
+    const err = new DacAddressRejectedError(
+      'DAC rejected form',
+      '#11481',
+      'El código postal no es válido para la localidad seleccionada.',
+    );
+    expect(err.dacErrorText).toBe(
+      'El código postal no es válido para la localidad seleccionada.',
+    );
+  });
+
+  it('dacErrorText is accessible via instanceof narrowing (so job-level catch can read it)', () => {
+    const err: unknown = new DacAddressRejectedError('msg', '#1', 'Barrio obligatorio');
+    if (err instanceof DacAddressRejectedError) {
+      expect(err.dacErrorText).toBe('Barrio obligatorio');
+    } else {
+      throw new Error('instanceof narrowing failed — contract regression');
+    }
+  });
 });

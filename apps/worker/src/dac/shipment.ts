@@ -67,12 +67,76 @@ export class DuplicateSubmitError extends Error {
  */
 export class DacAddressRejectedError extends Error {
   readonly isDacAddressRejected = true as const;
+  /**
+   * Raw validation text scraped from the DAC error box (if any), so the
+   * Shopify note shown to the operator reflects the ACTUAL reason DAC
+   * rejected the form (wrong ZIP, missing barrio, invalid phone, etc.)
+   * instead of our catch-all "dirección confusa".
+   *
+   * Empty string when no error box was visible — falls back to the
+   * generic "localidad/barrio no pudo identificarse" wording in the
+   * job-level note builder.
+   */
+  readonly dacErrorText: string;
   constructor(
     message: string,
     readonly orderName: string,
+    dacErrorText: string = '',
   ) {
     super(message);
     this.name = 'DacAddressRejectedError';
+    this.dacErrorText = dacErrorText;
+  }
+}
+
+/**
+ * Best-effort scrape of whatever validation text DAC is showing right
+ * now, used when the form silently rejected (URL stayed on /envios/nuevo).
+ *
+ * DAC does not expose a stable error API. We try several selectors
+ * defensively and pick the shortest non-empty one:
+ *
+ *   - `.validation-summary-errors` / `.field-validation-error`
+ *     (standard ASP.NET MVC validation helpers DAC uses)
+ *   - `.alert-danger` / `.alert-error` (bootstrap alert boxes)
+ *   - any element whose visible text contains "error" or "inválido"
+ *
+ * Returns an empty string if nothing is visible. Trimmed and capped
+ * at 240 chars so it fits inside a Shopify note comfortably.
+ */
+async function scrapeDacErrorBox(page: Page): Promise<string> {
+  try {
+    const texts = await page.evaluate(() => {
+      const sels = [
+        '.validation-summary-errors',
+        '.field-validation-error',
+        '.alert-danger',
+        '.alert-error',
+        '[role="alert"]',
+      ];
+      const out: string[] = [];
+      for (const sel of sels) {
+        const nodes = Array.from(document.querySelectorAll(sel));
+        for (const n of nodes) {
+          const t = (n as HTMLElement).innerText?.trim();
+          if (t && t.length > 0) out.push(t);
+        }
+      }
+      return out;
+    });
+    if (!Array.isArray(texts) || texts.length === 0) return '';
+    // Pick the longest non-empty — usually the summary box has the
+    // full validation list, single fields repeat it in fragments.
+    const best = texts
+      .map((t) => t.replace(/\s+/g, ' ').trim())
+      .filter((t) => t.length > 0)
+      .sort((a, b) => b.length - a.length)[0];
+    if (!best) return '';
+    return best.length > 240 ? best.slice(0, 237) + '...' : best;
+  } catch {
+    // Page evaluation can fail mid-teardown; never let scraping
+    // interrupt the throw path.
+    return '';
   }
 }
 
@@ -2111,10 +2175,40 @@ export async function createShipment(
         '[C-4] Failed to clear PendingShipment after rejected-form path',
       );
     }
+    // Best-effort: capture whatever DAC is actually displaying so the
+    // Shopify note reflects the real rejection reason (bad ZIP, missing
+    // barrio, invalid phone length, etc.) instead of our catch-all.
+    const dacErrorText = await scrapeDacErrorBox(page);
+    if (dacErrorText) {
+      slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV,
+        `[address-rejected] DAC error box: "${dacErrorText}"`,
+        { orderName: order.name },
+      );
+    }
+    // Observability: log whether the AI fallback was actually consulted
+    // before we gave up. A common failure mode is `ANTHROPIC_API_KEY`
+    // being unset in Render → the AI call returns null silently, the
+    // deterministic resolver can't classify "Mvdo.", and we end up here.
+    // This line makes that path visible in the logs.
+    slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV,
+      `[address-rejected] AI resolver status before throw: ${
+        aiResolution
+          ? `ran (source=${aiResolution.source}, confidence=${aiResolution.confidence}, dept=${aiResolution.department})`
+          : 'NOT invoked or returned null — deterministic path only'
+      }`,
+      {
+        orderName: order.name,
+        aiInvoked: aiResolution != null,
+        city: addr.city,
+        zip: addr.zip,
+      },
+    );
     throw new DacAddressRejectedError(
       `DAC rejected the shipment form for ${order.name} (URL stayed on /envios/nuevo and no guía was extracted). ` +
-      `Likely cause: address could not be classified into a valid department/barrio. Review the customer address in Shopify.`,
+      `Likely cause: address could not be classified into a valid department/barrio. Review the customer address in Shopify.` +
+      (dacErrorText ? ` DAC validation text: "${dacErrorText}"` : ''),
       order.name,
+      dacErrorText,
     );
   }
 

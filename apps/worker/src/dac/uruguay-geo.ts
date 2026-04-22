@@ -251,6 +251,20 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   // MONTEVIDEO (capital: Montevideo)
   // ─────────────────────────────────────────────
   'montevideo': 'Montevideo',
+  // Common Montevideo abbreviations seen in real Shopify orders (e.g.
+  // city="Mvdo.", "Mdeo", "MVD"). The lookup key is the post-normalized
+  // form (lowercased, dot stripped, accents removed) — see
+  // getDepartmentForCity() above. Without these, the deterministic
+  // resolver returns undefined and the order falls through to the AI
+  // resolver (or, if ANTHROPIC_API_KEY is unset, to DacAddressRejectedError).
+  // Catching abbreviations here is zero-cost and covers the common case.
+  'mvdo': 'Montevideo',
+  'mdeo': 'Montevideo',
+  'mvd': 'Montevideo',
+  'mdo': 'Montevideo',
+  'mtdeo': 'Montevideo',
+  'mtvdeo': 'Montevideo',
+  'mvdeo': 'Montevideo',
   'santiago vazquez': 'Montevideo',
   'abayuba': 'Montevideo',
   'pajas blancas': 'Montevideo',

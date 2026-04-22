@@ -849,10 +849,22 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         // English error dump. Clearer for whoever is triaging Shopify and
         // dedupes correctly against itself on repeated reprocess attempts.
         if (!isDacGuiaConstraint) {
+          // For DacAddressRejectedError, include ZIP (the operator often
+          // needs it to spot a typo the resolver couldn't) AND, when we
+          // successfully scraped DAC's own error box, the actual DAC
+          // validation text — so the operator sees "ZIP inválido" /
+          // "barrio obligatorio" instead of our catch-all "dirección
+          // confusa". See scrapeDacErrorBox in dac/shipment.ts.
+          const dacErrText = isDacAddressRejected
+            ? (err as DacAddressRejectedError).dacErrorText
+            : '';
           const noteText = isDacAddressRejected
             ? `LabelFlow: no se pudo crear el envío en DAC — dirección confusa o incompleta en Shopify ` +
-              `(ciudad="${addr.city ?? ''}", dirección="${addr.address1 ?? ''}"${addr.address2 ? `, referencia="${addr.address2}"` : ''}). ` +
-              `DAC rechazó el formulario porque la localidad/barrio no pudo identificarse. ` +
+              `(ciudad="${addr.city ?? ''}", dirección="${addr.address1 ?? ''}"${addr.address2 ? `, referencia="${addr.address2}"` : ''}` +
+              `${addr.zip ? `, código postal="${addr.zip}"` : ''}). ` +
+              (dacErrText
+                ? `DAC mostró este mensaje de validación: "${dacErrText}". `
+                : `DAC rechazó el formulario porque la localidad/barrio no pudo identificarse. `) +
               `Acción: contactar al cliente para corregir la dirección en Shopify y el worker la va a reprocesar solo en el próximo ciclo.`
             : `LabelFlow ERROR: ${errorMsg.substring(0, 200)}`;
           try {

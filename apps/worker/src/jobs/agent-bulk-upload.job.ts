@@ -543,10 +543,19 @@ export async function agentBulkUploadJob(job: {
 
         // Don't pollute real Shopify orders with notes in dry-run
         if (!dryRun) {
+          // Same enrichment as process-orders.job.ts: include ZIP + the
+          // real DAC validation text when we could scrape it, so the
+          // operator sees the actual reason instead of a catch-all.
+          const dacErrText = isDacAddressRejected
+            ? (err as DacAddressRejectedError).dacErrorText
+            : '';
           const noteText = isDacAddressRejected
             ? `LabelFlow: no se pudo crear el envío en DAC — dirección confusa o incompleta en Shopify ` +
-              `(ciudad="${shipAddr?.city ?? ''}", dirección="${shipAddr?.address1 ?? ''}"${shipAddr?.address2 ? `, referencia="${shipAddr.address2}"` : ''}). ` +
-              `DAC rechazó el formulario porque la localidad/barrio no pudo identificarse. ` +
+              `(ciudad="${shipAddr?.city ?? ''}", dirección="${shipAddr?.address1 ?? ''}"${shipAddr?.address2 ? `, referencia="${shipAddr.address2}"` : ''}` +
+              `${shipAddr?.zip ? `, código postal="${shipAddr.zip}"` : ''}). ` +
+              (dacErrText
+                ? `DAC mostró este mensaje de validación: "${dacErrText}". `
+                : `DAC rechazó el formulario porque la localidad/barrio no pudo identificarse. `) +
               `Acción: contactar al cliente para corregir la dirección en Shopify y el worker la va a reprocesar solo en el próximo ciclo.`
             : `LabelFlow ERROR: ${errorMsg.slice(0, 200)}`;
           try {
