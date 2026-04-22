@@ -123,27 +123,47 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
       (tenant.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first',
     );
 
-    // 2. Filter already-processed. Only skip orders with a truly COMPLETED
-    // label (real guía, not PENDING-{ts} placeholder). Stuck CREATED/FAILED
-    // labels get retried so Shopify "unfulfilled" orders always reprocess.
-    const existingLabels = await db.label.findMany({
+    // ── 2026-04-22 post-run audit ─────────────────────────────────────────
+    // Shopify's `fulfillment_status=unfulfilled` is the single source of
+    // truth; we no longer skip orders with a COMPLETED Label. See the
+    // matching block in process-orders.job.ts for the full rationale.
+    // Summary: when an operator manually cancels a bad DAC shipment and
+    // unfulfills the order in Shopify, that's an explicit "redo this"
+    // signal and must not be filtered out.
+    const existingCompletedLabels = await db.label.findMany({
       where: {
         tenantId,
         status: 'COMPLETED',
         NOT: { dacGuia: { startsWith: 'PENDING-' } },
       },
-      select: { shopifyOrderId: true },
+      select: { shopifyOrderId: true, dacGuia: true, updatedAt: true },
     });
-    const existingIds = new Set(existingLabels.map((l) => l.shopifyOrderId));
-    const newOrders = orders.filter((o) => !existingIds.has(String(o.id)));
+    const completedByOrderId = new Map(
+      existingCompletedLabels.map((l) => [l.shopifyOrderId, l] as const),
+    );
+    const reprocessCount = orders.filter((o) => completedByOrderId.has(String(o.id))).length;
+    if (reprocessCount > 0) {
+      const reprocessDetails = orders
+        .filter((o) => completedByOrderId.has(String(o.id)))
+        .slice(0, 10)
+        .map((o) => {
+          const prev = completedByOrderId.get(String(o.id))!;
+          return { orderName: o.name, previousGuia: prev.dacGuia, previousCompletedAt: prev.updatedAt };
+        });
+      slog.warn(
+        'filter',
+        `Bulk: reprocessing ${reprocessCount} order(s) that were previously COMPLETED — operator unfulfilled them in Shopify`,
+        { reprocessDetails },
+      );
+    }
 
     const maxOrders = tenant.maxOrdersPerRun ?? 20;
-    const limitedOrders = newOrders.slice(0, maxOrders);
+    const limitedOrders = orders.slice(0, maxOrders);
     totalOrders = limitedOrders.length;
 
     slog.info(
       'shopify',
-      `Found ${orders.length} unfulfilled, ${newOrders.length} new, processing ${totalOrders} (max ${maxOrders})`,
+      `Found ${orders.length} unfulfilled (${reprocessCount} reprocess), processing ${totalOrders} (max ${maxOrders})`,
     );
 
     if (totalOrders === 0) {

@@ -176,24 +176,52 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
 
     slog.info('shopify', `Fetched ${orders.length} unfulfilled orders from Shopify (sort: ${orderSortDirection})`);
 
-    // User-requested behavior: if Shopify still says "unfulfilled", reprocess it
-    // regardless of DB state. Only skip when we have a truly COMPLETED label
-    // with a real (non-placeholder) guía. This unsticks orders whose dacGuia is
-    // a PENDING-{ts} placeholder or whose status is CREATED/FAILED.
-    const existingLabels = await db.label.findMany({
+    // ── 2026-04-22 post-run audit ─────────────────────────────────────────
+    // Shopify's `fulfillment_status=unfulfilled` is the single source of
+    // truth. An order returned here is one the operator expects us to ship.
+    //
+    // We NO LONGER skip orders whose DB Label is COMPLETED. If the operator
+    // manually cancelled a bad DAC shipment and unfulfilled the order in
+    // Shopify, we must redo it — not silently skip because "the DB thinks
+    // it's done". The Label.upsert a few lines below overwrites the old
+    // guía/status on successful reprocess, and the Shopify note append
+    // preserves the prior guía for audit.
+    //
+    // Safety: every active tenant has fulfillMode = "on" | "always", so a
+    // successful reprocess re-fulfills the order in Shopify and it leaves
+    // the unfulfilled set. The only way an order stays in this list after
+    // we touch it is if Shopify fulfillment POST fails OR the tenant has
+    // fulfillMode="off" (no active tenant currently does). Both cases are
+    // already handled by the existing retry/PENDING-guía flow.
+    //
+    // We still look up existing labels to emit a telemetry line when we're
+    // about to reprocess something that previously COMPLETED — easy to grep
+    // if duplicate-DAC-shipment reports ever come in.
+    const existingCompletedLabels = await db.label.findMany({
       where: {
         tenantId,
         status: 'COMPLETED',
         NOT: { dacGuia: { startsWith: 'PENDING-' } },
       },
-      select: { shopifyOrderId: true },
+      select: { shopifyOrderId: true, dacGuia: true, updatedAt: true },
     });
-    const processedIds = new Set(existingLabels.map(l => l.shopifyOrderId));
-    const beforeFilter = orders.length;
-    orders = orders.filter(o => !processedIds.has(String(o.id)));
-    const filteredOut = beforeFilter - orders.length;
-    if (filteredOut > 0) {
-      slog.info('filter', `Filtered out ${filteredOut} orders with truly COMPLETED labels (real guía)`);
+    const completedByOrderId = new Map(
+      existingCompletedLabels.map((l) => [l.shopifyOrderId, l] as const),
+    );
+    const reprocessCount = orders.filter((o) => completedByOrderId.has(String(o.id))).length;
+    if (reprocessCount > 0) {
+      const reprocessDetails = orders
+        .filter((o) => completedByOrderId.has(String(o.id)))
+        .slice(0, 10)
+        .map((o) => {
+          const prev = completedByOrderId.get(String(o.id))!;
+          return { orderName: o.name, previousGuia: prev.dacGuia, previousCompletedAt: prev.updatedAt };
+        });
+      slog.warn(
+        'filter',
+        `Reprocessing ${reprocessCount} order(s) that were previously COMPLETED — operator unfulfilled them in Shopify`,
+        { reprocessDetails },
+      );
     }
 
     // Product type filter: only process orders containing allowed product types
