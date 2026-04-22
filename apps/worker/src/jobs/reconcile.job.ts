@@ -73,23 +73,28 @@ export async function runReconciliation(): Promise<void> {
         dacGuia: true,
         tenantId: true,
         createdAt: true,
+        // M-2: structured retry counter replaces the RunLog full-text scan.
+        autoRetryCount: true,
       },
     });
 
     for (const label of failedLabels) {
       if (!isRetryableError(label.errorMessage)) continue;
 
-      // Check how many times we've already auto-retried this label
-      const retryCount = await db.runLog.count({
-        where: {
-          tenantId: label.tenantId,
-          message: { contains: `auto-retry:${label.shopifyOrderName}` },
-        },
-      });
-
-      if (retryCount >= MAX_AUTO_RETRIES) {
-        logger.info({ label: label.shopifyOrderName, retries: retryCount },
-          '[Reconcile] Max auto-retries reached, leaving as FAILED');
+      // M-2 (2026-04-21 audit): O(1) cap check against a structured field.
+      // The previous implementation ran a `RunLog.count WHERE message
+      // CONTAINS 'auto-retry:<orderName>'` for every FAILED label on every
+      // reconcile pass — linear in RunLog size (millions of rows on busy
+      // tenants) and vulnerable to substring false-matches when an order
+      // name happened to appear in an unrelated log line. The counter is
+      // incremented below on each reset and reset to 0 by the success path
+      // in process-orders.job.ts upsert-update, so "already retried N
+      // times" is a single field comparison.
+      if (label.autoRetryCount >= MAX_AUTO_RETRIES) {
+        logger.info(
+          { label: label.shopifyOrderName, retries: label.autoRetryCount },
+          '[Reconcile] Max auto-retries reached, leaving as FAILED',
+        );
         continue;
       }
 
@@ -100,22 +105,31 @@ export async function runReconciliation(): Promise<void> {
         continue;
       }
 
-      // Delete the FAILED label record so the order can be re-processed fresh
-      await db.label.delete({ where: { id: label.id } });
-
-      // Log the auto-retry for tracking
-      await db.runLog.create({
+      // Reset the FAILED label back to PENDING so the next cron cycle picks
+      // it up through the normal path (processOrdersJob's upsert handles the
+      // rest — no more deletes, no more orphan-row churn). Bump
+      // autoRetryCount so the cap check on the next reconcile pass sees the
+      // attempt even if it fails identically. We keep dacGuia intact (the
+      // guard above ensures it's null or a placeholder) so the prior-label
+      // reuse path in processOrdersJob stays correct.
+      await db.label.update({
+        where: { id: label.id },
         data: {
-          tenantId: label.tenantId,
-          jobId: 'reconcile',
-          level: 'INFO',
-          message: `auto-retry:${label.shopifyOrderName} — deleted FAILED label (${label.errorMessage?.substring(0, 80)})`,
+          status: 'PENDING',
+          errorMessage: null,
+          autoRetryCount: { increment: 1 },
         },
       });
 
       fixed++;
-      logger.info({ label: label.shopifyOrderName, error: label.errorMessage?.substring(0, 60) },
-        '[Reconcile] Deleted FAILED label for auto-retry');
+      logger.info(
+        {
+          label: label.shopifyOrderName,
+          error: label.errorMessage?.substring(0, 60),
+          nextRetry: label.autoRetryCount + 1,
+        },
+        '[Reconcile] Reset FAILED label to PENDING for auto-retry',
+      );
     }
 
     // ================================================

@@ -7,6 +7,7 @@ import { fulfillOrderWithTracking } from '../shopify/fulfillment';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress, DuplicateSubmitError } from '../dac/shipment';
+import { withTenantDacLock, DacLockHeldError } from '../dac/tenant-lock';
 import type { AutoPayConfig } from '../dac/payment';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
@@ -50,7 +51,60 @@ async function withRetry<T>(
   throw lastError!;
 }
 
+/**
+ * Public entry point: acquires the per-tenant DAC processing lease
+ * (Fase 3, 2026-04-21 audit) and runs the actual order-processing body.
+ *
+ * If another worker already holds the lease for this tenant, the job is
+ * re-queued to PENDING and a later poll cycle will re-pick it. This
+ * prevents two workers from driving DAC for the same credentials at the
+ * same time — DAC only permits a single active session per user, and
+ * concurrent logins cause login loops, orphan PENDING-* guías, and
+ * occasionally real duplicate shipments.
+ */
 export async function processOrdersJob(tenantId: string, jobId: string): Promise<void> {
+  try {
+    await withTenantDacLock(tenantId, jobId, () =>
+      processOrdersJobInner(tenantId, jobId),
+    );
+  } catch (err) {
+    if (err instanceof DacLockHeldError) {
+      logger.warn(
+        {
+          tenantId,
+          jobId,
+          heldBy: err.holderId,
+          lockExpiresAt: err.expiresAt.toISOString(),
+        },
+        '[DAC-Lock] Tenant lease busy — re-queueing job to PENDING',
+      );
+      // Reset the row back to PENDING so the poll loop can re-claim it
+      // after the current holder releases. The Job row was already
+      // UPDATE'd to RUNNING by `claimPendingJob` (index.ts); undo that.
+      // We keep `errorMessage` short so the dashboard sees a readable
+      // cause; the next claim will clear it when the job actually runs.
+      await db.job
+        .update({
+          where: { id: jobId },
+          data: {
+            status: 'PENDING',
+            startedAt: null,
+            errorMessage: `Deferred: DAC lease held by ${err.holderId}`,
+          },
+        })
+        .catch((updateErr) => {
+          logger.error(
+            { tenantId, jobId, error: (updateErr as Error).message },
+            '[DAC-Lock] Failed to re-queue deferred job — may stay in RUNNING until reconcile',
+          );
+        });
+      return;
+    }
+    throw err;
+  }
+}
+
+async function processOrdersJobInner(tenantId: string, jobId: string): Promise<void> {
   const startTime = Date.now();
   let successCount = 0;
   let failedCount = 0;
@@ -463,6 +517,10 @@ export async function processOrdersJob(tenantId: string, jobId: string): Promise
             paymentStatus: resolvedPaymentStatus,
             paymentFailureReason: resolvedPaymentFailureReason,
             paymentAttemptedAt,
+            // M-2: a DAC-accepted retry means the transient-error streak
+            // ended; zero the counter so a later unrelated blip gets the
+            // full MAX_AUTO_RETRIES budget again.
+            autoRetryCount: 0,
           },
         });
 

@@ -1362,25 +1362,60 @@ export async function resolveAddressWithAI(
   );
   if (recurrenceHit) return recurrenceHit;
 
-  // 2. Tenant opt-in + quota check
-  const tenant = await db.tenant.findUnique({
-    where: { id: input.tenantId },
-    select: {
-      aiResolverEnabled: true,
-      aiResolverDailyLimit: true,
-      aiResolverDailyUsed: true,
-    },
-  });
+  // 2. Tenant opt-in + quota check (M-4, 2026-04-21 audit)
+  //
+  // Previously this was a three-step "read → check → later-increment" dance:
+  //
+  //     const t = await db.tenant.findUnique(...)
+  //     if (t.aiResolverDailyUsed >= t.aiResolverDailyLimit) return null;
+  //     // ... make the AI call ...
+  //     await db.tenant.update({ data: { aiResolverDailyUsed: { increment: 1 } } });
+  //
+  // Under concurrent callers the read-then-increment is not atomic: N
+  // orders classified as YELLOW in the same 10-second window all read the
+  // same `aiResolverDailyUsed`, all pass the cap check, all fire the AI
+  // call, and then all increment — blowing past the limit by N-1 and
+  // silently driving up the Anthropic bill.
+  //
+  // Replaced with a single atomic UPDATE that increments only when the
+  // cap is not reached AND the tenant has AI enabled. If the row was
+  // touched we won a slot and the counter is already reserved; if not,
+  // we're either disabled or over-limit and fall back. We trade a rare
+  // "quota burned on a failed AI call" for a hard cap on overshoot —
+  // the quota resets at midnight UY anyway, so one wasted slot per
+  // daily failure is negligible.
+  const reserved = await db.$queryRaw<
+    { ai_resolver_daily_used: number; ai_resolver_daily_limit: number }[]
+  >`
+    UPDATE "Tenant"
+    SET "aiResolverDailyUsed" = "aiResolverDailyUsed" + 1
+    WHERE id = ${input.tenantId}
+      AND "aiResolverEnabled" = true
+      AND "aiResolverDailyUsed" < "aiResolverDailyLimit"
+    RETURNING "aiResolverDailyUsed" AS ai_resolver_daily_used,
+              "aiResolverDailyLimit" AS ai_resolver_daily_limit
+  `;
 
-  if (!tenant) {
-    logger.warn({ tenantId: input.tenantId }, 'Tenant not found for AI resolver');
-    return null;
-  }
-  if (!tenant.aiResolverEnabled) {
-    logger.info({ tenantId: input.tenantId }, 'AI resolver disabled for this tenant');
-    return null;
-  }
-  if (tenant.aiResolverDailyUsed >= tenant.aiResolverDailyLimit) {
+  if (reserved.length === 0) {
+    // Distinguish "disabled" from "over-quota" from "tenant gone" with a
+    // single diagnostic read. This is only hit on the failure path, so
+    // the extra round-trip doesn't matter in steady state.
+    const tenant = await db.tenant.findUnique({
+      where: { id: input.tenantId },
+      select: {
+        aiResolverEnabled: true,
+        aiResolverDailyLimit: true,
+        aiResolverDailyUsed: true,
+      },
+    });
+    if (!tenant) {
+      logger.warn({ tenantId: input.tenantId }, 'Tenant not found for AI resolver');
+      return null;
+    }
+    if (!tenant.aiResolverEnabled) {
+      logger.info({ tenantId: input.tenantId }, 'AI resolver disabled for this tenant');
+      return null;
+    }
     logger.warn(
       {
         tenantId: input.tenantId,
@@ -1391,6 +1426,17 @@ export async function resolveAddressWithAI(
     );
     return null;
   }
+
+  // Slot reserved — record the post-increment counter for logging.
+  const quotaSnapshot = reserved[0];
+  logger.debug(
+    {
+      tenantId: input.tenantId,
+      used: quotaSnapshot.ai_resolver_daily_used,
+      limit: quotaSnapshot.ai_resolver_daily_limit,
+    },
+    'AI resolver quota slot reserved (atomic CAS-increment)',
+  );
 
   // 3. API key check
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -1729,18 +1775,7 @@ export async function resolveAddressWithAI(
     );
   }
 
-  // 10. Increment tenant daily quota
-  try {
-    await db.tenant.update({
-      where: { id: input.tenantId },
-      data: { aiResolverDailyUsed: { increment: 1 } },
-    });
-  } catch (err) {
-    logger.warn(
-      { error: (err as Error).message },
-      'Failed to increment quota counter',
-    );
-  }
+  // 10. Quota already incremented atomically at step 2 (M-4).
 
   logger.info(
     {

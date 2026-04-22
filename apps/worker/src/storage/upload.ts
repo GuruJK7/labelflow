@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { getConfig } from '../config';
 import logger from '../logger';
+import { localYmd } from '../utils';
 
 function getSupabase() {
   const config = getConfig();
@@ -24,7 +25,10 @@ export async function uploadLabelPdf(
   const config = getConfig();
   const supabase = getSupabase();
 
-  const today = new Date().toISOString().split('T')[0];
+  // M-7 (2026-04-21 audit): bucket by UY-local date so operators looking at
+  // "today's labels" at 22:00 UY see them in today's folder, not tomorrow's
+  // (which is what UTC would do). See `localYmd` for the full rationale.
+  const today = localYmd();
   const storagePath = `${tenantId}/${today}/${labelId}.pdf`;
 
   const { error } = await supabase.storage

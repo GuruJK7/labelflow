@@ -261,6 +261,21 @@ model Label {
   errorMessage     String?
   emailSent        Boolean     @default(false)
   emailSentAt      DateTime?
+
+  // M-2 (2026-04-21 audit): reconcile used to count "auto-retry:<orderName>"
+  // entries in RunLog with a `contains` substring scan to decide whether a
+  // FAILED label had already been auto-retried the maximum number of times.
+  // The scan grew linearly with RunLog (millions of rows on busy tenants)
+  // and had a false-match footgun whenever a log message happened to
+  // contain another order's name as a prefix/suffix. Replaced by this
+  // structured counter: reconcile bumps it when it resets a FAILED label,
+  // the success path resets it to 0 when a retry succeeds, and the cap
+  // check becomes an O(1) field compare. Legacy FAILED labels start at
+  // 0 — worst case they get MAX_AUTO_RETRIES extra attempts the first
+  // time reconcile sees them after the migration, which is an acceptable
+  // one-time blip.
+  autoRetryCount   Int         @default(0)
+
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
@@ -811,6 +826,78 @@ enum PendingShipmentStatus {
   PENDING   // Finalizar clicked, guía extraction still in-flight or failed
   RESOLVED  // extraction succeeded; resolvedGuia is the real DAC guía
   ORPHANED  // stayed PENDING past threshold — operator must reconcile manually
+}
+
+// --- CLASSIFIER METRICS (observability) ---
+//
+// O-1 (2026-04-21 audit): day-grained counters of how the order classifier
+// split each bulk run into GREEN / YELLOW / RED. Before this, "what
+// fraction of orders are we auto-shipping vs. queueing for review?" had
+// to be reconstructed by scanning RunLog — linear in log size and
+// vulnerable to message-format drift. This table gives a single row per
+// (tenantId, dayYmd) with counters that are atomically incremented on
+// every bulk run.
+//
+// `dayYmd` is a UY-local date string (YYYY-MM-DD) built via the
+// `localYmd()` helper — see M-7. Using a local string as the day key is
+// intentional: a midnight-crossing run in UY should show up in the
+// corresponding UY day, not the adjacent UTC day the operator doesn't
+// think of.
+model ClassifierMetric {
+  id        String   @id @default(cuid())
+  tenantId  String
+  dayYmd    String   // UY-local YYYY-MM-DD
+  green     Int      @default(0)
+  yellow    Int      @default(0)
+  red       Int      @default(0)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, dayYmd])
+  @@index([tenantId, dayYmd])
+}
+
+// --- DAC PROCESSING LEASE (cross-worker serialization) ---
+//
+// Fase 3 (2026-04-21 audit): serialize DAC processing per tenant across
+// multiple worker processes.
+//
+// C-6 already makes job claiming atomic (`FOR UPDATE SKIP LOCKED`), so two
+// workers can't claim the same Job row. But the scheduler's dedup check —
+// "don't create a PENDING job if one already exists for this tenant" — is
+// racy: two scheduler instances running the same minute can both see "no
+// pending job" and both INSERT, producing two valid PENDING jobs for the
+// same tenant. C-6 then claims each job by a different worker, and both
+// log into the same DAC account concurrently. DAC enforces a single
+// active session per user, so this causes login loops, half-submitted
+// forms, and in the worst case duplicate guías (C-4 catches the duplicate
+// guía, but not the login thrash).
+//
+// This table is a distributed mutex keyed on tenantId with TTL semantics:
+//   - Acquire = INSERT (first win) OR UPDATE WHERE expiresAt < NOW()
+//     (take over from a dead holder).
+//   - Heartbeat = bump expiresAt every ~2 min during the run so a live
+//     holder never looks dead.
+//   - Release = DELETE WHERE holderId = mine, in finally.
+//
+// If acquire fails (lock held by someone else), the job is re-queued to
+// PENDING and another poll cycle will pick it up after the holder releases.
+//
+// Edge cases handled:
+//   - Process crash mid-run: lease expires after TTL, next worker can take
+//     over. Leaves the Job in RUNNING — reconcile.job step 3 picks that up.
+//   - Same worker picks the same tenant twice (shouldn't happen with C-6,
+//     but defensive): acquire returns true because holderId matches in the
+//     expired-takeover path.
+model DacProcessingLease {
+  tenantId   String   @id
+  holderId   String   // "hostname#pid#random8" — identifies the worker instance
+  jobId      String?  // the Job this lease was acquired for (audit trail)
+  acquiredAt DateTime @default(now())
+  expiresAt  DateTime // bumped by the heartbeat timer every HEARTBEAT_MS
+
+  @@index([expiresAt])      // sweeper / takeover queries scan by expiry
+  @@index([holderId])       // ops queries: "what does worker X hold right now?"
 }
 
 // --- GDPR COMPLIANCE (Shopify mandatory privacy webhooks) ---

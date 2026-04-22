@@ -33,6 +33,7 @@ import { uploadOrdersJsonToStorage } from '../storage/upload';
 import { createStepLogger } from '../logger';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { classifyOrders, type ClassifiedOrder } from '../rules/order-classifier';
+import { recordClassifierMetric } from '../rules/classifier-metrics';
 import { determinePaymentType } from '../rules/payment';
 import { evaluateShippingRules, type ShippingRuleRow } from '../rules/shipping';
 import { mergeAddress } from '../dac/shipment';
@@ -165,6 +166,15 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
       'classify',
       `Zones: ${classified.green.length} GREEN, ${classified.yellow.length} YELLOW, ${classified.red.length} RED`,
     );
+
+    // O-1 (2026-04-21 audit): persist day-grained GREEN/YELLOW/RED counts
+    // so the dashboard doesn't have to substring-scan RunLog. Fire-and-
+    // forget — telemetry failures must never fail the bulk job.
+    await recordClassifierMetric(tenantId, {
+      green: classified.green.length,
+      yellow: classified.yellow.length,
+      red: classified.red.length,
+    });
 
     // Build a lookup from orderId → classification
     const classByOrderId = new Map<string, ClassifiedOrder>();

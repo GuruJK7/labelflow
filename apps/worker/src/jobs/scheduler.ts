@@ -4,6 +4,7 @@ import {
   resetAllDailyQuotas,
   cleanupExpiredAddressResolutions,
 } from '../dac/ai-resolver';
+import { probeCaptchaBalance } from '../dac/captcha-balance';
 
 /**
  * Converts a UTC Date to a Date-like object in a given IANA timezone.
@@ -157,6 +158,22 @@ export function startScheduler(): void {
             logger.error(
               { error: (sweepErr as Error).message },
               'Failed to sweep expired AddressResolution rows',
+            );
+          }
+
+          // O-2 (2026-04-21 audit): 2Captcha wallet probe. Alerting at
+          // the daily boundary gives us ~24h of runway to top up before a
+          // fresh-login tenant hits ERROR_ZERO_BALANCE. The probe itself
+          // logs the alert (and swallows probe failures); we don't need
+          // to branch on the return value here.
+          try {
+            await probeCaptchaBalance();
+          } catch (probeErr) {
+            // probeCaptchaBalance already swallows internally, but belt &
+            // suspenders to make sure the scheduler tick never throws.
+            logger.error(
+              { error: (probeErr as Error).message },
+              '2Captcha balance probe crashed unexpectedly',
             );
           }
         }
