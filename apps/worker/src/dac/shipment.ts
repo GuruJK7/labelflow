@@ -56,11 +56,35 @@ function computeIdempotencyKey(tenantId: string, shopifyOrderId: string): string
 }
 
 /**
- * C-4 guard. Throws DuplicateSubmitError if a PendingShipment row already
- * exists for this (tenant, order). Safe to call multiple times — always
- * read-only.
+ * C-4 guard. Throws DuplicateSubmitError if a PendingShipment row exists in
+ * an ambiguous state (PENDING or ORPHANED) — both mean we don't know whether
+ * DAC has a real guía we missed, so a reprocess would risk a duplicate DAC
+ * shipment. Those require manual reconciliation via DAC historial.
+ *
+ * ── 2026-04-22 post-run audit ──────────────────────────────────────────────
+ * RESOLVED rows are explicitly NOT treated as duplicates. A RESOLVED marker
+ * means the prior run finished cleanly and we already linked the real guía.
+ * If we're entering createShipment for this order again, Shopify's
+ * `fulfillment_status=unfulfilled` said so — the operator deliberately chose
+ * to redo (wrong address printed, courier pickup failed, etc.). We delete
+ * the stale RESOLVED row and let `markSubmitAttempted` below write a fresh
+ * PENDING marker for the new submit.
+ *
+ * Why deleting the RESOLVED row is safe:
+ *   - DAC's guía from the prior run still exists on DAC's side. That's the
+ *     operator's problem, not ours — they cancelled it in DAC before
+ *     unfulfilling in Shopify. We don't touch DAC historial from here.
+ *   - Label row (different table) gets overwritten via upsert with the new
+ *     guía; the prior guía stays in the note/tag on Shopify for audit.
+ *   - Two concurrent workers that both see RESOLVED and both delete is fine:
+ *     one wins the subsequent markSubmitAttempted INSERT, the loser gets
+ *     P2002 and bails via the concurrent-submit DuplicateSubmitError branch.
+ *
+ * PENDING / ORPHANED continue to block — if we never got a guía back, there
+ * may be one in DAC historial we never linked, and reprocessing would
+ * double-ship. Those paths need the operator to manually reconcile first.
  */
-async function assertNoPriorSubmit(
+export async function assertNoPriorSubmit(
   tenantId: string,
   shopifyOrderId: string,
   slog: StepLogger,
@@ -76,6 +100,33 @@ async function assertNoPriorSubmit(
     },
   });
   if (!prior) return;
+
+  if (prior.status === 'RESOLVED') {
+    slog.info(
+      DAC_STEPS.SUBMIT_WAIT_NAV,
+      `Reprocessing order ${shopifyOrderId}: clearing prior RESOLVED PendingShipment (old guía=${prior.resolvedGuia ?? 'n/a'}) to allow fresh submit`,
+      {
+        priorGuia: prior.resolvedGuia,
+        priorAttemptAgoMs: Date.now() - prior.submitAttemptedAt.getTime(),
+      },
+    );
+    try {
+      await db.pendingShipment.delete({
+        where: { tenantId_shopifyOrderId: { tenantId, shopifyOrderId } },
+      });
+    } catch (err) {
+      // Row vanished between the findUnique and the delete — either a
+      // concurrent reprocess beat us, or reconcile swept it. Either way
+      // markSubmitAttempted below is the source of truth for the race.
+      if (
+        !(err instanceof Prisma.PrismaClientKnownRequestError) ||
+        err.code !== 'P2025'
+      ) {
+        throw err;
+      }
+    }
+    return;
+  }
 
   slog.warn(
     DAC_STEPS.SUBMIT_WAIT_NAV,
