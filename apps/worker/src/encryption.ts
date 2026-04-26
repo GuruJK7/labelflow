@@ -56,3 +56,30 @@ export function decryptIfPresent(value: string | null | undefined): string | nul
     return null;
   }
 }
+
+/**
+ * Backward-compatible decrypt for fields being migrated to encryption at rest
+ * (e.g. dacUsername). Returns decrypted plaintext for encrypted rows, or the
+ * raw value for legacy plaintext rows not yet re-saved through the settings UI.
+ *
+ * See apps/web/lib/encryption.ts for full rationale.
+ */
+export function decryptOrRaw(value: string | null | undefined): string | null {
+  if (!value || value.trim() === '') return null;
+
+  const parts = value.split(':');
+  if (
+    parts.length === 3 &&
+    /^[0-9a-f]{32}$/i.test(parts[0]) &&
+    /^[0-9a-f]{32}$/i.test(parts[1]) &&
+    /^[0-9a-f]+$/i.test(parts[2])
+  ) {
+    try {
+      return decrypt(value);
+    } catch {
+      // Fall through — return raw value on decrypt failure
+    }
+  }
+
+  return value;
+}

@@ -65,9 +65,20 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id;
       }
-      // Only query DB when token is first minted (no tenantId yet)
-      // or on refresh (every 15 min) to pick up subscription changes
-      if (token.id && !token.tenantId) {
+
+      // Query DB on first mint (no tenantId) AND every 15 minutes thereafter
+      // so that subscription changes (upgrade, cancellation, plan expiry) are
+      // reflected in the JWT within a bounded window. Without the time check
+      // the token only refreshed once — on first sign-in — and carried stale
+      // subscriptionStatus for up to 7 days (the JWT maxAge).
+      const REFRESH_INTERVAL_S = 15 * 60; // 15 minutes
+      const now = Math.floor(Date.now() / 1000);
+      const needsRefresh =
+        !token.tenantId ||
+        !token.tenantRefreshedAt ||
+        now - (token.tenantRefreshedAt as number) > REFRESH_INTERVAL_S;
+
+      if (token.id && needsRefresh) {
         const tenant = await db.tenant.findUnique({
           where: { userId: token.id as string },
           select: { id: true, slug: true, isActive: true, subscriptionStatus: true },
@@ -77,6 +88,7 @@ export const authOptions: NextAuthOptions = {
           token.tenantSlug = tenant.slug;
           token.isActive = tenant.isActive;
           token.subscriptionStatus = tenant.subscriptionStatus;
+          token.tenantRefreshedAt = now;
         }
       }
       return token;

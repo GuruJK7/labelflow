@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { decryptIfPresent } from '../encryption';
+import { decryptIfPresent, decryptOrRaw } from '../encryption';
 import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify/client';
 import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify/orders';
@@ -161,7 +161,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
 
     const shopifyUrl = tenant.shopifyStoreUrl;
     const shopifyToken = decryptIfPresent(tenant.shopifyToken);
-    const dacUsername = tenant.dacUsername;
+    const dacUsername = decryptOrRaw(tenant.dacUsername);
     const dacPassword = decryptIfPresent(tenant.dacPassword);
 
     if (!shopifyUrl || !shopifyToken) {

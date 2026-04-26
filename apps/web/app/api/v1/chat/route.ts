@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { getAuthenticatedTenant, apiError } from '@/lib/api-utils';
+import { getRedis } from '@/lib/redis';
 
 const SYSTEM_PROMPT = `Sos el asistente de soporte de LabelFlow (AutoEnvia), una plataforma SaaS que automatiza el envio de paquetes en Uruguay conectando Shopify con DAC Uruguay.
 
@@ -117,32 +118,41 @@ Cuando el usuario da feedback o sugiere funcionalidades:
 
 IMPORTANTE: No digas que vas a enviar el reporte vos. El usuario tiene que clickear el boton "Enviar reporte" en la interfaz del chat para que nos llegue por email.`;
 
-// Rate limit with automatic cleanup (bounded Map, max 1000 entries, 60s TTL)
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+// Rate limiting constants
+const RATE_LIMIT_MAX = 20;    // max requests per window
+const RATE_LIMIT_TTL = 60;    // window size in seconds
 
-function checkRateLimit(tenantId: string): boolean {
-  const now = Date.now();
-
-  // Periodic cleanup: remove expired entries (run every ~100 calls)
-  if (rateLimitMap.size > 50 && Math.random() < 0.1) {
-    for (const [key, val] of rateLimitMap) {
-      if (now > val.resetAt) rateLimitMap.delete(key);
-    }
-  }
-  // Hard cap: evict oldest if map exceeds 1000 entries
-  if (rateLimitMap.size > 1000) {
-    const firstKey = rateLimitMap.keys().next().value;
-    if (firstKey) rateLimitMap.delete(firstKey);
-  }
-
-  const entry = rateLimitMap.get(tenantId);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(tenantId, { count: 1, resetAt: now + 60_000 });
+/**
+ * Redis-backed rate limiter (20 req / 60 s per tenant).
+ *
+ * Uses INCR + EXPIRE: atomic increment returns the new counter value, and
+ * EXPIRE sets the TTL only on the first call in a window so it doesn't
+ * reset on every request. Falls back to `true` (allow) when Redis is
+ * unavailable — degraded rate-limiting is preferable to blocking all chat.
+ *
+ * This replaces the old module-level Map which didn't survive multiple
+ * Vercel serverless instances (each instance had its own counter, so an
+ * attacker with 20 Vercel instances could send 400 req/min per tenant).
+ */
+async function checkRateLimit(tenantId: string): Promise<boolean> {
+  const redis = getRedis();
+  if (!redis) {
+    // No Redis configured — degrade gracefully (allow request)
     return true;
   }
-  if (entry.count >= 20) return false;
-  entry.count++;
-  return true;
+
+  const key = `chat:rl:${tenantId}`;
+  try {
+    const count = await redis.incr(key);
+    if (count === 1) {
+      // First request in this window — set the expiry
+      await redis.expire(key, RATE_LIMIT_TTL);
+    }
+    return count <= RATE_LIMIT_MAX;
+  } catch {
+    // Redis error — fail open rather than blocking all chat
+    return true;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -154,7 +164,7 @@ export async function POST(req: NextRequest) {
     return apiError('Suscripcion inactiva. Activa tu plan para usar el chat.', 403);
   }
 
-  if (!checkRateLimit(auth.tenantId)) {
+  if (!await checkRateLimit(auth.tenantId)) {
     return apiError('Demasiados mensajes. Espera un momento antes de enviar otro.', 429);
   }
 

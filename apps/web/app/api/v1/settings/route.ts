@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
-import { encryptIfPresent } from '@/lib/encryption';
+import { encryptIfPresent, decryptOrRaw } from '@/lib/encryption';
 
 const updateSchema = z.object({
   shopifyStoreUrl: z.string()
@@ -115,7 +115,7 @@ export async function GET() {
   return apiSuccess({
     shopifyStoreUrl: tenant.shopifyStoreUrl,
     shopifyTokenSet: !!tenant.shopifyToken,
-    dacUsername: tenant.dacUsername,
+    dacUsername: decryptOrRaw(tenant.dacUsername),
     dacPasswordSet: !!tenant.dacPassword,
     emailHost: tenant.emailHost,
     emailPort: tenant.emailPort,
@@ -170,7 +170,6 @@ export async function PUT(req: NextRequest) {
 
   // Plain fields
   if (input.shopifyStoreUrl !== undefined) data.shopifyStoreUrl = input.shopifyStoreUrl;
-  if (input.dacUsername !== undefined) data.dacUsername = input.dacUsername;
   if (input.emailHost !== undefined) data.emailHost = input.emailHost;
   if (input.emailPort !== undefined) data.emailPort = input.emailPort;
   if (input.emailUser !== undefined) data.emailUser = input.emailUser;
@@ -201,6 +200,7 @@ export async function PUT(req: NextRequest) {
 
   // Encrypted fields
   if (input.shopifyToken !== undefined) data.shopifyToken = encryptIfPresent(input.shopifyToken);
+  if (input.dacUsername !== undefined) data.dacUsername = encryptIfPresent(input.dacUsername);
   if (input.dacPassword !== undefined) data.dacPassword = encryptIfPresent(input.dacPassword);
   if (input.emailPass !== undefined) data.emailPass = encryptIfPresent(input.emailPass);
   if (input.paymentCardCvc !== undefined) data.paymentCardCvc = encryptIfPresent(input.paymentCardCvc);
