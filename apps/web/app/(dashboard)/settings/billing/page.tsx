@@ -206,7 +206,7 @@ function BillingContent() {
       </div>
 
       {/* Packs grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-12">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-12 pt-4">
         {packs.map((pack) => {
           const isPopular = pack.id === 'pack_100';
           const isBest = pack.id === 'pack_1000';
@@ -219,7 +219,7 @@ function BillingContent() {
           return (
             <div
               key={pack.id}
-              className={`group relative overflow-hidden rounded-2xl transition-all duration-300 hover:-translate-y-1 ${
+              className={`group relative rounded-2xl transition-all duration-300 hover:-translate-y-1 ${
                 isBest
                   ? 'shadow-2xl shadow-amber-500/10 hover:shadow-amber-500/20'
                   : isPopular
@@ -230,7 +230,7 @@ function BillingContent() {
               {/* Animated gradient border for highlighted packs */}
               {(isBest || isPopular) && (
                 <div
-                  className={`absolute inset-0 rounded-2xl opacity-60 group-hover:opacity-100 transition-opacity ${
+                  className={`absolute inset-0 rounded-2xl opacity-60 group-hover:opacity-100 transition-opacity pointer-events-none ${
                     isBest
                       ? 'bg-gradient-to-br from-amber-500/40 via-orange-500/20 to-amber-500/40'
                       : 'bg-gradient-to-br from-cyan-500/40 via-cyan-400/20 to-cyan-500/40'
@@ -247,15 +247,15 @@ function BillingContent() {
               >
                 {/* Ribbon */}
                 {isPopular && !isBest && (
-                  <div className="absolute -top-px left-1/2 -translate-x-1/2 -translate-y-1/2">
-                    <div className="bg-gradient-to-r from-cyan-500 to-cyan-400 text-zinc-950 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg shadow-cyan-500/40">
+                  <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
+                    <div className="bg-gradient-to-r from-cyan-500 to-cyan-400 text-zinc-950 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg shadow-cyan-500/40 whitespace-nowrap">
                       Más popular
                     </div>
                   </div>
                 )}
                 {isBest && (
-                  <div className="absolute -top-px left-1/2 -translate-x-1/2 -translate-y-1/2">
-                    <div className="bg-gradient-to-r from-amber-500 to-orange-400 text-zinc-950 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg shadow-amber-500/40">
+                  <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
+                    <div className="bg-gradient-to-r from-amber-500 to-orange-400 text-zinc-950 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg shadow-amber-500/40 whitespace-nowrap">
                       Mejor precio
                     </div>
                   </div>
