@@ -108,7 +108,9 @@ model Tenant {
   allowedProductTypes Json?
   productTypeCache    Json?
 
-  // Stripe Billing
+  // Stripe Billing (legacy — USD recurring; nuevos tenants no usan este flujo).
+  // El modelo activo es credit-packs (ver shipmentCredits abajo). Suscripciones
+  // MP existentes se honran hasta currentPeriodEnd y luego transicionan a packs.
   stripeCustomerId     String?            @unique
   stripeSubscriptionId String?            @unique
   stripePriceId        String?
@@ -123,6 +125,44 @@ model Tenant {
   labelsThisMonth Int       @default(0)
   labelsTotal     Int       @default(0)
   lastRunAt       DateTime?
+
+  // ── CREDIT-PACK BILLING (modelo activo, reemplaza al de suscripciones) ──
+  //
+  // shipmentCredits: saldo de envíos disponibles. El worker decrementa por
+  //   cada Finalizar exitoso en DAC. Si llega a 0, el scheduler deja de
+  //   encolar jobs para este tenant (gate en apps/worker/src/jobs/scheduler.ts).
+  //
+  // Welcome bonus: el default de 10 garantiza que cualquier tenant nuevo
+  //   arranca con 10 envíos gratis sin código en la ruta de signup. Tenants
+  //   pre-existentes a esta migración mantienen 0 hasta que se les hace
+  //   backfill (script aparte) — ver TRANSITION_NOTES en credit-packs.ts.
+  //
+  // creditsPurchased / creditsConsumed: contadores acumulativos lifetime,
+  //   solo para audit y métricas admin. NO se usan para gating.
+  //
+  // PCI / fraude: los créditos NO caducan. Si hay refund/chargeback, el
+  //   handler en apps/web/app/api/webhooks/mercadopago/route.ts intenta
+  //   debitar; si el saldo ya se gastó, queda registrado en log y se tolera.
+  shipmentCredits  Int @default(10)
+  creditsPurchased Int @default(0)
+  creditsConsumed  Int @default(0)
+
+  // ── REFERIDOS ──
+  //
+  // referralCode: código único que el tenant comparte (URL ?ref=<code>).
+  //   Se genera en signup. Nullable para tenants pre-migración hasta backfill.
+  //
+  // referredByCode / referredById: a quién pertenece este referido. Se
+  //   capturan en signup leyendo cookie firmada. SetNull si referrer se borra.
+  //
+  // referralCreditsEarned: contador acumulativo lifetime de envíos GRATIS
+  //   ganados como referidor (audit). El crédito real vive en shipmentCredits.
+  referralCode          String? @unique
+  referredByCode        String?
+  referredById          String?
+  referrer              Tenant? @relation("TenantReferrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals             Tenant[] @relation("TenantReferrals")
+  referralCreditsEarned Int     @default(0)
 
   // Fulfillment
   autoFulfillEnabled Boolean @default(true) // Mark orders as "Preparado" in Shopify after DAC shipment
@@ -172,9 +212,17 @@ model Tenant {
   // H-9: DAC session cookies (AES-encrypted), one row per tenant
   dacSession DacSession?
 
+  // Credit-pack billing
+  creditPurchases       CreditPurchase[]
+  // Referrals: this tenant as referrer (received credits) / as referee (paid)
+  referralAccrualsRecv  ReferralCreditAccrual[] @relation("ReferralAccrualReferrer")
+  referralAccrualsPaid  ReferralCreditAccrual[] @relation("ReferralAccrualReferee")
+
   @@index([slug])
   @@index([stripeCustomerId])
   @@index([apiKey])
+  @@index([referralCode])
+  @@index([referredById])
 }
 
 enum SubscriptionStatus {
@@ -1001,4 +1049,71 @@ enum ShippingRuleType {
   NTH_SHIPMENT_FREE    // every Nth shipment to same customer → REMITENTE
   CUSTOMER_TAG         // if Shopify order/customer has tag → REMITENTE
   ITEM_COUNT           // if order has more than minItems line items → REMITENTE
+}
+
+// --- CREDIT PACKS (pay-as-you-go) ---
+//
+// CreditPurchase: una fila por intento de compra de pack. Se crea con
+// status=PENDING al iniciar el checkout y se transiciona a PAID cuando
+// MercadoPago confirma el pago via webhook (idempotente vía mpPaymentId
+// único). Al pasar a PAID se incrementa Tenant.shipmentCredits y, si el
+// tenant fue referido, se crea una ReferralCreditAccrual y se le acredita
+// 20% al referidor.
+//
+// Diseño:
+//   - mpExternalRef único: el formato es `pkg|<purchaseId>` y se pasa a
+//     MercadoPago como external_reference, que vuelve en el webhook —
+//     evita lookups por payerEmail/preferenceId frágiles.
+//   - mpPaymentId único: garantiza idempotencia frente a webhooks
+//     reintentados de MP (que reintenta agresivamente).
+//   - status separado del flag de acreditación: el handler actualiza
+//     ambos en una sola transacción para que no quede plata sin créditos
+//     ni créditos sin plata.
+model CreditPurchase {
+  id                  String               @id @default(cuid())
+  tenantId            String
+  packId              String                                  // 'pack_10' | ... | 'pack_1000'
+  shipments           Int                                     // 10 / 50 / 100 / 250 / 500 / 1000
+  pricePerShipmentUyu Float                                   // 20 / 17 / 15 / 12 / 10 / 7
+  totalPriceUyu       Float                                   // shipments * pricePer
+  status              CreditPurchaseStatus @default(PENDING)
+  mpPreferenceId      String?              @unique            // creado al iniciar checkout
+  mpPaymentId         String?              @unique            // dado por webhook payment.approved
+  mpExternalRef       String               @unique            // `pkg|<purchaseId>` — match key del webhook
+  paidAt              DateTime?
+  refundedAt          DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  tenant         Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  referralCredit ReferralCreditAccrual?
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([status])
+}
+
+enum CreditPurchaseStatus {
+  PENDING        // checkout creado, esperando confirmación de pago
+  PAID           // MP confirmó: créditos acreditados al tenant
+  FAILED         // MP rechazó el pago
+  REFUNDED       // chargeback / reembolso manual
+}
+
+// ReferralCreditAccrual: acreditación de 20% al referidor cuando un
+// referido COMPRA un pack. Una fila por compra (sourcePurchaseId único)
+// previene doble-acreditación si el webhook MP se procesa dos veces.
+model ReferralCreditAccrual {
+  id               String   @id @default(cuid())
+  referrerTenantId String                                 // recibe créditos gratis
+  refereeTenantId  String                                 // hizo la compra
+  sourcePurchaseId String   @unique                       // 1 acreditación por compra
+  shipmentsAccrued Int                                    // floor(0.2 * shipments comprados)
+  createdAt        DateTime @default(now())
+
+  referrer       Tenant         @relation("ReferralAccrualReferrer", fields: [referrerTenantId], references: [id], onDelete: Cascade)
+  referee        Tenant         @relation("ReferralAccrualReferee",  fields: [refereeTenantId],  references: [id], onDelete: Cascade)
+  sourcePurchase CreditPurchase @relation(fields: [sourcePurchaseId], references: [id], onDelete: Cascade)
+
+  @@index([referrerTenantId, createdAt(sort: Desc)])
+  @@index([refereeTenantId])
 }

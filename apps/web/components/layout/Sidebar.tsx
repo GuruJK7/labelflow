@@ -23,6 +23,7 @@ import {
   ShoppingCart,
   Flag,
   Truck,
+  Gift,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useState } from 'react';
@@ -61,7 +62,8 @@ const navSections = [
       { href: '/reports', label: 'Reportes', icon: Flag },
       { href: '/settings', label: 'Configuracion', icon: Settings },
       { href: '/settings/shipping-rules', label: 'Reglas de envio', icon: Truck },
-      { href: '/settings/billing', label: 'Facturacion', icon: CreditCard },
+      { href: '/settings/billing', label: 'Envíos', icon: CreditCard },
+      { href: '/settings/referrals', label: 'Referidos', icon: Gift },
     ],
   },
 ];

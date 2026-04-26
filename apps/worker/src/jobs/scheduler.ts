@@ -179,9 +179,14 @@ export function startScheduler(): void {
         }
       }
 
+      // Credit-pack gate: solo encolar tenants con saldo. Tenants sin
+      // créditos no se programan — el frontend les muestra cómo recargar.
+      // Los suscriptores legacy (modelo viejo, en wind-down) recibieron
+      // créditos al final de su ciclo, así que entran por la misma puerta.
       const tenants = await db.tenant.findMany({
         where: {
           isActive: true,
+          shipmentCredits: { gt: 0 },
           shopifyStoreUrl: { not: null },
           shopifyToken: { not: null },
           dacUsername: { not: null },

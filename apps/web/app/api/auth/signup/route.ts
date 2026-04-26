@@ -3,6 +3,7 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { db } from '@/lib/db';
+import { generateReferralCode, isValidReferralCodeShape } from '@/lib/referrals';
 
 const signupSchema = z.object({
   name: z.string().min(1).max(100),
@@ -11,6 +12,8 @@ const signupSchema = z.object({
   tosAccepted: z.literal(true, {
     errorMap: () => ({ message: 'Debes aceptar los Terminos de Servicio y la Politica de Privacidad' }),
   }),
+  // Opcional: el cliente lo manda si vino por ?ref=<code>
+  referralCode: z.string().nullable().optional(),
 });
 
 export async function POST(req: Request) {
@@ -25,7 +28,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const { name, email, password } = parsed.data;
+    const { name, email, password, referralCode } = parsed.data;
 
     // Capture IP for legal compliance (Ley 18.331)
     const signupIp =
@@ -42,10 +45,43 @@ export async function POST(req: Request) {
       );
     }
 
+    // Resolver referidor (si vino con ?ref=<code>) ANTES de crear el tenant
+    // para poder setear referredById en la creación. Validamos forma + email
+    // distinto (no auto-referidos por email aunque no podamos garantizar
+    // 100% — no hay manera de detectar familia/multi-cuenta).
+    let referredByCode: string | null = null;
+    let referredById: string | null = null;
+    if (referralCode && isValidReferralCodeShape(referralCode)) {
+      const referrer = await db.tenant.findUnique({
+        where: { referralCode },
+        select: { id: true, userId: true, user: { select: { email: true } } },
+      });
+      if (referrer && referrer.user?.email?.toLowerCase() !== email.toLowerCase()) {
+        referredByCode = referralCode;
+        referredById = referrer.id;
+      }
+    }
+
     // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Create user + tenant in transaction
+    // Slug + código de referido propio (con reintentos por colisión)
+    const baseSlug =
+      email.split('@')[0].replace(/[^a-z0-9]/gi, '-').toLowerCase() +
+      '-' +
+      Date.now().toString(36);
+    let myReferralCode: string | null = null;
+    for (let attempt = 0; attempt < 5 && !myReferralCode; attempt++) {
+      const candidate = generateReferralCode(baseSlug);
+      const collision = await db.tenant.findUnique({
+        where: { referralCode: candidate },
+        select: { id: true },
+      });
+      if (!collision) myReferralCode = candidate;
+    }
+
+    // Create user + tenant in transaction (Prisma maneja la atomicidad
+    // dentro de un solo create con nested write).
     const user = await db.user.create({
       data: {
         email,
@@ -53,11 +89,15 @@ export async function POST(req: Request) {
         passwordHash,
         tenant: {
           create: {
-            name: name,
-            slug: email.split('@')[0].replace(/[^a-z0-9]/gi, '-').toLowerCase() + '-' + Date.now().toString(36),
+            name,
+            slug: baseSlug,
             apiKey: crypto.randomBytes(32).toString('hex'),
             signupIp,
             tosAcceptedAt: new Date(),
+            referralCode: myReferralCode,
+            referredByCode,
+            referredById,
+            // shipmentCredits arranca en 10 por el @default del schema
           },
         },
       },

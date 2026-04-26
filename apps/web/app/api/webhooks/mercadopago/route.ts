@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getPreApprovalClient, getPaymentClient, PLANS, type PlanId } from '@/lib/mercadopago';
 import { db } from '@/lib/db';
+import { calcReferralKickback } from '@/lib/credit-packs';
 
 /**
  * Verify MercadoPago webhook signature (x-signature header).
@@ -217,8 +218,14 @@ async function handlePreApprovalNotification(preapprovalId: string) {
 }
 
 /**
- * Handle a payment notification (individual charge within a subscription).
- * Updates the period end date when a recurring payment is approved.
+ * Handle a payment notification. Dispatch por formato de external_reference:
+ *
+ *   - "pkg|<purchaseId>"   → credit-pack purchase (modelo nuevo)
+ *   - "<tenantId>|<planId>" → suscripción legacy (modelo viejo, en wind-down)
+ *
+ * Si no hay external_reference (caso típico de subscription payments donde
+ * MP no la propaga), confiamos en que el handler de preapproval ya activó
+ * al tenant.
  */
 async function handlePaymentNotification(paymentId: string) {
   const paymentClient = getPaymentClient();
@@ -239,30 +246,222 @@ async function handlePaymentNotification(paymentId: string) {
   const status = payment.status as string | undefined;
   const externalReference = payment.external_reference as string | undefined;
 
-  let tenantId: string | undefined;
-  let planId: string | undefined;
-
-  if (externalReference) {
-    const parts = externalReference.split('|');
-    tenantId = parts[0];
-    planId = parts[1];
-  }
-
-  if (!tenantId) {
-    // For subscription payments, external_reference may not be set on the payment.
-    // The preapproval notification will handle activation.
+  if (!externalReference) {
+    // Subscription payments may not have external_reference; preapproval
+    // notification handles activation.
     return;
   }
+
+  // Routing por prefijo: "pkg|..." → credit pack; resto → legacy subscription.
+  if (externalReference.startsWith('pkg|')) {
+    const parts = externalReference.split('|');
+    const purchaseId = parts[1];
+    if (!purchaseId) {
+      console.error(`MercadoPago: malformed pkg external_reference "${externalReference}"`);
+      return;
+    }
+    await handleCreditPackPayment(purchaseId, paymentId, status);
+    return;
+  }
+
+  // Legacy: "<tenantId>|<planId>"
+  await handleLegacySubscriptionPayment(externalReference, status);
+}
+
+/**
+ * Acredita un pack de envíos al tenant cuando MP confirma el pago.
+ *
+ * Idempotencia: el update inicial es condicional a `status: 'PENDING'`. Si
+ * el row ya está PAID (webhook duplicado), `updateMany` devuelve count=0 y
+ * salimos sin re-acreditar. Esta es la primitiva atómica más sencilla en
+ * Prisma sin transacciones interactivas explícitas — la unicidad de
+ * mpPaymentId es una segunda red de seguridad por si el primer update se
+ * coló a la mitad.
+ *
+ * Acreditación al referidor: si el tenant que compró tiene referredById,
+ * después de marcar PAID:
+ *   1. Crear fila ReferralCreditAccrual (sourcePurchaseId @unique evita
+ *      doble-acreditación si volvemos a entrar acá).
+ *   2. Sumar floor(20% * shipments) a referrer.shipmentCredits.
+ *
+ * Refunded: status === 'refunded' o 'cancelled' después de PAID → marcamos
+ * refundedAt y *intentamos* debitar. Si shipmentCredits ya se gastó en
+ * envíos reales, debitamos lo que se pueda y registramos en log. No es
+ * perfecto pero es honesto: el tenant ya consumió el servicio.
+ */
+async function handleCreditPackPayment(
+  purchaseId: string,
+  paymentId: string,
+  status: string | undefined,
+) {
+  const purchase = await db.creditPurchase.findUnique({
+    where: { id: purchaseId },
+    select: {
+      id: true,
+      tenantId: true,
+      shipments: true,
+      status: true,
+      mpPaymentId: true,
+    },
+  });
+
+  if (!purchase) {
+    console.error(`MercadoPago: credit purchase ${purchaseId} not found`);
+    return;
+  }
+
+  if (status === 'approved') {
+    // Idempotente: solo transiciona si está PENDING.
+    const updated = await db.creditPurchase.updateMany({
+      where: { id: purchaseId, status: 'PENDING' },
+      data: {
+        status: 'PAID',
+        mpPaymentId: paymentId,
+        paidAt: new Date(),
+      },
+    });
+
+    if (updated.count === 0) {
+      console.info(
+        `MercadoPago: credit purchase ${purchaseId} already processed (idempotent skip)`,
+      );
+      return;
+    }
+
+    // Acreditar envíos al tenant.
+    await db.tenant.update({
+      where: { id: purchase.tenantId },
+      data: {
+        shipmentCredits: { increment: purchase.shipments },
+        creditsPurchased: { increment: purchase.shipments },
+      },
+    });
+
+    console.info(
+      `MercadoPago: credit pack PAID — tenant=${purchase.tenantId}, shipments=${purchase.shipments}`,
+    );
+
+    // Acreditar 20% al referidor (si lo hay).
+    await accrueReferralKickback(purchase.tenantId, purchase.id, purchase.shipments);
+    return;
+  }
+
+  if (status === 'rejected') {
+    await db.creditPurchase.updateMany({
+      where: { id: purchaseId, status: 'PENDING' },
+      data: { status: 'FAILED' },
+    });
+    console.info(`MercadoPago: credit purchase ${purchaseId} rejected`);
+    return;
+  }
+
+  if (status === 'refunded' || status === 'cancelled' || status === 'charged_back') {
+    // Marcamos como REFUNDED y tratamos de debitar lo no gastado.
+    const wasUpdated = await db.creditPurchase.updateMany({
+      where: { id: purchaseId, status: 'PAID' },
+      data: { status: 'REFUNDED', refundedAt: new Date() },
+    });
+    if (wasUpdated.count === 0) return; // ya estaba refunded o nunca estuvo PAID
+
+    // Debitar el saldo restante (clamp a 0 si ya consumió todo).
+    const tenant = await db.tenant.findUnique({
+      where: { id: purchase.tenantId },
+      select: { shipmentCredits: true },
+    });
+    if (tenant) {
+      const debit = Math.min(tenant.shipmentCredits, purchase.shipments);
+      if (debit > 0) {
+        await db.tenant.update({
+          where: { id: purchase.tenantId },
+          data: { shipmentCredits: { decrement: debit } },
+        });
+      }
+      if (debit < purchase.shipments) {
+        console.warn(
+          `MercadoPago: refund of ${purchase.shipments} shipments but only ${debit} available — ${purchase.shipments - debit} shipments unrecoverable for tenant ${purchase.tenantId}`,
+        );
+      }
+    }
+    return;
+  }
+
+  // pending / in_process / authorized: nada que hacer hasta approved.
+}
+
+/**
+ * Crea la acreditación al referidor si el tenant que compró fue referido.
+ * Idempotencia: ReferralCreditAccrual.sourcePurchaseId es @unique, así que
+ * un segundo intento dispara P2002 — atrapamos y salimos.
+ */
+async function accrueReferralKickback(
+  refereeTenantId: string,
+  sourcePurchaseId: string,
+  shipmentsPurchased: number,
+) {
+  const referee = await db.tenant.findUnique({
+    where: { id: refereeTenantId },
+    select: { referredById: true },
+  });
+  if (!referee?.referredById) return;
+  if (referee.referredById === refereeTenantId) return; // self-referral guard
+
+  const accrued = calcReferralKickback(shipmentsPurchased);
+  if (accrued <= 0) return;
+
+  try {
+    await db.referralCreditAccrual.create({
+      data: {
+        referrerTenantId: referee.referredById,
+        refereeTenantId,
+        sourcePurchaseId,
+        shipmentsAccrued: accrued,
+      },
+    });
+  } catch (err) {
+    // P2002 (unique violation) = ya acreditado por un webhook previo
+    if ((err as { code?: string }).code === 'P2002') {
+      console.info(
+        `MercadoPago: referral accrual already exists for purchase ${sourcePurchaseId} (idempotent skip)`,
+      );
+      return;
+    }
+    throw err;
+  }
+
+  await db.tenant.update({
+    where: { id: referee.referredById },
+    data: {
+      shipmentCredits: { increment: accrued },
+      referralCreditsEarned: { increment: accrued },
+    },
+  });
+
+  console.info(
+    `MercadoPago: referral kickback +${accrued} shipments → referrer=${referee.referredById} (referee=${refereeTenantId}, purchase=${sourcePurchaseId})`,
+  );
+}
+
+/**
+ * Handler legacy para suscripciones MercadoPago en formato `<tenantId>|<planId>`.
+ * Se mantiene para no romper a tenants pre-existentes en plan recurring.
+ * Nuevos tenants no entran por acá.
+ */
+async function handleLegacySubscriptionPayment(
+  externalReference: string,
+  status: string | undefined,
+) {
+  const parts = externalReference.split('|');
+  const tenantId = parts[0];
+  const planId = parts[1];
+  if (!tenantId) return;
 
   const tenant = await db.tenant.findUnique({
     where: { id: tenantId },
     select: { id: true },
   });
-
   if (!tenant) return;
 
   if (status === 'approved') {
-    // Recurring payment approved: extend period by 30 days
     const currentPeriodEnd = new Date();
     currentPeriodEnd.setDate(currentPeriodEnd.getDate() + 30);
 
@@ -278,18 +477,14 @@ async function handlePaymentNotification(paymentId: string) {
     });
 
     console.info(
-      `MercadoPago: recurring payment approved for ${tenantId}, period extended`
+      `MercadoPago [legacy]: recurring payment approved for ${tenantId}, period extended`,
     );
   } else if (status === 'rejected') {
     await db.tenant.update({
       where: { id: tenantId },
-      data: {
-        subscriptionStatus: 'PAST_DUE',
-      },
+      data: { subscriptionStatus: 'PAST_DUE' },
     });
-    console.info(
-      `MercadoPago: recurring payment rejected for ${tenantId}`
-    );
+    console.info(`MercadoPago [legacy]: recurring payment rejected for ${tenantId}`);
   }
 }
 

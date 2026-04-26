@@ -417,6 +417,7 @@ function TenantTable({
           <tr className="text-left text-[10px] uppercase text-zinc-500 tracking-wider">
             <th className="px-4 py-2.5 font-medium">Cuenta</th>
             <th className="px-4 py-2.5 font-medium">Plan</th>
+            <th className="px-4 py-2.5 font-medium text-right">Saldo</th>
             <th className="px-4 py-2.5 font-medium text-right">Mes</th>
             <th className="px-4 py-2.5 font-medium text-right">7d</th>
             <th className="px-4 py-2.5 font-medium text-right">30d</th>
@@ -436,6 +437,19 @@ function TenantTable({
                 <div className="text-[10px] text-zinc-500 truncate max-w-[220px]">{r.email}</div>
               </td>
               <td className="px-4 py-2.5"><PlanBadge row={r} /></td>
+              <td className="px-4 py-2.5 text-right">
+                <span
+                  className={
+                    r.shipmentCredits === 0
+                      ? 'text-red-400 font-medium'
+                      : r.shipmentCredits < 10
+                        ? 'text-yellow-400 font-medium'
+                        : 'text-emerald-400 font-medium'
+                  }
+                >
+                  {r.shipmentCredits.toLocaleString('es-UY')}
+                </span>
+              </td>
               <td className="px-4 py-2.5 text-right text-zinc-300">{r.labelsThisMonth.toLocaleString('es-UY')}</td>
               <td className="px-4 py-2.5 text-right text-zinc-400">{r.labelsLast7Days.toLocaleString('es-UY')}</td>
               <td className="px-4 py-2.5 text-right text-zinc-400">{r.labelsLast30Days.toLocaleString('es-UY')}</td>

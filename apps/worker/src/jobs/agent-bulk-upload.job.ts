@@ -616,13 +616,17 @@ export async function agentBulkUploadJob(job: {
       },
     });
 
-    // Don't inflate real usage counters in dry-run — only record the timestamp
+    // Don't inflate real usage counters in dry-run — only record the timestamp.
+    // En el modo real, decrement de créditos + audit en labelsThisMonth/labelsTotal
+    // (igual que process-orders.job.ts).
     await db.tenant
       .update({
         where: { id: job.tenantId },
         data: dryRun
           ? { lastRunAt: new Date() }
           : {
+              shipmentCredits: { decrement: successCount },
+              creditsConsumed: { increment: successCount },
               labelsThisMonth: { increment: successCount },
               labelsTotal: { increment: successCount },
               lastRunAt: new Date(),

@@ -1,17 +1,38 @@
 'use client';
 
-import { useState, FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useEffect, useState, FormEvent } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 export default function SignupPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignupContent />
+    </Suspense>
+  );
+}
+
+function SignupContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [tosAccepted, setTosAccepted] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [refCode, setRefCode] = useState<string | null>(null);
+
+  // Capturar ?ref=<code> y persistir como cookie firmada (server-side
+  // genera la cookie en /api/auth/signup; acá solo guardamos el código
+  // para enviarlo en el body del POST). Si el usuario llegó sin ?ref pero
+  // tiene la cookie de una visita previa, el server la lee igual.
+  useEffect(() => {
+    const ref = searchParams.get('ref');
+    if (ref && /^[A-Z0-9]{2,8}-[A-Z0-9]{4,8}$/.test(ref)) {
+      setRefCode(ref);
+    }
+  }, [searchParams]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -22,7 +43,13 @@ export default function SignupPage() {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email: email.toLowerCase(), password, tosAccepted }),
+        body: JSON.stringify({
+          name,
+          email: email.toLowerCase(),
+          password,
+          tosAccepted,
+          referralCode: refCode,
+        }),
       });
 
       const data = await res.json();
@@ -47,7 +74,12 @@ export default function SignupPage() {
           <h1 className="text-3xl font-bold text-white">
             Label<span className="text-cyan-400">Flow</span>
           </h1>
-          <p className="text-zinc-500 mt-2">Crea tu cuenta gratis</p>
+          <p className="text-zinc-500 mt-2">Crea tu cuenta gratis · 10 envíos de regalo</p>
+          {refCode && (
+            <p className="mt-2 inline-block bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs px-3 py-1 rounded-full">
+              Te invitó <strong>{refCode}</strong>
+            </p>
+          )}
         </div>
 
         <div className="bg-zinc-900/50 border border-white/[0.08] rounded-xl p-8">

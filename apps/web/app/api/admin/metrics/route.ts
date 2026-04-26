@@ -36,6 +36,14 @@ export interface AdminTenantRow {
   shopifyConnected: boolean;
   dacConnected: boolean;
   currentPeriodEnd: string | null;
+  // Credit-pack billing
+  shipmentCredits: number;
+  creditsPurchased: number;
+  creditsConsumed: number;
+  // Referrals
+  referralCode: string | null;
+  referredById: string | null;
+  referralCreditsEarned: number;
 }
 
 export interface AdminDailyPoint {
@@ -144,6 +152,14 @@ export async function GET() {
         currentPeriodEnd: true,
         shopifyStoreUrl: true,
         dacUsername: true,
+        // Credit-pack billing
+        shipmentCredits: true,
+        creditsPurchased: true,
+        creditsConsumed: true,
+        // Referrals
+        referralCode: true,
+        referredById: true,
+        referralCreditsEarned: true,
         user: { select: { email: true } },
       },
     }),
@@ -252,6 +268,14 @@ export async function GET() {
     shopifyConnected: !!t.shopifyStoreUrl,
     dacConnected: !!t.dacUsername,
     currentPeriodEnd: t.currentPeriodEnd?.toISOString() ?? null,
+    // Credit-pack billing
+    shipmentCredits: t.shipmentCredits,
+    creditsPurchased: t.creditsPurchased,
+    creditsConsumed: t.creditsConsumed,
+    // Referrals
+    referralCode: t.referralCode,
+    referredById: t.referredById,
+    referralCreditsEarned: t.referralCreditsEarned,
   }));
 
   // ── Daily series (oldest first, contiguous — backfill empty days with 0s) ──

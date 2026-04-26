@@ -290,6 +290,50 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       slog.warn('limit', `Limited to ${effectiveLimit} orders, ${skippedCount} skipped`);
     }
 
+    // ── CREDIT-PACK GATE ──
+    //
+    // Cap orders al saldo de envíos del tenant. El scheduler ya filtra
+    // tenants con shipmentCredits > 0, pero acá refrescamos por si el
+    // saldo cambió entre el encolado y el inicio del run, y para evitar
+    // procesar más órdenes que envíos disponibles dentro de un solo run.
+    //
+    // Diseño defensivo: si por alguna razón shipmentCredits = 0 al
+    // momento del run (race condition entre múltiples jobs en cola, lease
+    // expirado, etc.), abortamos limpiamente — DAC no se factura, no se
+    // imprime nada, el job queda en COMPLETED con 0 órdenes y el
+    // scheduler no volverá a encolar hasta que el tenant compre un pack.
+    const liveCredits = await db.tenant.findUnique({
+      where: { id: tenantId },
+      select: { shipmentCredits: true },
+    });
+    const availableCredits = liveCredits?.shipmentCredits ?? 0;
+    if (availableCredits <= 0) {
+      slog.warn(
+        'credits',
+        `Tenant sin créditos al iniciar el run (saldo=${availableCredits}). Abortando sin procesar.`,
+      );
+      await db.job.update({
+        where: { id: jobId },
+        data: {
+          status: 'COMPLETED',
+          totalOrders: 0,
+          errorMessage: 'Sin créditos disponibles. Comprá un pack para continuar.',
+          finishedAt: new Date(),
+          durationMs: Date.now() - startTime,
+        },
+      });
+      return;
+    }
+    if (orders.length > availableCredits) {
+      const droppedByCredits = orders.length - availableCredits;
+      skippedCount += droppedByCredits;
+      orders = orders.slice(0, availableCredits);
+      slog.warn(
+        'credits',
+        `Saldo de ${availableCredits} envíos: limitando a ${orders.length} órdenes, ${droppedByCredits} aplazadas hasta próxima recarga.`,
+      );
+    }
+
     // STEP 3: Start browser and login to DAC
     slog.info('dac-login', 'Starting browser and logging into DAC');
     const page = await dacBrowser.getPage();
@@ -917,9 +961,15 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       },
     });
 
+    // Decrement de créditos por cada Finalizar exitoso. labelsTotal +
+    // labelsThisMonth se mantienen como contadores de audit (no enforcement)
+    // — útiles para gráficos históricos y para el admin dashboard. El gate
+    // real es shipmentCredits.
     await db.tenant.update({
       where: { id: tenantId },
       data: {
+        shipmentCredits: { decrement: successCount },
+        creditsConsumed: { increment: successCount },
         labelsThisMonth: { increment: successCount },
         labelsTotal: { increment: successCount },
         lastRunAt: new Date(),
