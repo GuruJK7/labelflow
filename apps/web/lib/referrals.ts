@@ -94,7 +94,16 @@ export function readReferralCookieValue(value: string | null | undefined): strin
   const code = value.slice(0, idx);
   const sig = value.slice(idx + 1);
   if (!isValidReferralCodeShape(code)) return null;
-  if (sign(code) !== sig) return null;
+  // Timing-safe compare. !== short-circuits en el primer char distinto y abre
+  // un timing oracle para brute-forcear la firma de 64 bits — improbable
+  // pero gratis de cerrar.
+  const expected = sign(code);
+  if (expected.length !== sig.length) return null;
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig))) return null;
+  } catch {
+    return null;
+  }
   return code;
 }
 

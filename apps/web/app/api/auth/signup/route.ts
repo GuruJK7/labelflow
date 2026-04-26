@@ -3,7 +3,12 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { db } from '@/lib/db';
-import { generateReferralCode, isValidReferralCodeShape } from '@/lib/referrals';
+import {
+  generateReferralCode,
+  isValidReferralCodeShape,
+  readReferralCookieValue,
+  REFERRAL_COOKIE_NAME,
+} from '@/lib/referrals';
 
 const signupSchema = z.object({
   name: z.string().min(1).max(100),
@@ -12,7 +17,9 @@ const signupSchema = z.object({
   tosAccepted: z.literal(true, {
     errorMap: () => ({ message: 'Debes aceptar los Terminos de Servicio y la Politica de Privacidad' }),
   }),
-  // Opcional: el cliente lo manda si vino por ?ref=<code>
+  // El body NUNCA es authoritative para referralCode — sólo lo aceptamos
+  // como hint para mejor UX en el form. La atribución real viene de la
+  // cookie firmada `lf_ref` (HMAC). Mantener el campo opcional por compat.
   referralCode: z.string().nullable().optional(),
 });
 
@@ -28,7 +35,21 @@ export async function POST(req: Request) {
       );
     }
 
-    const { name, email, password, referralCode } = parsed.data;
+    const { name, email, password } = parsed.data;
+
+    // Atribución de referido: SÓLO desde la cookie firmada (HMAC). El body
+    // se ignora — un atacante podría POST-ear cualquier código y atribuirse
+    // referidos falsos. La cookie la setea el cliente cuando llega a
+    // /signup?ref=<code>, firmada por NEXTAUTH_SECRET.
+    const cookieHeader = req.headers.get('cookie') ?? '';
+    const cookieMatch = cookieHeader
+      .split(';')
+      .map((c) => c.trim())
+      .find((c) => c.startsWith(`${REFERRAL_COOKIE_NAME}=`));
+    const cookieRaw = cookieMatch
+      ? decodeURIComponent(cookieMatch.slice(REFERRAL_COOKIE_NAME.length + 1))
+      : null;
+    const referralCode = readReferralCookieValue(cookieRaw);
 
     // Capture IP for legal compliance (Ley 18.331)
     const signupIp =

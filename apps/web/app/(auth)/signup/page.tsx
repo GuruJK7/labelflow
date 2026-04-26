@@ -23,14 +23,23 @@ function SignupContent() {
   const [loading, setLoading] = useState(false);
   const [refCode, setRefCode] = useState<string | null>(null);
 
-  // Capturar ?ref=<code> y persistir como cookie firmada (server-side
-  // genera la cookie en /api/auth/signup; acá solo guardamos el código
-  // para enviarlo en el body del POST). Si el usuario llegó sin ?ref pero
-  // tiene la cookie de una visita previa, el server la lee igual.
+  // Capturar ?ref=<code> y pedirle al server que firme una cookie HMAC
+  // (httpOnly + secure + samesite=lax). El handler de /api/auth/signup
+  // SÓLO confía en esa cookie — ignora cualquier `referralCode` en el
+  // body. Esto evita que un atacante POSTée códigos forjados directamente.
+  // Si el usuario ya tenía la cookie de una visita previa, el server la
+  // lee igual (TTL 30 días).
   useEffect(() => {
     const ref = searchParams.get('ref');
     if (ref && /^[A-Z0-9]{2,8}-[A-Z0-9]{4,8}$/.test(ref)) {
       setRefCode(ref);
+      // Fire-and-forget: si falla el track, el flujo de signup sigue OK
+      // (sólo se pierde la atribución).
+      fetch('/api/referrals/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: ref }),
+      }).catch(() => {});
     }
   }, [searchParams]);
 
@@ -48,6 +57,8 @@ function SignupContent() {
           email: email.toLowerCase(),
           password,
           tosAccepted,
+          // Atribución real viene de la cookie firmada — esto es sólo hint
+          // para que el form se reenvie como cuando vino con ?ref.
           referralCode: refCode,
         }),
       });

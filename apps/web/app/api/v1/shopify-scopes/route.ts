@@ -26,7 +26,8 @@ export async function GET() {
 
   if (!res.ok) {
     const errText = await res.text();
-    return apiError(`Shopify API error (${res.status}): ${errText.substring(0, 300)}`, 502);
+    console.error(`[shopify-scopes] Shopify API ${res.status}: ${errText.substring(0, 500)}`);
+    return apiError('Error consultando scopes de Shopify', 502);
   }
 
   const data = await res.json();

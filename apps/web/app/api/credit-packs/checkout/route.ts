@@ -129,7 +129,7 @@ export async function GET(req: NextRequest) {
       data: { status: 'FAILED' },
     });
     console.error('[CREDIT-PACKS] Checkout error:', (err as Error).message, (err as Error).stack);
-    return apiError(`Error de MercadoPago: ${(err as Error).message}`, 500);
+    return apiError('Error al procesar el pago. Intenta de nuevo.', 500);
   }
 }
 

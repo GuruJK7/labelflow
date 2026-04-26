@@ -57,6 +57,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(checkoutUrl);
   } catch (err) {
     console.error('[MERCADOPAGO] Subscription checkout error:', (err as Error).message, (err as Error).stack);
-    return apiError(`Error de MercadoPago: ${(err as Error).message}`, 500);
+    return apiError('Error al procesar el pago. Intenta de nuevo.', 500);
   }
 }

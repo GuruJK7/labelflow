@@ -199,7 +199,7 @@ export default function LandingPage() {
       </section>
 
       {/* How it works */}
-      <section id="como-funciona" className="py-20 px-6">
+      <section id="como-funciona" className="py-16 md:py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-16">
             <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-widest mb-3">
@@ -251,7 +251,7 @@ export default function LandingPage() {
       </section>
 
       {/* Features grid */}
-      <section className="py-20 px-6">
+      <section className="py-16 md:py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
@@ -307,7 +307,7 @@ export default function LandingPage() {
       </section>
 
       {/* Pricing */}
-      <section id="precios" className="py-24 px-6">
+      <section id="precios" className="py-16 md:py-20 px-6">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-12">
             <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-widest mb-3">
@@ -464,7 +464,7 @@ export default function LandingPage() {
       </section>
 
       {/* Referrals */}
-      <section id="referidos" className="py-24 px-6">
+      <section id="referidos" className="py-16 md:py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="relative overflow-hidden rounded-3xl">
             <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-transparent to-emerald-500/10" />
@@ -558,7 +558,7 @@ export default function LandingPage() {
       </section>
 
       {/* FAQ */}
-      <section id="faq" className="py-24 px-6">
+      <section id="faq" className="py-16 md:py-20 px-6">
         <div className="max-w-3xl mx-auto">
           <div className="text-center mb-12">
             <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-widest mb-3">
@@ -620,7 +620,7 @@ export default function LandingPage() {
       </section>
 
       {/* Final CTA */}
-      <section className="py-24 px-6">
+      <section className="py-16 md:py-20 px-6">
         <div className="max-w-4xl mx-auto">
           <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-cyan-500/[0.15] via-zinc-900 to-emerald-500/[0.10] border border-cyan-500/20 p-10 md:p-16 text-center">
             <div className="absolute -top-32 -left-32 w-96 h-96 bg-cyan-500/20 rounded-full blur-3xl pointer-events-none" />

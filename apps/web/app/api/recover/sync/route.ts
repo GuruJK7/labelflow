@@ -54,16 +54,19 @@ export async function POST(_req: NextRequest) {
 
       if (!res.ok) {
         const errText = await res.text();
-        return apiError(`Shopify API error: ${res.status} - ${errText}`, 502);
+        // Loguear server-side, no leak Shopify internals al cliente.
+        console.error(`[recover/sync] Shopify API ${res.status}: ${errText.slice(0, 500)}`);
+        return apiError('Error conectando con Shopify', 502);
       }
 
       const data = await res.json();
       const checkouts: ShopifyCheckout[] = data.checkouts || [];
       allCheckouts = allCheckouts.concat(checkouts);
 
-      // Follow pagination via Link header
+      // Follow pagination via Link header — restringido al origin de la
+      // tienda para prevenir SSRF si el header viene manipulado.
       const linkHeader = res.headers.get('link');
-      url = parsePaginationNext(linkHeader);
+      url = parsePaginationNext(linkHeader, `https://${tenant.shopifyStoreUrl}`);
     }
 
     // Filter: only abandoned (no completed_at) and with some contact info
@@ -189,12 +192,25 @@ interface ShopifyCheckout {
 
 // ── Helpers ──
 
-function parsePaginationNext(linkHeader: string | null): string {
+/**
+ * Extrae la URL `rel="next"` del header Link de Shopify, validando que
+ * apunte al MISMO origin de la tienda. Sin este check, una respuesta
+ * maliciosa podría redirigir nuestro fetch outbound a IMDS interno (SSRF).
+ */
+function parsePaginationNext(linkHeader: string | null, baseUrl: string): string {
   if (!linkHeader) return '';
   const parts = linkHeader.split(',');
   for (const part of parts) {
     const match = part.match(/<([^>]+)>;\s*rel="next"/);
-    if (match) return match[1];
+    if (!match) continue;
+    const candidate = match[1];
+    if (!candidate.startsWith(`${baseUrl}/`)) {
+      console.warn(
+        `[recover/sync] dropping next URL outside baseUrl: ${candidate}`,
+      );
+      return '';
+    }
+    return candidate;
   }
   return '';
 }

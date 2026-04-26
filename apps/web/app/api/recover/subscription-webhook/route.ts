@@ -26,7 +26,15 @@ function verifyMercadoPagoSignature(
 
   const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
   const hash = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
-  return hash === v1;
+  // Timing-safe compare: NEVER use === on HMAC digests (timing oracle).
+  try {
+    const a = Buffer.from(hash, 'hex');
+    const b = Buffer.from(v1, 'hex');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 // POST /api/recover/subscription-webhook — MercadoPago subscription lifecycle for Recover module
@@ -40,12 +48,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
+  // Signature verification is MANDATORY. Fail closed when env is missing —
+  // the previous `if (webhookSecret)` was an open-by-default vulnerability:
+  // an attacker could activate Recover for arbitrary tenants if the env var
+  // happened to be unset.
   const webhookSecret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
-  if (webhookSecret) {
-    if (!verifyMercadoPagoSignature(req, rawBody, webhookSecret)) {
-      console.warn('[Recover Webhook] Invalid MercadoPago signature');
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
-    }
+  if (!webhookSecret) {
+    console.error('[Recover Webhook] MERCADOPAGO_WEBHOOK_SECRET not set — rejecting');
+    return NextResponse.json({ error: 'Service not configured' }, { status: 503 });
+  }
+  if (!verifyMercadoPagoSignature(req, rawBody, webhookSecret)) {
+    console.warn('[Recover Webhook] Invalid MercadoPago signature');
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
   const type = body.type as string | undefined;
@@ -95,6 +109,18 @@ async function handlePreApprovalNotification(preapprovalId: string): Promise<voi
 
   const tenantId = externalReference.split('|')[0];
   if (!tenantId) return;
+
+  // Verificar que el tenantId existe ANTES de cualquier write. Sin esto un
+  // atacante con HMAC válido podría inyectar tenantIds inventados y crear
+  // RecoverConfig huérfanos en la DB.
+  const tenant = await db.tenant.findUnique({
+    where: { id: tenantId },
+    select: { id: true },
+  });
+  if (!tenant) {
+    console.warn(`[Recover Webhook] tenant ${tenantId} not found — skipping`);
+    return;
+  }
 
   // Map MercadoPago status to our RecoverSubscriptionStatus
   const statusMap: Record<string, 'INACTIVE' | 'ACTIVE' | 'PAUSED' | 'CANCELLED'> = {

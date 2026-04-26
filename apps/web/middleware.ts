@@ -16,6 +16,7 @@ export async function middleware(request: NextRequest) {
     '/api/webhooks',
     '/api/v1/mcp', // MCP uses its own Bearer token auth
     '/api/recover/subscription-webhook', // MercadoPago calls this — no session available
+    '/api/referrals/track', // Pre-signup endpoint to set signed referral cookie
     '/_next',
     '/favicon.ico',
   ];
@@ -29,7 +30,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // All protected routes (dashboard + API)
+  // All protected routes (dashboard + API). Defense-in-depth: aún si una
+  // ruta nueva se olvida de llamar getAuthenticatedTenant(), el middleware
+  // la rebota con 401 antes de tocar la DB.
   const protectedPaths = [
     '/dashboard',
     '/orders',
@@ -43,6 +46,8 @@ export async function middleware(request: NextRequest) {
     '/api/stripe',
     '/api/mercadopago',
     '/api/recover',
+    '/api/credit-packs',
+    '/api/referrals',
   ];
 
   const isProtected = protectedPaths.some((p) => pathname.startsWith(p));

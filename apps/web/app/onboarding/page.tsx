@@ -29,7 +29,26 @@ interface StepConfig {
 const STEPS: StepConfig[] = [
   { number: 1, title: 'Shopify', description: 'Conecta tu tienda', icon: ShoppingBag },
   { number: 2, title: 'DAC Uruguay', description: 'Credenciales de envio', icon: Truck },
-  { number: 3, title: 'Plan', description: 'Activa tu cuenta', icon: CreditCard },
+  { number: 3, title: 'Cargá envíos', description: 'Elegí un pack', icon: CreditCard },
+];
+
+// Mirror lib/credit-packs.ts — paquetes de envíos en UYU. La fuente de
+// verdad sigue siendo el server (lib/credit-packs.ts), aquí solo está la
+// info necesaria para renderizar el step 3.
+type OnboardingPack = {
+  id: string;
+  shipments: number;
+  pricePerShipmentUyu: number;
+  totalPriceUyu: number;
+  tagline: string;
+  popular?: boolean;
+  best?: boolean;
+};
+
+const ONBOARDING_PACKS: OnboardingPack[] = [
+  { id: 'pack_10',   shipments: 10,   pricePerShipmentUyu: 20, totalPriceUyu: 200,  tagline: 'Para probar' },
+  { id: 'pack_100',  shipments: 100,  pricePerShipmentUyu: 15, totalPriceUyu: 1500, tagline: 'El favorito',         popular: true },
+  { id: 'pack_1000', shipments: 1000, pricePerShipmentUyu: 7,  totalPriceUyu: 7000, tagline: 'Mejor precio/envío',  best: true },
 ];
 
 export default function OnboardingPage() {
@@ -103,20 +122,26 @@ export default function OnboardingPage() {
     }
   }
 
-  async function handleSelectPlan(plan: string) {
+  async function handleSelectPack(packId: string) {
     setSaving(true);
+    setError('');
     try {
-      const res = await fetch(`/api/mercadopago/checkout?plan=${plan}`);
+      // /api/credit-packs/checkout devuelve un redirect 3xx hacia la URL
+      // de pago de MercadoPago. Si llega como JSON con `url`, también lo
+      // soportamos por compat.
+      const res = await fetch(`/api/credit-packs/checkout?pack=${packId}`);
       if (res.redirected) {
         window.location.href = res.url;
-      } else {
-        const data = await res.json();
-        if (data.url) {
-          window.location.href = data.url;
-        }
+        return;
       }
+      const data = await res.json().catch(() => ({}));
+      if (data?.url) {
+        window.location.href = data.url;
+        return;
+      }
+      setError(data?.error ?? 'Error al iniciar el pago');
     } catch {
-      setError('Error al iniciar checkout');
+      setError('Error al iniciar el pago');
     }
     setSaving(false);
   }
@@ -349,84 +374,91 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          {/* STEP 3: Plan */}
+          {/* STEP 3: Cargá envíos (credit packs en UYU) */}
           {step === 3 && (
             <div className="animate-fade-in">
               <div className="text-center mb-8">
-                <h2 className="text-xl font-bold text-white mb-1">Elige tu plan</h2>
+                <h2 className="text-xl font-bold text-white mb-1">Cargá envíos</h2>
                 <p className="text-zinc-500 text-sm">
-                  Todos incluyen 14 dias gratis. Cancela cuando quieras.
+                  Pagás solo por lo que usás. <span className="text-emerald-400">Tenés 10 envíos gratis</span> para arrancar — sumá un pack cuando quieras.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                {[
-                  {
-                    name: 'Starter',
-                    price: 15,
-                    labels: '100',
-                    features: ['Procesamiento auto', 'Email al cliente', 'Dashboard'],
-                    plan: 'starter',
-                    popular: false,
-                  },
-                  {
-                    name: 'Growth',
-                    price: 35,
-                    labels: '500',
-                    features: ['Todo de Starter', 'Webhooks', 'API + MCP', 'Soporte prioritario'],
-                    plan: 'growth',
-                    popular: true,
-                  },
-                  {
-                    name: 'Pro',
-                    price: 69,
-                    labels: 'Ilimitado',
-                    features: ['Todo de Growth', 'Soporte dedicado', 'Custom rules'],
-                    plan: 'pro',
-                    popular: false,
-                  },
-                ].map((tier) => (
-                  <div
-                    key={tier.name}
-                    className={cn(
-                      'glass rounded-2xl p-6 relative transition-all duration-200',
-                      tier.popular && 'ring-1 ring-cyan-500/30 bg-cyan-500/[0.02]'
-                    )}
-                  >
-                    {tier.popular && (
-                      <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-semibold text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                        Popular
-                      </span>
-                    )}
-                    <h3 className="text-sm font-semibold text-white mb-1">{tier.name}</h3>
-                    <p className="text-[11px] text-zinc-500 mb-3">{tier.labels} etiquetas/mes</p>
-                    <p className="mb-4">
-                      <span className="text-2xl font-bold text-white">${tier.price}</span>
-                      <span className="text-xs text-zinc-500">/mes</span>
-                    </p>
-                    <ul className="space-y-2 mb-5">
-                      {tier.features.map((f) => (
-                        <li key={f} className="flex items-center gap-2 text-xs text-zinc-400">
-                          <Check className="w-3 h-3 text-cyan-400 flex-shrink-0" />
-                          {f}
-                        </li>
-                      ))}
-                    </ul>
-                    <button
-                      onClick={() => handleSelectPlan(tier.plan)}
-                      disabled={saving}
+                {ONBOARDING_PACKS.map((pack) => {
+                  const highlighted = pack.popular || pack.best;
+                  return (
+                    <div
+                      key={pack.id}
                       className={cn(
-                        'w-full py-2.5 rounded-xl text-xs font-medium transition-all',
-                        tier.popular
-                          ? 'bg-gradient-to-r from-cyan-600 to-cyan-500 text-white hover:from-cyan-500 hover:to-cyan-400'
-                          : 'border border-white/[0.08] text-zinc-300 hover:bg-white/[0.03]'
+                        'glass rounded-2xl p-6 pt-7 relative transition-all duration-200',
+                        pack.popular && 'ring-1 ring-cyan-500/40 bg-cyan-500/[0.03]',
+                        pack.best && 'ring-1 ring-emerald-500/40 bg-emerald-500/[0.03]',
                       )}
                     >
-                      {saving ? 'Cargando...' : 'Empezar 14 dias gratis'}
-                    </button>
-                  </div>
-                ))}
+                      {pack.popular && (
+                        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-semibold text-cyan-400 bg-[#0a0a0a] border border-cyan-500/30 px-2.5 py-0.5 rounded-full uppercase tracking-wider whitespace-nowrap">
+                          Más popular
+                        </span>
+                      )}
+                      {pack.best && (
+                        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-semibold text-emerald-400 bg-[#0a0a0a] border border-emerald-500/30 px-2.5 py-0.5 rounded-full uppercase tracking-wider whitespace-nowrap">
+                          Mejor precio
+                        </span>
+                      )}
+                      <p className="text-[11px] text-zinc-500 mb-1">{pack.tagline}</p>
+                      <h3 className="text-2xl font-bold text-white mb-1">{pack.shipments.toLocaleString('es-UY')} envíos</h3>
+                      <p className="mb-4">
+                        <span className="text-2xl font-bold text-white">${pack.totalPriceUyu.toLocaleString('es-UY')}</span>
+                        <span className="text-xs text-zinc-500"> UYU</span>
+                        <span className="block text-[11px] text-zinc-500 mt-0.5">
+                          ${pack.pricePerShipmentUyu} UYU por envío
+                        </span>
+                      </p>
+                      <ul className="space-y-2 mb-5">
+                        <li className="flex items-center gap-2 text-xs text-zinc-400">
+                          <Check className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                          Sin vencimiento
+                        </li>
+                        <li className="flex items-center gap-2 text-xs text-zinc-400">
+                          <Check className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                          Pago único, no se renueva
+                        </li>
+                        <li className="flex items-center gap-2 text-xs text-zinc-400">
+                          <Check className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                          Acreditación inmediata
+                        </li>
+                      </ul>
+                      <button
+                        onClick={() => handleSelectPack(pack.id)}
+                        disabled={saving}
+                        className={cn(
+                          'w-full py-2.5 rounded-xl text-xs font-medium transition-all disabled:opacity-50',
+                          highlighted
+                            ? pack.best
+                              ? 'bg-gradient-to-r from-emerald-600 to-emerald-500 text-white hover:from-emerald-500 hover:to-emerald-400'
+                              : 'bg-gradient-to-r from-cyan-600 to-cyan-500 text-white hover:from-cyan-500 hover:to-cyan-400'
+                            : 'border border-white/[0.08] text-zinc-300 hover:bg-white/[0.03]',
+                        )}
+                      >
+                        {saving ? 'Cargando…' : 'Comprar con MercadoPago'}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
+
+              <p className="text-center text-[11px] text-zinc-600 mb-6">
+                ¿Necesitás otro tamaño? En{' '}
+                <button
+                  type="button"
+                  onClick={() => router.push('/settings/billing')}
+                  className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2"
+                >
+                  Facturación
+                </button>{' '}
+                tenés 6 packs (10, 50, 100, 250, 500, 1000 envíos).
+              </p>
 
               <div className="flex justify-between">
                 <button
@@ -439,7 +471,7 @@ export default function OnboardingPage() {
                   onClick={() => router.push('/dashboard')}
                   className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
                 >
-                  Elegir despues
+                  Saltar — uso los 10 envíos gratis
                 </button>
               </div>
             </div>

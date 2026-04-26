@@ -32,9 +32,10 @@ export async function POST(req: Request) {
 
   for (const orderNum of orderNumbers) {
     try {
-      // Search for the order by name
+      // Search for the order by name. encodeURIComponent para evitar que
+      // un orderNum con `&` o `=` inyecte query params extra.
       const searchRes = await fetch(
-        `https://${tenant.shopifyStoreUrl}/admin/api/2024-01/orders.json?name=%23${orderNum}&status=any`,
+        `https://${tenant.shopifyStoreUrl}/admin/api/2024-01/orders.json?name=%23${encodeURIComponent(orderNum)}&status=any`,
         { headers: { 'X-Shopify-Access-Token': token } }
       );
       const searchData = await searchRes.json();

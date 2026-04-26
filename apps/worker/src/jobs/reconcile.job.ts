@@ -26,6 +26,11 @@ const STALE_JOB_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 // that didn't delete the row. 15 min gives slow DAC flows (YELLOW path with
 // captcha + Plexo + historial probe) plenty of room before we intervene.
 const ORPHAN_PENDING_SHIPMENT_MS = 15 * 60 * 1000;
+// CreditPurchase sigue PENDING porque el usuario hizo click en "Comprar"
+// pero abandonó el flow de MercadoPago. La preferencia MP expira a las 24h
+// (default), así que cualquier PENDING más viejo que eso es ruido en el
+// historial del tenant — lo flippeamos a FAILED.
+const STALE_CREDIT_PURCHASE_MS = 24 * 60 * 60 * 1000;
 const MAX_AUTO_RETRIES = 3;
 
 /**
@@ -222,7 +227,35 @@ export async function runReconciliation(): Promise<void> {
     }
 
     // ================================================
-    // 4. Log summary
+    // 4. Sweep stale PENDING CreditPurchase rows (>24h)
+    // ================================================
+    //
+    // El handler /api/credit-packs/checkout crea un row PENDING antes de
+    // redirigir a MercadoPago. Si el usuario abandona el checkout, el row
+    // se queda PENDING para siempre y aparece en su historial como pago en
+    // proceso (falso positivo). MP expira la preferencia a 24h por default,
+    // así que cualquier row más viejo que eso ya no se va a aprobar.
+    const stalePurchaseCutoff = new Date(Date.now() - STALE_CREDIT_PURCHASE_MS);
+    const stalePurchases = await db.creditPurchase.updateMany({
+      where: {
+        status: 'PENDING',
+        createdAt: { lt: stalePurchaseCutoff },
+      },
+      data: {
+        status: 'FAILED',
+      },
+    });
+
+    if (stalePurchases.count > 0) {
+      logger.warn(
+        { count: stalePurchases.count, olderThanHours: STALE_CREDIT_PURCHASE_MS / (60 * 60 * 1000) },
+        '[Reconcile] Marked stale PENDING CreditPurchase rows as FAILED (abandoned checkouts)',
+      );
+      fixed += stalePurchases.count;
+    }
+
+    // ================================================
+    // 5. Log summary
     // ================================================
     const durationMs = Date.now() - startTime;
     logger.info({ fixed, durationMs }, '[Reconcile] Reconciliation complete');

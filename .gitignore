@@ -1,11 +1,18 @@
 node_modules/
 dist/
 .next/
+
+# Env files: deny-by-default, allow-list .example variants. Cubre variantes
+# .env.development, .env.test, .env.production.local, etc., en cualquier
+# subdirectorio (Next.js, monorepo workspaces).
 .env
-.env.local
-.env.production
-apps/web/.env
-apps/worker/.env
+.env.*
+!.env.example
+!.env.*.example
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
 etiquetas/
 /logs/
 !apps/web/app/**/logs/

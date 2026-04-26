@@ -27,7 +27,15 @@ function verifyMercadoPagoSignature(req: NextRequest, body: string, secret: stri
 
   const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
   const hash = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
-  return hash === v1;
+  // Timing-safe compare: NEVER use === on HMAC digests (timing oracle).
+  try {
+    const a = Buffer.from(hash, 'hex');
+    const b = Buffer.from(v1, 'hex');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -400,25 +408,53 @@ async function accrueReferralKickback(
 ) {
   const referee = await db.tenant.findUnique({
     where: { id: refereeTenantId },
-    select: { referredById: true },
+    select: { referredById: true, userId: true },
   });
   if (!referee?.referredById) return;
-  if (referee.referredById === refereeTenantId) return; // self-referral guard
+  if (referee.referredById === refereeTenantId) return; // tenant-level self-ref
+
+  // self-referral guard a nivel User: si el referrer y el referee comparten
+  // el mismo dueño (userId), saltamos. Cubre el caso de un usuario que abre
+  // dos tenants y se refiere a sí mismo.
+  const referrer = await db.tenant.findUnique({
+    where: { id: referee.referredById },
+    select: { userId: true },
+  });
+  if (referrer?.userId && referrer.userId === referee.userId) {
+    console.warn(
+      `MercadoPago: self-referral detected (userId=${referrer.userId}) — skipping kickback for purchase ${sourcePurchaseId}`,
+    );
+    return;
+  }
 
   const accrued = calcReferralKickback(shipmentsPurchased);
   if (accrued <= 0) return;
 
+  // Atómico: crear el accrual y acreditar al referrer en la MISMA txn. Si
+  // el process crashea entre crear el accrual y actualizar al tenant, el
+  // sourcePurchaseId @unique queda bloqueando el retry y el referrer
+  // quedaba sin sus créditos. La txn elimina ese hueco TOCTOU.
   try {
-    await db.referralCreditAccrual.create({
-      data: {
-        referrerTenantId: referee.referredById,
-        refereeTenantId,
-        sourcePurchaseId,
-        shipmentsAccrued: accrued,
-      },
-    });
+    await db.$transaction([
+      db.referralCreditAccrual.create({
+        data: {
+          referrerTenantId: referee.referredById,
+          refereeTenantId,
+          sourcePurchaseId,
+          shipmentsAccrued: accrued,
+        },
+      }),
+      db.tenant.update({
+        where: { id: referee.referredById },
+        data: {
+          shipmentCredits: { increment: accrued },
+          referralCreditsEarned: { increment: accrued },
+        },
+      }),
+    ]);
   } catch (err) {
-    // P2002 (unique violation) = ya acreditado por un webhook previo
+    // P2002 (unique violation) = ya acreditado por un webhook previo —
+    // ambas operaciones se rollbackean atómicamente.
     if ((err as { code?: string }).code === 'P2002') {
       console.info(
         `MercadoPago: referral accrual already exists for purchase ${sourcePurchaseId} (idempotent skip)`,
@@ -427,14 +463,6 @@ async function accrueReferralKickback(
     }
     throw err;
   }
-
-  await db.tenant.update({
-    where: { id: referee.referredById },
-    data: {
-      shipmentCredits: { increment: accrued },
-      referralCreditsEarned: { increment: accrued },
-    },
-  });
 
   console.info(
     `MercadoPago: referral kickback +${accrued} shipments → referrer=${referee.referredById} (referee=${refereeTenantId}, purchase=${sourcePurchaseId})`,

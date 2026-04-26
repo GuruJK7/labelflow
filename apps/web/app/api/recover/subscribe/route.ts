@@ -56,6 +56,6 @@ export async function GET() {
     return NextResponse.redirect(checkoutUrl);
   } catch (err) {
     console.error('[Recover Subscribe] MercadoPago error:', (err as Error).message);
-    return apiError(`Error de MercadoPago: ${(err as Error).message}`, 500);
+    return apiError('Error al procesar la suscripción. Intenta de nuevo.', 500);
   }
 }

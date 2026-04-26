@@ -81,7 +81,8 @@ export async function POST() {
       scannedAt: new Date().toISOString(),
     });
   } catch (err) {
-    return apiError(`Error escaneando: ${(err as Error).message}`, 500);
+    console.error('[products/scan] error:', (err as Error).message, (err as Error).stack);
+    return apiError('Error escaneando productos', 500);
   }
 }
 
@@ -199,7 +200,7 @@ async function tryProductsApi(
         };
       }
 
-      url = parsePaginationNext(res.headers.get('link'));
+      url = parsePaginationNext(res.headers.get('link'), baseUrl);
     }
 
     return Object.keys(map).length > 0;
@@ -243,12 +244,27 @@ async function tryOrdersApi(
   }
 }
 
-function parsePaginationNext(linkHeader: string | null): string | null {
+/**
+ * Extrae la URL `rel="next"` del header Link de Shopify, validando que
+ * apunte al MISMO origin de la tienda. Sin este check, una respuesta
+ * maliciosa (Shopify comprometido, MITM, proxy roto) podría redirigir
+ * nuestros fetch outbound a IMDS interno, Redis, o la API de Supabase
+ * (SSRF). Cualquier URL fuera del baseUrl esperado se descarta.
+ */
+function parsePaginationNext(linkHeader: string | null, baseUrl: string): string | null {
   if (!linkHeader) return null;
   const parts = linkHeader.split(',');
   for (const part of parts) {
     const match = part.match(/<([^>]+)>;\s*rel="next"/);
-    if (match) return match[1];
+    if (!match) continue;
+    const candidate = match[1];
+    if (!candidate.startsWith(`${baseUrl}/`)) {
+      console.warn(
+        `[Shopify pagination] dropping next URL outside baseUrl: ${candidate}`,
+      );
+      return null;
+    }
+    return candidate;
   }
   return null;
 }
