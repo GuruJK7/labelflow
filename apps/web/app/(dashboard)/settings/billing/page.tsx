@@ -23,6 +23,17 @@ interface Pack {
   label: string;
 }
 
+// Marketing copy per pack — keeps the JSX clean and centralizes voice.
+// If business adds/renames packs, update this map.
+const PACK_COPY: Record<string, { tagline: string }> = {
+  pack_10:   { tagline: 'Ideal para empezar a probar' },
+  pack_50:   { tagline: 'Para tiendas que arrancan' },
+  pack_100:  { tagline: 'El favorito de los emprendedores' },
+  pack_250:  { tagline: 'Para negocios en crecimiento' },
+  pack_500:  { tagline: 'Para tiendas con alta demanda' },
+  pack_1000: { tagline: 'Para operaciones establecidas' },
+};
+
 interface CreditState {
   balance: {
     shipmentCredits: number;
@@ -261,17 +272,17 @@ function BillingContent() {
                   </div>
                 )}
 
-                {/* Savings badge */}
-                {savings > 0 && (
-                  <div className="absolute top-4 right-4 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-semibold">
-                    <TrendingDown className="w-3 h-3" />
-                    -{savings}%
-                  </div>
-                )}
-
-                {/* Quantity */}
-                <div className="text-center mb-1 mt-2">
-                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-white/[0.06] mb-3">
+                {/* Top row: icon + savings */}
+                <div className="flex items-start justify-between mb-5 mt-2">
+                  <div
+                    className={`inline-flex items-center justify-center w-11 h-11 rounded-xl border ${
+                      isBest
+                        ? 'bg-gradient-to-br from-amber-500/20 to-orange-500/5 border-amber-500/20'
+                        : isPopular
+                          ? 'bg-gradient-to-br from-cyan-500/20 to-cyan-500/5 border-cyan-500/20'
+                          : 'bg-zinc-800/80 border-white/[0.06]'
+                    }`}
+                  >
                     <Package
                       className={`w-5 h-5 ${
                         isBest
@@ -282,28 +293,74 @@ function BillingContent() {
                       }`}
                     />
                   </div>
-                  <p className="text-3xl font-bold text-white tabular-nums">
-                    {pack.shipments.toLocaleString('es-UY')}
+                  {savings > 0 && (
+                    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-semibold">
+                      <TrendingDown className="w-3 h-3" />
+                      -{savings}%
+                    </div>
+                  )}
+                </div>
+
+                {/* Quantity + tagline */}
+                <div className="mb-5">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-4xl font-bold text-white tabular-nums tracking-tight">
+                      {pack.shipments.toLocaleString('es-UY')}
+                    </span>
+                    <span className="text-sm font-medium text-zinc-400">envíos</span>
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-1.5">
+                    {PACK_COPY[pack.id]?.tagline ?? 'Para tu tienda'}
                   </p>
-                  <p className="text-xs text-zinc-500 uppercase tracking-wider mt-0.5">envíos</p>
                 </div>
 
                 {/* Price */}
-                <div className="text-center my-5 py-4 border-y border-white/[0.04]">
-                  <div className="flex items-baseline justify-center gap-1.5">
+                <div className="border-y border-white/[0.06] py-4 mb-5">
+                  {pack.shipments * refPrice > pack.totalPriceUyu && (
+                    <p className="text-[11px] text-zinc-600 line-through mb-1 tabular-nums">
+                      Antes ${(pack.shipments * refPrice).toLocaleString('es-UY')} UYU
+                    </p>
+                  )}
+                  <div className="flex items-baseline gap-1.5">
                     <span className="text-zinc-500 text-sm">$</span>
                     <span className="text-4xl font-bold text-white tabular-nums tracking-tight">
                       {pack.totalPriceUyu.toLocaleString('es-UY')}
                     </span>
                     <span className="text-xs text-zinc-500 font-medium">UYU</span>
                   </div>
-                  <p className="text-xs text-zinc-400 mt-2">
-                    <span className="text-cyan-400 font-semibold">
+                  <p className="text-xs text-zinc-400 mt-1.5">
+                    <span
+                      className={`font-semibold ${
+                        isBest ? 'text-amber-400' : 'text-cyan-400'
+                      }`}
+                    >
                       ${pack.pricePerShipmentUyu}
                     </span>{' '}
                     UYU por envío
                   </p>
                 </div>
+
+                {/* Benefits */}
+                <ul className="space-y-2.5 mb-6">
+                  <li className="flex items-start gap-2 text-xs text-zinc-400">
+                    <div className="mt-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                      <Check className="w-2.5 h-2.5 text-emerald-400" strokeWidth={3} />
+                    </div>
+                    Acreditación instantánea
+                  </li>
+                  <li className="flex items-start gap-2 text-xs text-zinc-400">
+                    <div className="mt-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                      <Check className="w-2.5 h-2.5 text-emerald-400" strokeWidth={3} />
+                    </div>
+                    Sin caducidad ni renovación
+                  </li>
+                  <li className="flex items-start gap-2 text-xs text-zinc-400">
+                    <div className="mt-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                      <Check className="w-2.5 h-2.5 text-emerald-400" strokeWidth={3} />
+                    </div>
+                    Soporte directo por WhatsApp
+                  </li>
+                </ul>
 
                 {/* CTA */}
                 <button
