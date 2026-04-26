@@ -18,6 +18,11 @@ import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { getDepartmentForCity, getDepartmentForCityAsync } from '../dac/uruguay-geo';
 import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
+import {
+  buildAllowedSet,
+  orderMatchesAllowedProducts,
+  type ProductCache,
+} from '../rules/product-filter';
 import { evaluateShippingRules, type ShippingRuleRow } from '../rules/shipping';
 import { sendShipmentNotification } from '../notifier/email';
 import { uploadLabelPdf } from '../storage/upload';
@@ -236,10 +241,12 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       );
     }
 
-    // Product type filter: only process orders containing allowed product types
-    // Read fresh from DB to avoid stale Prisma client cache
+    // Product filter: only process orders containing whitelisted products.
+    // The whitelist matches against the cache entry's title, type, or vendor —
+    // see apps/worker/src/rules/product-filter.ts for the full contract.
+    // Read fresh from DB to avoid stale Prisma client cache.
     let allowedProductTypes: string[] | null = tenant.allowedProductTypes as string[] | null;
-    let productTypeCache: Record<string, string> | null = tenant.productTypeCache as Record<string, string> | null;
+    let productTypeCache: ProductCache | null = tenant.productTypeCache as ProductCache | null;
     try {
       const fresh = await db.$queryRaw<{allowedProductTypes: string | null; productTypeCache: string | null}[]>`
         SELECT "allowedProductTypes"::text, "productTypeCache"::text FROM "Tenant" WHERE id = ${tenantId}
@@ -251,23 +258,16 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     } catch { /* fallback to tenant object values */ }
     slog.info('filter', `Product filter: ${allowedProductTypes && allowedProductTypes.length > 0 ? allowedProductTypes.join(', ') : 'ALL (no filter)'}`);
 
-    if (allowedProductTypes && allowedProductTypes.length > 0 && !productTypeCache) {
-      slog.warn('filter', `Product type filter configured (${allowedProductTypes.join(', ')}) but no product cache — run "Escanear Shopify" first. Processing ALL orders.`);
+    if (allowedProductTypes && allowedProductTypes.length > 0 && (!productTypeCache || Object.keys(productTypeCache).length === 0)) {
+      slog.warn('filter', `Product filter configured (${allowedProductTypes.join(', ')}) but no product cache — run "Escanear Shopify" first. Processing ALL orders.`);
     }
-    if (allowedProductTypes && allowedProductTypes.length > 0 && productTypeCache) {
+    if (allowedProductTypes && allowedProductTypes.length > 0 && productTypeCache && Object.keys(productTypeCache).length > 0) {
       const beforeProductFilter = orders.length;
-      const allowedSet = new Set(allowedProductTypes.map(t => t.toLowerCase()));
-      orders = orders.filter(order => {
-        return order.line_items.some(item => {
-          if (!item.product_id) return false;
-          const pType = productTypeCache[String(item.product_id)];
-          if (!pType) return false;
-          return allowedSet.has(pType.toLowerCase());
-        });
-      });
+      const allowedSet = buildAllowedSet(allowedProductTypes);
+      orders = orders.filter((order) => orderMatchesAllowedProducts(order, allowedSet, productTypeCache!));
       const productFiltered = beforeProductFilter - orders.length;
       if (productFiltered > 0) {
-        slog.info('filter', `Product type filter: excluded ${productFiltered} orders (allowed: ${allowedProductTypes.join(', ')})`);
+        slog.info('filter', `Product filter: excluded ${productFiltered} orders (allowed: ${allowedProductTypes.join(', ')})`);
       }
     }
 

@@ -30,7 +30,10 @@ interface SettingsData {
   autoPrintEnabled?: boolean;
   orderSortDirection?: string;
   allowedProductTypes?: string[] | null;
-  productTypeCache?: Record<string, string> | null;
+  // Cache shape evolved 2026-04-24 from `string` to `{ title, type, vendor }`.
+  // Keep both supported here so the page works with old + new tenants until
+  // every shop has re-scanned.
+  productTypeCache?: Record<string, string | { title?: string; type?: string; vendor?: string }> | null;
   paymentAutoEnabled?: boolean;
   paymentCardBrand?: 'mastercard' | 'visa' | 'oca' | null;
   paymentCardLast4?: string | null;
@@ -55,8 +58,13 @@ export default function SettingsPage() {
   const [scheduleSlots, setScheduleSlots] = useState<ScheduleSlot[]>([{ time: '09:00', maxOrders: 0 }]);
   const [scheduleDays, setScheduleDays] = useState<number[]>([1, 2, 3, 4, 5]); // Mon-Fri
   const [orderSort, setOrderSort] = useState<'oldest_first' | 'newest_first'>('oldest_first');
+  // Persisted whitelist (entries can be product titles, types, or vendors —
+  // worker matches all three case-insensitively).
   const [allowedProductTypes, setAllowedProductTypes] = useState<string[]>([]);
-  const [availableProductTypes, setAvailableProductTypes] = useState<string[]>([]);
+  // One row per Shopify product, surfaced as chips.
+  const [availableProducts, setAvailableProducts] = useState<
+    Array<{ id: string; title: string; type: string; vendor: string }>
+  >([]);
   const [scanning, setScanning] = useState(false);
   const [consolidateConsecutiveOrders, setConsolidateConsecutiveOrders] = useState(false);
   const [consolidationWindowMinutes, setConsolidationWindowMinutes] = useState(30);
@@ -177,13 +185,11 @@ export default function SettingsPage() {
           setCronSchedule(cron);
           parseCronToSchedule(cron, data.scheduleSlots);
           setOrderSort(data.orderSortDirection ?? 'oldest_first');
-          setAllowedProductTypes(data.allowedProductTypes ?? []);
+          const stored = (data.allowedProductTypes ?? []) as string[];
+          setAllowedProductTypes(stored);
           setConsolidateConsecutiveOrders(data.consolidateConsecutiveOrders ?? false);
           setConsolidationWindowMinutes(data.consolidationWindowMinutes ?? 30);
-          if (data.productTypeCache) {
-            const types = [...new Set(Object.values(data.productTypeCache) as string[])].sort();
-            setAvailableProductTypes(types);
-          }
+          setAvailableProducts(normalizeProductCache(data.productTypeCache, stored));
         }
       })
       .catch(() => {});
@@ -429,7 +435,7 @@ export default function SettingsPage() {
                     const res = await fetch('/api/v1/products/scan', { method: 'POST' });
                     if (res.ok) {
                       const { data } = await res.json();
-                      setAvailableProductTypes(data.productTypes ?? []);
+                      setAvailableProducts((data.products ?? []) as typeof availableProducts);
                     }
                   } catch { /* silent */ }
                   setScanning(false);
@@ -442,30 +448,33 @@ export default function SettingsPage() {
               </button>
             </div>
 
-            {availableProductTypes.length === 0 ? (
+            {availableProducts.length === 0 ? (
               <div className="bg-zinc-800/20 border border-dashed border-white/[0.08] rounded-lg p-4 text-center mt-1">
-                <p className="text-xs text-zinc-500">No hay tipos de producto cargados</p>
-                <p className="text-[10px] text-zinc-600 mt-1">Hace click en &quot;Escanear productos&quot; para cargar los tipos desde Shopify</p>
+                <p className="text-xs text-zinc-500">No hay productos cargados</p>
+                <p className="text-[10px] text-zinc-600 mt-1">Hace click en &quot;Escanear productos&quot; para cargar los productos desde Shopify</p>
               </div>
             ) : (
               <div className="flex flex-wrap gap-2 mt-2">
-                {availableProductTypes.map((pType) => {
-                  const isSelected = allowedProductTypes.includes(pType);
+                {availableProducts.map((product) => {
+                  const label = product.title || product.type || product.vendor || product.id;
+                  const isSelected = allowedProductTypes.includes(label);
+                  const subtitle = [product.type, product.vendor].filter(Boolean).join(' · ');
                   return (
                     <button
-                      key={pType}
+                      key={product.id}
+                      title={subtitle || undefined}
                       onClick={() => {
-                        setAllowedProductTypes(prev =>
-                          isSelected ? prev.filter(t => t !== pType) : [...prev, pType]
+                        setAllowedProductTypes((prev) =>
+                          isSelected ? prev.filter((t) => t !== label) : [...prev, label]
                         );
                       }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all max-w-[260px] truncate ${
                         isSelected
                           ? 'bg-cyan-600/20 text-cyan-400 border-cyan-500/30'
                           : 'bg-zinc-800/50 text-zinc-500 border-white/[0.06] hover:text-zinc-300 hover:border-white/[0.15]'
                       }`}
                     >
-                      {pType}
+                      {label}
                     </button>
                   );
                 })}
@@ -473,7 +482,7 @@ export default function SettingsPage() {
             )}
             <p className="text-[10px] text-zinc-600 mt-2">
               {allowedProductTypes.length === 0
-                ? 'Sin filtro — se procesan todos los tipos de producto'
+                ? 'Sin filtro — se procesan todos los productos'
                 : `Solo se procesan pedidos con: ${allowedProductTypes.join(', ')}`}
             </p>
           </div>
@@ -716,5 +725,48 @@ export default function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Normalize productTypeCache (legacy string OR enriched object) into the
+ * shape used by the chip UI. Mirrored from app/(dashboard)/dashboard/page.tsx
+ * — keep the two implementations in sync.
+ */
+function normalizeProductCache(
+  cache: unknown,
+  storedAllowed: string[],
+): Array<{ id: string; title: string; type: string; vendor: string }> {
+  const out: Array<{ id: string; title: string; type: string; vendor: string }> = [];
+  const seen = new Set<string>();
+  if (cache && typeof cache === 'object') {
+    for (const [id, value] of Object.entries(cache as Record<string, unknown>)) {
+      let title = '';
+      let type = '';
+      let vendor = '';
+      if (typeof value === 'string') {
+        title = value;
+        vendor = value;
+      } else if (value && typeof value === 'object') {
+        const v = value as { title?: unknown; type?: unknown; vendor?: unknown };
+        if (typeof v.title === 'string') title = v.title;
+        if (typeof v.type === 'string') type = v.type;
+        if (typeof v.vendor === 'string') vendor = v.vendor;
+      }
+      const label = (title || type || vendor || id).trim();
+      if (!label) continue;
+      if (seen.has(label.toLowerCase())) continue;
+      seen.add(label.toLowerCase());
+      out.push({ id, title: title.trim(), type: type.trim(), vendor: vendor.trim() });
+    }
+  }
+  for (const stored of storedAllowed) {
+    const trimmed = stored.trim();
+    if (!trimmed || seen.has(trimmed.toLowerCase())) continue;
+    seen.add(trimmed.toLowerCase());
+    out.push({ id: `__stored__${trimmed}`, title: trimmed, type: '', vendor: '' });
+  }
+  return out.sort((a, b) =>
+    (a.title || a.type || a.vendor).localeCompare(b.title || b.type || b.vendor, 'es'),
   );
 }

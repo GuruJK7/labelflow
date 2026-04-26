@@ -58,8 +58,15 @@ export default function DashboardPage() {
   const [orderCount, setOrderCount] = useState(1);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [orderSort, setOrderSort] = useState<'oldest_first' | 'newest_first'>('oldest_first');
+  // `allowedProductTypes` is the persisted whitelist. Each entry can be a
+  // product title, product_type, or vendor — the worker matches any of them.
   const [allowedProductTypes, setAllowedProductTypes] = useState<string[]>([]);
-  const [availableProductTypes, setAvailableProductTypes] = useState<string[]>([]);
+  // Individual products surfaced as chips in the dashboard filter. Sourced
+  // from the `productTypeCache` (Tenant.productTypeCache) which is rebuilt
+  // each time the user clicks "Escanear Shopify".
+  const [availableProducts, setAvailableProducts] = useState<
+    Array<{ id: string; title: string; type: string; vendor: string }>
+  >([]);
   const [scanning, setScanning] = useState(false);
   const [savingSort, setSavingSort] = useState(false);
   const [fulfillMode, setFulfillMode] = useState<'off' | 'on' | 'always'>('on');
@@ -116,15 +123,8 @@ export default function DashboardPage() {
       setFulfillMode(mode === 'off' || mode === 'on' || mode === 'always' ? mode : (settingsData?.autoFulfillEnabled ? 'on' : 'off'));
       const storedAllowed = (settingsData?.allowedProductTypes as string[]) ?? [];
       setAllowedProductTypes(storedAllowed);
-      if (settingsData?.productTypeCache) {
-        const cacheTypes = [...new Set(Object.values(settingsData.productTypeCache as Record<string, string>))].sort();
-        // Merge: include any stored filter types not in cache so they're visible and removable
-        const merged = [...new Set([...cacheTypes, ...storedAllowed])].sort();
-        setAvailableProductTypes(merged);
-      } else if (storedAllowed.length > 0) {
-        // No cache but filters exist — show them so user can remove them
-        setAvailableProductTypes(storedAllowed);
-      }
+      const products = normalizeProductCache(settingsData?.productTypeCache, storedAllowed);
+      setAvailableProducts(products);
     } catch {
       // Silent
     }
@@ -372,11 +372,12 @@ export default function DashboardPage() {
 
           <div className="w-px h-6 bg-white/[0.06] hidden sm:block" />
 
-          {/* Product type filter */}
+          {/* Product filter — one chip per Shopify product. Whitelist matches
+             title / type / vendor case-insensitively in the worker. */}
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <Filter className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
             <span className="text-xs text-zinc-500 flex-shrink-0">Productos:</span>
-            {availableProductTypes.length === 0 ? (
+            {availableProducts.length === 0 ? (
               <button
                 onClick={async () => {
                   setScanning(true);
@@ -385,9 +386,10 @@ export default function DashboardPage() {
                     const res = await fetch('/api/v1/products/scan', { method: 'POST' });
                     const json = await res.json();
                     if (res.ok && json.data) {
-                      setAvailableProductTypes(json.data.productTypes ?? []);
-                      if ((json.data.productTypes ?? []).length === 0) {
-                        setError('No se encontraron tipos de producto en Shopify');
+                      const products = (json.data.products ?? []) as typeof availableProducts;
+                      setAvailableProducts(products);
+                      if (products.length === 0) {
+                        setError('No se encontraron productos en Shopify');
                       }
                     } else {
                       setError(json.error ?? 'Error escaneando productos');
@@ -425,15 +427,17 @@ export default function DashboardPage() {
                 >
                   Todos
                 </button>
-                {availableProductTypes.map((pType) => {
-                  const isSelected = allowedProductTypes.includes(pType);
+                {availableProducts.map((product) => {
+                  const label = product.title || product.type || product.vendor || product.id;
+                  const isSelected = allowedProductTypes.includes(label);
                   return (
                     <button
-                      key={pType}
+                      key={product.id}
+                      title={[product.type, product.vendor].filter(Boolean).join(' · ') || undefined}
                       onClick={async () => {
                         const newTypes = isSelected
-                          ? allowedProductTypes.filter(t => t !== pType)
-                          : [...allowedProductTypes, pType];
+                          ? allowedProductTypes.filter((t) => t !== label)
+                          : [...allowedProductTypes, label];
                         setAllowedProductTypes(newTypes);
                         try {
                           await fetch('/api/v1/settings', {
@@ -444,13 +448,13 @@ export default function DashboardPage() {
                         } catch { /* silent */ }
                       }}
                       className={cn(
-                        'px-2 py-1 rounded text-[10px] font-medium border transition-all',
+                        'px-2 py-1 rounded text-[10px] font-medium border transition-all max-w-[200px] truncate',
                         isSelected
                           ? 'bg-cyan-600/20 text-cyan-400 border-cyan-500/30'
                           : 'bg-white/[0.02] text-zinc-600 border-white/[0.04] hover:text-zinc-400'
                       )}
                     >
-                      {pType}
+                      {label}
                     </button>
                   );
                 })}
@@ -461,7 +465,7 @@ export default function DashboardPage() {
                       const res = await fetch('/api/v1/products/scan', { method: 'POST' });
                       if (res.ok) {
                         const { data } = await res.json();
-                        setAvailableProductTypes(data.productTypes ?? []);
+                        setAvailableProducts((data.products ?? []) as typeof availableProducts);
                       }
                     } catch { /* silent */ }
                     setScanning(false);
@@ -713,4 +717,56 @@ function formatDuration(ms: number): string {
   const secs = Math.round(ms / 1000);
   if (secs < 60) return `${secs}s`;
   return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+}
+
+/**
+ * Coerces both legacy (string) and current (object) productTypeCache entries
+ * into a list of product chips for the filter UI.
+ *
+ * Legacy entries (pre-2026-04-24) stored a single string per product
+ * (typically the vendor name). The new shape is `{ title, type, vendor }`.
+ * Both are accepted here so we don't blow up if a tenant hasn't re-scanned
+ * yet. Stored allowed entries that no longer correspond to a cached product
+ * are appended as orphan chips so the user can still see/remove them.
+ */
+function normalizeProductCache(
+  cache: unknown,
+  storedAllowed: string[],
+): Array<{ id: string; title: string; type: string; vendor: string }> {
+  const out: Array<{ id: string; title: string; type: string; vendor: string }> = [];
+  const seen = new Set<string>();
+  if (cache && typeof cache === 'object') {
+    for (const [id, value] of Object.entries(cache as Record<string, unknown>)) {
+      let title = '';
+      let type = '';
+      let vendor = '';
+      if (typeof value === 'string') {
+        title = value;
+        vendor = value;
+      } else if (value && typeof value === 'object') {
+        const v = value as { title?: unknown; type?: unknown; vendor?: unknown };
+        if (typeof v.title === 'string') title = v.title;
+        if (typeof v.type === 'string') type = v.type;
+        if (typeof v.vendor === 'string') vendor = v.vendor;
+      }
+      const label = (title || type || vendor || id).trim();
+      if (!label) continue;
+      // Dedupe by displayed label so legacy "all-vendor" caches still
+      // collapse cleanly while enriched caches keep their per-product rows.
+      if (seen.has(label.toLowerCase())) continue;
+      seen.add(label.toLowerCase());
+      out.push({ id, title: title.trim(), type: type.trim(), vendor: vendor.trim() });
+    }
+  }
+  // Surface stored filters that no longer match a cached product so the
+  // user can still toggle them off.
+  for (const stored of storedAllowed) {
+    const trimmed = stored.trim();
+    if (!trimmed || seen.has(trimmed.toLowerCase())) continue;
+    seen.add(trimmed.toLowerCase());
+    out.push({ id: `__stored__${trimmed}`, title: trimmed, type: '', vendor: '' });
+  }
+  return out.sort((a, b) =>
+    (a.title || a.type || a.vendor).localeCompare(b.title || b.type || b.vendor, 'es'),
+  );
 }
