@@ -9,6 +9,7 @@ import {
   readReferralCookieValue,
   REFERRAL_COOKIE_NAME,
 } from '@/lib/referrals';
+import { issueAndSendVerificationEmail, resolveAppOrigin } from '@/lib/verify-email';
 
 const signupSchema = z.object({
   name: z.string().min(1).max(100),
@@ -137,6 +138,27 @@ export async function POST(req: Request) {
       },
       include: { tenant: true },
     });
+
+    // Fire the email-verification message. Best-effort:
+    //   - If `RESEND_API_KEY` is unset (preview / local) the helper soft-
+    //     fails and we still return 201 — signup must not depend on email.
+    //   - If Resend is briefly unavailable, the user can re-trigger from
+    //     the /verify-email page (rate-limited to 3/hr per address).
+    //   - The verification GATE itself is env-flagged
+    //     (`EMAIL_VERIFICATION_REQUIRED`) so an unwired email pipeline
+    //     doesn't lock users out of the dashboard.
+    try {
+      await issueAndSendVerificationEmail({
+        userId: user.id,
+        email: user.email,
+        name: user.name,
+        origin: resolveAppOrigin(req),
+      });
+    } catch {
+      // Truly belt-and-suspenders — the helper itself doesn't throw, but
+      // we don't trust transitive dependencies (Prisma, fetch) to never
+      // raise. A failed email must NEVER take down a successful signup.
+    }
 
     return NextResponse.json(
       { data: { userId: user.id, tenantId: user.tenant?.id } },

@@ -71,7 +71,12 @@ function SignupContent() {
         return;
       }
 
-      router.push('/login?registered=true');
+      // Redirect to "check your inbox" page. The signup handler already
+      // fired the verification email best-effort; the verify-email page
+      // exposes a "Reenviar" button for stragglers + a help text covering
+      // the delivery / spam-folder scenario. Users who never confirm can
+      // still log in normally — the verification gate is env-flagged.
+      router.push(`/verify-email?email=${encodeURIComponent(email.toLowerCase())}`);
     } catch {
       setError('Error de conexion');
       setLoading(false);

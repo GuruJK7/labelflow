@@ -35,9 +35,46 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts Account[]
-  sessions Session[]
-  tenant   Tenant?
+  accounts                 Account[]
+  sessions                 Session[]
+  tenant                   Tenant?
+  emailVerificationTokens  EmailVerificationToken[]
+}
+
+/// Single-use email verification tokens for the post-signup confirmation
+/// flow. We hash the token before storing (`tokenHash` = SHA-256) so a DB
+/// dump can't be replayed against the verify endpoint — only a leaked
+/// EMAIL inbox or the link itself work.
+///
+/// Why a separate table and not the NextAuth `VerificationToken`:
+///   1. NextAuth's table is keyed by (identifier, token) with no FK to
+///      User and no `usedAt` audit column — we want both, plus the ability
+///      to invalidate prior tokens cheaply when a user requests a resend.
+///   2. We want a hard FK to User so if a user is deleted, their pending
+///      tokens cascade with them.
+///   3. The verify-email flow is purely internal; mixing it with magic-link
+///      auth (which we don't use) would couple two unrelated mechanisms.
+///
+/// Lifecycle:
+///   1. POST /api/auth/verify-email/send: random 32-byte token, store hash,
+///      expiresAt = now + 24 h, email the plaintext link to the user.
+///   2. GET /api/auth/verify-email/[token]: lookup by hash, check
+///      `expiresAt > now` and `usedAt IS NULL`, set User.emailVerified and
+///      stamp `usedAt`. The token row is kept for audit (delete after 90 d
+///      via cron if needed).
+///   3. On resend, invalidate prior unused tokens for that user.
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique  // SHA-256 hex of the plaintext token
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Account {

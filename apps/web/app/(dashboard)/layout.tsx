@@ -44,10 +44,29 @@ export default async function DashboardLayout({
       shopifyToken: true,
       dacUsername: true,
       dacPassword: true,
+      // Email verification gate — only checked when EMAIL_VERIFICATION_REQUIRED
+      // is on. Selecting this field always is cheap (one extra timestamp on
+      // a row we already fetch) and lets us flip the flag without a
+      // redeploy.
+      user: { select: { email: true, emailVerified: true } },
     },
   });
 
   if (!tenant) redirect('/login');
+
+  // Email-verification gate. Off by default so a Resend outage or a fresh
+  // preview deploy without `RESEND_API_KEY` doesn't lock everyone out. Once
+  // delivery is stable in production we flip `EMAIL_VERIFICATION_REQUIRED=1`
+  // in Vercel env to enforce it. Existing users (pre-flag-flip) stay
+  // grandfathered in via a one-time SQL backfill (`UPDATE "User" SET
+  // "emailVerified" = NOW() WHERE "emailVerified" IS NULL`) — we don't want
+  // legacy customers to suddenly hit a wall.
+  const verifyRequired = process.env.EMAIL_VERIFICATION_REQUIRED === '1' ||
+    process.env.EMAIL_VERIFICATION_REQUIRED === 'true';
+  if (verifyRequired && tenant.user && !tenant.user.emailVerified) {
+    const email = encodeURIComponent(tenant.user.email);
+    redirect(`/verify-email?email=${email}`);
+  }
 
   // Onboarding gate: if the user hasn't finished the wizard yet, force them
   // through it. We also re-check the underlying credentials are still set —
