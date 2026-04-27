@@ -46,15 +46,24 @@ export async function PATCH(
     return apiError('Token de Meta no configurado', 400);
   }
 
-  // Call Meta API
+  // Call Meta API.
+  //
+  // Audit 2026-04-27 H-12: pass `access_token` via the Authorization header
+  // (Bearer) instead of the request body. Meta accepts both, but body params
+  // tend to surface in framework-level request logs, request inspection
+  // tooling, and any reverse proxy that buffers POST bodies. Authorization
+  // header is treated as sensitive by every standard logger. Meta tokens
+  // grant ads-account control with a long TTL — minimize their exposure.
   const META_BASE = 'https://graph.facebook.com/v21.0';
   const newStatus = action === 'pause' ? 'PAUSED' : 'ACTIVE';
 
   const res = await fetch(`${META_BASE}/${ad.metaAdId}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
     body: JSON.stringify({
-      access_token: accessToken,
       status: newStatus,
     }),
   });

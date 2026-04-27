@@ -18,6 +18,17 @@ function verifyMercadoPagoSignature(req: NextRequest, body: string, secret: stri
   const v1 = parts.find((p) => p.startsWith('v1='))?.split('=')[1];
   if (!ts || !v1) return false;
 
+  // Audit 2026-04-27 H-06: reject payloads outside a ±5 min window. The HMAC
+  // covers `ts`, so an attacker can't move the timestamp without invalidating
+  // the signature — but a validly-signed payload from days ago can otherwise
+  // be replayed indefinitely (e.g., re-activating a cancelled subscription
+  // from a leaked log). Stripe's SDK enforces this by default with
+  // `toleranceSeconds=300`; mirror it here.
+  const tsNum = parseInt(ts, 10);
+  if (!Number.isFinite(tsNum) || Math.abs(Date.now() / 1000 - tsNum) > 300) {
+    return false;
+  }
+
   let dataId: string | undefined;
   try {
     dataId = JSON.parse(body)?.data?.id;

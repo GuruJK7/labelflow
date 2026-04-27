@@ -17,6 +17,15 @@ function verifyMercadoPagoSignature(
   const v1 = parts.find((p) => p.startsWith('v1='))?.split('=')[1];
   if (!ts || !v1) return false;
 
+  // Audit 2026-04-27 H-06: reject payloads outside a ±5 min window. Same
+  // rationale as the main MP webhook — the HMAC covers `ts` (so the attacker
+  // can't shift it) but a validly-signed payload from days ago can otherwise
+  // be replayed indefinitely.
+  const tsNum = parseInt(ts, 10);
+  if (!Number.isFinite(tsNum) || Math.abs(Date.now() / 1000 - tsNum) > 300) {
+    return false;
+  }
+
   let dataId: string | undefined;
   try {
     dataId = JSON.parse(body)?.data?.id;

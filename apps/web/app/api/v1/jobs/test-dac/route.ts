@@ -51,7 +51,16 @@ export async function POST(req: Request) {
     },
   });
 
-  // Store test config in RunLog for the worker to read
+  // Store test config in RunLog for the worker to read.
+  //
+  // Security: NEVER persist `dacPassword` in plaintext here. RunLog.meta
+  // is returned to the tenant via GET /api/v1/logs and a stale row would
+  // leak the operator's DAC credentials forever. The worker reads the
+  // password directly from Tenant.dacPassword (encrypted at rest) — this
+  // log row only carries non-secret config (username is encrypted at rest
+  // too but the in-memory username here is plaintext, which we accept since
+  // it's not a credential on its own and the worker needs it to scope the
+  // test). Audit 2026-04-27 H-04.
   await db.runLog.create({
     data: {
       jobId: job.id,
@@ -61,7 +70,7 @@ export async function POST(req: Request) {
       meta: {
         testDac: true,
         dacUsername,
-        dacPassword,
+        dacPasswordSet: !!dacPassword, // boolean only — NEVER the value
         maxOrders,
         orderIds: orderIds.length > 0 ? orderIds : null,
         fetchMode: 'recent',

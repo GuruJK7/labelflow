@@ -11,14 +11,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing signature' }, { status: 401 });
   }
 
+  // Signature verification is MANDATORY. Fail closed when env is missing.
+  // The previous `?? ''` fallback was directly exploitable: Stripe SDK
+  // happily computes HMAC-SHA256 with an empty key (Node's crypto accepts
+  // it without error), so an attacker could forge any `customer.subscription.deleted`
+  // / `invoice.paid` event by signing it with the empty key. Confirmed via PoC
+  // against stripe@15.12.0 in the 2026-04-27 audit. This pattern matches
+  // the fail-closed guards already in webhooks/mercadopago and
+  // recover/subscription-webhook.
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    console.error('[Stripe Webhook] STRIPE_WEBHOOK_SECRET not set — rejecting');
+    return NextResponse.json({ error: 'Service not configured' }, { status: 503 });
+  }
+
   let event: Stripe.Event;
 
   try {
-    event = getStripe().webhooks.constructEvent(
-      body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET ?? ''
-    );
+    event = getStripe().webhooks.constructEvent(body, sig, webhookSecret);
   } catch (err) {
     console.error('Stripe webhook signature error:', (err as Error).message);
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
