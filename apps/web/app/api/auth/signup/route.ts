@@ -101,6 +101,15 @@ export async function POST(req: Request) {
       if (!collision) myReferralCode = candidate;
     }
 
+    // Bono de referido para el referee: si entró con un código válido (cookie
+    // firmada, no body), arranca con 10 envíos GRATIS extra en un pool
+    // separado (`referralBonusCredits`). El worker drena ese pool primero al
+    // despachar — el saldo pago (`shipmentCredits`, que ya viene con 10 por
+    // signup universal) queda intacto hasta que el bonus se agote. Pareo con
+    // el kickback del 20% al referrer (mercadopago/route.ts:415-481).
+    const REFEREE_BONUS_CREDITS = 10;
+    const refereeBonus = referredById ? REFEREE_BONUS_CREDITS : 0;
+
     // Create user + tenant in transaction (Prisma maneja la atomicidad
     // dentro de un solo create con nested write).
     const user = await db.user.create({
@@ -118,7 +127,11 @@ export async function POST(req: Request) {
             referralCode: myReferralCode,
             referredByCode,
             referredById,
-            // shipmentCredits arranca en 10 por el @default del schema
+            // shipmentCredits arranca en 10 por el @default del schema (bonus
+            // universal de signup, no específico de referidos).
+            // referralBonusCredits SÓLO se setea si el signup vino vía referral
+            // válido — defaults a 0 para signups directos.
+            referralBonusCredits: refereeBonus,
           },
         },
       },

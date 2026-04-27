@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Zap, Plus } from 'lucide-react';
+import { Zap, Plus, Gift } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 /**
@@ -8,18 +8,31 @@ import { cn } from '@/lib/cn';
  * The counter is the user's primary "fuel gauge": it's the single most
  * important state they need at-a-glance, since 0 credits stops the worker.
  *
- * Tone tiers:
+ * Tone tiers (driven by TOTAL — what they can actually ship):
  *   > 5     emerald  (healthy)
  *   2 – 5   amber    (warning)
  *   0 – 1   red      (critical / blocked)
+ *
+ * Bonus pill: when `bonusCredits > 0` we render a small Gift chip next to the
+ * main counter showing "+N gratis". This makes the perk visible (referees
+ * SEE that they got bonus envíos) and clarifies why the total is higher than
+ * what was paid for. The worker drains bonus first, so when paid credits
+ * start dropping, the user already understands their free pool ran out.
  *
  * Click anywhere on the counter goes to /settings/billing. The "+" button
  * is a clearer affordance for "buy more" — both routes resolve to the same
  * pack-purchase flow but the explicit CTA tracks better in funnel analytics.
  */
-export function TopBar({ credits }: { credits: number }) {
+export function TopBar({
+  credits,
+  bonusCredits = 0,
+}: {
+  credits: number;
+  bonusCredits?: number;
+}) {
+  const total = credits + bonusCredits;
   const tone =
-    credits > 5
+    total > 5
       ? {
           ring: 'ring-emerald-500/30',
           bg: 'bg-emerald-500/10',
@@ -27,7 +40,7 @@ export function TopBar({ credits }: { credits: number }) {
           icon: 'text-emerald-400',
           label: 'Envíos disponibles',
         }
-      : credits >= 2
+      : total >= 2
       ? {
           ring: 'ring-amber-500/30',
           bg: 'bg-amber-500/10',
@@ -40,7 +53,7 @@ export function TopBar({ credits }: { credits: number }) {
           bg: 'bg-red-500/10',
           text: 'text-red-300',
           icon: 'text-red-400',
-          label: credits === 0 ? 'Sin envíos' : 'Último envío',
+          label: total === 0 ? 'Sin envíos' : 'Último envío',
         };
 
   return (
@@ -48,7 +61,9 @@ export function TopBar({ credits }: { credits: number }) {
       <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-end gap-3 pl-16 lg:pl-8">
         <Link
           href="/settings/billing"
-          aria-label={`${credits} envíos disponibles. Click para gestionar planes.`}
+          aria-label={`${total} envíos disponibles${
+            bonusCredits > 0 ? ` (${bonusCredits} gratis por referido)` : ''
+          }. Click para gestionar planes.`}
           className={cn(
             'group flex items-center gap-2.5 pl-2 pr-3 py-1.5 rounded-full ring-1 transition-all hover:scale-[1.02]',
             tone.ring,
@@ -65,13 +80,27 @@ export function TopBar({ credits }: { credits: number }) {
           </span>
           <div className="flex items-baseline gap-1.5 leading-none">
             <span className={cn('text-sm font-semibold tabular-nums', tone.text)}>
-              {credits}
+              {total}
             </span>
             <span className="text-[11px] uppercase tracking-wider text-zinc-500 hidden sm:inline">
               {tone.label}
             </span>
           </div>
         </Link>
+
+        {bonusCredits > 0 && (
+          <Link
+            href="/settings/referrals"
+            aria-label={`${bonusCredits} envíos gratis por referido. Click para detalles.`}
+            title={`${bonusCredits} envíos gratis por entrar como referido — se gastan primero`}
+            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full ring-1 ring-violet-500/25 bg-violet-500/8 text-violet-300 hover:bg-violet-500/12 transition-colors"
+          >
+            <Gift className="w-3 h-3" strokeWidth={2.5} />
+            <span className="text-[11px] font-medium tabular-nums">
+              +{bonusCredits} gratis
+            </span>
+          </Link>
+        )}
 
         <Link
           href="/settings/billing"

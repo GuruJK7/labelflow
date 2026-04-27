@@ -174,12 +174,19 @@ model Tenant {
   //
   // referralCreditsEarned: contador acumulativo lifetime de envíos GRATIS
   //   ganados como referidor (audit). El crédito real vive en shipmentCredits.
+  //
+  // referralBonusCredits: pool SEPARADO de envíos gratuitos otorgados por
+  //   ser referido (no se mezcla con shipmentCredits pago). El worker drena
+  //   primero este pool al despachar; sólo cuando llega a 0 toca shipmentCredits.
+  //   Esto preserva el saldo pago del usuario y permite mostrar "+10 envíos
+  //   bonus" en la UI sin contaminar la métrica de créditos comprados.
   referralCode          String? @unique
   referredByCode        String?
   referredById          String?
   referrer              Tenant? @relation("TenantReferrals", fields: [referredById], references: [id], onDelete: SetNull)
   referrals             Tenant[] @relation("TenantReferrals")
   referralCreditsEarned Int     @default(0)
+  referralBonusCredits  Int     @default(0)
 
   // Fulfillment
   autoFulfillEnabled Boolean @default(true) // Mark orders as "Preparado" in Shopify after DAC shipment

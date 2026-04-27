@@ -1,4 +1,5 @@
 import { db } from '../db';
+import { deductCreditsAndStamp } from '../credits';
 import { decryptIfPresent, decryptOrRaw } from '../encryption';
 import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify/client';
@@ -964,17 +965,13 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     // Decrement de créditos por cada Finalizar exitoso. labelsTotal +
     // labelsThisMonth se mantienen como contadores de audit (no enforcement)
     // — útiles para gráficos históricos y para el admin dashboard. El gate
-    // real es shipmentCredits.
-    await db.tenant.update({
-      where: { id: tenantId },
-      data: {
-        shipmentCredits: { decrement: successCount },
-        creditsConsumed: { increment: successCount },
-        labelsThisMonth: { increment: successCount },
-        labelsTotal: { increment: successCount },
-        lastRunAt: new Date(),
-      },
-    });
+    // real es shipmentCredits + referralBonusCredits.
+    //
+    // El helper drena referralBonusCredits PRIMERO (envíos free de referido),
+    // y sólo cuando se agota toca shipmentCredits (saldo pago). Si el tenant
+    // tiene 5 bonus + 20 paid y procesa 3 envíos exitosos → bonus baja a 2,
+    // paid intacto. Si procesa 8 → bonus a 0, paid baja a 17.
+    await deductCreditsAndStamp(tenantId, successCount);
 
     slog.success('complete', `Cycle complete: ${successCount} success, ${failedCount} failed, ${skippedCount} skipped`, {
       durationMs, successCount, failedCount, skippedCount,

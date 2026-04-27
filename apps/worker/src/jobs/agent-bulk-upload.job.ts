@@ -24,6 +24,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 import { db } from '../db';
+import { deductCreditsAndStamp } from '../credits';
 import { decryptIfPresent } from '../encryption';
 import { getConfig } from '../config';
 import { downloadOrdersJsonFromStorage } from '../storage/upload';
@@ -617,22 +618,19 @@ export async function agentBulkUploadJob(job: {
     });
 
     // Don't inflate real usage counters in dry-run — only record the timestamp.
-    // En el modo real, decrement de créditos + audit en labelsThisMonth/labelsTotal
-    // (igual que process-orders.job.ts).
-    await db.tenant
-      .update({
-        where: { id: job.tenantId },
-        data: dryRun
-          ? { lastRunAt: new Date() }
-          : {
-              shipmentCredits: { decrement: successCount },
-              creditsConsumed: { increment: successCount },
-              labelsThisMonth: { increment: successCount },
-              labelsTotal: { increment: successCount },
-              lastRunAt: new Date(),
-            },
-      })
-      .catch(() => {});
+    // En el modo real, decrement de créditos vía helper compartido que drena
+    // primero referralBonusCredits (envíos free de referido) y después
+    // shipmentCredits (saldo pago). Mismo comportamiento que process-orders.
+    if (dryRun) {
+      await db.tenant
+        .update({
+          where: { id: job.tenantId },
+          data: { lastRunAt: new Date() },
+        })
+        .catch(() => {});
+    } else {
+      await deductCreditsAndStamp(job.tenantId, successCount).catch(() => {});
+    }
 
     slog.success(
       'agent-complete',

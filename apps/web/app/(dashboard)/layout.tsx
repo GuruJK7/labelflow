@@ -38,6 +38,7 @@ export default async function DashboardLayout({
     select: {
       onboardingComplete: true,
       shipmentCredits: true,
+      referralBonusCredits: true,
       firstJobCompletedAt: true,
       shopifyStoreUrl: true,
       shopifyToken: true,
@@ -89,21 +90,30 @@ export default async function DashboardLayout({
     showAha = !!completed;
   }
 
-  const credits = tenant.shipmentCredits;
+  // Para los gates de UX (banner amarillo, modal "sin envíos"), lo que
+  // importa es el TOTAL de envíos que el usuario puede despachar — no
+  // distinguimos pago vs bonus aquí, porque el worker drena bonus primero
+  // de forma transparente. El TopBar SÍ separa las dos métricas para que
+  // el usuario vea de dónde sale el saldo.
+  const paidCredits = tenant.shipmentCredits;
+  const bonusCredits = tenant.referralBonusCredits;
+  const totalCredits = paidCredits + bonusCredits;
 
   return (
     <div className="min-h-screen bg-[#050505]">
       <Sidebar />
       <main className="lg:ml-60 min-h-screen">
-        <TopBar credits={credits} />
+        <TopBar credits={paidCredits} bonusCredits={bonusCredits} />
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-          {credits > 0 && credits <= 2 && <LowCreditsBanner credits={credits} />}
+          {totalCredits > 0 && totalCredits <= 2 && (
+            <LowCreditsBanner credits={totalCredits} />
+          )}
           {children}
         </div>
       </main>
       <ChatWidget />
       {showAha && <AhaMomentModal />}
-      {credits === 0 && <CreditExhaustedModal />}
+      {totalCredits === 0 && <CreditExhaustedModal />}
     </div>
   );
 }

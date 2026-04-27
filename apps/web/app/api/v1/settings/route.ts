@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { encryptIfPresent, decryptOrRaw } from '@/lib/encryption';
+import { startOfDayUy, startOfMonthUy } from '@/lib/uy-time';
 
 const updateSchema = z.object({
   shopifyStoreUrl: z.string()
@@ -97,10 +98,14 @@ export async function GET() {
 
   if (!tenant) return apiError('Tenant no encontrado', 404);
 
-  // Calculate real label counts from Label table
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // Calculate real label counts from Label table.
+  //
+  // BUGFIX: previous version used `new Date(y, m, d)` which interprets in
+  // server-local time. On Vercel that's UTC, so "today" started at 21:00 UY
+  // of the previous day — the dashboard misattributed any activity in the
+  // 21:00–24:00 UY window every single night. Now using UY-fixed helpers.
+  const startOfMonth = startOfMonthUy();
+  const startOfDay = startOfDayUy();
 
   const [labelsThisMonthReal, labelsTodayReal] = await Promise.all([
     db.label.count({

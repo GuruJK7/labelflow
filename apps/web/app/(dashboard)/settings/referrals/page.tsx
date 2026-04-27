@@ -72,8 +72,11 @@ export default function ReferralsPage() {
           Compartí y <span className="bg-gradient-to-r from-cyan-300 to-emerald-300 bg-clip-text text-transparent">ganá envíos gratis</span>
         </h1>
         <p className="text-zinc-400 text-sm mt-2 max-w-2xl">
-          Invitá a otros emprendedores. Cada referido recibe 10 envíos al registrarse y vos te
-          quedás con el 20% de lo que compren — para siempre.
+          Invitá a otros emprendedores. Quien entra con tu link arranca con
+          <span className="text-white font-semibold"> 20 envíos gratis</span>
+          {' '}(los 10 universales + 10 extra por venir referido) y vos te
+          quedás con el <span className="text-white font-semibold">20% de cada pack</span>
+          {' '}que compren — para siempre.
         </p>
       </div>
 
@@ -206,8 +209,8 @@ export default function ReferralsPage() {
           <Step
             number={2}
             icon={<ShoppingCart className="w-5 h-5" />}
-            title="Tu referido compra"
-            description="Cada uno arranca con 10 envíos gratis y compra packs cuando los necesite."
+            title="Tu referido arranca con bonus"
+            description="Recibe 10 envíos gratis EXTRA por entrar con tu link (encima de los 10 universales = 20 totales) y compra packs cuando los necesite."
             accent="cyan"
           />
           <Step
