@@ -240,7 +240,10 @@ export default function DashboardPage() {
           </div>
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
         </div>
-        <div className="flex items-center gap-3 animate-fade-in delay-150">
+        {/* Mobile overflow fix: con flex-wrap los chips numéricos pasan a una
+            segunda fila debajo del botón "Ejecutar" en pantallas <640px en
+            vez de overflowear horizontalmente. */}
+        <div className="flex flex-wrap items-center gap-3 animate-fade-in delay-150">
           <div className="flex items-center gap-1.5">
             {[1, 3, 5, 10, 20].map((n) => (
               <button

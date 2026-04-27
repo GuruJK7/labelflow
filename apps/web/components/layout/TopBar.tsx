@@ -93,11 +93,17 @@ export function TopBar({
             href="/settings/referrals"
             aria-label={`${bonusCredits} envíos gratis por referido. Click para detalles.`}
             title={`${bonusCredits} envíos gratis por entrar como referido — se gastan primero`}
-            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full ring-1 ring-violet-500/25 bg-violet-500/8 text-violet-300 hover:bg-violet-500/12 transition-colors"
+            // Visible en TODOS los breakpoints — el bonus es la señal más
+            // fuerte de "este producto te quiere" y la mayoría de usuarios
+            // PyME en UY entran por mobile. En <sm el label se acorta a
+            // "+N" sin la palabra "gratis" para evitar overflow contra el
+            // contador principal y el botón "+".
+            className="inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-full ring-1 ring-violet-500/25 bg-violet-500/[0.08] text-violet-300 hover:bg-violet-500/[0.12] transition-colors"
           >
             <Gift className="w-3 h-3" strokeWidth={2.5} />
             <span className="text-[11px] font-medium tabular-nums">
-              +{bonusCredits} gratis
+              +{bonusCredits}
+              <span className="hidden sm:inline"> gratis</span>
             </span>
           </Link>
         )}

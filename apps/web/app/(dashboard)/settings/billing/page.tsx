@@ -216,6 +216,51 @@ function BillingContent() {
         </div>
       </div>
 
+      {/* Trust strip ABOVE el grid — antes estaba en el footer (post-decision)
+          y la mayoría de usuarios decide sin scrollear hasta abajo. Ponerlo
+          aquí baja la fricción justo en el momento de evaluar precio. */}
+      <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-5">
+        <div className="bg-zinc-900/30 border border-white/[0.04] rounded-xl p-2.5 sm:p-3 flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] sm:text-xs font-semibold text-zinc-300 leading-tight">
+              Pago seguro
+            </p>
+            <p className="text-[10px] sm:text-[11px] text-zinc-500 leading-tight truncate">
+              Vía MercadoPago
+            </p>
+          </div>
+        </div>
+        <div className="bg-zinc-900/30 border border-white/[0.04] rounded-xl p-2.5 sm:p-3 flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center flex-shrink-0">
+            <Clock className="w-3.5 h-3.5 text-cyan-400" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] sm:text-xs font-semibold text-zinc-300 leading-tight">
+              Sin caducidad
+            </p>
+            <p className="text-[10px] sm:text-[11px] text-zinc-500 leading-tight truncate">
+              No expiran nunca
+            </p>
+          </div>
+        </div>
+        <div className="bg-zinc-900/30 border border-white/[0.04] rounded-xl p-2.5 sm:p-3 flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center flex-shrink-0">
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] sm:text-xs font-semibold text-zinc-300 leading-tight">
+              Sin suscripción
+            </p>
+            <p className="text-[10px] sm:text-[11px] text-zinc-500 leading-tight truncate">
+              Pagás lo que usás
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Packs grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-12 pt-4">
         {packs.map((pack) => {
@@ -446,38 +491,9 @@ function BillingContent() {
         </div>
       )}
 
-      {/* Footer */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8">
-        <div className="bg-zinc-900/30 border border-white/[0.04] rounded-xl p-4 flex items-start gap-3">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-zinc-300">Pago seguro</p>
-            <p className="text-[11px] text-zinc-500 mt-0.5">
-              Procesado por MercadoPago
-            </p>
-          </div>
-        </div>
-        <div className="bg-zinc-900/30 border border-white/[0.04] rounded-xl p-4 flex items-start gap-3">
-          <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center flex-shrink-0">
-            <Clock className="w-4 h-4 text-cyan-400" />
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-zinc-300">Sin caducidad</p>
-            <p className="text-[11px] text-zinc-500 mt-0.5">Tus envíos no expiran</p>
-          </div>
-        </div>
-        <div className="bg-zinc-900/30 border border-white/[0.04] rounded-xl p-4 flex items-start gap-3">
-          <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center flex-shrink-0">
-            <Sparkles className="w-4 h-4 text-amber-400" />
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-zinc-300">Sin suscripción</p>
-            <p className="text-[11px] text-zinc-500 mt-0.5">Pagás solo lo que usás</p>
-          </div>
-        </div>
-      </div>
+      {/* (Trust badges movidos arriba del grid de packs — ver sección
+          "Trust strip ABOVE el grid". Antes estaban acá pero rara vez los
+          veían los usuarios porque deciden sin scrollear.) */}
     </div>
   );
 }
