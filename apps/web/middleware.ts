@@ -45,7 +45,6 @@ export async function middleware(request: NextRequest) {
     '/api/admin', // Defense-in-depth: getAdminSession() inside handlers is the
                   // real gate, but a forgotten check on a future /api/admin/*
                   // sub-route would slip through without this prefix listed.
-    '/api/stripe',
     '/api/mercadopago',
     '/api/recover',
     '/api/credit-packs',
