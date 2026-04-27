@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { decryptIfPresent } from '../encryption';
+import { decrypt, decryptIfPresent } from '../encryption';
 import { createShopifyClient } from '../shopify/client';
 import { getRecentOrders } from '../shopify/orders';
 import { dacBrowser } from '../dac/browser';
@@ -55,9 +55,23 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
     }
 
     const dacUsername = meta.dacUsername as string;
-    const dacPassword = meta.dacPassword as string;
+    // Audit 2026-04-27 H-04: password is now persisted encrypted (AES-256-GCM)
+    // by the web API. Decrypt here using the same ENCRYPTION_KEY both processes
+    // share. Falls back to legacy `dacPassword` plaintext only for in-flight
+    // jobs created before the fix landed (zero-downtime deploy bridge); remove
+    // the fallback after one full deploy cycle.
+    const dacPasswordEnc = meta.dacPasswordEnc as string | undefined;
+    const dacPassword = dacPasswordEnc
+      ? decrypt(dacPasswordEnc)
+      : (meta.dacPassword as string | undefined) ?? '';
     const maxOrders = (meta.maxOrders as number) || 3;
     const specificOrderIds = meta.orderIds as string[] | null;
+
+    if (!dacPassword) {
+      slog.error('config', 'No DAC password in test config (encrypted blob missing or empty)');
+      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Missing test password' } });
+      return;
+    }
 
     slog.info('config', `TEST DAC mode: user=${dacUsername}, maxOrders=${maxOrders}, specificIds=${specificOrderIds?.join(',') ?? 'none'}`);
 

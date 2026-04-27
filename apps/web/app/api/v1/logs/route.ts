@@ -9,10 +9,13 @@ import { NextRequest } from 'next/server';
  * write a secret. This sanitizer is the last line of defense between
  * RunLog.meta and the tenant's browser. Audit 2026-04-27 H-04.
  *
- * Matches keys case-insensitively against a deny-list. The match is on the
- * key name itself, not the value, so it survives JSON serialization quirks.
+ * Matches keys case-insensitively as a SUBSTRING (not a full-string match) so
+ * compound keys like `dacPasswordEnc`, `apiSecretKey`, or `userToken` are also
+ * redacted. Over-redaction is the safe failure mode here — a logged field
+ * with the word "password" in its name should never reach the tenant's
+ * browser regardless of contents.
  */
-const SENSITIVE_KEY_PATTERN = /^(password|secret|token|api[_-]?key|cvc|pass|credential|authorization|cookie)$/i;
+const SENSITIVE_KEY_PATTERN = /(password|secret|token|api[_-]?key|cvc|credential|authorization|cookie)/i;
 
 function redactSensitive(value: unknown): unknown {
   if (value === null || value === undefined) return value;
