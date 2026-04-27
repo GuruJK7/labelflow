@@ -121,6 +121,23 @@ model Tenant {
   signupIp      String?
   tosAcceptedAt DateTime?
 
+  // ── ONBOARDING / ACTIVATION (PLG funnel) ──
+  //
+  // onboardingComplete: gate flag. Dashboard layout (server component) reads
+  //   this on every request; if false, redirects to /onboarding. We don't put
+  //   this in the JWT because the JWT only refreshes every 15 min — completing
+  //   onboarding must take effect immediately.
+  //
+  // onboardingCompletedAt: timestamp the user finished the wizard. Used for
+  //   funnel analytics (signup → activation time).
+  //
+  // firstJobCompletedAt: set when the worker logs the first label whose status
+  //   becomes COMPLETED. Triggers the "aha moment" celebration modal on the
+  //   dashboard. Once set, the modal never re-shows.
+  onboardingComplete    Boolean   @default(false)
+  onboardingCompletedAt DateTime?
+  firstJobCompletedAt   DateTime?
+
   // Usage
   labelsThisMonth Int       @default(0)
   labelsTotal     Int       @default(0)

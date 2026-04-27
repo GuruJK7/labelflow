@@ -6,7 +6,6 @@ import {
   Zap,
   ShoppingBag,
   Truck,
-  CreditCard,
   ArrowRight,
   ArrowLeft,
   Check,
@@ -14,56 +13,50 @@ import {
   ExternalLink,
   AlertCircle,
   CheckCircle,
+  Sparkles,
+  Rocket,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { ShopifyTutorial } from './_components/ShopifyTutorial';
+import { DacTutorial } from './_components/DacTutorial';
 
+/**
+ * Onboarding wizard — 2 mandatory connection steps + 1 celebration step.
+ *
+ * Why mandatory:
+ *   The app is useless without Shopify (orders source) and DAC (label
+ *   destination). Letting users skip leaves them on a dashboard full of
+ *   empty states and they bounce. Forcing the wizard up-front guarantees
+ *   they hit the activation moment (first auto-shipment) within minutes
+ *   of signup, which is the strongest predictor of paid conversion.
+ *
+ * Each step has its own tutorial collapsible so users without prior
+ * Shopify dev-app experience can complete setup unaided. The final step
+ * doesn't sell — it nudges them toward the dashboard where their 10 free
+ * shipments will start being consumed by real orders. Pack-purchase only
+ * shows up after they've felt the value (LowCreditsBanner / aha modal).
+ */
 type Step = 1 | 2 | 3;
 
-interface StepConfig {
-  number: number;
-  title: string;
-  description: string;
-  icon: typeof ShoppingBag;
-}
-
-const STEPS: StepConfig[] = [
-  { number: 1, title: 'Shopify', description: 'Conecta tu tienda', icon: ShoppingBag },
-  { number: 2, title: 'DAC Uruguay', description: 'Credenciales de envio', icon: Truck },
-  { number: 3, title: 'Cargá envíos', description: 'Elegí un pack', icon: CreditCard },
-];
-
-// Mirror lib/credit-packs.ts — paquetes de envíos en UYU. La fuente de
-// verdad sigue siendo el server (lib/credit-packs.ts), aquí solo está la
-// info necesaria para renderizar el step 3.
-type OnboardingPack = {
-  id: string;
-  shipments: number;
-  pricePerShipmentUyu: number;
-  totalPriceUyu: number;
-  tagline: string;
-  popular?: boolean;
-  best?: boolean;
-};
-
-const ONBOARDING_PACKS: OnboardingPack[] = [
-  { id: 'pack_10',   shipments: 10,   pricePerShipmentUyu: 20, totalPriceUyu: 200,  tagline: 'Para probar' },
-  { id: 'pack_100',  shipments: 100,  pricePerShipmentUyu: 15, totalPriceUyu: 1500, tagline: 'El favorito',         popular: true },
-  { id: 'pack_1000', shipments: 1000, pricePerShipmentUyu: 7,  totalPriceUyu: 7000, tagline: 'Mejor precio/envío',  best: true },
-];
+const STEPS = [
+  { number: 1, title: 'Shopify', description: 'Conectá tu tienda', icon: ShoppingBag },
+  { number: 2, title: 'DAC',     description: 'Tus credenciales',  icon: Truck       },
+  { number: 3, title: 'Listo',   description: '¡A despachar!',     icon: Rocket      },
+] as const;
 
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
-  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
 
-  // Step 1: Shopify
+  // Step 1 — Shopify
   const [shopifyUrl, setShopifyUrl] = useState('');
   const [shopifyToken, setShopifyToken] = useState('');
   const [shopifyVerified, setShopifyVerified] = useState(false);
+  const [shopifyShopName, setShopifyShopName] = useState<string | null>(null);
 
-  // Step 2: DAC
+  // Step 2 — DAC
   const [dacUsername, setDacUsername] = useState('');
   const [dacPassword, setDacPassword] = useState('');
   const [dacSaved, setDacSaved] = useState(false);
@@ -72,97 +65,108 @@ export default function OnboardingPage() {
     'w-full px-4 py-3 bg-white/[0.03] border border-white/[0.08] rounded-xl text-white text-sm placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500/30 transition-all';
   const labelClass = 'block text-xs font-medium text-zinc-400 mb-1.5';
 
-  async function saveSettings(body: Record<string, unknown>) {
-    setSaving(true);
+  async function handleShopifyTest(e: FormEvent) {
+    e.preventDefault();
     setError('');
-    setSuccess('');
+    if (!shopifyUrl || !shopifyToken) {
+      setError('Completá URL y token de Shopify');
+      return;
+    }
+    // Strip protocol if user pasted https://, normalize.
+    const cleanUrl = shopifyUrl
+      .trim()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/$/, '');
+
+    setBusy(true);
     try {
-      const res = await fetch('/api/v1/settings', {
-        method: 'PUT',
+      const res = await fetch('/api/v1/onboarding/test-shopify', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          shopifyStoreUrl: cleanUrl,
+          shopifyToken: shopifyToken.trim(),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? 'Error al guardar');
-        return false;
+        setError(data.error ?? 'No se pudo verificar Shopify');
+        return;
       }
-      return true;
-    } catch {
-      setError('Error de conexion');
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleShopifySave(e: FormEvent) {
-    e.preventDefault();
-    if (!shopifyUrl || !shopifyToken) {
-      setError('Completa URL y token de Shopify');
-      return;
-    }
-    const ok = await saveSettings({ shopifyStoreUrl: shopifyUrl, shopifyToken });
-    if (ok) {
       setShopifyVerified(true);
-      setSuccess('Shopify conectado correctamente');
+      setShopifyShopName(data.data?.shopName ?? null);
+      // Auto-advance after a beat so the user sees the green confirmation.
+      setTimeout(() => {
+        setStep(2);
+        setError('');
+      }, 900);
+    } catch {
+      setError('Error de conexión. Probá de nuevo.');
+    } finally {
+      setBusy(false);
     }
   }
 
   async function handleDacSave(e: FormEvent) {
     e.preventDefault();
+    setError('');
     if (!dacUsername || !dacPassword) {
-      setError('Completa usuario y password de DAC');
+      setError('Completá usuario y contraseña de DAC');
       return;
     }
-    const ok = await saveSettings({ dacUsername, dacPassword });
-    if (ok) {
+    setBusy(true);
+    try {
+      const res = await fetch('/api/v1/onboarding/test-dac', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dacUsername: dacUsername.trim(),
+          dacPassword: dacPassword,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? 'No se pudo guardar las credenciales');
+        return;
+      }
       setDacSaved(true);
-      setSuccess('Credenciales DAC guardadas');
+      setTimeout(() => {
+        setStep(3);
+        setError('');
+      }, 900);
+    } catch {
+      setError('Error de conexión. Probá de nuevo.');
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function handleSelectPack(packId: string) {
-    setSaving(true);
+  async function handleFinish() {
+    setBusy(true);
     setError('');
     try {
-      // /api/credit-packs/checkout devuelve un redirect 3xx hacia la URL
-      // de pago de MercadoPago. Si llega como JSON con `url`, también lo
-      // soportamos por compat.
-      const res = await fetch(`/api/credit-packs/checkout?pack=${packId}`);
-      if (res.redirected) {
-        window.location.href = res.url;
+      const res = await fetch('/api/v1/onboarding/complete', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? 'No se pudo completar el setup');
+        setBusy(false);
         return;
       }
-      const data = await res.json().catch(() => ({}));
-      if (data?.url) {
-        window.location.href = data.url;
-        return;
-      }
-      setError(data?.error ?? 'Error al iniciar el pago');
+      // Hard navigation, not router.push — the dashboard layout reads
+      // onboardingComplete from the DB on render, so we want a fresh request
+      // with no stale cached layout.
+      window.location.href = '/dashboard';
     } catch {
-      setError('Error al iniciar el pago');
+      setError('Error de conexión. Probá de nuevo.');
+      setBusy(false);
     }
-    setSaving(false);
-  }
-
-  function nextStep() {
-    setError('');
-    setSuccess('');
-    if (step < 3) setStep((step + 1) as Step);
-  }
-
-  function prevStep() {
-    setError('');
-    setSuccess('');
-    if (step > 1) setStep((step - 1) as Step);
   }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] flex flex-col">
-      {/* Header */}
+      {/* Header — no "skip" button: onboarding is required. */}
       <div className="border-b border-white/[0.04] px-6 py-4">
-        <div className="max-w-2xl mx-auto flex items-center justify-between">
+        <div className="max-w-3xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-lg flex items-center justify-center">
               <Zap className="w-4 h-4 text-white" />
@@ -171,25 +175,25 @@ export default function OnboardingPage() {
               Label<span className="text-cyan-400">Flow</span>
             </span>
           </div>
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
-          >
-            Saltar por ahora
-          </button>
+          <span className="text-[11px] text-zinc-600 hidden sm:block">
+            Setup inicial — toma 2 minutos
+          </span>
         </div>
       </div>
 
       {/* Progress bar */}
-      <div className="max-w-2xl mx-auto w-full px-6 pt-8">
+      <div className="max-w-3xl mx-auto w-full px-6 pt-8">
         <div className="flex items-center gap-4 mb-8">
           {STEPS.map((s, i) => {
             const isActive = s.number === step;
-            const isCompleted = s.number < step || (s.number === 1 && shopifyVerified) || (s.number === 2 && dacSaved);
+            const isCompleted =
+              s.number < step ||
+              (s.number === 1 && shopifyVerified) ||
+              (s.number === 2 && dacSaved);
             const StepIcon = s.icon;
             return (
               <div key={s.number} className="flex items-center flex-1">
-                <div className="flex items-center gap-3 flex-1">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
                   <div
                     className={cn(
                       'w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 flex-shrink-0',
@@ -197,24 +201,39 @@ export default function OnboardingPage() {
                         ? 'bg-emerald-500/20 border border-emerald-500/30'
                         : isActive
                           ? 'bg-cyan-500/20 border border-cyan-500/30'
-                          : 'bg-white/[0.03] border border-white/[0.06]'
+                          : 'bg-white/[0.03] border border-white/[0.06]',
                     )}
                   >
                     {isCompleted ? (
                       <Check className="w-4 h-4 text-emerald-400" />
                     ) : (
-                      <StepIcon className={cn('w-4 h-4', isActive ? 'text-cyan-400' : 'text-zinc-600')} />
+                      <StepIcon
+                        className={cn(
+                          'w-4 h-4',
+                          isActive ? 'text-cyan-400' : 'text-zinc-600',
+                        )}
+                      />
                     )}
                   </div>
-                  <div className="hidden sm:block">
-                    <p className={cn('text-xs font-medium', isActive ? 'text-white' : 'text-zinc-500')}>
+                  <div className="hidden sm:block min-w-0">
+                    <p
+                      className={cn(
+                        'text-xs font-medium truncate',
+                        isActive ? 'text-white' : 'text-zinc-500',
+                      )}
+                    >
                       {s.title}
                     </p>
-                    <p className="text-[10px] text-zinc-600">{s.description}</p>
+                    <p className="text-[10px] text-zinc-600 truncate">{s.description}</p>
                   </div>
                 </div>
                 {i < STEPS.length - 1 && (
-                  <div className={cn('h-px flex-1 mx-3', isCompleted ? 'bg-emerald-500/30' : 'bg-white/[0.06]')} />
+                  <div
+                    className={cn(
+                      'h-px flex-1 mx-3',
+                      isCompleted ? 'bg-emerald-500/30' : 'bg-white/[0.06]',
+                    )}
+                  />
                 )}
               </div>
             );
@@ -224,258 +243,306 @@ export default function OnboardingPage() {
 
       {/* Content */}
       <div className="flex-1 flex items-start justify-center px-6 pb-12">
-        <div className="w-full max-w-2xl">
-          {/* Messages */}
+        <div className="w-full max-w-3xl">
           {error && (
-            <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              {error}
-            </div>
-          )}
-          {success && (
-            <div className="mb-4 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm flex items-center gap-2">
-              <CheckCircle className="w-4 h-4 flex-shrink-0" />
-              {success}
+            <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
             </div>
           )}
 
-          {/* STEP 1: Shopify */}
+          {/* STEP 1 — Shopify */}
           {step === 1 && (
-            <div className="glass rounded-2xl p-8 animate-fade-in">
-              <h2 className="text-xl font-bold text-white mb-1">Conecta tu tienda Shopify</h2>
-              <p className="text-zinc-500 text-sm mb-6">
-                Necesitamos tu URL de tienda y un token de Admin API para leer pedidos.
-              </p>
-
-              <div className="bg-white/[0.02] rounded-xl p-4 mb-6 border border-white/[0.04]">
-                <p className="text-xs font-medium text-zinc-400 mb-2">Como obtener el token:</p>
-                <ol className="text-xs text-zinc-500 space-y-1.5 list-decimal list-inside">
-                  <li>Entra a tu admin de Shopify</li>
-                  <li>Configuracion &gt; Apps &gt; Desarrollar apps</li>
-                  <li>Crear app &gt; Configurar permisos de Admin API</li>
-                  <li>Habilitar: <code className="text-cyan-400/80">read_orders</code> y <code className="text-cyan-400/80">write_orders</code></li>
-                  <li>Instalar app &gt; Copiar el token <code className="text-cyan-400/80">shpat_xxx</code></li>
-                </ol>
-              </div>
-
-              <form onSubmit={handleShopifySave} className="space-y-4">
-                <div>
-                  <label className={labelClass}>Store URL</label>
-                  <input
-                    value={shopifyUrl}
-                    onChange={(e) => setShopifyUrl(e.target.value)}
-                    className={inputClass}
-                    placeholder="mitienda.myshopify.com"
-                    required
-                  />
+            <div className="space-y-4 animate-fade-in">
+              <div className="glass rounded-2xl p-6 sm:p-8">
+                <div className="flex items-start gap-3 mb-1">
+                  <div className="w-10 h-10 rounded-xl bg-cyan-500/15 ring-1 ring-cyan-500/30 flex items-center justify-center flex-shrink-0">
+                    <ShoppingBag className="w-5 h-5 text-cyan-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-white">Conectá tu tienda Shopify</h2>
+                    <p className="text-zinc-500 text-sm mt-0.5">
+                      Leemos tus pedidos para generar las etiquetas DAC automáticamente.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <label className={labelClass}>Access Token</label>
-                  <input
-                    type="password"
-                    value={shopifyToken}
-                    onChange={(e) => setShopifyToken(e.target.value)}
-                    className={inputClass}
-                    placeholder="shpat_xxxxxxxxxxxxxxxxx"
-                    required
-                  />
-                </div>
-                <div className="flex items-center gap-3 pt-2">
+
+                <ShopifyTutorial />
+
+                <form onSubmit={handleShopifyTest} className="space-y-4 mt-6">
+                  <div>
+                    <label className={labelClass}>URL de la tienda</label>
+                    <input
+                      value={shopifyUrl}
+                      onChange={(e) => {
+                        setShopifyUrl(e.target.value);
+                        setShopifyVerified(false);
+                      }}
+                      className={inputClass}
+                      placeholder="mi-tienda.myshopify.com"
+                      autoComplete="off"
+                      required
+                    />
+                    <p className="text-[10px] text-zinc-600 mt-1">
+                      El dominio que termina en .myshopify.com (no el dominio personalizado).
+                    </p>
+                  </div>
+                  <div>
+                    <label className={labelClass}>Admin API Access Token</label>
+                    <input
+                      type="password"
+                      value={shopifyToken}
+                      onChange={(e) => {
+                        setShopifyToken(e.target.value);
+                        setShopifyVerified(false);
+                      }}
+                      className={inputClass}
+                      placeholder="shpat_xxxxxxxxxxxxxxxxx"
+                      autoComplete="off"
+                      required
+                    />
+                  </div>
+
+                  {shopifyVerified && (
+                    <div className="flex items-center gap-2 text-emerald-400 text-sm bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+                      <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                      <span>
+                        Conectado{shopifyShopName ? ` a ${shopifyShopName}` : ''}. Pasamos al
+                        siguiente paso…
+                      </span>
+                    </div>
+                  )}
+
                   <button
                     type="submit"
-                    disabled={saving}
-                    className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white py-3 rounded-xl text-sm font-medium transition-all disabled:opacity-50"
+                    disabled={busy || shopifyVerified}
+                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white py-3 rounded-xl text-sm font-medium transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                    {shopifyVerified ? 'Verificado' : 'Verificar y guardar'}
+                    {busy ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Verificando con Shopify…
+                      </>
+                    ) : shopifyVerified ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        Verificado
+                      </>
+                    ) : (
+                      <>
+                        Verificar y continuar
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
                   </button>
-                  <button
-                    type="button"
-                    onClick={nextStep}
-                    className="px-6 py-3 rounded-xl border border-white/[0.08] text-zinc-400 text-sm hover:bg-white/[0.03] transition-colors flex items-center gap-1"
-                  >
-                    Siguiente <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </form>
+                </form>
+              </div>
             </div>
           )}
 
-          {/* STEP 2: DAC */}
+          {/* STEP 2 — DAC */}
           {step === 2 && (
-            <div className="glass rounded-2xl p-8 animate-fade-in">
-              <h2 className="text-xl font-bold text-white mb-1">Conecta tu cuenta DAC</h2>
-              <p className="text-zinc-500 text-sm mb-6">
-                Usa tu Documento/RUT y password de dac.com.uy para generar envios automaticamente.
-              </p>
+            <div className="space-y-4 animate-fade-in">
+              <div className="glass rounded-2xl p-6 sm:p-8">
+                <div className="flex items-start gap-3 mb-1">
+                  <div className="w-10 h-10 rounded-xl bg-cyan-500/15 ring-1 ring-cyan-500/30 flex items-center justify-center flex-shrink-0">
+                    <Truck className="w-5 h-5 text-cyan-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-white">Conectá tu cuenta DAC</h2>
+                    <p className="text-zinc-500 text-sm mt-0.5">
+                      Las mismas credenciales que usás en{' '}
+                      <a
+                        href="https://www.dac.com.uy"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1"
+                      >
+                        dac.com.uy <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </p>
+                  </div>
+                </div>
 
-              <div className="bg-white/[0.02] rounded-xl p-4 mb-6 border border-white/[0.04]">
-                <p className="text-xs text-zinc-500">
-                  No tenes cuenta en DAC?{' '}
-                  <a
-                    href="https://www.dac.com.uy/usuarios/registro"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1"
-                  >
-                    Registrate aca <ExternalLink className="w-3 h-3" />
-                  </a>
-                </p>
+                <DacTutorial />
+
+                <form onSubmit={handleDacSave} className="space-y-4 mt-6">
+                  <div>
+                    <label className={labelClass}>Documento / RUT</label>
+                    <input
+                      value={dacUsername}
+                      onChange={(e) => {
+                        setDacUsername(e.target.value);
+                        setDacSaved(false);
+                      }}
+                      className={inputClass}
+                      placeholder="Ej: 12345678 o tu RUT"
+                      autoComplete="off"
+                      required
+                    />
+                    <p className="text-[10px] text-zinc-600 mt-1">
+                      Cédula de identidad o RUT, igual que en el portal DAC.
+                    </p>
+                  </div>
+                  <div>
+                    <label className={labelClass}>Contraseña</label>
+                    <input
+                      type="password"
+                      value={dacPassword}
+                      onChange={(e) => {
+                        setDacPassword(e.target.value);
+                        setDacSaved(false);
+                      }}
+                      className={inputClass}
+                      placeholder="Tu contraseña de DAC"
+                      autoComplete="off"
+                      required
+                    />
+                    <p className="text-[10px] text-zinc-600 mt-1">
+                      Se guarda cifrada (AES-256). Sólo se usa para que el bot inicie sesión.
+                    </p>
+                  </div>
+
+                  {dacSaved && (
+                    <div className="flex items-center gap-2 text-emerald-400 text-sm bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+                      <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                      <span>Credenciales guardadas. Casi terminamos…</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStep(1);
+                        setError('');
+                      }}
+                      className="px-5 py-3 rounded-xl border border-white/[0.08] text-zinc-400 text-sm hover:bg-white/[0.03] transition-colors flex items-center gap-1"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" /> Atrás
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={busy || dacSaved}
+                      className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white py-3 rounded-xl text-sm font-medium transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {busy ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Guardando…
+                        </>
+                      ) : dacSaved ? (
+                        <>
+                          <Check className="w-4 h-4" />
+                          Guardado
+                        </>
+                      ) : (
+                        <>
+                          Guardar y continuar
+                          <ArrowRight className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
               </div>
-
-              <form onSubmit={handleDacSave} className="space-y-4">
-                <div>
-                  <label className={labelClass}>Documento / RUT</label>
-                  <input
-                    value={dacUsername}
-                    onChange={(e) => setDacUsername(e.target.value)}
-                    className={inputClass}
-                    placeholder="12345678"
-                    required
-                  />
-                  <p className="text-[10px] text-zinc-600 mt-1">El mismo que usas para loguearte en dac.com.uy</p>
-                </div>
-                <div>
-                  <label className={labelClass}>Password</label>
-                  <input
-                    type="password"
-                    value={dacPassword}
-                    onChange={(e) => setDacPassword(e.target.value)}
-                    className={inputClass}
-                    placeholder="Tu password de DAC"
-                    required
-                  />
-                </div>
-                <div className="flex items-center gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={prevStep}
-                    className="px-6 py-3 rounded-xl border border-white/[0.08] text-zinc-400 text-sm hover:bg-white/[0.03] transition-colors flex items-center gap-1"
-                  >
-                    <ArrowLeft className="w-3.5 h-3.5" /> Anterior
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white py-3 rounded-xl text-sm font-medium transition-all disabled:opacity-50"
-                  >
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                    {dacSaved ? 'Guardado' : 'Guardar credenciales'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={nextStep}
-                    className="px-6 py-3 rounded-xl border border-white/[0.08] text-zinc-400 text-sm hover:bg-white/[0.03] transition-colors flex items-center gap-1"
-                  >
-                    Siguiente <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </form>
             </div>
           )}
 
-          {/* STEP 3: Cargá envíos (credit packs en UYU) */}
+          {/* STEP 3 — Activación */}
           {step === 3 && (
             <div className="animate-fade-in">
-              <div className="text-center mb-8">
-                <h2 className="text-xl font-bold text-white mb-1">Cargá envíos</h2>
-                <p className="text-zinc-500 text-sm">
-                  Pagás solo por lo que usás. <span className="text-emerald-400">Tenés 10 envíos gratis</span> para arrancar — sumá un pack cuando quieras.
+              <div className="glass rounded-2xl p-8 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/30 to-cyan-500/30 ring-1 ring-emerald-500/40 flex items-center justify-center mx-auto mb-4">
+                  <Sparkles className="w-7 h-7 text-emerald-300" />
+                </div>
+
+                <h2 className="text-2xl font-bold text-white mb-2">
+                  ¡Configuración lista!
+                </h2>
+                <p className="text-zinc-400 text-sm mb-6 max-w-md mx-auto">
+                  Tu tienda y DAC están conectados. A partir de ahora cada pedido nuevo
+                  de Shopify se procesa solo: leemos la dirección, generamos la guía DAC
+                  e imprimimos la etiqueta — sin que vos toques nada.
                 </p>
-              </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                {ONBOARDING_PACKS.map((pack) => {
-                  const highlighted = pack.popular || pack.best;
-                  return (
-                    <div
-                      key={pack.id}
-                      className={cn(
-                        'glass rounded-2xl p-6 pt-7 relative transition-all duration-200',
-                        pack.popular && 'ring-1 ring-cyan-500/40 bg-cyan-500/[0.03]',
-                        pack.best && 'ring-1 ring-emerald-500/40 bg-emerald-500/[0.03]',
-                      )}
-                    >
-                      {pack.popular && (
-                        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-semibold text-cyan-400 bg-[#0a0a0a] border border-cyan-500/30 px-2.5 py-0.5 rounded-full uppercase tracking-wider whitespace-nowrap">
-                          Más popular
-                        </span>
-                      )}
-                      {pack.best && (
-                        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-semibold text-emerald-400 bg-[#0a0a0a] border border-emerald-500/30 px-2.5 py-0.5 rounded-full uppercase tracking-wider whitespace-nowrap">
-                          Mejor precio
-                        </span>
-                      )}
-                      <p className="text-[11px] text-zinc-500 mb-1">{pack.tagline}</p>
-                      <h3 className="text-2xl font-bold text-white mb-1">{pack.shipments.toLocaleString('es-UY')} envíos</h3>
-                      <p className="mb-4">
-                        <span className="text-2xl font-bold text-white">${pack.totalPriceUyu.toLocaleString('es-UY')}</span>
-                        <span className="text-xs text-zinc-500"> UYU</span>
-                        <span className="block text-[11px] text-zinc-500 mt-0.5">
-                          ${pack.pricePerShipmentUyu} UYU por envío
-                        </span>
-                      </p>
-                      <ul className="space-y-2 mb-5">
-                        <li className="flex items-center gap-2 text-xs text-zinc-400">
-                          <Check className="w-3 h-3 text-cyan-400 flex-shrink-0" />
-                          Sin vencimiento
-                        </li>
-                        <li className="flex items-center gap-2 text-xs text-zinc-400">
-                          <Check className="w-3 h-3 text-cyan-400 flex-shrink-0" />
-                          Pago único, no se renueva
-                        </li>
-                        <li className="flex items-center gap-2 text-xs text-zinc-400">
-                          <Check className="w-3 h-3 text-cyan-400 flex-shrink-0" />
-                          Acreditación inmediata
-                        </li>
-                      </ul>
-                      <button
-                        onClick={() => handleSelectPack(pack.id)}
-                        disabled={saving}
-                        className={cn(
-                          'w-full py-2.5 rounded-xl text-xs font-medium transition-all disabled:opacity-50',
-                          highlighted
-                            ? pack.best
-                              ? 'bg-gradient-to-r from-emerald-600 to-emerald-500 text-white hover:from-emerald-500 hover:to-emerald-400'
-                              : 'bg-gradient-to-r from-cyan-600 to-cyan-500 text-white hover:from-cyan-500 hover:to-cyan-400'
-                            : 'border border-white/[0.08] text-zinc-300 hover:bg-white/[0.03]',
-                        )}
-                      >
-                        {saving ? 'Cargando…' : 'Comprar con MercadoPago'}
-                      </button>
+                <div className="bg-cyan-500/[0.06] border border-cyan-500/20 rounded-xl p-4 mb-6 text-left max-w-md mx-auto">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Zap className="w-4 h-4 text-cyan-400" />
+                    <span className="text-sm font-semibold text-white">10 envíos gratis</span>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Te regalamos 10 envíos para que pruebes el flujo completo. No se
+                    vencen. Cuando los uses, comprás un pack y seguís sin pausas.
+                  </p>
+                </div>
+
+                <ul className="space-y-2 mb-7 max-w-md mx-auto text-left">
+                  <li className="flex items-start gap-2.5 text-sm text-zinc-300">
+                    <div className="w-5 h-5 rounded-full bg-emerald-500/15 ring-1 ring-emerald-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Check className="w-3 h-3 text-emerald-400" />
                     </div>
-                  );
-                })}
-              </div>
+                    <span>
+                      <strong className="text-white">Pedidos en tiempo real</strong> —
+                      tu tienda se sincroniza cada 15 minutos.
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2.5 text-sm text-zinc-300">
+                    <div className="w-5 h-5 rounded-full bg-emerald-500/15 ring-1 ring-emerald-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Check className="w-3 h-3 text-emerald-400" />
+                    </div>
+                    <span>
+                      <strong className="text-white">Guías DAC automáticas</strong> —
+                      generamos la guía y te avisamos si algo falla.
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2.5 text-sm text-zinc-300">
+                    <div className="w-5 h-5 rounded-full bg-emerald-500/15 ring-1 ring-emerald-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Check className="w-3 h-3 text-emerald-400" />
+                    </div>
+                    <span>
+                      <strong className="text-white">Cero data entry</strong> — el bot
+                      hace el copy-paste por vos.
+                    </span>
+                  </li>
+                </ul>
 
-              <p className="text-center text-[11px] text-zinc-600 mb-6">
-                ¿Necesitás otro tamaño? En{' '}
+                <button
+                  onClick={handleFinish}
+                  disabled={busy}
+                  className="w-full sm:w-auto px-8 inline-flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white py-3 rounded-xl text-sm font-medium transition-all disabled:opacity-60"
+                >
+                  {busy ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      Ir al dashboard
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+
                 <button
                   type="button"
-                  onClick={() => router.push('/settings/billing')}
-                  className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2"
+                  onClick={() => {
+                    setStep(2);
+                    setError('');
+                  }}
+                  className="block w-full text-xs text-zinc-600 hover:text-zinc-400 transition-colors mt-4"
                 >
-                  Facturación
-                </button>{' '}
-                tenés 6 packs (10, 50, 100, 250, 500, 1000 envíos).
-              </p>
-
-              <div className="flex justify-between">
-                <button
-                  onClick={prevStep}
-                  className="px-6 py-3 rounded-xl border border-white/[0.08] text-zinc-400 text-sm hover:bg-white/[0.03] transition-colors flex items-center gap-1"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" /> Anterior
-                </button>
-                <button
-                  onClick={() => router.push('/dashboard')}
-                  className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
-                >
-                  Saltar — uso los 10 envíos gratis
+                  ← Revisar credenciales DAC
                 </button>
               </div>
             </div>
           )}
+
+          {/* Trust footer */}
+          <div className="text-center mt-6">
+            <p className="text-[11px] text-zinc-700">
+              🔒 Tus credenciales se guardan cifradas con AES-256. Sólo el bot las usa
+              para iniciar sesión.
+            </p>
+          </div>
         </div>
       </div>
     </div>
