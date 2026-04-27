@@ -20,7 +20,7 @@ const updateSchema = z.object({
   paymentThreshold: z.number().min(0).max(1000000).optional(),
   paymentRuleEnabled: z.boolean().optional(),
   cronSchedule: z.string()
-    .regex(/^(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)$/, 'Invalid cron expression')
+    .regex(/^(\*|[0-9,\-\/*]+)\s+(\*|[0-9,\-\/*]+)\s+(\*|[0-9,\-\/*]+)\s+(\*|[0-9,\-\/*]+)\s+(\*|[0-9,\-\/*]+)$/, 'Invalid cron expression')
     .refine((val) => {
       const [min] = val.split(' ');
       if (min === '*') return false;

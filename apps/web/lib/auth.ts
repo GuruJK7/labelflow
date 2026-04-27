@@ -83,12 +83,15 @@ export const authOptions: NextAuthOptions = {
           where: { userId: token.id as string },
           select: { id: true, slug: true, isActive: true, subscriptionStatus: true },
         });
+        // Always stamp the refresh time — even when tenant is null — so we
+        // don't hit the DB on every request for users whose tenant row is
+        // missing (e.g. interrupted OAuth sign-in flow).
+        token.tenantRefreshedAt = now;
         if (tenant) {
           token.tenantId = tenant.id;
           token.tenantSlug = tenant.slug;
           token.isActive = tenant.isActive;
           token.subscriptionStatus = tenant.subscriptionStatus;
-          token.tenantRefreshedAt = now;
         }
       }
       return token;

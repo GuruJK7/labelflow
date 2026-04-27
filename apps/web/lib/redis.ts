@@ -22,6 +22,12 @@ export function getRedis(): IORedis | null {
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl) return null;
 
+  // If the client previously hit the retry limit and called close() on itself,
+  // its status becomes "end". Don't return a dead client — reset and reconnect.
+  if (global._redis?.status === 'end') {
+    global._redis = undefined;
+  }
+
   if (!global._redis) {
     global._redis = new IORedis(redisUrl, {
       maxRetriesPerRequest: 1,     // fail fast — never block a request waiting for Redis

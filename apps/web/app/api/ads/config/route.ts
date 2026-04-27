@@ -55,7 +55,7 @@ export async function GET() {
 // Cron expression validation — 5 fields separated by whitespace.
 // Allows standard cron syntax: numbers, ranges, steps, lists, wildcards.
 const CRON_REGEX =
-  /^(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)$/;
+  /^(\*|[0-9,\-\/*]+)\s+(\*|[0-9,\-\/*]+)\s+(\*|[0-9,\-\/*]+)\s+(\*|[0-9,\-\/*]+)\s+(\*|[0-9,\-\/*]+)$/;
 
 // POST body schema. All fields are optional — caller sends only what changed.
 const adsConfigSchema = z.object({
@@ -72,9 +72,20 @@ const adsConfigSchema = z.object({
     .string()
     .url('notifyWebhook must be a valid URL')
     .max(2048)
-    .refine((url) => url.startsWith('https://'), {
-      message: 'notifyWebhook must use HTTPS',
-    })
+    .refine((url) => {
+      // Must be HTTPS and must resolve to a public host.
+      // Blocks SSRF to cloud metadata endpoints (169.254.169.254, etc.),
+      // RFC-1918 private ranges, loopback, and link-local addresses.
+      if (!url.startsWith('https://')) return false;
+      try {
+        const { hostname } = new URL(url);
+        const privatePattern =
+          /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.0\.0\.0|::1|fd[0-9a-f]{2}:)/i;
+        return !privatePattern.test(hostname);
+      } catch {
+        return false;
+      }
+    }, { message: 'notifyWebhook must be a public HTTPS URL (private/internal addresses are not allowed)' })
     .optional()
     .or(z.literal('')),   // allow clearing the field with an empty string
   isActive:        z.boolean().optional(),
@@ -160,25 +171,26 @@ export async function POST(request: Request) {
     update: updateData,
   });
 
-  // Handle rules if provided
+  // Handle rules if provided — wrapped in a transaction so a partial failure
+  // never leaves the tenant with rules deleted but not recreated.
   if (rules && Array.isArray(rules)) {
-    // Delete existing rules and recreate
-    await db.adRule.deleteMany({ where: { metaAdAccountId: adAccount.id } });
-
-    for (const rule of rules) {
-      await db.adRule.create({
-        data: {
-          metaAdAccountId: adAccount.id,
-          name: rule.name,
-          metric: rule.metric,
-          operator: rule.operator,
-          threshold: Number(rule.threshold),
-          windowHours: Number(rule.windowHours) || 48,
-          action: rule.action || 'pause',
-          isActive: rule.isActive !== false,
-        },
-      });
-    }
+    await db.$transaction(async (tx) => {
+      await tx.adRule.deleteMany({ where: { metaAdAccountId: adAccount.id } });
+      if (rules.length > 0) {
+        await tx.adRule.createMany({
+          data: rules.map((rule) => ({
+            metaAdAccountId: adAccount.id,
+            name: rule.name,
+            metric: rule.metric,
+            operator: rule.operator,
+            threshold: Number(rule.threshold),
+            windowHours: Number(rule.windowHours) || 48,
+            action: rule.action ?? 'pause',
+            isActive: rule.isActive !== false,
+          })),
+        });
+      }
+    });
   }
 
   return apiSuccess({ id: adAccount.id, saved: true });

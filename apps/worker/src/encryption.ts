@@ -77,9 +77,13 @@ export function decryptOrRaw(value: string | null | undefined): string | null {
     try {
       return decrypt(value);
     } catch {
-      // Fall through — return raw value on decrypt failure
+      // Decryption failed (wrong key, tampered data). Return null so the
+      // caller gets a clear "missing credential" error rather than trying
+      // to use the raw ciphertext as a DAC username.
+      return null;
     }
   }
 
+  // Not in encrypted format — treat as legacy plaintext value.
   return value;
 }

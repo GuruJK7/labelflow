@@ -105,12 +105,14 @@ export function decryptOrRaw(value: string | null | undefined): string | null {
     try {
       return decrypt(value);
     } catch {
-      // Looks like encrypted format but failed to decrypt (wrong key?).
-      // Fall through and return as-is — better to expose a garbled value
-      // than to silently lose the credential.
+      // Looks like encrypted format but decryption failed (wrong key, tampered
+      // ciphertext, etc.). Return null so callers surface a clear
+      // "credential missing" error rather than attempting to use the raw
+      // ciphertext as a password, which produces a confusing downstream failure.
+      return null;
     }
   }
 
-  // Not encrypted (or decrypt failed) — return raw value.
+  // Not in encrypted format — treat as legacy plaintext value.
   return value;
 }

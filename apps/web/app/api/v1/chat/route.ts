@@ -143,11 +143,12 @@ async function checkRateLimit(tenantId: string): Promise<boolean> {
 
   const key = `chat:rl:${tenantId}`;
   try {
-    const count = await redis.incr(key);
-    if (count === 1) {
-      // First request in this window — set the expiry
-      await redis.expire(key, RATE_LIMIT_TTL);
-    }
+    // Pipeline sends INCR + EXPIRE in one round-trip so the key can never
+    // be left with a count but no TTL. If the connection drops between two
+    // separate commands the key would have no expiry and permanently block
+    // the tenant — the pipeline failure mode is "both commands fail" instead.
+    const results = await redis.pipeline().incr(key).expire(key, RATE_LIMIT_TTL).exec();
+    const count = (results?.[0]?.[1] as number) ?? 1;
     return count <= RATE_LIMIT_MAX;
   } catch {
     // Redis error — fail open rather than blocking all chat
