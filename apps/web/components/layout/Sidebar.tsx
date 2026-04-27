@@ -8,11 +8,11 @@ import {
   Package,
   Tags,
   Settings,
-  FileText,
   LogOut,
   Zap,
   CreditCard,
   ChevronLeft,
+  ChevronDown,
   Menu,
   X,
   Megaphone,
@@ -29,7 +29,24 @@ import { cn } from '@/lib/cn';
 import { useState } from 'react';
 import { isFeatureEnabled, SECTION_FLAGS, ITEM_FLAGS } from '@/lib/feature-flags';
 
-const navSections = [
+/**
+ * Sidebar navigation sections.
+ *
+ * `displayLabel` is the user-facing name for "soon" (feature-flagged-off)
+ * sections, since when collapsed into a single umbrella row the section
+ * uppercase label ("META ADS") would look like a header rather than a
+ * nav item. For enabled sections it's unused — we keep the original
+ * uppercase label as the section heading.
+ *
+ * `umbrellaIcon` (optional) overrides the icon shown on the collapsed
+ * umbrella row. Defaults to the first item's icon — which is what we
+ * want for ads (Megaphone) and recover (MessageSquare).
+ */
+const navSections: Array<{
+  label: string;
+  displayLabel?: string;
+  items: Array<{ href: string; label: string; icon: typeof LayoutDashboard }>;
+}> = [
   {
     label: 'Principal',
     items: [
@@ -40,6 +57,7 @@ const navSections = [
   },
   {
     label: 'META ADS',
+    displayLabel: 'Meta Ads',
     items: [
       { href: '/ads', label: 'Panel de Anuncios', icon: Megaphone },
       { href: '/ads/creativos', label: 'Anuncios', icon: Image },
@@ -49,6 +67,7 @@ const navSections = [
   },
   {
     label: 'RECOVER',
+    displayLabel: 'Recover',
     items: [
       { href: '/recover', label: 'Panel Recover', icon: MessageSquare },
       { href: '/recover/carts', label: 'Carritos', icon: ShoppingCart },
@@ -58,7 +77,6 @@ const navSections = [
   {
     label: 'Sistema',
     items: [
-      { href: '/logs', label: 'Logs', icon: FileText },
       { href: '/reports', label: 'Reportes', icon: Flag },
       { href: '/settings', label: 'Configuracion', icon: Settings },
       { href: '/settings/shipping-rules', label: 'Reglas de envio', icon: Truck },
@@ -72,6 +90,19 @@ export function Sidebar() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Which "Coming Soon" sections are expanded to reveal their sub-items.
+  // Default: all collapsed → each soon-section shows a single umbrella row.
+  // Stored as a Set keyed by section.label so we can toggle independently.
+  const [expandedSoon, setExpandedSoon] = useState<Set<string>>(new Set());
+
+  const toggleSoon = (label: string) => {
+    setExpandedSoon((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  };
 
   const sidebarContent = (
     <>
@@ -109,6 +140,79 @@ export function Sidebar() {
           const requiredFlag = SECTION_FLAGS[section.label];
           const sectionEnabled = !requiredFlag || isFeatureEnabled(requiredFlag);
 
+          // ── "Coming Soon" sections ─────────────────────────────────────
+          // Render a single umbrella row (using the section's first item's
+          // icon + the friendlier displayLabel) plus a Soon pill and a
+          // chevron. Clicking the row expands/collapses to reveal the
+          // upcoming sub-items as disabled previews. This keeps the sidebar
+          // clean — instead of 4 grayed-out items per soon section we show
+          // 1 by default, while still letting curious users peek at what's
+          // coming. In collapsed sidebar mode we just show the umbrella
+          // icon (no expand — there's no horizontal room).
+          if (!sectionEnabled) {
+            const isExpanded = expandedSoon.has(section.label);
+            const umbrella = section.items[0];
+            const UmbrellaIcon = umbrella.icon;
+            const previewItems = section.items;
+
+            return (
+              <div key={section.label}>
+                <button
+                  type="button"
+                  onClick={() => !collapsed && toggleSoon(section.label)}
+                  aria-expanded={isExpanded}
+                  aria-label={`${section.displayLabel ?? section.label} — próximamente`}
+                  className={cn(
+                    'flex items-center gap-2.5 rounded-lg text-[13px] font-medium text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.03] transition-all duration-150 w-full group relative',
+                    collapsed ? 'justify-center px-2 py-2.5 cursor-default' : 'px-3 py-2.5',
+                  )}
+                >
+                  <UmbrellaIcon className="w-[18px] h-[18px] flex-shrink-0 opacity-70" />
+                  {!collapsed && (
+                    <>
+                      <span className="flex-1 text-left">
+                        {section.displayLabel ?? section.label}
+                      </span>
+                      <span className="text-[9px] font-medium text-amber-400/80 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/20">
+                        Soon
+                      </span>
+                      <ChevronDown
+                        className={cn(
+                          'w-3.5 h-3.5 text-zinc-600 transition-transform duration-200',
+                          isExpanded ? 'rotate-180' : 'rotate-0',
+                        )}
+                      />
+                    </>
+                  )}
+                  {collapsed && (
+                    <div className="absolute left-full ml-2 px-2.5 py-1.5 bg-zinc-800 text-zinc-200 text-xs rounded-md shadow-xl opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 border border-white/[0.08]">
+                      {section.displayLabel ?? section.label} (Coming Soon)
+                    </div>
+                  )}
+                </button>
+
+                {/* Expanded preview list (only when sidebar is wide) */}
+                {!collapsed && isExpanded && (
+                  <div className="mt-1 ml-4 pl-3 border-l border-white/[0.04] space-y-0.5 animate-fade-in">
+                    {previewItems.map((item) => (
+                      <div
+                        key={item.href}
+                        className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-[12px] font-medium opacity-40 cursor-not-allowed text-zinc-600"
+                      >
+                        <item.icon className="w-[15px] h-[15px] flex-shrink-0" />
+                        <span>{item.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          // ── Enabled sections (Principal, Sistema, etc.) ─────────────────
+          // Original behavior, unchanged from before. Section heading +
+          // each item rendered as a Link (or as a disabled preview row when
+          // gated by a per-item flag like /reports).
           return (
             <div key={section.label}>
               {!collapsed && (
@@ -116,11 +220,6 @@ export function Sidebar() {
                   <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">
                     {section.label}
                   </p>
-                  {!sectionEnabled && (
-                    <span className="text-[9px] font-medium text-amber-400/80 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/20">
-                      Soon
-                    </span>
-                  )}
                 </div>
               )}
               <div className="space-y-0.5">
@@ -133,7 +232,7 @@ export function Sidebar() {
                   const itemFlag = ITEM_FLAGS[item.href];
                   const itemDisabled = itemFlag ? !isFeatureEnabled(itemFlag) : false;
 
-                  if (!sectionEnabled || itemDisabled) {
+                  if (itemDisabled) {
                     return (
                       <div
                         key={item.href}

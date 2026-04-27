@@ -24,7 +24,7 @@ import { encrypt } from '@/lib/encryption';
  *   3. Mark the step as "saved" — the wizard moves on. The actual
  *      credential check happens when the worker tries to log in for the
  *      user's first real shipment, and the result surfaces via the aha
- *      moment modal (success) or a row in /logs (failure).
+ *      moment modal (success) or the JobFeedPanel on the dashboard (failure).
  *
  * The honest UX trade: telling the user "we'll confirm on first shipment"
  * is better than fake-verifying with a flaky probe that gives false negatives.

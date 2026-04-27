@@ -37,7 +37,6 @@ export async function middleware(request: NextRequest) {
     '/dashboard',
     '/orders',
     '/labels',
-    '/logs',
     '/settings',
     '/ads',
     '/recover',
