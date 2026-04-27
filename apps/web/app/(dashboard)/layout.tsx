@@ -54,8 +54,27 @@ export default async function DashboardLayout({
   // tenant as un-onboarded so the activation funnel rebuilds them properly.
   const hasShopify = !!tenant.shopifyStoreUrl && !!tenant.shopifyToken;
   const hasDac = !!tenant.dacUsername && !!tenant.dacPassword;
-  if (!tenant.onboardingComplete || !hasShopify || !hasDac) {
+
+  // Missing credentials → always force the wizard. Nothing else matters.
+  if (!hasShopify || !hasDac) {
     redirect('/onboarding');
+  }
+
+  // Legacy backfill: tenants that existed before the `onboardingComplete`
+  // column was added all default to `false`, even though they may have been
+  // fully configured (manually preloaded creds, internal/test accounts, users
+  // who finished setup before this PLG funnel shipped). If both credentials
+  // are present we treat that as proof of completed onboarding and flip the
+  // flag in-place — one fire-and-forget UPDATE the first time they hit the
+  // dashboard post-deploy. Subsequent renders skip this branch entirely.
+  if (!tenant.onboardingComplete) {
+    await db.tenant.update({
+      where: { id: auth.tenantId },
+      data: {
+        onboardingComplete: true,
+        onboardingCompletedAt: new Date(),
+      },
+    });
   }
 
   // "Aha moment" trigger: first time a label transitions to COMPLETED, light
