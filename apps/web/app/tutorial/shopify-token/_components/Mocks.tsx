@@ -1,8 +1,8 @@
 /**
- * Dark-themed UI mockups of each Shopify Admin / Dev Dashboard screen the
- * user will hit while creating their Admin API token.
+ * Dark-themed UI illustrations of each Shopify Admin / Dev Dashboard screen
+ * the user will hit while creating their Admin API token.
  *
- * Why mocks and not real screenshots:
+ * Why illustrations and not real screenshots:
  *   1. Privacy — real captures from the operator's KARBON store would leak
  *      brand-specific UI to anyone visiting the public tutorial.
  *   2. Stability — Shopify ships UI changes constantly. SVGs that match
@@ -12,18 +12,24 @@
  *      trips, look pixel-perfect at any DPR, and theme-match the rest of
  *      the dashboard.
  *
- * Every label, button name and URL fragment in these mocks was verified
- * by driving Chrome through the live flow on a real Shopify store. If
- * you change wording here, run the flow again first.
+ * Every label, button name and URL fragment in these illustrations was
+ * verified by driving Chrome through the live flow on a real Shopify store
+ * on 2026-04-28. If you change wording here, run the flow again first.
+ *
+ * Each `<marker id="...">` MUST be unique across the page — duplicate ids
+ * across SVGs cause `markerEnd="url(#id)"` to resolve unpredictably under
+ * Safari/Webkit. We pass a per-SVG id to ArrowDefs to avoid this.
  */
 
 type MockProps = { className?: string };
 
-const ARROW = (
-  <g>
+/** Reusable arrow-marker defs. Each SVG gets a unique id to keep the DOM
+ *  free of id collisions when many mocks render together. */
+function ArrowDefs({ id }: { id: string }) {
+  return (
     <defs>
       <marker
-        id="arrowhead"
+        id={id}
         markerWidth="10"
         markerHeight="10"
         refX="6"
@@ -33,20 +39,21 @@ const ARROW = (
         <polygon points="0 0, 6 3, 0 6" fill="#22d3ee" />
       </marker>
     </defs>
-  </g>
-);
+  );
+}
 
 /** Step 1: admin.shopify.com → "Configuración" link in lower-left sidebar. */
 export function MockSettings({ className }: MockProps) {
+  const arrowId = 'mock-arrow-settings';
   return (
     <svg
       viewBox="0 0 800 460"
       role="img"
-      aria-label="Captura: clic en Configuración"
+      aria-label="Ilustración: clic en Configuración del admin de Shopify"
       className={className}
       xmlns="http://www.w3.org/2000/svg"
     >
-      {ARROW}
+      <ArrowDefs id={arrowId} />
       {/* Window chrome */}
       <rect x="0" y="0" width="800" height="460" rx="10" fill="#0b1220" />
       <rect x="0" y="0" width="800" height="36" rx="10" fill="#111827" />
@@ -55,7 +62,7 @@ export function MockSettings({ className }: MockProps) {
       <circle cx="56" cy="18" r="5" fill="#10b981" />
       <rect x="160" y="8" width="380" height="20" rx="6" fill="#1f2937" />
       <text x="180" y="22" fontSize="11" fill="#6b7280" fontFamily="monospace">
-        admin.shopify.com/store/karbon
+        admin.shopify.com/store/...
       </text>
       {/* Sidebar */}
       <rect x="0" y="36" width="220" height="424" fill="#0a0f1a" />
@@ -112,7 +119,7 @@ export function MockSettings({ className }: MockProps) {
         y2="408"
         stroke="#22d3ee"
         strokeWidth="2.5"
-        markerEnd="url(#arrowhead)"
+        markerEnd={`url(#${arrowId})`}
       />
       <text x="298" y="412" fontSize="13" fill="#22d3ee" fontWeight="600">
         Hacé clic aquí
@@ -123,15 +130,16 @@ export function MockSettings({ className }: MockProps) {
 
 /** Step 2: Configuración → Apps y canales de venta → Desarrollar apps. */
 export function MockDevelopApps({ className }: MockProps) {
+  const arrowId = 'mock-arrow-develop';
   return (
     <svg
       viewBox="0 0 800 460"
       role="img"
-      aria-label="Captura: botón Desarrollar apps en Dev Dashboard"
+      aria-label="Ilustración: botón Desarrollar apps en Dev Dashboard"
       className={className}
       xmlns="http://www.w3.org/2000/svg"
     >
-      {ARROW}
+      <ArrowDefs id={arrowId} />
       <rect x="0" y="0" width="800" height="460" rx="10" fill="#0b1220" />
       <rect x="0" y="0" width="800" height="36" rx="10" fill="#111827" />
       <circle cx="20" cy="18" r="5" fill="#ef4444" />
@@ -139,7 +147,7 @@ export function MockDevelopApps({ className }: MockProps) {
       <circle cx="56" cy="18" r="5" fill="#10b981" />
       <rect x="160" y="8" width="500" height="20" rx="6" fill="#1f2937" />
       <text x="180" y="22" fontSize="11" fill="#6b7280" fontFamily="monospace">
-        admin.shopify.com/store/karbon/settings/apps/development
+        admin.shopify.com/store/.../settings/apps/development
       </text>
       {/* Sidebar (settings-style: shorter list) */}
       <rect x="0" y="36" width="240" height="424" fill="#0a0f1a" />
@@ -227,7 +235,7 @@ export function MockDevelopApps({ className }: MockProps) {
         y2="264"
         stroke="#22d3ee"
         strokeWidth="2.5"
-        markerEnd="url(#arrowhead)"
+        markerEnd={`url(#${arrowId})`}
       />
       <text x="608" y="268" fontSize="12" fill="#22d3ee" fontWeight="600">
         Hacé clic aquí
@@ -238,15 +246,16 @@ export function MockDevelopApps({ className }: MockProps) {
 
 /** Step 3: dev.shopify.com/dashboard/<id>/apps → Crear app. */
 export function MockCreateApp({ className }: MockProps) {
+  const arrowId = 'mock-arrow-create';
   return (
     <svg
       viewBox="0 0 800 460"
       role="img"
-      aria-label="Captura: botón Crear app en Dev Dashboard"
+      aria-label="Ilustración: botón Crear app en Dev Dashboard"
       className={className}
       xmlns="http://www.w3.org/2000/svg"
     >
-      {ARROW}
+      <ArrowDefs id={arrowId} />
       <rect x="0" y="0" width="800" height="460" rx="10" fill="#0b1220" />
       <rect x="0" y="0" width="800" height="36" rx="10" fill="#111827" />
       <circle cx="20" cy="18" r="5" fill="#ef4444" />
@@ -325,7 +334,7 @@ export function MockCreateApp({ className }: MockProps) {
         y2="266"
         stroke="#22d3ee"
         strokeWidth="2.5"
-        markerEnd="url(#arrowhead)"
+        markerEnd={`url(#${arrowId})`}
       />
       <text x="546" y="270" fontSize="12" fill="#22d3ee" fontWeight="600">
         Hacé clic aquí
@@ -336,15 +345,16 @@ export function MockCreateApp({ className }: MockProps) {
 
 /** Step 4: choose "Empezar desde Dev Dashboard". */
 export function MockChooseDashboard({ className }: MockProps) {
+  const arrowId = 'mock-arrow-choose';
   return (
     <svg
       viewBox="0 0 800 420"
       role="img"
-      aria-label="Captura: elegir Empezar desde Dev Dashboard"
+      aria-label="Ilustración: elegir Empezar desde Dev Dashboard"
       className={className}
       xmlns="http://www.w3.org/2000/svg"
     >
-      {ARROW}
+      <ArrowDefs id={arrowId} />
       <rect x="0" y="0" width="800" height="420" rx="10" fill="#0b1220" />
       <rect x="0" y="0" width="800" height="36" rx="10" fill="#111827" />
       <circle cx="20" cy="18" r="5" fill="#ef4444" />
@@ -431,7 +441,7 @@ export function MockChooseDashboard({ className }: MockProps) {
         y2="298"
         stroke="#22d3ee"
         strokeWidth="2.5"
-        markerEnd="url(#arrowhead)"
+        markerEnd={`url(#${arrowId})`}
       />
       <text x="668" y="302" fontSize="12" fill="#22d3ee" fontWeight="600">
         Hacé clic
@@ -442,15 +452,16 @@ export function MockChooseDashboard({ className }: MockProps) {
 
 /** Step 5/6: Acceso section with "Seleccionar alcances" and the legacy checkbox. */
 export function MockAccessSection({ className }: MockProps) {
+  const arrowId = 'mock-arrow-access';
   return (
     <svg
       viewBox="0 0 800 540"
       role="img"
-      aria-label="Captura: sección Acceso con checkbox de instalación heredada"
+      aria-label="Ilustración: sección Acceso con checkbox de instalación heredada"
       className={className}
       xmlns="http://www.w3.org/2000/svg"
     >
-      {ARROW}
+      <ArrowDefs id={arrowId} />
       <rect x="0" y="0" width="800" height="540" rx="10" fill="#0b1220" />
       <rect x="0" y="0" width="800" height="36" rx="10" fill="#111827" />
       <circle cx="20" cy="18" r="5" fill="#ef4444" />
@@ -490,7 +501,7 @@ export function MockAccessSection({ className }: MockProps) {
         y2="136"
         stroke="#22d3ee"
         strokeWidth="2.5"
-        markerEnd="url(#arrowhead)"
+        markerEnd={`url(#${arrowId})`}
       />
       {/* Textarea */}
       <rect
@@ -606,7 +617,7 @@ export function MockScopePicker({ className }: MockProps) {
     <svg
       viewBox="0 0 800 540"
       role="img"
-      aria-label="Captura: modal Seleccionar alcances"
+      aria-label="Ilustración: modal Seleccionar alcances con los 10 alcances tildados"
       className={className}
       xmlns="http://www.w3.org/2000/svg"
     >
@@ -635,7 +646,9 @@ export function MockScopePicker({ className }: MockProps) {
         Alcances
       </text>
       <line x1="60" y1="178" x2="740" y2="178" stroke="#1f2937" />
-      {/* Rows */}
+      {/* Rows. We render scope name as a short read/write tag and trust the
+          tutorial body to spell out the full scope id. The row layout and
+          checkboxes mirror the live picker. */}
       {rows.map((row, i) => {
         const y = 200 + i * 56;
         return (
@@ -667,12 +680,12 @@ export function MockScopePicker({ className }: MockProps) {
                 <text
                   x={478 + j * 142}
                   y={y + 14}
-                  fontSize="10"
+                  fontSize="9.5"
                   fill="#22d3ee"
                   fontFamily="monospace"
                   fontWeight="600"
                 >
-                  {s.replace(/_(orders|fulfillments|products|fulfillment_orders)/, (m) => m)}
+                  {s.startsWith('read_') ? 'read' : 'write'}
                 </text>
               </g>
             ))}
@@ -699,11 +712,10 @@ export function MockTokenReveal({ className }: MockProps) {
     <svg
       viewBox="0 0 800 460"
       role="img"
-      aria-label="Captura: token shpat_ con botón Mostrar token una vez"
+      aria-label="Ilustración: token shpat con botón Mostrar token una vez"
       className={className}
       xmlns="http://www.w3.org/2000/svg"
     >
-      {ARROW}
       <rect x="0" y="0" width="800" height="460" rx="10" fill="#0b1220" />
       <rect x="0" y="0" width="800" height="36" rx="10" fill="#111827" />
       <circle cx="20" cy="18" r="5" fill="#ef4444" />

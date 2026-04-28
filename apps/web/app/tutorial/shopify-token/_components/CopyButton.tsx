@@ -19,11 +19,15 @@ import { cn } from '@/lib/cn';
 export function CopyButton({
   value,
   label,
+  ariaLabel,
   variant = 'default',
   className,
 }: {
   value: string;
+  /** Visible text next to the icon. Pass `""` for icon-only. */
   label?: string;
+  /** Override for the SR-only label. Defaults to "Copiar al portapapeles". */
+  ariaLabel?: string;
   variant?: 'default' | 'small' | 'pill';
   className?: string;
 }) {
@@ -61,7 +65,11 @@ export function CopyButton({
         styles,
         className,
       )}
-      aria-label={copied ? 'Copiado' : `Copiar ${label ?? 'al portapapeles'}`}
+      aria-label={
+        copied
+          ? 'Copiado'
+          : ariaLabel ?? (label ? `Copiar ${label}` : 'Copiar al portapapeles')
+      }
     >
       {copied ? (
         <>

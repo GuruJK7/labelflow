@@ -369,6 +369,52 @@ export default function ShopifyTokenTutorialPage() {
         </div>
       </section>
 
+      {/* Claude Desktop prompt — promoted to top so power users can copy
+          and run without scrolling through the manual steps. */}
+      <section className="max-w-5xl mx-auto px-5 sm:px-8 pb-10">
+        <div className="rounded-2xl border border-violet-500/25 bg-gradient-to-br from-violet-500/[0.08] via-violet-500/[0.03] to-transparent p-6 sm:p-8 shadow-lg shadow-violet-500/5">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <div className="inline-flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-violet-300">
+                <Sparkles className="w-3 h-3" />
+                Modo automático · Recomendado
+              </div>
+              <h2 className="text-xl sm:text-2xl font-semibold text-white mt-1.5">
+                ¿Querés que Claude Desktop lo haga por vos?
+              </h2>
+              <p className="text-sm text-zinc-400 mt-2 max-w-3xl leading-relaxed">
+                Si tenés{' '}
+                <span className="text-zinc-200 font-medium">Claude Desktop</span>{' '}
+                con la extensión de Chrome instalada, copiá este prompt y pegalo
+                en una conversación nueva. Claude va a abrir tu Shopify,
+                configurar la app, marcar los 10 alcances y entregarte el token
+                al final — sin que toques nada.
+              </p>
+            </div>
+            <CopyButton
+              value={CLAUDE_DESKTOP_PROMPT}
+              label="Copiar prompt"
+              variant="pill"
+            />
+          </div>
+          <pre className="mt-5 rounded-xl bg-black/70 border border-white/[0.06] p-4 sm:p-5 text-[11.5px] text-zinc-300 font-mono leading-relaxed whitespace-pre-wrap overflow-x-auto max-h-[420px]">
+            {CLAUDE_DESKTOP_PROMPT}
+          </pre>
+          <div className="mt-4 flex items-start gap-2 text-[11px] text-zinc-500 leading-relaxed">
+            <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>
+              Requiere Claude Desktop + extensión Chrome MCP activa, y sesión
+              iniciada en{' '}
+              <code className="text-zinc-400 font-mono">admin.shopify.com</code>{' '}
+              de la tienda objetivo.{' '}
+              <span className="text-zinc-400">
+                ¿No tenés Claude Desktop? Seguí el paso a paso manual abajo.
+              </span>
+            </span>
+          </div>
+        </div>
+      </section>
+
       {/* TL;DR scopes panel */}
       <section className="max-w-5xl mx-auto px-5 sm:px-8 pb-10">
         <div className="rounded-2xl border border-cyan-500/15 bg-gradient-to-br from-cyan-500/[0.04] to-transparent p-6">
@@ -403,7 +449,12 @@ export default function ShopifyTokenTutorialPage() {
                     <code className="text-cyan-300 font-mono text-xs truncate">
                       {s.name}
                     </code>
-                    <CopyButton value={s.name} variant="small" label="" />
+                    <CopyButton
+                      value={s.name}
+                      variant="small"
+                      label=""
+                      ariaLabel={`Copiar ${s.name}`}
+                    />
                   </div>
                   <div className="text-[11px] text-zinc-500 mt-0.5 truncate">
                     {s.resource} — {s.why}
@@ -415,14 +466,15 @@ export default function ShopifyTokenTutorialPage() {
         </div>
       </section>
 
-      {/* Step-by-step */}
+      {/* Step-by-step (manual) */}
       <section className="max-w-5xl mx-auto px-5 sm:px-8 pb-12">
         <h2 className="text-2xl font-bold text-white mb-2">
-          Paso a paso, con capturas
+          Paso a paso manual
         </h2>
         <p className="text-sm text-zinc-500 mb-8 max-w-3xl">
-          Cada captura es una representación fiel de la pantalla real. Verificadas
-          el 28 de abril de 2026 contra el flujo de Dev Dashboard de Shopify.
+          Las imágenes son ilustraciones esquemáticas — los textos, botones,
+          URLs y nombres de alcances coinciden palabra por palabra con el UI
+          real de Shopify (verificado el 28 de abril de 2026).
         </p>
         <ol className="space-y-10">
           {STEPS.map((step) => (
@@ -457,46 +509,6 @@ export default function ShopifyTokenTutorialPage() {
             </li>
           ))}
         </ol>
-      </section>
-
-      {/* Claude Desktop prompt */}
-      <section className="max-w-5xl mx-auto px-5 sm:px-8 pb-16">
-        <div className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-violet-500/[0.06] to-transparent p-6 sm:p-8">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="flex-1 min-w-0">
-              <div className="inline-flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-violet-300">
-                <Sparkles className="w-3 h-3" />
-                Modo automático
-              </div>
-              <h2 className="text-xl font-semibold text-white mt-1">
-                ¿Querés que Claude Desktop lo haga por vos?
-              </h2>
-              <p className="text-sm text-zinc-400 mt-2 max-w-3xl">
-                Si tenés Claude Desktop con la extensión de Chrome instalada,
-                copiá este prompt y pegalo en una conversación nueva. Claude va
-                a abrir tu Shopify, configurar la app, y entregarte el token al
-                final.
-              </p>
-            </div>
-            <CopyButton
-              value={CLAUDE_DESKTOP_PROMPT}
-              label="Copiar prompt"
-              variant="pill"
-            />
-          </div>
-          <pre className="mt-5 rounded-xl bg-black/60 border border-white/[0.05] p-4 sm:p-5 text-[11.5px] text-zinc-300 font-mono leading-relaxed whitespace-pre-wrap overflow-x-auto max-h-[420px]">
-            {CLAUDE_DESKTOP_PROMPT}
-          </pre>
-          <div className="mt-4 flex items-start gap-2 text-[11px] text-zinc-500 leading-relaxed">
-            <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-            <span>
-              Requiere Claude Desktop + extensión Chrome MCP activa, y sesión
-              iniciada en{' '}
-              <code className="text-zinc-400 font-mono">admin.shopify.com</code>{' '}
-              de la tienda objetivo.
-            </span>
-          </div>
-        </div>
       </section>
 
       {/* Troubleshooting */}
@@ -570,5 +582,5 @@ export default function ShopifyTokenTutorialPage() {
 export const metadata = {
   title: 'Cómo generar tu token de Shopify · LabelFlow',
   description:
-    'Tutorial paso a paso para crear un token Admin API de Shopify (shpat_) y conectarlo a LabelFlow. Con capturas verificadas y prompt para Claude Desktop.',
+    'Tutorial paso a paso para crear un token Admin API de Shopify (shpat_) y conectarlo a LabelFlow. Con ilustraciones de cada pantalla y prompt para Claude Desktop en modo automático.',
 };
