@@ -67,8 +67,12 @@ export async function POST(request: Request) {
     );
 
     if (res.status === 401 || res.status === 403) {
+      // Keep the message terse — the full scope list lives in
+      // /tutorial/shopify-token. The single most common cause of a
+      // rejected token is forgetting to tick "Usar flujo de instalación
+      // heredado" in the Dev Dashboard, so call that out explicitly.
       return apiError(
-        'Token rechazado por Shopify. Verificá los scopes (read_orders, write_orders, read_fulfillments, write_fulfillments) y volvé a generarlo.',
+        'Token rechazado por Shopify. Verificá los 10 alcances y que el checkbox "Usar flujo de instalación heredado" esté tildado en el Dev Dashboard. Mirá el tutorial en /tutorial/shopify-token y volvé a generarlo.',
         422,
       );
     }

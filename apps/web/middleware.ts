@@ -10,6 +10,10 @@ export async function middleware(request: NextRequest) {
     '/login',
     '/signup',
     '/onboarding',
+    '/tutorial', // Public step-by-step guides (Shopify token, etc.) — these
+                 // are linked from /onboarding so they MUST be reachable
+                 // without a session (some users open them in a fresh
+                 // window before signing up).
     '/terminos',
     '/privacidad',
     '/api/auth',

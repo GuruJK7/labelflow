@@ -9,44 +9,53 @@ import {
   Copy,
   Check,
   Shield,
+  AlertTriangle,
+  BookOpen,
 } from 'lucide-react';
+import Link from 'next/link';
 import { cn } from '@/lib/cn';
 
 /**
- * In-step tutorial for getting a Shopify Admin API token.
+ * Inline dropdown tutorial inside the onboarding wizard.
  *
- * The Shopify dev-app flow has ~7 clicks across 3 different admin screens
- * and uses jargon ("Admin API access", "scopes", "shpat_") that scares
- * off non-technical store owners. Without this tutorial, the support
- * load would dwarf any other onboarding step.
+ * Two ways to read it:
+ *   - This compact dropdown (collapsed by default, no extra route).
+ *   - The full page at /tutorial/shopify-token with verified screenshots
+ *     and a Claude Desktop automation prompt.
  *
- * Screenshots will be added in a follow-up — for now the text-only
- * version is detailed enough for someone who knows Shopify Admin to
- * get unstuck. Each scope is explained inline so the user understands
- * what they're approving (and so we can later cite this when explaining
- * why we don't ask for write_customers etc.).
+ * The 10 required scopes here are the SAME list enforced runtime by
+ * /api/v1/shopify-scopes/route.ts. They MUST stay in sync — if you add or
+ * remove a scope, update both files plus the standalone tutorial page plus
+ * the error message in /api/v1/onboarding/test-shopify/route.ts.
+ *
+ * The flow text was rewritten in 2026-04 after Shopify migrated "custom
+ * apps" from `Apps y canales de venta → Desarrollar apps` to the new
+ * Dev Dashboard at dev.shopify.com. The legacy-installation checkbox is
+ * the single most common reason a token is rejected — call it out twice.
  */
 
 const REQUIRED_SCOPES = [
+  { name: 'read_orders', why: 'Leer los pedidos nuevos.' },
+  { name: 'write_orders', why: 'Marcar pedidos como preparados.' },
+  { name: 'read_fulfillments', why: 'Detectar envíos manuales.' },
+  { name: 'write_fulfillments', why: 'Crear el fulfillment con la guía DAC.' },
+  { name: 'read_products', why: 'Filtros opcionales por categoría.' },
+  { name: 'write_products', why: 'Actualizar metadata de bultos especiales.' },
   {
-    name: 'read_orders',
-    why: 'Para leer los pedidos nuevos que necesitan envío.',
+    name: 'read_assigned_fulfillment_orders',
+    why: 'Leer fulfillment orders asignados.',
   },
   {
-    name: 'write_orders',
-    why: 'Para marcar pedidos como "Preparado" cuando el envío sale.',
+    name: 'write_assigned_fulfillment_orders',
+    why: 'Aceptar/cerrar fulfillment orders desde LabelFlow.',
   },
   {
-    name: 'read_fulfillments',
-    why: 'Para detectar pedidos ya despachados manualmente.',
+    name: 'read_merchant_managed_fulfillment_orders',
+    why: 'Leer fulfillment orders del merchant.',
   },
   {
-    name: 'write_fulfillments',
-    why: 'Para crear el fulfillment con el número de guía DAC.',
-  },
-  {
-    name: 'read_products',
-    why: 'Para leer tipos de producto (filtros opcionales por categoría).',
+    name: 'write_merchant_managed_fulfillment_orders',
+    why: 'Crear/modificar fulfillment orders del merchant.',
   },
 ] as const;
 
@@ -90,10 +99,32 @@ export function ShopifyTutorial() {
           <div className="bg-zinc-900/40 border border-white/[0.04] rounded-lg p-3">
             <p className="text-xs text-zinc-400 leading-relaxed">
               Vamos a crear una <strong className="text-zinc-200">app personalizada</strong> dentro
-              de tu tienda Shopify. Es la forma oficial y segura — no te pide instalar
-              nada en App Store ni compartir tu contraseña. Te toma ~3 minutos.
+              de tu tienda Shopify usando el nuevo{' '}
+              <strong className="text-zinc-200">Dev Dashboard</strong>. Es la
+              forma oficial y segura — no te pide instalar nada en App Store ni
+              compartir tu contraseña. Te toma ~3 minutos.
             </p>
           </div>
+
+          {/* Link to full standalone tutorial */}
+          <Link
+            href="/tutorial/shopify-token"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-3 rounded-lg border border-cyan-500/25 bg-cyan-500/[0.06] hover:bg-cyan-500/[0.1] px-3 py-2.5 transition-colors group"
+          >
+            <BookOpen className="w-4 h-4 text-cyan-300 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-[12.5px] font-semibold text-white">
+                Ver tutorial completo con capturas →
+              </div>
+              <div className="text-[11px] text-zinc-400">
+                Página dedicada con screenshots de cada pantalla y un prompt
+                para Claude Desktop.
+              </div>
+            </div>
+            <ExternalLink className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-300 transition-colors flex-shrink-0" />
+          </Link>
 
           {/* Step list */}
           <ol className="space-y-3 text-sm text-zinc-300">
@@ -116,9 +147,14 @@ export function ShopifyTutorial() {
               </span>
               <div className="flex-1 leading-relaxed">
                 Hacé clic en{' '}
-                <span className="text-zinc-100 font-medium">Desarrollar apps</span> (arriba a la
-                derecha) y aceptá los términos si es la primera vez. Después{' '}
-                <span className="text-zinc-100 font-medium">Crear app</span>.
+                <span className="text-zinc-100 font-medium">
+                  Desarrollar apps en Dev Dashboard
+                </span>
+                . Vas a saltar a{' '}
+                <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
+                  dev.shopify.com
+                </code>
+                .
               </div>
             </li>
 
@@ -127,11 +163,13 @@ export function ShopifyTutorial() {
                 3
               </span>
               <div className="flex-1 leading-relaxed">
-                Ponele un nombre — algo como{' '}
+                Clic en <span className="text-zinc-100 font-medium">Crear app</span>{' '}
+                y elegí <span className="text-zinc-100 font-medium">Empezar desde Dev Dashboard</span>{' '}
+                (no la opción de Shopify CLI). Ponele un nombre — sugerimos{' '}
                 <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs">
-                  LabelFlow
-                </code>{' '}
-                — y elegí tu usuario como desarrollador de la app.
+                  AutoEnvía
+                </code>
+                .
               </div>
             </li>
 
@@ -140,11 +178,13 @@ export function ShopifyTutorial() {
                 4
               </span>
               <div className="flex-1 leading-relaxed">
-                Andá a la pestaña{' '}
+                En el editor de la versión, scrolleá hasta la sección{' '}
+                <span className="text-zinc-100 font-medium">Acceso</span> y
+                hacé clic en{' '}
                 <span className="text-zinc-100 font-medium">
-                  Configuración → Configurar permisos de Admin API
-                </span>
-                . Esto abre el listado de "scopes".
+                  Seleccionar alcances
+                </span>{' '}
+                (a la derecha del label "Alcances").
               </div>
             </li>
 
@@ -154,8 +194,8 @@ export function ShopifyTutorial() {
               </span>
               <div className="flex-1 space-y-2 leading-relaxed">
                 <div>
-                  Buscá y tildá <strong>solo</strong> estos 5 scopes (no actives ningún otro —
-                  cuanto menos permisos otorgues, más seguro):
+                  En el modal, buscá y tildá <strong>solo</strong> estos 10
+                  alcances (cuanto menos permisos otorgues, más seguro):
                 </div>
                 <button
                   type="button"
@@ -168,7 +208,7 @@ export function ShopifyTutorial() {
                     </>
                   ) : (
                     <>
-                      <Copy className="w-3 h-3" /> Copiar los 5 scopes
+                      <Copy className="w-3 h-3" /> Copiar los 10 alcances
                     </>
                   )}
                 </button>
@@ -185,17 +225,31 @@ export function ShopifyTutorial() {
                     </li>
                   ))}
                 </ul>
+                <div className="text-[11px] text-zinc-500 mt-2">
+                  Cuando termines, clic en{' '}
+                  <span className="text-zinc-300 font-medium">Listo</span>.
+                </div>
               </div>
             </li>
 
             <li className="flex gap-3">
-              <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-500/15 ring-1 ring-cyan-500/30 text-cyan-300 text-xs font-semibold flex items-center justify-center">
+              <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 ring-1 ring-amber-500/40 text-amber-300 text-xs font-semibold flex items-center justify-center">
                 6
               </span>
               <div className="flex-1 leading-relaxed">
-                Hacé clic en <span className="text-zinc-100 font-medium">Guardar</span>, y
-                después <span className="text-zinc-100 font-medium">Instalar app</span>{' '}
-                arriba a la derecha. Shopify te pedirá confirmar — aceptá.
+                <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/[0.06] px-2.5 py-2">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+                  <div className="text-xs text-amber-100 leading-relaxed">
+                    <strong>Crítico:</strong> volvé a la sección{' '}
+                    <span className="text-amber-200 font-medium">Acceso</span> y{' '}
+                    <strong>tildá el checkbox</strong>{' '}
+                    <span className="text-amber-200 font-medium">
+                      "Usar flujo de instalación heredado"
+                    </span>
+                    . Sin esto, Shopify NO te entrega un token{' '}
+                    <code className="font-mono">shpat_</code>.
+                  </div>
+                </div>
               </div>
             </li>
 
@@ -204,15 +258,28 @@ export function ShopifyTutorial() {
                 7
               </span>
               <div className="flex-1 leading-relaxed">
-                En la pestaña{' '}
-                <span className="text-zinc-100 font-medium">Credenciales de la API</span>{' '}
-                aparece el{' '}
+                Hacé clic en{' '}
+                <span className="text-zinc-100 font-medium">Publicar</span>{' '}
+                (abajo a la derecha). Confirmá si te lo pide.
+              </div>
+            </li>
+
+            <li className="flex gap-3">
+              <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-500/15 ring-1 ring-cyan-500/30 text-cyan-300 text-xs font-semibold flex items-center justify-center">
+                8
+              </span>
+              <div className="flex-1 leading-relaxed">
+                Andá a la pestaña{' '}
+                <span className="text-zinc-100 font-medium">Configuración</span>{' '}
+                de tu app, buscá{' '}
                 <span className="text-zinc-100 font-medium">
                   Token de acceso de Admin API
+                </span>{' '}
+                y clic en{' '}
+                <span className="text-zinc-100 font-medium">
+                  Mostrar token una vez
                 </span>
-                . Hacé clic en{' '}
-                <span className="text-zinc-100 font-medium">Mostrar token una vez</span> y
-                copialo —{' '}
+                . Copialo —{' '}
                 <strong className="text-amber-300">
                   Shopify NO te lo deja ver de nuevo
                 </strong>
@@ -230,8 +297,9 @@ export function ShopifyTutorial() {
               </span>
               <div className="flex-1 leading-relaxed text-zinc-200">
                 Pegalo abajo junto con la URL de tu tienda y le damos a{' '}
-                <span className="text-zinc-100 font-medium">Verificar</span>. Si algo
-                falla, revisá los scopes — es el problema más común.
+                <span className="text-zinc-100 font-medium">Verificar</span>. Si
+                algo falla, revisá los alcances y el checkbox de "instalación
+                heredada" — son los dos problemas más comunes.
               </div>
             </li>
           </ol>
@@ -241,16 +309,15 @@ export function ShopifyTutorial() {
             <Shield className="w-3.5 h-3.5 text-zinc-400 flex-shrink-0 mt-0.5" />
             <span>
               El token se guarda cifrado en nuestra base con AES-256. Si lo querés
-              revocar, vas a la misma pantalla de "Apps personalizadas" en Shopify y
-              hacés clic en{' '}
-              <span className="text-zinc-300 font-medium">Desinstalar app</span> — ahí
-              dejamos de tener acceso al instante.
+              revocar, vas al Dev Dashboard, abrís tu app y hacés clic en{' '}
+              <span className="text-zinc-300 font-medium">Eliminar app</span> —
+              ahí dejamos de tener acceso al instante.
             </span>
           </div>
 
           {/* Direct link */}
           <a
-            href="https://help.shopify.com/en/manual/apps/app-types/custom-apps"
+            href="https://shopify.dev/docs/api/admin"
             target="_blank"
             rel="noopener noreferrer"
             className={cn(
