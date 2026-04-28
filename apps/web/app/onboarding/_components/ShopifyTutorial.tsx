@@ -20,8 +20,8 @@ import { cn } from '@/lib/cn';
  *
  * Two ways to read it:
  *   - This compact dropdown (collapsed by default, no extra route).
- *   - The full page at /tutorial/shopify-token with verified screenshots
- *     and a Claude Desktop automation prompt.
+ *   - The full page at /tutorial/shopify-token with illustrated mocks of
+ *     each screen and a Claude Desktop automation prompt.
  *
  * The 10 required scopes here are the SAME list enforced runtime by
  * /api/v1/shopify-scopes/route.ts. They MUST stay in sync — if you add or
@@ -116,11 +116,11 @@ export function ShopifyTutorial() {
             <BookOpen className="w-4 h-4 text-cyan-300 flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-[12.5px] font-semibold text-white">
-                Ver tutorial completo con capturas →
+                Ver tutorial completo + prompt para Claude Desktop →
               </div>
               <div className="text-[11px] text-zinc-400">
-                Página dedicada con screenshots de cada pantalla y un prompt
-                para Claude Desktop.
+                Página dedicada con ilustraciones de cada pantalla y un
+                prompt automático que hace todo por vos.
               </div>
             </div>
             <ExternalLink className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-300 transition-colors flex-shrink-0" />

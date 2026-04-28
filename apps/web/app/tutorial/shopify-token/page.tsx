@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import {
   ShieldCheck,
@@ -145,8 +146,8 @@ ENTREGA FINAL
 const STEPS: {
   n: number;
   title: string;
-  body: React.ReactNode;
-  mock: React.ReactNode;
+  body: ReactNode;
+  mock: ReactNode;
   warn?: string;
 }[] = [
   {
