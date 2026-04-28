@@ -450,9 +450,17 @@ export function MockChooseDashboard({ className }: MockProps) {
   );
 }
 
-/** Step 5/6: Acceso section with "Seleccionar alcances" and the legacy checkbox. */
-export function MockAccessSection({ className }: MockProps) {
-  const arrowId = 'mock-arrow-access';
+/** Step 5/6: Acceso section with "Seleccionar alcances" and the legacy checkbox.
+ *
+ *  This component is rendered TWICE on /tutorial/shopify-token (steps 5 and 7),
+ *  so it accepts an `idSuffix` to make the `<marker>` id unique per render —
+ *  duplicate marker ids in the same DOM cause `markerEnd="url(#id)"` to resolve
+ *  unpredictably under Safari/WebKit. */
+export function MockAccessSection({
+  className,
+  idSuffix,
+}: MockProps & { idSuffix?: string }) {
+  const arrowId = `mock-arrow-access${idSuffix ? `-${idSuffix}` : ''}`;
   return (
     <svg
       viewBox="0 0 800 540"
@@ -722,7 +730,7 @@ export function MockTokenReveal({ className }: MockProps) {
       <circle cx="38" cy="18" r="5" fill="#f59e0b" />
       <circle cx="56" cy="18" r="5" fill="#10b981" />
       <text x="180" y="22" fontSize="11" fill="#6b7280" fontFamily="monospace">
-        dev.shopify.com/dashboard/.../apps/.../configuracion
+        dev.shopify.com/dashboard/.../apps/.../configuration
       </text>
       <text x="40" y="76" fontSize="16" fill="#f8fafc" fontWeight="700">
         Token de acceso de Admin API

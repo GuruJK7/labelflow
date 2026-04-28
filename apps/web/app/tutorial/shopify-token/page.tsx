@@ -266,7 +266,7 @@ const STEPS: {
         la derecha. Shopify te puede pedir confirmar — aceptá.
       </>
     ),
-    mock: <MockAccessSection className="w-full h-auto" />,
+    mock: <MockAccessSection idSuffix="step7" className="w-full h-auto" />,
   },
   {
     n: 8,
@@ -395,6 +395,7 @@ export default function ShopifyTokenTutorialPage() {
             <CopyButton
               value={CLAUDE_DESKTOP_PROMPT}
               label="Copiar prompt"
+              ariaLabel="Copiar el prompt de Claude Desktop al portapapeles"
               variant="pill"
             />
           </div>
@@ -435,6 +436,7 @@ export default function ShopifyTokenTutorialPage() {
             <CopyButton
               value={ALL_SCOPES_CSV}
               label="Copiar los 10 alcances"
+              ariaLabel="Copiar los 10 alcances al portapapeles"
               variant="pill"
             />
           </div>

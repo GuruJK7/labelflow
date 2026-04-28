@@ -39,8 +39,8 @@ export async function GET() {
     'read_fulfillments', 'write_fulfillments',
     'read_products', 'write_products',
     'read_assigned_fulfillment_orders', 'write_assigned_fulfillment_orders',
-    'write_merchant_managed_fulfillment_orders',
     'read_merchant_managed_fulfillment_orders',
+    'write_merchant_managed_fulfillment_orders',
   ];
 
   const missing = required.filter(s => !scopes.includes(s));
