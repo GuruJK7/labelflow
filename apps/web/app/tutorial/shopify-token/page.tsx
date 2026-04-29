@@ -13,6 +13,7 @@ import {
   Terminal as TerminalIcon,
 } from 'lucide-react';
 import { CopyButton } from './_components/CopyButton';
+import { OSTabs } from './_components/OSTabs';
 import {
   Step01AdminHome,
   Step02SettingsSidebar,
@@ -244,7 +245,7 @@ type Step = {
   title: string;
   body: ReactNode;
   visual: ReactNode;
-  warn?: string;
+  warn?: ReactNode;
 };
 
 const STEPS: Step[] = [
@@ -406,27 +407,76 @@ const STEPS: Step[] = [
     title: 'Crear y ejecutar el server OAuth local',
     body: (
       <>
-        Creá el archivo{' '}
-        <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
-          ~/Desktop/shopify_oauth.py
-        </code>{' '}
-        con el script de abajo (botón "Copiar script" a la derecha).
-        <br />
-        <br />
-        Editá la sección{' '}
+        Creá el archivo del script (copialo del bloque a la derecha) en tu
+        Desktop, editá el dict{' '}
         <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
           APPS
         </code>{' '}
-        reemplazando los placeholders con el Client ID y Client Secret de tu
-        app (paso 6). Ejecutá:
-        <pre className="mt-3 rounded-lg bg-black/70 border border-white/[0.06] p-3 text-xs text-zinc-300 font-mono overflow-x-auto">
-          python3 ~/Desktop/shopify_oauth.py
-        </pre>
-        Debe imprimir{' '}
-        <code className="text-emerald-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
-          Listening on http://localhost:3456
-        </code>
-        . <span className="text-zinc-400">Dejalo corriendo en esa terminal.</span>
+        reemplazando los placeholders con el Client ID y Client Secret del
+        paso 6, y ejecutalo. Los comandos cambian según tu sistema:
+        <div className="mt-4">
+          <OSTabs
+            mac={
+              <div className="space-y-2">
+                <div className="text-[11px] text-zinc-500">
+                  Crear el archivo en Terminal (heredoc):
+                </div>
+                <pre className="rounded-md bg-black/70 border border-white/[0.06] p-3 text-[11px] leading-relaxed text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">
+                  {`# Crear: pegá el script (botón "Copiar script") y guardalo
+nano ~/Desktop/shopify_oauth.py
+# o si preferís TextEdit:
+open -e ~/Desktop/shopify_oauth.py
+
+# Después de editar APPS y guardar, ejecutá:
+python3 ~/Desktop/shopify_oauth.py`}
+                </pre>
+              </div>
+            }
+            linux={
+              <div className="space-y-2">
+                <div className="text-[11px] text-zinc-500">
+                  Crear el archivo y ejecutarlo:
+                </div>
+                <pre className="rounded-md bg-black/70 border border-white/[0.06] p-3 text-[11px] leading-relaxed text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">
+                  {`# Crear con tu editor preferido (nano, vim, gedit, code, etc.)
+nano ~/Desktop/shopify_oauth.py
+
+# Después de editar APPS y guardar, ejecutá:
+python3 ~/Desktop/shopify_oauth.py`}
+                </pre>
+              </div>
+            }
+            windows={
+              <div className="space-y-2">
+                <div className="text-[11px] text-zinc-500">
+                  En PowerShell (búscalo en Inicio):
+                </div>
+                <pre className="rounded-md bg-black/70 border border-white/[0.06] p-3 text-[11px] leading-relaxed text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">
+                  {`# Crear el archivo: abrí Notepad y guardalo en el Desktop
+notepad $env:USERPROFILE\\Desktop\\shopify_oauth.py
+
+# Después de editar APPS y guardar, ejecutá:
+python $env:USERPROFILE\\Desktop\\shopify_oauth.py
+# o si tu instalador agregó "py":
+py $env:USERPROFILE\\Desktop\\shopify_oauth.py`}
+                </pre>
+                <div className="text-[11px] text-amber-300/80 mt-1">
+                  Si Notepad muestra el script en una sola línea sin saltos:
+                  abrilo de nuevo con &quot;Archivo → Abrir&quot; o usá VS
+                  Code.
+                </div>
+              </div>
+            }
+          />
+        </div>
+        <div className="mt-3 text-sm text-zinc-400">
+          Cuando arranca correctamente imprime{' '}
+          <code className="text-emerald-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
+            Listening on http://localhost:3456
+          </code>
+          . <span className="text-zinc-300 font-medium">Dejá esa terminal abierta</span>{' '}
+          — el server tiene que estar vivo cuando hagas el paso 8.
+        </div>
       </>
     ),
     visual: (
@@ -448,16 +498,68 @@ const STEPS: Step[] = [
         </pre>
       </div>
     ),
-    warn:
-      'Si dice "Address already in use", matá el server previo: lsof -ti:3456 | xargs kill -9 y reintentá.',
+    warn: (
+      <div className="space-y-2">
+        <div>
+          Si dice <code className="font-mono">&quot;Address already in
+          use&quot;</code> hay un server previo en el puerto 3456. Matalo:
+        </div>
+        <OSTabs
+          mac={
+            <pre className="rounded-md bg-black/40 border border-amber-500/20 p-2 text-[11px] leading-relaxed text-amber-100 font-mono overflow-x-auto">
+              lsof -ti:3456 | xargs kill -9
+            </pre>
+          }
+          linux={
+            <pre className="rounded-md bg-black/40 border border-amber-500/20 p-2 text-[11px] leading-relaxed text-amber-100 font-mono overflow-x-auto">
+              {`# Si tenés lsof (la mayoría de distros):
+lsof -ti:3456 | xargs kill -9
+
+# Si no, con fuser:
+fuser -k 3456/tcp`}
+            </pre>
+          }
+          windows={
+            <pre className="rounded-md bg-black/40 border border-amber-500/20 p-2 text-[11px] leading-relaxed text-amber-100 font-mono overflow-x-auto whitespace-pre-wrap">
+              {`# En PowerShell (recomendado):
+Get-NetTCPConnection -LocalPort 3456 -ErrorAction SilentlyContinue |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+
+# En CMD (alternativa):
+for /f "tokens=5" %a in ('netstat -ano ^| findstr :3456 ^| findstr LISTENING') do taskkill /PID %a /F`}
+            </pre>
+          }
+        />
+      </div>
+    ),
   },
   {
     n: 8,
     title: 'Disparar el flujo OAuth',
     body: (
       <>
-        En una pestaña nueva del navegador (donde estás logueado en Shopify),
-        pegá esta URL reemplazando los placeholders:
+        <div className="mb-4 rounded-lg border border-cyan-500/20 bg-cyan-500/[0.05] p-3">
+          <div className="flex items-start gap-2">
+            <Info className="w-4 h-4 text-cyan-300 flex-shrink-0 mt-0.5" />
+            <div className="text-xs text-cyan-100 leading-relaxed">
+              <strong className="text-cyan-200">Antes de seguir:</strong>{' '}
+              hay <em>dos cuentas Shopify distintas</em> que pueden estar
+              involucradas: la del{' '}
+              <span className="text-cyan-50 font-medium">Dev Dashboard</span>{' '}
+              (donde creaste la app) y la{' '}
+              <span className="text-cyan-50 font-medium">Owner/Staff</span> de
+              la tienda. A veces son la misma, a veces no. Para evitar
+              instalar la app en la tienda equivocada, abrí en otra pestaña{' '}
+              <code className="font-mono">
+                https://{'{TU_TIENDA}'}.myshopify.com/admin
+              </code>{' '}
+              — si te muestra el panel de tu tienda objetivo, estás
+              logueado bien. Si te pide login, hacelo primero.
+            </div>
+          </div>
+        </div>
+        Después, en una pestaña nueva del navegador, pegá esta URL
+        reemplazando los placeholders:
         <pre className="mt-3 rounded-lg bg-black/70 border border-white/[0.06] p-3 text-[10.5px] leading-relaxed text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap break-all">
           {OAUTH_URL_TEMPLATE}
         </pre>
@@ -482,6 +584,8 @@ const STEPS: Step[] = [
       </>
     ),
     visual: <Step07VersionFormTop className="w-full h-auto" />,
+    warn:
+      'Cuando aparezca la pantalla "Instalar app", verificá el avatar y nombre de la tienda arriba a la derecha — debe ser TU tienda. Si muestra otra (porque tenés varias cuentas Shopify abiertas), cancelá, abrí una ventana privada/incógnita y pegá la URL ahí logueándote primero en la tienda correcta.',
   },
   {
     n: 9,
@@ -524,23 +628,98 @@ const STEPS: Step[] = [
   },
   {
     n: 10,
-    title: 'Verificar el token',
+    title: 'Verificar el token (10/10 scopes)',
     body: (
       <>
         El token quedó guardado en{' '}
         <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
           ~/Desktop/shopify_tokens.json
-        </code>
-        . Antes de pegarlo en LabelFlow, confirmá que tiene los 10 scopes:
-        <pre className="mt-3 rounded-lg bg-black/70 border border-white/[0.06] p-3 text-[10.5px] leading-relaxed text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">
+        </code>{' '}
+        (Mac/Linux) o{' '}
+        <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
+          %USERPROFILE%\Desktop\shopify_tokens.json
+        </code>{' '}
+        (Windows). Antes de pegarlo en LabelFlow, corré este chequeo —
+        reemplazá <code className="font-mono">shpat_TU_TOKEN</code> y{' '}
+        <code className="font-mono">xxxxxx-xx</code> por los valores tuyos:
+        <div className="mt-3">
+          <OSTabs
+            mac={
+              <pre className="rounded-lg bg-black/70 border border-white/[0.06] p-3 text-[10.5px] leading-relaxed text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">
 {`TOKEN="shpat_TU_TOKEN"
 DOMAIN="xxxxxx-xx.myshopify.com"
+
 curl -s -H "X-Shopify-Access-Token: $TOKEN" \\
   "https://$DOMAIN/admin/oauth/access_scopes.json" | \\
-  python3 -c "import sys,json; print(sorted(s['handle'] for s in json.load(sys.stdin)['access_scopes']))"`}
-        </pre>
-        Esperás ver los 10 scopes listados. Si falta alguno, volvé al paso 3
-        y verificá el campo Alcances.
+python3 -c "
+import sys, json
+scopes = sorted(s['handle'] for s in json.load(sys.stdin)['access_scopes'])
+required = ['read_orders','write_orders','read_fulfillments','write_fulfillments','read_products','write_products','read_assigned_fulfillment_orders','write_assigned_fulfillment_orders','read_merchant_managed_fulfillment_orders','write_merchant_managed_fulfillment_orders']
+missing = [s for s in required if s not in scopes]
+print(f'Granted total: {len(scopes)}')
+print('ALL 10 LABELFLOW SCOPES GRANTED ✅' if not missing else f'MISSING: {missing}')
+"`}
+              </pre>
+            }
+            linux={
+              <pre className="rounded-lg bg-black/70 border border-white/[0.06] p-3 text-[10.5px] leading-relaxed text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">
+{`TOKEN="shpat_TU_TOKEN"
+DOMAIN="xxxxxx-xx.myshopify.com"
+
+curl -s -H "X-Shopify-Access-Token: $TOKEN" \\
+  "https://$DOMAIN/admin/oauth/access_scopes.json" | \\
+python3 -c "
+import sys, json
+scopes = sorted(s['handle'] for s in json.load(sys.stdin)['access_scopes'])
+required = ['read_orders','write_orders','read_fulfillments','write_fulfillments','read_products','write_products','read_assigned_fulfillment_orders','write_assigned_fulfillment_orders','read_merchant_managed_fulfillment_orders','write_merchant_managed_fulfillment_orders']
+missing = [s for s in required if s not in scopes]
+print(f'Granted total: {len(scopes)}')
+print('ALL 10 LABELFLOW SCOPES GRANTED ✅' if not missing else f'MISSING: {missing}')
+"`}
+              </pre>
+            }
+            windows={
+              <pre className="rounded-lg bg-black/70 border border-white/[0.06] p-3 text-[10.5px] leading-relaxed text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">
+{`# En PowerShell:
+$TOKEN = "shpat_TU_TOKEN"
+$DOMAIN = "xxxxxx-xx.myshopify.com"
+
+$response = Invoke-RestMethod \`
+  -Uri "https://$DOMAIN/admin/oauth/access_scopes.json" \`
+  -Headers @{ "X-Shopify-Access-Token" = $TOKEN }
+
+$required = @(
+  'read_orders','write_orders',
+  'read_fulfillments','write_fulfillments',
+  'read_products','write_products',
+  'read_assigned_fulfillment_orders','write_assigned_fulfillment_orders',
+  'read_merchant_managed_fulfillment_orders','write_merchant_managed_fulfillment_orders'
+)
+$granted = $response.access_scopes.handle
+$missing = $required | Where-Object { $_ -notin $granted }
+
+Write-Host "Granted total: $($granted.Count)"
+if ($missing) {
+  Write-Host "MISSING: $($missing -join ', ')" -ForegroundColor Red
+} else {
+  Write-Host "ALL 10 LABELFLOW SCOPES GRANTED" -ForegroundColor Green
+}`}
+              </pre>
+            }
+          />
+        </div>
+        <div className="mt-3 text-sm text-zinc-400 leading-relaxed">
+          <strong className="text-emerald-300">Resultado esperado:</strong>{' '}
+          una línea con &quot;Granted total: 10&quot; o más, y la línea{' '}
+          <code className="text-emerald-300 font-mono">
+            ALL 10 LABELFLOW SCOPES GRANTED
+          </code>
+          . Si te aparece{' '}
+          <code className="text-amber-300 font-mono">MISSING: [...]</code>,
+          volvé al paso 3, agregá los scopes que faltan, creá una versión
+          nueva en el Dev Dashboard y publicala — después reintentá desde el
+          paso 8.
+        </div>
       </>
     ),
     visual: <Step11VersionsPublished className="w-full h-auto" />,
@@ -685,12 +864,42 @@ export default function ShopifyTokenTutorialPage() {
                   en la tienda.
                 </li>
                 <li>
-                  Mac o Linux con Python 3 (
-                  <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
-                    python3 --version
-                  </code>{' '}
-                  debe responder).
+                  Python 3 instalado (Mac viene con él, Linux normalmente
+                  también; Windows requiere descargarlo de{' '}
+                  <a
+                    href="https://www.python.org/downloads/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-cyan-300 hover:text-cyan-200 underline"
+                  >
+                    python.org/downloads
+                  </a>{' '}
+                  marcando &quot;Add Python to PATH&quot; durante el instalador).
+                  Verificalo según tu sistema:
                 </li>
+              </ul>
+              <div className="mt-3">
+                <OSTabs
+                  mac={
+                    <pre className="rounded-md bg-black/70 border border-white/[0.06] p-3 text-[11px] leading-relaxed text-zinc-300 font-mono overflow-x-auto">
+                      python3 --version
+                    </pre>
+                  }
+                  linux={
+                    <pre className="rounded-md bg-black/70 border border-white/[0.06] p-3 text-[11px] leading-relaxed text-zinc-300 font-mono overflow-x-auto">
+                      python3 --version
+                    </pre>
+                  }
+                  windows={
+                    <pre className="rounded-md bg-black/70 border border-white/[0.06] p-3 text-[11px] leading-relaxed text-zinc-300 font-mono overflow-x-auto">
+                      {`python --version
+# o si tenés Python launcher:
+py --version`}
+                    </pre>
+                  }
+                />
+              </div>
+              <ul className="mt-4 space-y-1.5 text-sm text-zinc-300">
                 <li>
                   El dominio{' '}
                   <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
@@ -704,7 +913,8 @@ export default function ShopifyTokenTutorialPage() {
                 </li>
                 <li>
                   Una terminal con permiso para correr scripts locales (Mac:
-                  Terminal.app o iTerm).
+                  Terminal.app o iTerm; Linux: el que uses; Windows:
+                  PowerShell — buscalo en el menú Inicio).
                 </li>
               </ul>
             </div>
@@ -841,9 +1051,9 @@ export default function ShopifyTokenTutorialPage() {
                   {step.warn && (
                     <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.05] px-3 py-2">
                       <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-                      <span className="text-xs text-amber-200 leading-relaxed">
+                      <div className="text-xs text-amber-200 leading-relaxed flex-1 min-w-0">
                         {step.warn}
-                      </span>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -854,6 +1064,37 @@ export default function ShopifyTokenTutorialPage() {
             </li>
           ))}
         </ol>
+
+        {/* Step 12: shutdown the local server */}
+        <div className="mt-10 rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.04] p-6">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="text-base font-semibold text-emerald-100">
+                Listo — y un detalle final
+              </h3>
+              <p className="mt-2 text-sm text-zinc-300 leading-relaxed">
+                Una vez que LabelFlow guardó tu token (paso 11), el server
+                Python local ya no hace falta. Volvé a la terminal donde corre
+                y apretá{' '}
+                <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
+                  Ctrl+C
+                </code>{' '}
+                para cerrarlo. El archivo{' '}
+                <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
+                  ~/Desktop/shopify_oauth.py
+                </code>{' '}
+                podés borrarlo o conservarlo para regenerar tokens en el
+                futuro (es reusable). El token guardado en{' '}
+                <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
+                  ~/Desktop/shopify_tokens.json
+                </code>{' '}
+                ya está en LabelFlow cifrado AES-256, así que el archivo
+                local también podés moverlo a un lugar seguro o borrarlo.
+              </p>
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* Troubleshooting */}
@@ -871,7 +1112,15 @@ export default function ShopifyTokenTutorialPage() {
             },
             {
               q: '"Address already in use" al correr el server (paso 7)',
-              a: 'Hay un server previo escuchando en el puerto 3456. Matalo con: lsof -ti:3456 | xargs kill -9 — después reintentá python3 ~/Desktop/shopify_oauth.py.',
+              a: 'Hay un server previo escuchando en el puerto 3456. Mac/Linux: lsof -ti:3456 | xargs kill -9. Windows (PowerShell): Get-NetTCPConnection -LocalPort 3456 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }. Después reintentá ejecutar el script.',
+            },
+            {
+              q: 'En Windows: "python no se reconoce como comando"',
+              a: 'Python no está en el PATH. Reinstalá Python 3 desde python.org/downloads marcando el check "Add Python to PATH" en la primera pantalla del instalador. Cerrá y reabrí PowerShell. Probá python --version o py --version.',
+            },
+            {
+              q: 'En Windows: Notepad guarda el script en una sola línea',
+              a: 'Notepad antiguo a veces no respeta los saltos de línea LF del clipboard. Usá VS Code (gratis en code.visualstudio.com) o el Notepad de Windows 11 que sí maneja LF. Alternativa: abrí PowerShell y pegá el script con Set-Content -Path $env:USERPROFILE\\Desktop\\shopify_oauth.py -Value @\'(...)\'@.',
             },
             {
               q: 'El token NO empieza con shpat_',
@@ -879,11 +1128,15 @@ export default function ShopifyTokenTutorialPage() {
             },
             {
               q: 'LabelFlow dice "Token rechazado por Shopify"',
-              a: 'Casi siempre falta algún scope. Corré el curl de verificación del paso 10 y compará contra los 10 que LabelFlow requiere. Si falta alguno, pegá el CSV completo en el paso 3, creá una versión nueva, y publicá.',
+              a: 'Casi siempre falta algún scope. Corré el chequeo del paso 10 y mirá si dice MISSING:[...]. Si falta alguno, pegá el CSV completo en el paso 3, creá una versión nueva, y publicá.',
             },
             {
               q: 'Tengo varios tokens generados para la misma tienda',
               a: 'Pasa cuando creás varias apps en el Dev Dashboard. Todos los tokens generados siguen siendo válidos hasta que desinstales/elimines la app que los emitió. Pegá en LabelFlow el último que generaste; si querés limpiar los viejos, eliminá las apps no usadas en el Dev Dashboard.',
+            },
+            {
+              q: 'La pantalla "Instalar app" muestra otra tienda (no la mía)',
+              a: 'Estás logueado en otra cuenta Shopify en este browser. Cancelá, abrí ventana privada/incógnita, hacé login en https://{TU_TIENDA}.myshopify.com/admin con la cuenta dueña de la tienda objetivo, y recién ahí pegá la URL OAuth en una pestaña nueva.',
             },
             {
               q: 'El selector de tiendas en Shopify aparece vacío',
@@ -892,6 +1145,10 @@ export default function ShopifyTokenTutorialPage() {
             {
               q: 'No tengo permiso para crear apps',
               a: 'Pedile al Owner de la tienda Shopify que te asigne el permiso "Develop apps" en Settings → Users and permissions, o que cree el token él directamente.',
+            },
+            {
+              q: 'Mi firewall/antivirus bloquea localhost:3456',
+              a: 'Inusual pero pasa con algunos firewalls corporativos en Windows. Permití temporalmente Python en el firewall (Configuración → Privacidad y seguridad → Firewall → Permitir una aplicación). Si sigue bloqueado, probá en una red personal en lugar de la oficina.',
             },
           ].map((item) => (
             <div
