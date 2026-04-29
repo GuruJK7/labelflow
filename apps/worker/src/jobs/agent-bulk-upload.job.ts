@@ -393,28 +393,36 @@ export async function agentBulkUploadJob(job: {
           },
         });
 
-        // Download PDF (skip if PENDING guia)
+        // Download PDF (skip if PENDING guia). pdfUploaded is read by the
+        // billing guard before successCount++. Two attempts to absorb
+        // transient S3/network blips before declaring it failed.
+        let pdfUploaded = false;
         if (result.guia && !result.guia.startsWith('PENDING-')) {
-          try {
-            const labelLocalPath = await downloadLabel(page, result.guia, tmpDir, dacUsername, dacPassword);
-            if (labelLocalPath && fsSync.existsSync(labelLocalPath)) {
-              const pdfBuffer = fsSync.readFileSync(labelLocalPath);
-              const upload = await uploadLabelPdf(job.tenantId, labelId, pdfBuffer);
-              if (!upload.error) {
-                await db.label.update({
-                  where: { id: labelId },
-                  data: { pdfPath: upload.path, status: 'COMPLETED' },
-                });
-                slog.info('order-pdf', `PDF uploaded for ${order.name}`, { path: upload.path });
+          for (let attempt = 1; attempt <= 2 && !pdfUploaded; attempt++) {
+            try {
+              const labelLocalPath = await downloadLabel(page, result.guia, tmpDir, dacUsername, dacPassword);
+              if (labelLocalPath && fsSync.existsSync(labelLocalPath)) {
+                const pdfBuffer = fsSync.readFileSync(labelLocalPath);
+                const upload = await uploadLabelPdf(job.tenantId, labelId, pdfBuffer);
+                if (!upload.error) {
+                  await db.label.update({
+                    where: { id: labelId },
+                    data: { pdfPath: upload.path, status: 'COMPLETED' },
+                  });
+                  slog.info('order-pdf', `PDF uploaded for ${order.name}${attempt > 1 ? ` (retry ${attempt})` : ''}`, { path: upload.path });
+                  pdfUploaded = true;
+                } else if (attempt === 2) {
+                  slog.warn('order-pdf', `PDF upload failed after ${attempt} attempts: ${upload.error}`);
+                }
+                try { fsSync.unlinkSync(labelLocalPath); } catch { /* best-effort */ }
+              } else if (attempt === 2) {
+                slog.warn('order-pdf', `Could not download PDF after ${attempt} attempts (no file at expected path)`);
               }
-              try {
-                fsSync.unlinkSync(labelLocalPath);
-              } catch {
-                /* best-effort cleanup */
+            } catch (dlErr) {
+              if (attempt === 2) {
+                slog.warn('order-pdf', `PDF download/upload failed after ${attempt} attempts: ${(dlErr as Error).message}`);
               }
             }
-          } catch (dlErr) {
-            slog.warn('order-pdf', `PDF download failed (non-fatal): ${(dlErr as Error).message}`);
           }
         }
 
@@ -488,12 +496,36 @@ export async function agentBulkUploadJob(job: {
           }
         }
 
-        // AI resolver feedback
-        if (result.aiResolutionHash) {
-          await markAddressResolutionFeedback(job.tenantId, result.aiResolutionHash, true, result.guia);
+        // ─ Billing fairness guard (2026-04-29) ──────────────────────────────
+        // Mirror of process-orders.job.ts. Don't bill when the customer's
+        // result is incomplete: (a) guia is PENDING-* (no real DAC number),
+        // or (b) PDF upload to S3 failed permanently. Mark NEEDS_REVIEW so
+        // the operator picks it up; do not increment successCount.
+        const guiaIsPlaceholder = !!result.guia?.startsWith('PENDING-');
+        if (guiaIsPlaceholder || !pdfUploaded) {
+          const reason = guiaIsPlaceholder
+            ? 'No se pudo extraer el número de guía DAC tras varios reintentos. Buscar manualmente en DAC historial.'
+            : 'La guía DAC se generó pero el PDF no se pudo subir al storage. Re-subir manualmente desde el dashboard.';
+          await db.label.update({
+            where: { id: labelId },
+            data: { status: 'NEEDS_REVIEW', errorMessage: reason },
+          });
+          needsReviewCount++;
+          slog.warn(
+            'order-incomplete',
+            `Order ${order.name}: marked NEEDS_REVIEW (no charge) — ${guiaIsPlaceholder ? 'guia is PENDING placeholder' : 'PDF upload failed'}`,
+            { orderName: order.name, guia: result.guia, pdfUploaded },
+          );
+          if (!guiaIsPlaceholder && result.aiResolutionHash) {
+            await markAddressResolutionFeedback(job.tenantId, result.aiResolutionHash, true, result.guia);
+          }
+        } else {
+          // Full success path
+          if (result.aiResolutionHash) {
+            await markAddressResolutionFeedback(job.tenantId, result.aiResolutionHash, true, result.guia);
+          }
+          successCount++;
         }
-
-        successCount++;
       } catch (err) {
         if (result?.guia && !result.guia.startsWith('PENDING-')) {
           usedGuias.add(result.guia);
@@ -641,6 +673,22 @@ export async function agentBulkUploadJob(job: {
     logger.error({ jobId: job.id, error: errorMsg }, 'Agent per-order flow crashed');
 
     await dacBrowser.close().catch(() => {});
+
+    // ─ Billing fairness on crash (2026-04-29) ────────────────────────────
+    // Drain credits for orders that fully succeeded BEFORE the crash. Without
+    // this, those orders are billed zero (silent revenue leak) since the
+    // happy-path deductCreditsAndStamp call below the loop never ran.
+    // dryRun jobs never bill, so skip there. Idempotent: 0 is a no-op.
+    // (`dryRun` const is scoped to the try block above; re-evaluate the same
+    // function here so we don't bill a dry-run job that crashed mid-flight.)
+    if (!isDryRun() && successCount > 0) {
+      await deductCreditsAndStamp(job.tenantId, successCount).catch((deductErr) => {
+        logger.error(
+          { jobId: job.id, tenantId: job.tenantId, successCount, error: (deductErr as Error).message },
+          '[credits] Failed to drain credits in agent crash path — manual reconciliation needed',
+        );
+      });
+    }
 
     await db.job
       .update({

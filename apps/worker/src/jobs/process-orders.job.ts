@@ -678,30 +678,41 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         // short-circuited above with their own Shopify note), and
         // DESTINATARIO orders never require payment at this stage.
 
-        // d) Download PDF label (skip if guia is temporary/pending)
+        // d) Download PDF label (skip if guia is temporary/pending).
+        // pdfUploaded tracks whether the PDF made it to S3 — read by the
+        // billing guard right before successCount++. Two attempts to absorb
+        // transient S3/network blips before declaring it failed.
+        let pdfUploaded = false;
         if (result.guia && !result.guia.startsWith('PENDING-')) {
-          try {
-            slog.info('order-pdf', `Downloading PDF for guia ${result.guia}`);
-            const labelLocalPath = await downloadLabel(page, result.guia, tmpDir, dacUsername, dacPassword);
-            if (labelLocalPath && fs.existsSync(labelLocalPath)) {
-              const pdfBuffer = fs.readFileSync(labelLocalPath);
-              const upload = await uploadLabelPdf(tenantId, labelRecord.id, pdfBuffer);
-              if (!upload.error) {
-                await db.label.update({
-                  where: { id: labelRecord.id },
-                  data: { pdfPath: upload.path, status: 'COMPLETED' },
-                });
-                slog.info('order-pdf', 'PDF uploaded successfully', { path: upload.path });
+          for (let attempt = 1; attempt <= 2 && !pdfUploaded; attempt++) {
+            try {
+              slog.info('order-pdf', `Downloading PDF for guia ${result.guia}${attempt > 1 ? ` (retry ${attempt})` : ''}`);
+              const labelLocalPath = await downloadLabel(page, result.guia, tmpDir, dacUsername, dacPassword);
+              if (labelLocalPath && fs.existsSync(labelLocalPath)) {
+                const pdfBuffer = fs.readFileSync(labelLocalPath);
+                const upload = await uploadLabelPdf(tenantId, labelRecord.id, pdfBuffer);
+                if (!upload.error) {
+                  await db.label.update({
+                    where: { id: labelRecord.id },
+                    data: { pdfPath: upload.path, status: 'COMPLETED' },
+                  });
+                  slog.info('order-pdf', 'PDF uploaded successfully', { path: upload.path });
+                  pdfUploaded = true;
+                } else if (attempt === 2) {
+                  slog.warn('order-pdf', `PDF upload failed after ${attempt} attempts: ${upload.error}`, { guia: result.guia });
+                }
+                try { fs.unlinkSync(labelLocalPath); } catch { /* best-effort */ }
+              } else if (attempt === 2) {
+                slog.warn('order-pdf', `Could not download PDF after ${attempt} attempts (no file at expected path)`, { guia: result.guia });
               }
-              fs.unlinkSync(labelLocalPath);
+            } catch (downloadErr) {
+              if (attempt === 2) {
+                slog.warn('order-pdf', `PDF download/upload failed after ${attempt} attempts: ${(downloadErr as Error).message}`, { guia: result.guia });
+              }
             }
-          } catch (downloadErr) {
-            slog.warn('order-pdf', `PDF download failed (non-fatal): ${(downloadErr as Error).message}`, { guia: result.guia });
           }
         } else {
-          slog.warn('order-pdf', 'Guia is pending, skipping PDF download — label stays as CREATED (not COMPLETED)', { guia: result.guia });
-          // DO NOT mark as COMPLETED — a PENDING guia is not a finished job.
-          // Keeping status as CREATED allows future reconciliation or manual review.
+          slog.warn('order-pdf', 'Guia is pending — no real shipment to download. Will be flagged NEEDS_REVIEW below (no charge to tenant).', { guia: result.guia });
         }
 
         // e) Fulfill order in Shopify with DAC tracking + notify customer
@@ -776,18 +787,61 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           guia: result.guia, paymentType, emailSent,
         });
 
-        // AI resolver feedback: if this order used AI to resolve its address,
-        // mark the resolution as accepted so it gets reinforced in the cache.
-        if (result.aiResolutionHash) {
-          await markAddressResolutionFeedback(
-            tenantId,
-            result.aiResolutionHash,
-            true,
-            result.guia,
+        // ─ Billing fairness guard (2026-04-29) ──────────────────────────────
+        // Only count toward the tenant's billed shipments when the customer
+        // has a fully usable result. Two cases where they don't, despite the
+        // worker reaching this branch without throwing:
+        //
+        //   (a) guia is "PENDING-*" — DAC didn't return a real number after
+        //       retries. No PDF could be downloaded, no Shopify fulfillment
+        //       happened (the `!startsWith('PENDING-')` guards above skipped
+        //       both), no tracking email went out. The customer has nothing.
+        //
+        //   (b) PDF upload to S3 failed permanently after retries. DAC has the
+        //       guia and Shopify is fulfilled, BUT the operator can't print
+        //       the label from LabelFlow. From the operator's perspective the
+        //       order is incomplete and needs hand-off.
+        //
+        // In both cases mark NEEDS_REVIEW so it surfaces in the dashboard and
+        // do NOT increment successCount — that single counter is what
+        // deductCreditsAndStamp uses to bill the tenant at job's end.
+        const guiaIsPlaceholder = !!result.guia?.startsWith('PENDING-');
+        if (guiaIsPlaceholder || !pdfUploaded) {
+          const reason = guiaIsPlaceholder
+            ? 'No se pudo extraer el número de guía DAC tras varios reintentos. Buscar manualmente en DAC historial.'
+            : 'La guía DAC se generó pero el PDF no se pudo subir al storage. Re-subir manualmente desde el dashboard.';
+          await db.label.update({
+            where: { id: labelRecord.id },
+            data: { status: 'NEEDS_REVIEW', errorMessage: reason },
+          });
+          failedCount++;
+          slog.warn(
+            'order-incomplete',
+            `Order ${order.name}: marked NEEDS_REVIEW (no charge) — ${guiaIsPlaceholder ? 'guia is PENDING placeholder' : 'PDF upload failed'}`,
+            { orderName: order.name, guia: result.guia, pdfUploaded },
           );
+          // AI resolver feedback for the (b) case — guia exists, address
+          // resolution itself was fine; mark accepted so cache reinforces.
+          if (!guiaIsPlaceholder && result.aiResolutionHash) {
+            await markAddressResolutionFeedback(
+              tenantId,
+              result.aiResolutionHash,
+              true,
+              result.guia,
+            );
+          }
+        } else {
+          // Full success path — AI feedback + bill the tenant.
+          if (result.aiResolutionHash) {
+            await markAddressResolutionFeedback(
+              tenantId,
+              result.aiResolutionHash,
+              true,
+              result.guia,
+            );
+          }
+          successCount++;
         }
-
-        successCount++;
       } catch (err) {
         // If DAC created a shipment but we failed downstream, track the guia so it
         // isn't reused for the next order in this batch (orphan guia protection)
@@ -980,6 +1034,24 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
   } catch (err) {
     await dacBrowser.close();
     const errorMsg = (err as Error).message;
+
+    // ─ Billing fairness on crash (2026-04-29) ────────────────────────────
+    // If the loop made it through some orders successfully BEFORE the fatal
+    // error, those orders are already complete from the customer's view
+    // (DAC guia exists, Shopify fulfilled, tracking emailed, PDF uploaded —
+    // each of those gates incremented successCount only when ALL of them
+    // succeeded). The deductCreditsAndStamp call lives at the end of the try
+    // block, so without this drain the tenant is billed zero for a partially
+    // successful crash run — silent revenue leak. Idempotent: 0 is a no-op.
+    if (successCount > 0) {
+      await deductCreditsAndStamp(tenantId, successCount).catch((deductErr) => {
+        logger.error(
+          { tenantId, jobId, successCount, error: (deductErr as Error).message },
+          '[credits] Failed to drain credits in crash path — manual reconciliation needed',
+        );
+      });
+    }
+
     await db.job.update({
       where: { id: jobId },
       data: {
