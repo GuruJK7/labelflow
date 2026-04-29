@@ -40,9 +40,18 @@ import {
  *   exchange. We document that exchange via a tiny local Python server that
  *   intercepts the callback and trades the code for a token.
  *
- * Verified end-to-end on 2026-04-29 against the operator's KARBON store.
- * The token obtained (`shpat_f7f25649...`) authenticated against the live
- * Admin API and had all 10 scopes the LabelFlow worker requires.
+ * Verified end-to-end on 2026-04-29 against the operator's KARBON store
+ * (cfzf6b-dk.myshopify.com) — TWICE, with two independent apps in the same
+ * Dev Dashboard. Both tokens (shpat_f7f2... and shpat_7004...) authenticated
+ * against the live Admin API and granted all 10 scopes the LabelFlow worker
+ * requires. The second run surfaced two real-world traps now documented:
+ *   - Typo "callbac" (missing trailing "k") in the redirect_uri field →
+ *     "Oauth error invalid_request: The redirect_uri is not whitelisted".
+ *     Step 4 warning is now explicit about the trailing k.
+ *   - Published versions are read-only. To change anything (a typo, a
+ *     missing scope), open sidebar "Versiones" and click "Crear versión" —
+ *     this opens a fresh editor pre-filled with the current config. Step 5
+ *     and the troubleshooting list both call this out.
  *
  * If Shopify rolls a UI change:
  *   1. Re-run the flow against a real store.
@@ -332,7 +341,7 @@ const STEPS: Step[] = [
     ),
     visual: <Step10PublishButton className="w-full h-auto" />,
     warn:
-      'El "redirect_uri" tiene que coincidir BYTE-A-BYTE con el del server Python (paso 6). Si copiás con espacios o cambiás "localhost" por "127.0.0.1", el OAuth falla.',
+      'El "redirect_uri" tiene que coincidir BYTE-A-BYTE con el del server Python. Errores reales que vimos en producción: (a) typo "callbac" sin la "k" final → falla con "Oauth error invalid_request: The redirect_uri is not whitelisted"; (b) "127.0.0.1" en lugar de "localhost" → no matchea; (c) espacios pegados o slash final extra. El valor correcto exacto es: http://localhost:3456/callback (con "k" al final, sin slash). Triple-checkeá antes de Publicar.',
   },
   {
     n: 5,
@@ -353,6 +362,8 @@ const STEPS: Step[] = [
       </>
     ),
     visual: <Step10PublishModal className="w-full h-auto" />,
+    warn:
+      'Una vez publicada, la versión queda READ-ONLY. Si después necesitás cambiar algo (alcances, redirect_uri, checkbox), NO podés editar la actual — click sidebar "Versiones" → botón "Crear versión" (te abre un editor pre-cargado con la config actual). Modificás lo que haga falta → "Publicar". La nueva queda Activa, la vieja pasa a histórico. Nadie pierde tokens en el medio.',
   },
   {
     n: 6,
@@ -509,7 +520,7 @@ const STEPS: Step[] = [
     ),
     visual: <Step09ScopePicker className="w-full h-auto" />,
     warn:
-      'Si te aparece "ups algo salió mal" (HTTP 500): el redirect_uri no quedó registrado en la app. Volvé al paso 4, verificá el campo "URLs de redireccionamiento", publicá una versión nueva, y reintentá el paso 8.',
+      'Si te aparece "Oauth error invalid_request: The redirect_uri is not whitelisted" (pantalla blanca con ícono de Shopify): el redirect_uri no está registrado o tiene un typo. Causa #1 vista en producción: faltaba la "k" final de "callback". Volvé al Dev Dashboard → sidebar "Versiones" → "Crear versión" → corregí el campo "URLs de redireccionamiento" a exactamente "http://localhost:3456/callback" → Publicá → reintentá el paso 8.',
   },
   {
     n: 10,
@@ -851,24 +862,32 @@ export default function ShopifyTokenTutorialPage() {
         <div className="grid md:grid-cols-2 gap-4">
           {[
             {
-              q: 'HTTP 500 al pegar la URL OAuth (paso 8)',
-              a: 'El redirect_uri http://localhost:3456/callback no quedó registrado en la app. Volvé al paso 4, verificá ese campo, publicá una versión nueva, y reintentá.',
+              q: '"Oauth error invalid_request: The redirect_uri is not whitelisted" (paso 8)',
+              a: 'El redirect_uri pedido no coincide con ninguno registrado en la app. Causa #1 real: typo "callbac" sin la "k" final. Sidebar "Versiones" → "Crear versión" → corregí el campo a exactamente "http://localhost:3456/callback" → Publicá → reintentá el paso 8.',
+            },
+            {
+              q: 'No me deja editar la versión publicada',
+              a: 'Las versiones publicadas son read-only por diseño. Sidebar "Versiones" → botón "Crear versión" — te abre un editor pre-cargado con la config actual. Modificás lo que necesites y "Publicás". La vieja pasa a histórico, la nueva queda Activa.',
             },
             {
               q: '"Address already in use" al correr el server (paso 7)',
-              a: 'Hay un server previo en el puerto 3456. Matalo con: lsof -ti:3456 | xargs kill -9 — después reintentá python3 ~/Desktop/shopify_oauth.py.',
+              a: 'Hay un server previo escuchando en el puerto 3456. Matalo con: lsof -ti:3456 | xargs kill -9 — después reintentá python3 ~/Desktop/shopify_oauth.py.',
             },
             {
               q: 'El token NO empieza con shpat_',
-              a: 'El intercambio falló. Verificá que el dict APPS del script Python tenga el par correcto Client ID + Secret (sin espacios al copiar). Si rotaste el secret después de copiar, regenéralo y volvé a editar el script.',
+              a: 'El intercambio falló. Verificá que el dict APPS del script Python tenga el par correcto Client ID + Secret (sin espacios al copiar). Si rotaste el secret después de copiar, regeneralo y volvé a editar el script.',
             },
             {
               q: 'LabelFlow dice "Token rechazado por Shopify"',
-              a: 'Casi siempre falta algún scope. Corré el curl de verificación del paso 10 y compará contra los 10 que LabelFlow requiere. Si falta alguno, pegá el CSV completo en el paso 3 y publicá una versión nueva.',
+              a: 'Casi siempre falta algún scope. Corré el curl de verificación del paso 10 y compará contra los 10 que LabelFlow requiere. Si falta alguno, pegá el CSV completo en el paso 3, creá una versión nueva, y publicá.',
+            },
+            {
+              q: 'Tengo varios tokens generados para la misma tienda',
+              a: 'Pasa cuando creás varias apps en el Dev Dashboard. Todos los tokens generados siguen siendo válidos hasta que desinstales/elimines la app que los emitió. Pegá en LabelFlow el último que generaste; si querés limpiar los viejos, eliminá las apps no usadas en el Dev Dashboard.',
             },
             {
               q: 'El selector de tiendas en Shopify aparece vacío',
-              a: 'Tu cuenta no está en la organización correcta del Dev Dashboard. Cambiá de org desde el dropdown arriba a la derecha y reintentá desde el paso 1.',
+              a: 'Tu cuenta no está en la organización correcta del Dev Dashboard. Cambiá de org desde el selector arriba a la derecha y reintentá desde el paso 1.',
             },
             {
               q: 'No tengo permiso para crear apps',

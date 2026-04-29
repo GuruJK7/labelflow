@@ -28,7 +28,14 @@ import { cn } from '@/lib/cn';
  * remove a scope, update both files plus the standalone tutorial page plus
  * the error message in /api/v1/onboarding/test-shopify/route.ts.
  *
- * Flow rewritten 2026-04-29 after verifying end-to-end against KARBON store.
+ * Flow rewritten 2026-04-29 after verifying end-to-end against KARBON store
+ * — twice, with two independent apps. Both tokens (shpat_f7f2... and
+ * shpat_7004...) authenticated against live Admin API with all 10 scopes.
+ * The second run surfaced two real-world traps now reflected in step 3:
+ *   - Typo "callbac" (missing "k") in redirect_uri → invalid_request error.
+ *   - Published versions are read-only — to fix anything, click "Versiones"
+ *     in the sidebar and create a new version.
+ *
  * The old "Mostrar token una vez" button doesn't exist in the new Dev
  * Dashboard — the only way to obtain a `shpat_*` is to complete an OAuth
  * `authorization_code` exchange. Documented here as 5 condensed phases
@@ -219,7 +226,12 @@ export function ShopifyTutorial() {
                         ={' '}
                         <code className="font-mono">
                           http://localhost:3456/callback
-                        </code>
+                        </code>{' '}
+                        <span className="text-amber-300/80">
+                          (con la "k" final — el typo "callbac" hace que el
+                          OAuth falle con "invalid_request: redirect_uri is
+                          not whitelisted")
+                        </span>
                       </li>
                       <li>
                         Checkbox{' '}
@@ -230,11 +242,13 @@ export function ShopifyTutorial() {
                       </li>
                     </ul>
                     <div>
-                      Sin esto el OAuth falla con HTTP 500. Después click{' '}
+                      Click{' '}
                       <span className="text-amber-200 font-medium">
                         Publicar
                       </span>
-                      .
+                      . Si después necesitás cambiar algo, no podés editar la
+                      versión activa: click sidebar "Versiones" → "Crear
+                      versión" para abrir un editor pre-cargado.
                     </div>
                   </div>
                 </div>
