@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/cn';
+import { OSTabs } from '@/app/tutorial/shopify-token/_components/OSTabs';
 
 /**
  * Inline dropdown tutorial inside the onboarding wizard.
@@ -116,7 +117,9 @@ export function ShopifyTutorial() {
               y completar un OAuth local para obtener un token{' '}
               <code className="font-mono">shpat_*</code> permanente. Toma ~6
               minutos. Necesitás{' '}
-              <code className="font-mono">python3</code> instalado en tu Mac/Linux.
+              <strong className="text-zinc-200">Python 3</strong> instalado
+              (Mac/Linux lo trae; Windows lo descargás de python.org marcando
+              &quot;Add Python to PATH&quot;).
             </p>
           </div>
 
@@ -130,11 +133,11 @@ export function ShopifyTutorial() {
             <BookOpen className="w-4 h-4 text-cyan-300 flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-[12.5px] font-semibold text-white">
-                Ver tutorial completo + script Python + prompt Claude →
+                Ver tutorial completo (capturas + macOS/Linux/Windows) →
               </div>
               <div className="text-[11px] text-zinc-400">
-                Página dedicada con capturas reales, el server OAuth listo
-                para copiar y un prompt automático.
+                Página dedicada con capturas reales, comandos para los 3
+                sistemas operativos, troubleshooting y prompt Claude.
               </div>
             </div>
             <ExternalLink className="w-3.5 h-3.5 text-zinc-500 group-hover:text-cyan-300 transition-colors flex-shrink-0" />
@@ -269,15 +272,36 @@ export function ShopifyTutorial() {
                 (empieza con{' '}
                 <code className="font-mono">shpss_</code>). Pegalos en el dict{' '}
                 <code className="font-mono">APPS</code> del script Python (lo
-                tenés en el tutorial completo) y arrancalo:
-                <pre className="mt-2 rounded-md bg-black/60 border border-white/[0.04] p-2 text-[10.5px] text-zinc-300 font-mono overflow-x-auto">
-                  python3 ~/Desktop/shopify_oauth.py
-                </pre>
-                Debe imprimir{' '}
-                <code className="font-mono text-emerald-300">
-                  Listening on http://localhost:3456
-                </code>
-                .
+                tenés en el tutorial completo) y arrancalo según tu sistema:
+                <div className="mt-2">
+                  <OSTabs
+                    mac={
+                      <pre className="rounded-md bg-black/60 border border-white/[0.04] p-2 text-[10.5px] text-zinc-300 font-mono overflow-x-auto">
+                        python3 ~/Desktop/shopify_oauth.py
+                      </pre>
+                    }
+                    linux={
+                      <pre className="rounded-md bg-black/60 border border-white/[0.04] p-2 text-[10.5px] text-zinc-300 font-mono overflow-x-auto">
+                        python3 ~/Desktop/shopify_oauth.py
+                      </pre>
+                    }
+                    windows={
+                      <pre className="rounded-md bg-black/60 border border-white/[0.04] p-2 text-[10.5px] text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">
+                        {`# En PowerShell:
+python $env:USERPROFILE\\Desktop\\shopify_oauth.py
+# o si tu instalador agregó "py":
+py $env:USERPROFILE\\Desktop\\shopify_oauth.py`}
+                      </pre>
+                    }
+                  />
+                </div>
+                <div className="mt-2">
+                  Debe imprimir{' '}
+                  <code className="font-mono text-emerald-300">
+                    Listening on http://localhost:3456
+                  </code>
+                  .
+                </div>
               </div>
             </li>
 
