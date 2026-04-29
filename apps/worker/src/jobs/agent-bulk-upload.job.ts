@@ -525,6 +525,21 @@ export async function agentBulkUploadJob(job: {
             await markAddressResolutionFeedback(job.tenantId, result.aiResolutionHash, true, result.guia);
           }
           successCount++;
+          // Mid-run checkpoint (2026-04-29) — see comment in
+          // process-orders.job.ts. Persists progress every full success so a
+          // hard external crash doesn't drop the banked count. The final
+          // job update below uses SET (not increment) so we don't double.
+          await db.job
+            .update({
+              where: { id: job.id },
+              data: { successCount: { increment: 1 } },
+            })
+            .catch((cpErr) => {
+              logger.warn(
+                { jobId: job.id, tenantId: job.tenantId, error: (cpErr as Error).message },
+                '[checkpoint] Failed to persist successCount mid-run (non-fatal)',
+              );
+            });
         }
       } catch (err) {
         if (result?.guia && !result.guia.startsWith('PENDING-')) {
@@ -636,7 +651,11 @@ export async function agentBulkUploadJob(job: {
       where: { id: job.id },
       data: {
         status,
-        successCount: { increment: successCount },
+        // SET (not increment): the per-success checkpoint above already
+        // applied the increments in real time. Setting to the in-memory
+        // running total ensures the row reflects the authoritative count
+        // even if a checkpoint was lost (logged as warn, never threw).
+        successCount,
         failedCount: { increment: failedCount },
         finishedAt: new Date(),
         durationMs,

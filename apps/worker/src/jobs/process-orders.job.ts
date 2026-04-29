@@ -841,6 +841,24 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             );
           }
           successCount++;
+          // Checkpoint to DB (2026-04-29). Persist progress every full
+          // success so a hard crash (kill -9, OOM-killer, infra restart) is
+          // not a silent revenue leak — the reconcile cron reads Job.successCount
+          // when it auto-FAILs a stale RUNNING job, then drains credits for
+          // the banked total. Failure of the checkpoint itself is logged but
+          // non-fatal: the in-memory counter is still authoritative for the
+          // happy path's end-of-job deductCreditsAndStamp call.
+          await db.job
+            .update({
+              where: { id: jobId },
+              data: { successCount: { increment: 1 } },
+            })
+            .catch((cpErr) => {
+              logger.warn(
+                { tenantId, jobId, error: (cpErr as Error).message },
+                '[checkpoint] Failed to persist successCount mid-run (non-fatal)',
+              );
+            });
         }
       } catch (err) {
         // If DAC created a shipment but we failed downstream, track the guia so it

@@ -12,7 +12,15 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get('status');
   const skip = (page - 1) * limit;
 
-  const VALID_STATUSES = ['PENDING', 'CREATED', 'COMPLETED', 'FAILED', 'SKIPPED', 'all'];
+  const VALID_STATUSES = [
+    'PENDING',
+    'CREATED',
+    'COMPLETED',
+    'FAILED',
+    'SKIPPED',
+    'NEEDS_REVIEW',
+    'all',
+  ];
   if (status && !VALID_STATUSES.includes(status.toUpperCase()) && status !== 'all') {
     return apiError('Invalid status value', 400);
   }
@@ -39,8 +47,11 @@ export async function GET(req: NextRequest) {
         shopifyOrderName: true,
         customerName: true,
         customerEmail: true,
+        customerPhone: true,
+        deliveryAddress: true,
         dacGuia: true,
         status: true,
+        errorMessage: true,
         paymentType: true,
         totalUyu: true,
         city: true,

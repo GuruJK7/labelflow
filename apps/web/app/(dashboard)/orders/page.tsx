@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { PrintButton } from '@/components/printing/PrintButton';
+import { UploadPdfButton } from '@/components/labels/UploadPdfButton';
 import {
   Package,
   Download,
@@ -10,16 +11,15 @@ import {
   XCircle,
   Clock,
   Filter,
-  ArrowUpDown,
   Mail,
   MailX,
   MapPin,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
-  FileText,
   Truck,
   ExternalLink,
+  AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
@@ -32,6 +32,7 @@ interface Label {
   deliveryAddress: string;
   dacGuia: string | null;
   status: string;
+  errorMessage: string | null;
   paymentType: string;
   totalUyu: number;
   city: string;
@@ -47,6 +48,7 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; label: string; 
   FAILED: { color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20', label: 'Error', icon: XCircle },
   PENDING: { color: 'text-zinc-400', bg: 'bg-zinc-500/10 border-zinc-500/20', label: 'Pendiente', icon: Clock },
   SKIPPED: { color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20', label: 'Salteado', icon: Clock },
+  NEEDS_REVIEW: { color: 'text-amber-300', bg: 'bg-amber-500/15 border-amber-400/30', label: 'Revisar', icon: AlertTriangle },
 };
 
 export default function OrdersPage() {
@@ -128,7 +130,9 @@ export default function OrdersPage() {
             >
               <option value="all">Todos</option>
               <option value="COMPLETED">Completados</option>
+              <option value="NEEDS_REVIEW">Revisar</option>
               <option value="FAILED">Con error</option>
+              <option value="CREATED">Creados (sin PDF)</option>
               <option value="PENDING">Pendientes</option>
               <option value="SKIPPED">Salteados</option>
             </select>
@@ -261,6 +265,10 @@ export default function OrdersPage() {
                                     <PrintButton labelId={label.id} pdfPath={label.pdfPath} />
                                   </span>
                                 </>
+                              ) : label.status === 'NEEDS_REVIEW' &&
+                                  label.dacGuia &&
+                                  !label.dacGuia.startsWith('PENDING-') ? (
+                                <UploadPdfButton labelId={label.id} onSuccess={fetchData} />
                               ) : (
                                 <span className="w-4" />
                               )}
@@ -291,7 +299,26 @@ export default function OrdersPage() {
                                   </p>
                                 </div>
                               </div>
-                              {label.dacGuia && (
+                              {label.errorMessage && (
+                                <div className={cn(
+                                  'mt-3 rounded-lg border px-3 py-2 flex items-start gap-2',
+                                  label.status === 'NEEDS_REVIEW'
+                                    ? 'border-amber-400/30 bg-amber-500/[0.06]'
+                                    : 'border-red-400/30 bg-red-500/[0.05]',
+                                )}>
+                                  <AlertTriangle className={cn(
+                                    'w-3.5 h-3.5 flex-shrink-0 mt-0.5',
+                                    label.status === 'NEEDS_REVIEW' ? 'text-amber-400' : 'text-red-400',
+                                  )} />
+                                  <p className={cn(
+                                    'text-[11px] leading-relaxed',
+                                    label.status === 'NEEDS_REVIEW' ? 'text-amber-100' : 'text-red-200',
+                                  )}>
+                                    {label.errorMessage}
+                                  </p>
+                                </div>
+                              )}
+                              {label.dacGuia && !label.dacGuia.startsWith('PENDING-') && (
                                 <a
                                   href={`https://www.dac.com.uy/envios/rastrear?guia=${label.dacGuia}`}
                                   target="_blank"

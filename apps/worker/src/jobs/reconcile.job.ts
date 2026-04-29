@@ -13,6 +13,7 @@
  */
 import { db } from '../db';
 import logger from '../logger';
+import { deductCreditsAndStamp } from '../credits';
 
 // Cadence: a typical order finishes in 20–60 s (YELLOW with AI resolver can go
 // up to ~90 s). 10 min is ~10× the worst case, so anything older than that is
@@ -208,22 +209,77 @@ export async function runReconciliation(): Promise<void> {
     // ================================================
     // 3. Fix stale RUNNING jobs (stuck > 10 minutes)
     // ================================================
+    //
+    // 2026-04-29: when a stale job is auto-failed, drain credits for the
+    // successCount it banked via mid-run checkpoint. Without this, an
+    // external crash (kill -9, OOM, server restart) means orders that
+    // already shipped (DAC guia generated, Shopify fulfilled, customer
+    // emailed) get billed zero — silent revenue leak.
+    //
+    // The mid-run checkpoint in process-orders.job.ts and
+    // agent-bulk-upload.job.ts increments Job.successCount after each fully
+    // successful order, so by the time reconcile sees the row, that field
+    // is the source of truth for "how many shipments shipped before the
+    // crash". deductCreditsAndStamp is the same helper the happy-path uses.
     const staleThreshold = new Date(Date.now() - STALE_JOB_THRESHOLD_MS);
-    const staleJobs = await db.job.updateMany({
+    const staleJobs = await db.job.findMany({
       where: {
         status: 'RUNNING',
         startedAt: { lt: staleThreshold },
       },
-      data: {
-        status: 'FAILED',
-        errorMessage: 'Auto-reconciled: job was stuck in RUNNING for >10 minutes',
-        finishedAt: new Date(),
+      select: {
+        id: true,
+        tenantId: true,
+        successCount: true,
       },
     });
 
-    if (staleJobs.count > 0) {
-      logger.warn({ count: staleJobs.count }, '[Reconcile] Fixed stale RUNNING jobs');
-      fixed += staleJobs.count;
+    for (const job of staleJobs) {
+      try {
+        await db.job.update({
+          where: { id: job.id },
+          data: {
+            status: 'FAILED',
+            errorMessage:
+              'Auto-reconciled: job was stuck in RUNNING for >10 minutes',
+            finishedAt: new Date(),
+          },
+        });
+
+        if (job.successCount > 0) {
+          await deductCreditsAndStamp(job.tenantId, job.successCount).catch(
+            (deductErr) => {
+              logger.error(
+                {
+                  jobId: job.id,
+                  tenantId: job.tenantId,
+                  successCount: job.successCount,
+                  error: (deductErr as Error).message,
+                },
+                '[Reconcile] Failed to drain credits for stale job — manual reconciliation needed',
+              );
+            },
+          );
+          logger.info(
+            { jobId: job.id, tenantId: job.tenantId, drained: job.successCount },
+            '[Reconcile] Drained banked credits from stale-failed job',
+          );
+        }
+
+        fixed += 1;
+      } catch (failErr) {
+        logger.error(
+          { jobId: job.id, error: (failErr as Error).message },
+          '[Reconcile] Failed to mark stale job as FAILED',
+        );
+      }
+    }
+
+    if (staleJobs.length > 0) {
+      logger.warn(
+        { count: staleJobs.length },
+        '[Reconcile] Fixed stale RUNNING jobs',
+      );
     }
 
     // ================================================
