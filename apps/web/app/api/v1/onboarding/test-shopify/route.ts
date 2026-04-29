@@ -67,12 +67,13 @@ export async function POST(request: Request) {
     );
 
     if (res.status === 401 || res.status === 403) {
-      // Keep the message terse — the full scope list lives in
-      // /tutorial/shopify-token. The single most common cause of a
-      // rejected token is forgetting to tick "Usar flujo de instalación
-      // heredado" in the Dev Dashboard, so call that out explicitly.
+      // Keep the message terse — the full scope list + Python OAuth flow
+      // lives in /tutorial/shopify-token. The two most common reasons a
+      // freshly-generated token gets rejected are: (a) the redirect_uri
+      // wasn't registered in the app config, and (b) the
+      // "Usar flujo de instalación heredado" checkbox wasn't tildado.
       return apiError(
-        'Token rechazado por Shopify. Verificá los 10 alcances y que el checkbox "Usar flujo de instalación heredado" esté tildado en el Dev Dashboard. Mirá el tutorial en /tutorial/shopify-token y volvé a generarlo.',
+        'Token rechazado por Shopify. Verificá que: (1) los 10 alcances estén en el campo "Alcances" del Dev Dashboard, (2) el checkbox "Usar flujo de instalación heredado" esté tildado, y (3) "URLs de redireccionamiento" incluya http://localhost:3456/callback. Tutorial completo en /tutorial/shopify-token.',
         422,
       );
     }
