@@ -11,6 +11,7 @@ import {
   readReferralCookieValue,
   REFERRAL_COOKIE_NAME,
 } from './referrals';
+import { trackServer } from './analytics.server';
 
 const REFEREE_BONUS_CREDITS = 10;
 
@@ -190,11 +191,13 @@ export const authOptions: NextAuthOptions = {
         // headers() throws outside request scope — keep 'unknown'.
       }
 
+      let newTenantId: string | null = null;
+
       if (existing) {
         // Edge case: User row exists (from a previous orphaned attempt
         // where Tenant creation failed) but no Tenant. Backfill the Tenant
         // without touching the User.
-        await db.tenant.create({
+        const t = await db.tenant.create({
           data: {
             userId: existing.id,
             name: user.name ?? baseSlug,
@@ -208,33 +211,47 @@ export const authOptions: NextAuthOptions = {
             referralBonusCredits: refereeBonus,
           },
         });
-        return true;
-      }
-
-      // Atomic User + Tenant creation via Prisma nested write.
-      // shipmentCredits arranca en 10 por @default del schema (welcome
-      // bonus universal). referralBonusCredits SÓLO si vino vía referral.
-      await db.user.create({
-        data: {
-          email,
-          name: user.name,
-          image: user.image,
-          emailVerified: new Date(),
-          tenant: {
-            create: {
-              name: user.name ?? baseSlug,
-              slug: baseSlug,
-              apiKey: crypto.randomBytes(32).toString('hex'),
-              signupIp,
-              tosAcceptedAt: new Date(),
-              referralCode: myReferralCode,
-              referredByCode,
-              referredById,
-              referralBonusCredits: refereeBonus,
+        newTenantId = t.id;
+      } else {
+        // Atomic User + Tenant creation via Prisma nested write.
+        // shipmentCredits arranca en 10 por @default del schema (welcome
+        // bonus universal). referralBonusCredits SÓLO si vino vía referral.
+        const created = await db.user.create({
+          data: {
+            email,
+            name: user.name,
+            image: user.image,
+            emailVerified: new Date(),
+            tenant: {
+              create: {
+                name: user.name ?? baseSlug,
+                slug: baseSlug,
+                apiKey: crypto.randomBytes(32).toString('hex'),
+                signupIp,
+                tosAcceptedAt: new Date(),
+                referralCode: myReferralCode,
+                referredByCode,
+                referredById,
+                referralBonusCredits: refereeBonus,
+              },
             },
           },
-        },
-      });
+          include: { tenant: { select: { id: true } } },
+        });
+        newTenantId = created.tenant?.id ?? null;
+      }
+
+      // Fire #4 signup_completed for the OAuth path (mirror of the same
+      // event fired from /api/auth/signup for email/password). distinct_id
+      // is the tenantId so client + server events stitch into the same
+      // PostHog person profile when IdentifyOnAuth runs after redirect.
+      // No PII in properties (method enum + boolean only).
+      if (newTenantId) {
+        await trackServer(newTenantId, 'signup_completed', {
+          method: 'google',
+          has_referral: Boolean(referredById),
+        });
+      }
 
       return true;
     },

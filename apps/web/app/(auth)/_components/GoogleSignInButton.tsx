@@ -3,6 +3,7 @@
 import { signIn } from 'next-auth/react';
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { track } from '@/lib/analytics';
 
 /**
  * One-click Google OAuth button. Shared between /login and /signup so the
@@ -29,6 +30,7 @@ export function GoogleSignInButton({
     <button
       type="button"
       onClick={() => {
+        track('signup_method_selected', { method: 'google' });
         setLoading(true);
         signIn('google', { callbackUrl });
       }}

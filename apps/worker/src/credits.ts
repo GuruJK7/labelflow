@@ -1,4 +1,5 @@
 import { db } from './db';
+import { trackWorker } from './analytics';
 
 /**
  * Atomically deduct N successful labels' worth of credits from a tenant.
@@ -34,18 +35,27 @@ export async function deductCreditsAndStamp(
     return { bonusUsed: 0, paidUsed: 0 };
   }
 
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const t = await tx.tenant.findUnique({
       where: { id: tenantId },
-      select: { referralBonusCredits: true, shipmentCredits: true },
+      // labelsTotal is read here so we can detect "this is the tenant's
+      // very first successful shipment" — used to fire #11
+      // first_shipment_created exactly once per tenant lifetime. A read
+      // BEFORE the increment is the canonical "first-time?" check.
+      select: {
+        referralBonusCredits: true,
+        shipmentCredits: true,
+        labelsTotal: true,
+      },
     });
     // Tenant must exist if we got this far (job referenced it). If somehow
     // gone, fall through with zeros — the calling job will log the failure
     // via its own error path.
-    if (!t) return { bonusUsed: 0, paidUsed: 0 };
+    if (!t) return { bonusUsed: 0, paidUsed: 0, wasFirstShipment: false };
 
     const bonusUsed = Math.min(successCount, t.referralBonusCredits);
     const paidUsed = successCount - bonusUsed;
+    const wasFirstShipment = t.labelsTotal === 0;
 
     await tx.tenant.update({
       where: { id: tenantId },
@@ -63,6 +73,20 @@ export async function deductCreditsAndStamp(
       },
     });
 
-    return { bonusUsed, paidUsed };
+    return { bonusUsed, paidUsed, wasFirstShipment };
   });
+
+  // Fire #11 outside the transaction so a PostHog hiccup never rolls
+  // back the credit deduction. Idempotency: `wasFirstShipment` was
+  // computed from `labelsTotal === 0` BEFORE the increment, so a
+  // concurrent run that landed first would see labelsTotal > 0 and
+  // skip — only one of them fires the event.
+  if (result.wasFirstShipment) {
+    trackWorker(tenantId, 'first_shipment_created', {
+      // No PII — just the count for funnel context.
+      shipments_in_first_run: result.bonusUsed + result.paidUsed,
+    });
+  }
+
+  return { bonusUsed: result.bonusUsed, paidUsed: result.paidUsed };
 }

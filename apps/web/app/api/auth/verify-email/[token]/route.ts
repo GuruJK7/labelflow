@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { db } from '@/lib/db';
+import { trackServer } from '@/lib/analytics.server';
 
 /**
  * GET /api/auth/verify-email/[token]
@@ -55,7 +56,14 @@ export async function GET(
       userId: true,
       expiresAt: true,
       usedAt: true,
-      user: { select: { id: true, emailVerified: true } },
+      user: {
+        select: {
+          id: true,
+          emailVerified: true,
+          createdAt: true,
+          tenant: { select: { id: true } },
+        },
+      },
     },
   });
 
@@ -64,6 +72,11 @@ export async function GET(
   if (tokenRow.expiresAt.getTime() <= Date.now()) {
     return buildRedirect(req, 'expired');
   }
+
+  // Capture "was this the first verification?" BEFORE the update so we
+  // only fire #6 once per user. If they re-click the link the next day,
+  // the prior `emailVerified` is non-null and we skip the event.
+  const isFirstVerification = !tokenRow.user?.emailVerified;
 
   // Stamp both rows atomically. If the user is already verified (e.g.
   // they clicked the link twice and we lost the race), we still mark the
@@ -79,6 +92,18 @@ export async function GET(
       data: { emailVerified: tokenRow.user?.emailVerified ?? now },
     }),
   ]);
+
+  // Fire #6 email_verified — only on first verification, only if we have
+  // a tenantId to use as distinct_id. `time_to_verify_seconds` lets us
+  // see how long users sit in their inbox; long delays correlate with
+  // spam-folder hits and can drive a "resend" UX nudge.
+  if (isFirstVerification && tokenRow.user?.tenant?.id) {
+    const createdAt = tokenRow.user.createdAt.getTime();
+    const seconds = Math.round((now.getTime() - createdAt) / 1000);
+    await trackServer(tokenRow.user.tenant.id, 'email_verified', {
+      time_to_verify_seconds: seconds,
+    });
+  }
 
   return buildRedirect(req, 'ok');
 }

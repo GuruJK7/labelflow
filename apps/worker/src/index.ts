@@ -11,6 +11,7 @@ import { processAdUploadJob } from './ads/upload-job';
 import { processAdMonitorJob } from './ads/monitor-job';
 import { processRecoverMessage } from './recover/process-message';
 import { startReconciliationLoop, runReconciliation } from './jobs/reconcile.job';
+import { flushWorkerAnalytics } from './analytics';
 
 // Emit memory usage every 60 s so we can catch leaks / OOM risk in Render
 // logs before the container gets killed. Numbers are in MB for readability.
@@ -269,8 +270,8 @@ async function main(): Promise<void> {
     pollAgent();
     logger.info('[Agent] Worker in AGENT_MODE — only polling for WAITING_FOR_AGENT jobs');
     // In agent mode, skip all the other loops (Render handles regular jobs/ads/recover/cron)
-    process.on('SIGTERM', async () => { await dacBrowser.close(); await db.$disconnect(); process.exit(0); });
-    process.on('SIGINT', async () => { await dacBrowser.close(); await db.$disconnect(); process.exit(0); });
+    process.on('SIGTERM', async () => { await flushWorkerAnalytics(); await dacBrowser.close(); await db.$disconnect(); process.exit(0); });
+    process.on('SIGINT', async () => { await flushWorkerAnalytics(); await dacBrowser.close(); await db.$disconnect(); process.exit(0); });
     return;
   }
 
@@ -343,6 +344,11 @@ async function main(): Promise<void> {
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutting down worker...');
+    // Flush PostHog buffer first — events captured during the last poll
+    // cycle are still in memory; without this they get dropped on Render
+    // redeploy. flushWorkerAnalytics() is a no-op if PostHog wasn't
+    // initialized (env vars unset).
+    await flushWorkerAnalytics();
     await dacBrowser.close();
     await db.$disconnect();
     process.exit(0);

@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { getPreApprovalClient, getPaymentClient, PLANS, type PlanId } from '@/lib/mercadopago';
 import { db } from '@/lib/db';
 import { calcReferralKickback } from '@/lib/credit-packs';
+import { trackServer } from '@/lib/analytics.server';
 
 /**
  * Verify MercadoPago webhook signature (x-signature header).
@@ -318,7 +319,9 @@ async function handleCreditPackPayment(
     select: {
       id: true,
       tenantId: true,
+      packId: true,
       shipments: true,
+      totalPriceUyu: true,
       status: true,
       mpPaymentId: true,
     },
@@ -330,6 +333,21 @@ async function handleCreditPackPayment(
   }
 
   if (status === 'approved') {
+    // Detect FIRST paid pack BEFORE we transition this purchase to PAID.
+    // The conditional updateMany below makes this idempotent: even if the
+    // webhook fires twice for the same payment, only the first call moves
+    // the row from PENDING → PAID, and only that call gets a non-zero
+    // `priorPaidCount` reading.
+    const priorPaidCount = await db.creditPurchase.count({
+      where: {
+        tenantId: purchase.tenantId,
+        status: 'PAID',
+        // Exclude THIS purchase (it's still PENDING here, but defensive
+        // against any future race where it's already PAID).
+        id: { not: purchase.id },
+      },
+    });
+
     // Idempotente: solo transiciona si está PENDING.
     const updated = await db.creditPurchase.updateMany({
       where: { id: purchaseId, status: 'PENDING' },
@@ -359,6 +377,19 @@ async function handleCreditPackPayment(
     console.info(
       `MercadoPago: credit pack PAID — tenant=${purchase.tenantId}, shipments=${purchase.shipments}`,
     );
+
+    // Fire #12 subscription_activated — only on the FIRST paid pack per
+    // tenant lifetime. Subsequent purchases generate `pack_purchased`
+    // events (not yet wired) but never re-fire this funnel-step event.
+    // Idempotency: priorPaidCount was read BEFORE the conditional update
+    // succeeded, so a duplicate webhook (whose updateMany returns 0)
+    // never reaches this branch.
+    if (priorPaidCount === 0) {
+      await trackServer(purchase.tenantId, 'subscription_activated', {
+        plan: purchase.packId, // 'pack_10' | ... | 'pack_1000' (enum-safe)
+        amount_uyu: purchase.totalPriceUyu,
+      });
+    }
 
     // Acreditar 20% al referidor (si lo hay).
     await accrueReferralKickback(purchase.tenantId, purchase.id, purchase.shipments);

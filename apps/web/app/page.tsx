@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { TrackedSignupLink } from '@/components/TrackedSignupLink';
 import {
   Zap,
   Package,
@@ -114,12 +115,13 @@ export default function LandingPage() {
             >
               Iniciar sesión
             </Link>
-            <Link
+            <TrackedSignupLink
               href="/signup"
+              ctaLocation="navbar"
               className="bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-4 py-2 rounded-lg text-[13px] font-semibold transition-all shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 hover:-translate-y-0.5"
             >
               Crear cuenta
-            </Link>
+            </TrackedSignupLink>
           </div>
         </div>
       </nav>
@@ -152,13 +154,14 @@ export default function LandingPage() {
             genera la guía DAC y le avisa al cliente — solo.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-            <Link
+            <TrackedSignupLink
               href="/signup"
+              ctaLocation="hero"
               className="group inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-xl shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:-translate-y-0.5"
             >
               Comenzá ya · 10 envíos gratis
               <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-            </Link>
+            </TrackedSignupLink>
             <a
               href="#precios"
               className="inline-flex items-center gap-2 border border-white/10 text-zinc-200 px-6 py-3.5 rounded-xl text-sm font-semibold hover:bg-white/[0.04] hover:border-white/20 transition-colors"
@@ -168,12 +171,13 @@ export default function LandingPage() {
           </div>
           <p className="mt-4 text-xs text-zinc-500">
             Registrate con Google en 1 click ·{' '}
-            <Link
+            <TrackedSignupLink
               href="/signup"
+              ctaLocation="hero_secondary"
               className="text-cyan-400 hover:text-cyan-300 transition-colors underline-offset-2 hover:underline"
             >
               empezar ahora →
-            </Link>
+            </TrackedSignupLink>
           </p>
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-6 text-xs text-zinc-500">
             <div className="flex items-center gap-1.5">
@@ -455,8 +459,9 @@ export default function LandingPage() {
                       <FeatureLi>Soporte por WhatsApp</FeatureLi>
                     </ul>
 
-                    <Link
+                    <TrackedSignupLink
                       href="/signup"
+                      ctaLocation="pricing"
                       className={`block text-center py-3 rounded-xl text-sm font-semibold transition-all mt-auto ${
                         isBest
                           ? 'bg-gradient-to-r from-amber-500 to-orange-400 hover:from-amber-400 hover:to-orange-300 text-zinc-950 shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40'
@@ -466,7 +471,7 @@ export default function LandingPage() {
                       }`}
                     >
                       Crear cuenta y comprar
-                    </Link>
+                    </TrackedSignupLink>
                   </div>
                 </div>
               );
@@ -559,13 +564,14 @@ export default function LandingPage() {
               </div>
 
               <div className="text-center mt-10">
-                <Link
+                <TrackedSignupLink
                   href="/signup"
+                  ctaLocation="referrals"
                   className="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40 hover:-translate-y-0.5"
                 >
                   Crear cuenta y obtener tu link
                   <ArrowRight className="w-4 h-4" />
-                </Link>
+                </TrackedSignupLink>
               </div>
             </div>
           </div>
@@ -652,13 +658,14 @@ export default function LandingPage() {
                 Creá tu cuenta, conectá Shopify y mirá cómo se procesa solo tu próximo pedido.
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-                <Link
+                <TrackedSignupLink
                   href="/signup"
+                  ctaLocation="final_cta"
                   className="group inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-xl shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:-translate-y-0.5"
                 >
                   Empezar con 10 envíos gratis
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-                </Link>
+                </TrackedSignupLink>
               </div>
               <p className="text-xs text-zinc-500 mt-5">Sin tarjeta. Sin compromisos.</p>
             </div>

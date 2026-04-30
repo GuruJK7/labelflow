@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, FormEvent } from 'react';
+import { useState, useEffect, useRef, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Zap,
@@ -19,6 +19,7 @@ import {
 import { cn } from '@/lib/cn';
 import { ShopifyTutorial } from './_components/ShopifyTutorial';
 import { DacTutorial } from './_components/DacTutorial';
+import { track } from '@/lib/analytics';
 
 /**
  * Onboarding wizard — 2 mandatory connection steps + 1 celebration step.
@@ -61,6 +62,26 @@ export default function OnboardingPage() {
   const [dacPassword, setDacPassword] = useState('');
   const [dacSaved, setDacSaved] = useState(false);
 
+  // Analytics — track time spent on each step + global wizard start.
+  // We use refs (not state) because these timestamps don't drive any
+  // re-render; mutating them on step change shouldn't trigger React.
+  const wizardStartedAtRef = useRef<number>(Date.now());
+  const stepStartedAtRef = useRef<number>(Date.now());
+
+  // Fire `onboarding_started` exactly once per page mount. The user can
+  // cycle through steps without remounting (state-driven), so a useEffect
+  // with [] deps is the right shape.
+  useEffect(() => {
+    track('onboarding_started');
+  }, []);
+
+  // Reset the per-step timer whenever the step changes so the
+  // `time_on_step_seconds` property reports time spent on the CURRENT
+  // step, not since the wizard mounted.
+  useEffect(() => {
+    stepStartedAtRef.current = Date.now();
+  }, [step]);
+
   const inputClass =
     'w-full px-4 py-3 bg-white/[0.03] border border-white/[0.08] rounded-xl text-white text-sm placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500/30 transition-all';
   const labelClass = 'block text-xs font-medium text-zinc-400 mb-1.5';
@@ -90,9 +111,22 @@ export default function OnboardingPage() {
       });
       const data = await res.json();
       if (!res.ok) {
+        track('onboarding_step_failed', {
+          step: 'shopify',
+          step_number: 1,
+          // No error_message — could leak token shape / shop URL. Status
+          // code is enough to bucket failures (401, 403, 422, 500).
+          error_code: res.status,
+        });
         setError(data.error ?? 'No se pudo verificar Shopify');
         return;
       }
+      const seconds = Math.round((Date.now() - stepStartedAtRef.current) / 1000);
+      track('onboarding_step_completed', {
+        step: 'shopify',
+        step_number: 1,
+        time_on_step_seconds: seconds,
+      });
       setShopifyVerified(true);
       setShopifyShopName(data.data?.shopName ?? null);
       // Auto-advance after a beat so the user sees the green confirmation.
@@ -101,6 +135,11 @@ export default function OnboardingPage() {
         setError('');
       }, 900);
     } catch {
+      track('onboarding_step_failed', {
+        step: 'shopify',
+        step_number: 1,
+        error_code: 'network',
+      });
       setError('Error de conexión. Probá de nuevo.');
     } finally {
       setBusy(false);
@@ -126,15 +165,31 @@ export default function OnboardingPage() {
       });
       const data = await res.json();
       if (!res.ok) {
+        track('onboarding_step_failed', {
+          step: 'dac',
+          step_number: 2,
+          error_code: res.status,
+        });
         setError(data.error ?? 'No se pudo guardar las credenciales');
         return;
       }
+      const seconds = Math.round((Date.now() - stepStartedAtRef.current) / 1000);
+      track('onboarding_step_completed', {
+        step: 'dac',
+        step_number: 2,
+        time_on_step_seconds: seconds,
+      });
       setDacSaved(true);
       setTimeout(() => {
         setStep(3);
         setError('');
       }, 900);
     } catch {
+      track('onboarding_step_failed', {
+        step: 'dac',
+        step_number: 2,
+        error_code: 'network',
+      });
       setError('Error de conexión. Probá de nuevo.');
     } finally {
       setBusy(false);
@@ -152,6 +207,10 @@ export default function OnboardingPage() {
         setBusy(false);
         return;
       }
+      const totalSeconds = Math.round(
+        (Date.now() - wizardStartedAtRef.current) / 1000,
+      );
+      track('onboarding_completed', { total_time_seconds: totalSeconds });
       // Hard navigation, not router.push — the dashboard layout reads
       // onboardingComplete from the DB on render, so we want a fresh request
       // with no stale cached layout.

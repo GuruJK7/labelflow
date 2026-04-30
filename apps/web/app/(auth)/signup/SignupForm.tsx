@@ -24,6 +24,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Sparkles, Gift, Check, ArrowRight, Loader2 } from 'lucide-react';
 import { GoogleSignInButton, OrDivider } from '../_components/GoogleSignInButton';
+import { track } from '@/lib/analytics';
 
 export function SignupForm({ googleEnabled }: { googleEnabled: boolean }) {
   return (
@@ -64,6 +65,7 @@ function SignupContent({ googleEnabled }: { googleEnabled: boolean }) {
     e.preventDefault();
     setError('');
     setLoading(true);
+    track('signup_method_selected', { method: 'email' });
 
     try {
       const res = await fetch('/api/auth/signup', {

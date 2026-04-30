@@ -10,6 +10,7 @@ import {
   REFERRAL_COOKIE_NAME,
 } from '@/lib/referrals';
 import { issueAndSendVerificationEmail, resolveAppOrigin } from '@/lib/verify-email';
+import { trackServer } from '@/lib/analytics.server';
 
 const signupSchema = z.object({
   name: z.string().min(1).max(100),
@@ -139,6 +140,18 @@ export async function POST(req: Request) {
       include: { tenant: true },
     });
 
+    // Fire #4 signup_completed BEFORE the email send so an outbound
+    // SMTP hiccup doesn't drop the analytics event. distinct_id is the
+    // tenantId — same id the client will see post-login when
+    // IdentifyOnAuth runs, so the funnel stitches correctly. NO email,
+    // name, or any PII in properties.
+    if (user.tenant?.id) {
+      await trackServer(user.tenant.id, 'signup_completed', {
+        method: 'email',
+        has_referral: Boolean(referredById),
+      });
+    }
+
     // Fire the email-verification message. Best-effort:
     //   - If `RESEND_API_KEY` is unset (preview / local) the helper soft-
     //     fails and we still return 201 — signup must not depend on email.
@@ -147,6 +160,7 @@ export async function POST(req: Request) {
     //   - The verification GATE itself is env-flagged
     //     (`EMAIL_VERIFICATION_REQUIRED`) so an unwired email pipeline
     //     doesn't lock users out of the dashboard.
+    let emailSent = false;
     try {
       await issueAndSendVerificationEmail({
         userId: user.id,
@@ -154,10 +168,19 @@ export async function POST(req: Request) {
         name: user.name,
         origin: resolveAppOrigin(req),
       });
+      emailSent = true;
     } catch {
       // Truly belt-and-suspenders — the helper itself doesn't throw, but
       // we don't trust transitive dependencies (Prisma, fetch) to never
       // raise. A failed email must NEVER take down a successful signup.
+    }
+
+    // Fire #5 only when the SMTP send actually succeeded — otherwise the
+    // funnel would show "verification sent" for users who never got a
+    // mail. Skipped entirely for OAuth signups (auto-verified via
+    // emailVerified: now() in auth.ts).
+    if (emailSent && user.tenant?.id) {
+      await trackServer(user.tenant.id, 'email_verification_sent');
     }
 
     return NextResponse.json(
