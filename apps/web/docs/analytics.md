@@ -84,9 +84,67 @@ If you want to disable PostHog entirely (privacy incident, debug, regional regul
 
 ## Funnel dashboards (PostHog UI)
 
-After 7 days of data, set up:
+### Dashboard 1 — Funnel Principal (CREATED 2026-04-30)
 
-1. **Funnel principal** (7-day window): `$pageview` on `/` → `signup_started` → `signup_completed` → `email_verified` → `onboarding_step_completed` (step=`shopify`) → `onboarding_step_completed` (step=`dac`) → `first_shipment_created`.
-2. **Conversion to paid** (30-day window): `first_shipment_created` → `subscription_activated`.
-3. **Source attribution** (Trends, group by `$initial_utm_source`, event = `signup_completed`).
-4. **Onboarding friction** (combined): time-on-step distribution, `onboarding_step_failed` rate by step, plus a session-recording filter `pathname matches /onboarding AND duration > 60s AND NOT onboarding_completed`.
+Already exists in PostHog: project 404673, dashboard ID 1530582, 7-day window.
+Steps: `$pageview` → `signup_started` → `signup_completed` → `email_verified` → `onboarding_step_completed` (step=`shopify`) → `onboarding_step_completed` (step=`dac`) → `first_shipment_created`.
+Direct link: <https://us.posthog.com/project/404673/dashboard/1530582>
+
+### Dashboards 2 / 3 / 4 — one-click recipes (run when you have ≥7 days of data)
+
+Each recipe below is a single PostHog URL that pre-populates the insight. Open the URL, click **"Save & add to dashboard"**, then either pick an existing dashboard or click **"+ New dashboard"** in the destination dropdown.
+
+#### Dashboard 2 — Conversion to paid (30-day funnel)
+
+Two-step funnel: who actually pays after their first auto-shipment? If this number is low, the product worked but pricing/UX of the pack-purchase flow is the bottleneck.
+
+```text
+https://us.posthog.com/project/404673/insights/new?insight=FUNNELS#q=%7B%22kind%22%3A%22InsightVizNode%22%2C%22source%22%3A%7B%22kind%22%3A%22FunnelsQuery%22%2C%22series%22%3A%5B%7B%22kind%22%3A%22EventsNode%22%2C%22event%22%3A%22first_shipment_created%22%2C%22name%22%3A%22First%20auto-shipment%22%7D%2C%7B%22kind%22%3A%22EventsNode%22%2C%22event%22%3A%22subscription_activated%22%2C%22name%22%3A%22First%20paid%20pack%22%7D%5D%2C%22funnelsFilter%22%3A%7B%22funnelVizType%22%3A%22steps%22%2C%22funnelOrderType%22%3A%22ordered%22%7D%2C%22dateRange%22%3A%7B%22date_from%22%3A%22-30d%22%7D%7D%7D
+```
+
+#### Dashboard 3 — Source attribution (which channel converts)
+
+Trends grouped by `$initial_utm_source` for the `signup_completed` event. Tells you which UTM source brings signups (Instagram, WhatsApp share, organic, referral, direct).
+
+```text
+https://us.posthog.com/project/404673/insights/new?insight=TRENDS#q=%7B%22kind%22%3A%22InsightVizNode%22%2C%22source%22%3A%7B%22kind%22%3A%22TrendsQuery%22%2C%22series%22%3A%5B%7B%22kind%22%3A%22EventsNode%22%2C%22event%22%3A%22signup_completed%22%2C%22math%22%3A%22total%22%7D%5D%2C%22breakdownFilter%22%3A%7B%22breakdown_type%22%3A%22person%22%2C%22breakdown%22%3A%22%24initial_utm_source%22%7D%2C%22dateRange%22%3A%7B%22date_from%22%3A%22-30d%22%7D%2C%22trendsFilter%22%3A%7B%22display%22%3A%22ActionsBarValue%22%7D%7D%7D
+```
+
+#### Dashboard 4 — Onboarding friction
+
+Three insights to combine:
+
+**4a — Failure rate by step** (Trends, daily):
+```text
+https://us.posthog.com/project/404673/insights/new?insight=TRENDS#q=%7B%22kind%22%3A%22InsightVizNode%22%2C%22source%22%3A%7B%22kind%22%3A%22TrendsQuery%22%2C%22series%22%3A%5B%7B%22kind%22%3A%22EventsNode%22%2C%22event%22%3A%22onboarding_step_failed%22%2C%22math%22%3A%22total%22%7D%5D%2C%22breakdownFilter%22%3A%7B%22breakdown_type%22%3A%22event%22%2C%22breakdown%22%3A%22step%22%7D%2C%22dateRange%22%3A%7B%22date_from%22%3A%22-7d%22%7D%2C%22trendsFilter%22%3A%7B%22display%22%3A%22ActionsBar%22%7D%7D%7D
+```
+
+**4b — Average time on each step** (Trends, average of `time_on_step_seconds`):
+```text
+https://us.posthog.com/project/404673/insights/new?insight=TRENDS#q=%7B%22kind%22%3A%22InsightVizNode%22%2C%22source%22%3A%7B%22kind%22%3A%22TrendsQuery%22%2C%22series%22%3A%5B%7B%22kind%22%3A%22EventsNode%22%2C%22event%22%3A%22onboarding_step_completed%22%2C%22math%22%3A%22avg%22%2C%22math_property%22%3A%22time_on_step_seconds%22%7D%5D%2C%22breakdownFilter%22%3A%7B%22breakdown_type%22%3A%22event%22%2C%22breakdown%22%3A%22step%22%7D%2C%22dateRange%22%3A%7B%22date_from%22%3A%22-7d%22%7D%7D%7D
+```
+
+**4c — Stuck-and-bailed session recordings.** Manually in PostHog → Session Replay, filter:
+- `pathname` contains `/onboarding`
+- `duration > 60` seconds
+- person did NOT trigger `onboarding_completed`
+
+Each of these recordings is a real user who gave up mid-onboarding. Watching 5–10 of them tells you exactly which step is the bottleneck (Shopify token paste? DAC creds? something else?).
+
+### How to add these to a dashboard
+
+1. Open one of the URLs above.
+2. PostHog renders the pre-configured insight. Verify the data looks right.
+3. Top-right: click the **"Save & add to dashboard"** button.
+4. From the dropdown, pick **"+ New dashboard"** (or an existing one).
+5. Name the dashboard (e.g. "2. Conversion to paid").
+6. Done — the insight appears in the dashboard.
+
+### Adblocker caveat (verified 2026-04-30)
+
+If you're testing from your own browser and PostHog Live events look empty, check that your browser doesn't have an adblocker / privacy extension blocking `*.posthog.com`. uBlock Origin, AdGuard, Brave Shields, and Privacy Badger ALL block PostHog by default. The fix is either:
+- Allowlist `autoenvia.com` in your blocker, or
+- Test from incognito with extensions off, or
+- Trust the server-side smoke test (we verified `signup_completed` from `/api/auth/signup/route.ts` lands in PostHog Activity within ~5 seconds).
+
+Real users without blockers get tracked normally — adblock penetration in Uruguay is ~15–20%, so plan for that loss in your funnel-rate denominators.
