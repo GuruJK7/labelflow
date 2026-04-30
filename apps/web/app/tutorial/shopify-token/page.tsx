@@ -15,10 +15,6 @@ import {
 import { CopyButton } from './_components/CopyButton';
 import { OSTabs } from './_components/OSTabs';
 import {
-  Step01AdminHome,
-  Step02SettingsSidebar,
-  Step03AppsSection,
-  Step04DevelopAppsLanding,
   Step05DevDashboardEmpty,
   Step06CreateAppForm,
   Step07VersionFormTop,

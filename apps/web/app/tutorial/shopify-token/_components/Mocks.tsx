@@ -16,17 +16,10 @@
  *   2. Run the redaction script (see commit history) before placing it in
  *      `public/tutorial/shopify/`.
  *   3. Update the `alt` text in this file if the screen content changed.
- *
- * The Step components below are thin wrappers that render an `<img>` with
- * the right path, alt, and class names so the consuming `page.tsx` reads
- * the same as it did with the SVG version (no breaking change to imports).
  */
 
 type ScreenshotProps = {
   className?: string;
-  /** Optional id suffix for the wrapping figure (used when the same screen
-   *  is rendered twice — kept for backward compat with the old MockAccessSection). */
-  idSuffix?: string;
 };
 
 function Screenshot({
@@ -48,54 +41,6 @@ function Screenshot({
         className="block w-full h-auto"
       />
     </figure>
-  );
-}
-
-/** Step 1: admin.shopify.com home — the "Configuración" link is in the
- *  bottom-left corner of the sidebar (gear icon). */
-export function Step01AdminHome({ className }: ScreenshotProps) {
-  return (
-    <Screenshot
-      src="/tutorial/shopify/01-admin.png"
-      alt="Captura de admin.shopify.com mostrando el sidebar con el ítem 'Configuración' abajo a la izquierda."
-      className={className}
-    />
-  );
-}
-
-/** Step 2: admin.shopify.com/settings/general — sidebar shows "Apps" and
- *  "Canales de ventas" as separate entries (NOT combined "Apps y canales de venta"). */
-export function Step02SettingsSidebar({ className }: ScreenshotProps) {
-  return (
-    <Screenshot
-      src="/tutorial/shopify/02-settings.png"
-      alt="Captura de Configuración → General mostrando el sidebar con los ítems 'Apps' y 'Canales de ventas' como entradas separadas."
-      className={className}
-    />
-  );
-}
-
-/** Step 3: admin.shopify.com/settings/apps — installed apps list with the
- *  "Desarrollar apps" button top-right. */
-export function Step03AppsSection({ className }: ScreenshotProps) {
-  return (
-    <Screenshot
-      src="/tutorial/shopify/03-apps.png"
-      alt="Captura de Configuración → Apps mostrando el botón 'Desarrollar apps' arriba a la derecha junto al botón 'Shopify App Store'."
-      className={className}
-    />
-  );
-}
-
-/** Step 4: intermediate landing page "Desarrollo de apps" with the
- *  "Desarrollar apps en Dev Dashboard" CTA. */
-export function Step04DevelopAppsLanding({ className }: ScreenshotProps) {
-  return (
-    <Screenshot
-      src="/tutorial/shopify/04-desarrollo-apps-landing.png"
-      alt="Captura de la pantalla intermedia 'Desarrollo de apps' con el botón 'Desarrollar apps en Dev Dashboard'."
-      className={className}
-    />
   );
 }
 
@@ -210,16 +155,3 @@ export function Step12CredentialsTab({ className }: ScreenshotProps) {
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────
- * Backward-compat aliases for the old SVG component names. The page.tsx
- * still imports these — keeping them pointing to the new Step* components
- * lets us delete the SVG implementation without touching the consumer.
- * Once page.tsx is rewritten to use Step* directly, these can go.
- * ──────────────────────────────────────────────────────────────────── */
-export const MockSettings = Step01AdminHome;
-export const MockDevelopApps = Step02SettingsSidebar;
-export const MockCreateApp = Step03AppsSection;
-export const MockChooseDashboard = Step06CreateAppForm;
-export const MockAccessSection = Step08AccessoComplete;
-export const MockScopePicker = Step09ScopePicker;
-export const MockTokenReveal = Step12CredentialsTab;
