@@ -30,6 +30,13 @@ const config: Config = {
           300: '#404040',
         },
       },
+      animation: {
+        // Slow, low-key pulse for the "10 envíos gratis" hero badge.
+        // Default `animate-pulse` (1s) is too aggressive and feels like
+        // an alert; 4s reads as "alive" without distracting from the
+        // hero copy. Used in app/page.tsx hero badge.
+        'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+      },
     },
   },
   plugins: [],

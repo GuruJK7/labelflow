@@ -5,6 +5,7 @@ import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Zap, ArrowRight, Loader2, Package, Truck, Mail } from 'lucide-react';
+import { GoogleSignInButton, OrDivider } from '../_components/GoogleSignInButton';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -106,10 +107,14 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold text-white">Iniciar sesion</h2>
-            <p className="text-zinc-500 text-sm mt-1">Ingresa a tu panel de control</p>
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-white">Iniciar sesión</h2>
+            <p className="text-zinc-500 text-sm mt-1">Ingresá a tu panel de control</p>
           </div>
+
+          <GoogleSignInButton callbackUrl="/dashboard" label="Continuar con Google" />
+
+          <OrDivider label="o con email" />
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
@@ -159,7 +164,7 @@ export default function LoginPage() {
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <>
-                  Iniciar sesion
+                  Iniciar sesión
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
@@ -168,9 +173,9 @@ export default function LoginPage() {
 
           <div className="mt-8 text-center">
             <p className="text-zinc-500 text-sm">
-              No tenes cuenta?{' '}
+              ¿No tenés cuenta?{' '}
               <Link href="/signup" className="text-cyan-400 hover:text-cyan-300 font-medium transition-colors">
-                Registrate gratis
+                Registrate gratis · 10 envíos
               </Link>
             </p>
           </div>

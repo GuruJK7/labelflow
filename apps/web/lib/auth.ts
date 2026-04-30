@@ -3,7 +3,16 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import { cookies, headers } from 'next/headers';
 import { db } from './db';
+import {
+  generateReferralCode,
+  isValidReferralCodeShape,
+  readReferralCookieValue,
+  REFERRAL_COOKIE_NAME,
+} from './referrals';
+
+const REFEREE_BONUS_CREDITS = 10;
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -107,29 +116,126 @@ export const authOptions: NextAuthOptions = {
       return session;
     },
     async signIn({ user, account }) {
-      if (account?.provider === 'google' && user.email) {
-        const existing = await db.user.findUnique({ where: { email: user.email } });
-        if (!existing) {
-          const newUser = await db.user.create({
-            data: {
-              email: user.email,
-              name: user.name,
-              image: user.image,
-              emailVerified: new Date(),
-            },
+      if (account?.provider !== 'google' || !user.email) return true;
+
+      const email = user.email.toLowerCase();
+      const existing = await db.user.findUnique({
+        where: { email },
+        include: { tenant: { select: { id: true } } },
+      });
+
+      // Existing user logging in via Google again — nothing to provision.
+      // The 10-shipment welcome bonus was already granted at first signup
+      // via the schema `@default(10)`, so a re-login MUST NOT touch it.
+      if (existing?.tenant) return true;
+
+      // ── First-time Google OAuth signup ──
+      // Mirror /api/auth/signup so OAuth users get the same referral
+      // attribution + signed-cookie validation as email/password signups.
+      // Reading cookies inside a NextAuth signIn callback works because
+      // NextAuth runs the callback inside the OAuth callback route handler,
+      // which keeps the request context (cookies, headers) attached.
+      let referredByCode: string | null = null;
+      let referredById: string | null = null;
+      try {
+        const cookieStore = cookies();
+        const refCookie = cookieStore.get(REFERRAL_COOKIE_NAME)?.value ?? null;
+        const referralCode = readReferralCookieValue(refCookie);
+        if (referralCode && isValidReferralCodeShape(referralCode)) {
+          const referrer = await db.tenant.findUnique({
+            where: { referralCode },
+            select: { id: true, user: { select: { email: true } } },
           });
-          // Create tenant for OAuth users too
-          const slug = user.email.split('@')[0].replace(/[^a-z0-9]/gi, '-').toLowerCase();
-          await db.tenant.create({
-            data: {
-              userId: newUser.id,
-              name: user.name ?? slug,
-              slug: `${slug}-${Date.now()}`,
-              apiKey: crypto.randomBytes(32).toString('hex'),
-            },
-          });
+          // Anti-self-referral by email (best-effort — same as signup route).
+          if (referrer && referrer.user?.email?.toLowerCase() !== email) {
+            referredByCode = referralCode;
+            referredById = referrer.id;
+          }
         }
+      } catch {
+        // cookies() throws if called outside a request scope — extremely
+        // unlikely here but we'd rather lose attribution than block signup.
       }
+
+      // Build base slug from email + millis to avoid collisions across
+      // accounts that share a local-part (e.g. john@gmail / john@outlook).
+      const baseSlug =
+        email.split('@')[0].replace(/[^a-z0-9]/gi, '-').toLowerCase() +
+        '-' +
+        Date.now().toString(36);
+
+      // Generate a unique referral code with retries on collision (same
+      // shape as signup/route.ts — keeps both paths interchangeable).
+      let myReferralCode: string | null = null;
+      for (let attempt = 0; attempt < 5 && !myReferralCode; attempt++) {
+        const candidate = generateReferralCode(baseSlug);
+        const collision = await db.tenant.findUnique({
+          where: { referralCode: candidate },
+          select: { id: true },
+        });
+        if (!collision) myReferralCode = candidate;
+      }
+
+      const refereeBonus = referredById ? REFEREE_BONUS_CREDITS : 0;
+
+      // Capture IP for Ley 18.331 compliance (same as email/password signup).
+      let signupIp = 'unknown';
+      try {
+        const h = headers();
+        signupIp =
+          h.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+          h.get('x-real-ip') ||
+          'unknown';
+      } catch {
+        // headers() throws outside request scope — keep 'unknown'.
+      }
+
+      if (existing) {
+        // Edge case: User row exists (from a previous orphaned attempt
+        // where Tenant creation failed) but no Tenant. Backfill the Tenant
+        // without touching the User.
+        await db.tenant.create({
+          data: {
+            userId: existing.id,
+            name: user.name ?? baseSlug,
+            slug: baseSlug,
+            apiKey: crypto.randomBytes(32).toString('hex'),
+            signupIp,
+            tosAcceptedAt: new Date(),
+            referralCode: myReferralCode,
+            referredByCode,
+            referredById,
+            referralBonusCredits: refereeBonus,
+          },
+        });
+        return true;
+      }
+
+      // Atomic User + Tenant creation via Prisma nested write.
+      // shipmentCredits arranca en 10 por @default del schema (welcome
+      // bonus universal). referralBonusCredits SÓLO si vino vía referral.
+      await db.user.create({
+        data: {
+          email,
+          name: user.name,
+          image: user.image,
+          emailVerified: new Date(),
+          tenant: {
+            create: {
+              name: user.name ?? baseSlug,
+              slug: baseSlug,
+              apiKey: crypto.randomBytes(32).toString('hex'),
+              signupIp,
+              tosAcceptedAt: new Date(),
+              referralCode: myReferralCode,
+              referredByCode,
+              referredById,
+              referralBonusCredits: refereeBonus,
+            },
+          },
+        },
+      });
+
       return true;
     },
   },

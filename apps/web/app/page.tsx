@@ -127,10 +127,16 @@ export default function LandingPage() {
       {/* Hero */}
       <section className="relative pt-36 pb-16 px-6">
         <div className="max-w-5xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 bg-cyan-500/10 border border-cyan-500/20 rounded-full px-4 py-1.5 mb-8 backdrop-blur-sm">
-            <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="text-cyan-300 text-xs font-medium">
-              10 envíos gratis al crear tu cuenta
+          {/* Animated reward badge — anchor the gift in real money */}
+          <div className="inline-flex items-center gap-2 bg-gradient-to-r from-cyan-500/15 to-emerald-500/15 border border-cyan-400/30 rounded-full pl-2 pr-4 py-1.5 mb-8 backdrop-blur-sm shadow-lg shadow-cyan-500/10 animate-pulse-slow">
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-gradient-to-br from-cyan-400 to-emerald-400">
+              <Sparkles className="w-3 h-3 text-zinc-950" strokeWidth={3} />
+            </span>
+            <span className="text-cyan-100 text-xs font-semibold tracking-wide">
+              <span className="text-emerald-300">10 envíos GRATIS</span> al
+              registrarte ·{' '}
+              <span className="text-zinc-400 line-through">$200 UYU</span>{' '}
+              <span className="text-emerald-300 font-bold">$0</span>
             </span>
           </div>
           <h1 className="text-5xl md:text-7xl font-bold text-white leading-[1.05] tracking-tight mb-6">
@@ -150,7 +156,7 @@ export default function LandingPage() {
               href="/signup"
               className="group inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-xl shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:-translate-y-0.5"
             >
-              Empezar con 10 envíos gratis
+              Comenzá ya · 10 envíos gratis
               <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
             </Link>
             <a
@@ -160,7 +166,16 @@ export default function LandingPage() {
               Ver precios
             </a>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-8 text-xs text-zinc-500">
+          <p className="mt-4 text-xs text-zinc-500">
+            Registrate con Google en 1 click ·{' '}
+            <Link
+              href="/signup"
+              className="text-cyan-400 hover:text-cyan-300 transition-colors underline-offset-2 hover:underline"
+            >
+              empezar ahora →
+            </Link>
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-6 text-xs text-zinc-500">
             <div className="flex items-center gap-1.5">
               <Check className="w-3.5 h-3.5 text-emerald-400" />
               Sin tarjeta para empezar
