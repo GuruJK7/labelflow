@@ -35,9 +35,17 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
+  // Multi-store support (2026-05-01): a single User can own multiple
+  // Tenants (each Tenant = one Shopify store + DAC creds + credit pool).
+  // The currently-selected tenant lives in the JWT only — no DB column —
+  // so this migration is purely declarative: drop @unique on
+  // Tenant.userId and add an index. No data backfill needed; existing
+  // 1:1 users keep working because the auth.ts JWT callback falls back
+  // to "first tenant for this userId" when no explicit tenantId is in
+  // the token.
+  tenants                  Tenant[]
   accounts                 Account[]
   sessions                 Session[]
-  tenant                   Tenant?
   emailVerificationTokens  EmailVerificationToken[]
 }
 
@@ -108,7 +116,10 @@ model Session {
 
 model Tenant {
   id        String   @id @default(cuid())
-  userId    String   @unique
+  // userId: owning user. Used to be @unique (1 user = 1 tenant) but is now
+  // a regular indexed FK so a single user can own multiple Tenants for
+  // multi-store support. Active selection lives on User.activeTenantId.
+  userId    String
   name      String
   slug      String   @unique
   apiKey    String   @unique @default(cuid())
@@ -279,6 +290,7 @@ model Tenant {
   referralAccrualsRecv  ReferralCreditAccrual[] @relation("ReferralAccrualReferrer")
   referralAccrualsPaid  ReferralCreditAccrual[] @relation("ReferralAccrualReferee")
 
+  @@index([userId])
   @@index([slug])
   @@index([stripeCustomerId])
   @@index([apiKey])

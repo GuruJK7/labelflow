@@ -49,6 +49,11 @@ export async function GET(
 
   const tokenHash = crypto.createHash('sha256').update(plaintext).digest('hex');
 
+  // Multi-store schema (2026-05-01): User.tenant (1:1) became User.tenants
+  // (1:N). For email_verified analytics we want a stable distinct_id, so
+  // we use the user's FIRST tenant (the one created at signup, ordered by
+  // createdAt asc) — exactly the same identity the JWT default-resolves
+  // to on first session mint.
   const tokenRow = await db.emailVerificationToken.findUnique({
     where: { tokenHash },
     select: {
@@ -61,7 +66,11 @@ export async function GET(
           id: true,
           emailVerified: true,
           createdAt: true,
-          tenant: { select: { id: true } },
+          tenants: {
+            select: { id: true },
+            orderBy: { createdAt: 'asc' },
+            take: 1,
+          },
         },
       },
     },
@@ -77,6 +86,7 @@ export async function GET(
   // only fire #6 once per user. If they re-click the link the next day,
   // the prior `emailVerified` is non-null and we skip the event.
   const isFirstVerification = !tokenRow.user?.emailVerified;
+  const firstTenantId = tokenRow.user?.tenants?.[0]?.id;
 
   // Stamp both rows atomically. If the user is already verified (e.g.
   // they clicked the link twice and we lost the race), we still mark the
@@ -97,10 +107,10 @@ export async function GET(
   // a tenantId to use as distinct_id. `time_to_verify_seconds` lets us
   // see how long users sit in their inbox; long delays correlate with
   // spam-folder hits and can drive a "resend" UX nudge.
-  if (isFirstVerification && tokenRow.user?.tenant?.id) {
+  if (isFirstVerification && firstTenantId && tokenRow.user) {
     const createdAt = tokenRow.user.createdAt.getTime();
     const seconds = Math.round((now.getTime() - createdAt) / 1000);
-    await trackServer(tokenRow.user.tenant.id, 'email_verified', {
+    await trackServer(firstTenantId, 'email_verified', {
       time_to_verify_seconds: seconds,
     });
   }

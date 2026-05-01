@@ -114,39 +114,52 @@ export async function POST(req: Request) {
 
     // Create user + tenant in transaction (Prisma maneja la atomicidad
     // dentro de un solo create con nested write).
+    //
+    // Multi-store schema (2026-05-01): User.tenant (1:1) → User.tenants
+    // (1:N). Signup creates exactly ONE tenant — the user's first store —
+    // and additional stores get added later via POST /api/v1/tenants.
     const user = await db.user.create({
       data: {
         email,
         name,
         passwordHash,
-        tenant: {
-          create: {
-            name,
-            slug: baseSlug,
-            apiKey: crypto.randomBytes(32).toString('hex'),
-            signupIp,
-            tosAcceptedAt: new Date(),
-            referralCode: myReferralCode,
-            referredByCode,
-            referredById,
-            // shipmentCredits arranca en 10 por el @default del schema (bonus
-            // universal de signup, no específico de referidos).
-            // referralBonusCredits SÓLO se setea si el signup vino vía referral
-            // válido — defaults a 0 para signups directos.
-            referralBonusCredits: refereeBonus,
-          },
+        tenants: {
+          create: [
+            {
+              name,
+              slug: baseSlug,
+              apiKey: crypto.randomBytes(32).toString('hex'),
+              signupIp,
+              tosAcceptedAt: new Date(),
+              referralCode: myReferralCode,
+              referredByCode,
+              referredById,
+              // shipmentCredits arranca en 10 por el @default del schema
+              // (bonus universal de signup, no específico de referidos).
+              // referralBonusCredits SÓLO se setea si el signup vino vía
+              // referral válido — defaults a 0 para signups directos.
+              referralBonusCredits: refereeBonus,
+            },
+          ],
         },
       },
-      include: { tenant: true },
+      include: {
+        tenants: {
+          select: { id: true },
+          orderBy: { createdAt: 'asc' },
+          take: 1,
+        },
+      },
     });
+    const firstTenantId = user.tenants[0]?.id;
 
     // Fire #4 signup_completed BEFORE the email send so an outbound
     // SMTP hiccup doesn't drop the analytics event. distinct_id is the
     // tenantId — same id the client will see post-login when
     // IdentifyOnAuth runs, so the funnel stitches correctly. NO email,
     // name, or any PII in properties.
-    if (user.tenant?.id) {
-      await trackServer(user.tenant.id, 'signup_completed', {
+    if (firstTenantId) {
+      await trackServer(firstTenantId, 'signup_completed', {
         method: 'email',
         has_referral: Boolean(referredById),
       });
@@ -179,12 +192,12 @@ export async function POST(req: Request) {
     // funnel would show "verification sent" for users who never got a
     // mail. Skipped entirely for OAuth signups (auto-verified via
     // emailVerified: now() in auth.ts).
-    if (emailSent && user.tenant?.id) {
-      await trackServer(user.tenant.id, 'email_verification_sent');
+    if (emailSent && firstTenantId) {
+      await trackServer(firstTenantId, 'email_verification_sent');
     }
 
     return NextResponse.json(
-      { data: { userId: user.id, tenantId: user.tenant?.id } },
+      { data: { userId: user.id, tenantId: firstTenantId } },
       { status: 201 }
     );
   } catch (err) {

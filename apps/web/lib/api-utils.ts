@@ -32,6 +32,24 @@ export async function getAuthenticatedTenant(): Promise<SessionWithTenant | null
 }
 
 /**
+ * Auth helper for tenant-management endpoints — returns just the userId
+ * without requiring an active tenantId in the session. Used for endpoints
+ * like POST /api/v1/tenants (create new store) where the user might not
+ * have any tenant yet, OR /api/v1/tenants/switch where they're choosing
+ * a different tenant than the current session one.
+ *
+ * For per-tenant endpoints (most of /api/v1) keep using
+ * getAuthenticatedTenant() — it enforces the tenantId is set.
+ */
+export async function getAuthenticatedUser(): Promise<{ userId: string } | null> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) return null;
+  const userId = (session.user as Record<string, unknown>).id as string | undefined;
+  if (!userId) return null;
+  return { userId };
+}
+
+/**
  * Standard API error response.
  */
 export function apiError(message: string, status: number = 400) {

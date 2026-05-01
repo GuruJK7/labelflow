@@ -71,9 +71,35 @@ export const authOptions: NextAuthOptions = {
     newUser: '/onboarding',
   },
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session: updateSession }) {
       if (user) {
         token.id = user.id;
+      }
+
+      // ── Multi-store tenant switch ──
+      // The /api/tenants/switch endpoint calls update({ tenantId }) on the
+      // client, which fires a 'update' trigger here with the new tenantId
+      // in updateSession. We re-validate ownership and refresh the token
+      // with the chosen tenant's data.
+      if (trigger === 'update' && updateSession && typeof updateSession === 'object') {
+        const requestedTenantId = (updateSession as Record<string, unknown>).tenantId;
+        if (typeof requestedTenantId === 'string' && token.id) {
+          const owned = await db.tenant.findFirst({
+            where: { id: requestedTenantId, userId: token.id as string },
+            select: { id: true, slug: true, isActive: true, subscriptionStatus: true },
+          });
+          if (owned) {
+            token.tenantId = owned.id;
+            token.tenantSlug = owned.slug;
+            token.isActive = owned.isActive;
+            token.subscriptionStatus = owned.subscriptionStatus;
+            token.tenantRefreshedAt = Math.floor(Date.now() / 1000);
+            return token;
+          }
+          // If the user doesn't own the requested tenantId, we silently
+          // ignore the switch (defense against a tampered client). Token
+          // keeps its previous tenantId.
+        }
       }
 
       // Query DB on first mint (no tenantId) AND every 15 minutes thereafter
@@ -89,10 +115,24 @@ export const authOptions: NextAuthOptions = {
         now - (token.tenantRefreshedAt as number) > REFRESH_INTERVAL_S;
 
       if (token.id && needsRefresh) {
-        const tenant = await db.tenant.findUnique({
-          where: { userId: token.id as string },
-          select: { id: true, slug: true, isActive: true, subscriptionStatus: true },
-        });
+        // Multi-store aware lookup:
+        //   1. If the token already has a tenantId (carried across refresh
+        //      cycles), re-load THAT specific tenant — preserves the user's
+        //      current store selection across the 15-min refresh window.
+        //   2. If the token has no tenantId yet (first session after login),
+        //      pick the first tenant the user owns ordered by createdAt.
+        //      This is the deterministic default for multi-store accounts:
+        //      "the store you originally onboarded with".
+        const tenant = token.tenantId
+          ? await db.tenant.findFirst({
+              where: { id: token.tenantId as string, userId: token.id as string },
+              select: { id: true, slug: true, isActive: true, subscriptionStatus: true },
+            })
+          : await db.tenant.findFirst({
+              where: { userId: token.id as string },
+              orderBy: { createdAt: 'asc' },
+              select: { id: true, slug: true, isActive: true, subscriptionStatus: true },
+            });
         // Always stamp the refresh time — even when tenant is null — so we
         // don't hit the DB on every request for users whose tenant row is
         // missing (e.g. interrupted OAuth sign-in flow).
@@ -102,6 +142,13 @@ export const authOptions: NextAuthOptions = {
           token.tenantSlug = tenant.slug;
           token.isActive = tenant.isActive;
           token.subscriptionStatus = tenant.subscriptionStatus;
+        } else if (token.tenantId) {
+          // The previously-selected tenant no longer exists or no longer
+          // belongs to this user (e.g. they deleted the store, or admin
+          // moved it). Clear the stale reference so the next refresh falls
+          // back to "first tenant" path above.
+          delete token.tenantId;
+          delete token.tenantSlug;
         }
       }
       return token;
@@ -120,15 +167,22 @@ export const authOptions: NextAuthOptions = {
       if (account?.provider !== 'google' || !user.email) return true;
 
       const email = user.email.toLowerCase();
+      // Multi-store schema (2026-05-01): User.tenant (1:1) → User.tenants (1:N).
+      // For "is this a returning user?" we just need to know if they have
+      // ANY tenant; the JWT callback handles which one becomes active. So
+      // we only fetch the count + the user id — no need for the full row.
       const existing = await db.user.findUnique({
         where: { email },
-        include: { tenant: { select: { id: true } } },
+        select: {
+          id: true,
+          _count: { select: { tenants: true } },
+        },
       });
 
       // Existing user logging in via Google again — nothing to provision.
       // The 10-shipment welcome bonus was already granted at first signup
       // via the schema `@default(10)`, so a re-login MUST NOT touch it.
-      if (existing?.tenant) return true;
+      if (existing && existing._count.tenants > 0) return true;
 
       // ── First-time Google OAuth signup ──
       // Mirror /api/auth/signup so OAuth users get the same referral
@@ -216,29 +270,42 @@ export const authOptions: NextAuthOptions = {
         // Atomic User + Tenant creation via Prisma nested write.
         // shipmentCredits arranca en 10 por @default del schema (welcome
         // bonus universal). referralBonusCredits SÓLO si vino vía referral.
+        //
+        // Multi-store note: `tenants: { create: [...] }` produces the
+        // same effect as the old 1:1 `tenant: { create: ... }` — creates
+        // exactly one Tenant during signup. Additional stores are added
+        // later via POST /api/v1/tenants.
         const created = await db.user.create({
           data: {
             email,
             name: user.name,
             image: user.image,
             emailVerified: new Date(),
-            tenant: {
-              create: {
-                name: user.name ?? baseSlug,
-                slug: baseSlug,
-                apiKey: crypto.randomBytes(32).toString('hex'),
-                signupIp,
-                tosAcceptedAt: new Date(),
-                referralCode: myReferralCode,
-                referredByCode,
-                referredById,
-                referralBonusCredits: refereeBonus,
-              },
+            tenants: {
+              create: [
+                {
+                  name: user.name ?? baseSlug,
+                  slug: baseSlug,
+                  apiKey: crypto.randomBytes(32).toString('hex'),
+                  signupIp,
+                  tosAcceptedAt: new Date(),
+                  referralCode: myReferralCode,
+                  referredByCode,
+                  referredById,
+                  referralBonusCredits: refereeBonus,
+                },
+              ],
             },
           },
-          include: { tenant: { select: { id: true } } },
+          include: {
+            tenants: {
+              select: { id: true },
+              orderBy: { createdAt: 'asc' },
+              take: 1,
+            },
+          },
         });
-        newTenantId = created.tenant?.id ?? null;
+        newTenantId = created.tenants[0]?.id ?? null;
       }
 
       // Fire #4 signup_completed for the OAuth path (mirror of the same
