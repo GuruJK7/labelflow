@@ -221,8 +221,23 @@ export function startScheduler(): void {
           continue;
         }
 
-        // Determine maxOrders from matched schedule slot
-        let slotMaxOrders = 0; // 0 = use tenant default
+        // Determine maxOrders from matched schedule slot.
+        //
+        // Semantic across the system (scheduler + process-orders.job):
+        //   - undefined / no match → fall back to tenant.maxOrdersPerRun
+        //   - 0 → "unlimited" (process every pending order, capped only by
+        //         the live credit balance)
+        //   - N > 0 → cap this run at exactly N orders
+        //
+        // BUG FIX (2026-05-01): the previous version used a numeric `0`
+        // sentinel for BOTH "no slot matched" and "slot matched with explicit
+        // unlimited". When a user configured `{time:"09:00", maxOrders:0}`
+        // intending "process everything at 9am", the slot match was lost in
+        // the `if (slotMaxOrders > 0)` filter below and we silently fell back
+        // to `tenant.maxOrdersPerRun = 20`. We now use `slotMaxOrders: number
+        // | undefined` so 0 (explicit unlimited) and undefined (no match)
+        // are distinguishable.
+        let slotMaxOrders: number | undefined;
         const slots = tenant.scheduleSlots as { time: string; maxOrders: number }[] | null;
         if (slots && slots.length > 0) {
           const t = toTimezone(now, tz);
@@ -238,8 +253,10 @@ export function startScheduler(): void {
           data: { tenantId: tenant.id, trigger: 'CRON', type: 'PROCESS_ORDERS', status: 'PENDING' },
         });
 
-        // If slot has a specific maxOrders, store it as override in RunLog meta
-        if (slotMaxOrders > 0) {
+        // Always persist the override RunLog when a slot matched, even if
+        // maxOrders was 0 — the "0 = unlimited" semantic must reach
+        // process-orders.job, otherwise the tenant default kicks in.
+        if (slotMaxOrders !== undefined) {
           await db.runLog.create({
             data: {
               tenantId: tenant.id,
@@ -249,7 +266,12 @@ export function startScheduler(): void {
               meta: { maxOrdersPerRun: slotMaxOrders } as any,
             },
           });
-          logger.info({ tenantId: tenant.id, jobId: dbJob.id, slotMaxOrders }, 'Cron job created with slot maxOrders override');
+          logger.info(
+            { tenantId: tenant.id, jobId: dbJob.id, slotMaxOrders },
+            slotMaxOrders === 0
+              ? 'Cron job created with slot override: UNLIMITED'
+              : 'Cron job created with slot maxOrders override',
+          );
         } else {
           logger.info({ tenantId: tenant.id, jobId: dbJob.id, cron: tenant.cronSchedule }, 'Cron job created');
         }

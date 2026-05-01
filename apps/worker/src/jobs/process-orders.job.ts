@@ -130,15 +130,35 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       data: { status: 'RUNNING', startedAt: new Date() },
     });
 
-    // Check for maxOrders override in RunLog meta
+    // Check for maxOrders override in RunLog meta.
+    //
+    // Override semantics (must match scheduler.ts):
+    //   - undefined / no row → no override; use tenant.maxOrdersPerRun
+    //   - 0 → "unlimited" (process every available order, capped only by
+    //         the live credit balance below)
+    //   - N > 0 → cap this run at exactly N orders
+    //
+    // We extract the override into `maxOrdersOverride: number | undefined`
+    // (NOT `?? 0` like before) so we can tell "no override → fall back to
+    // tenant default" from "explicit zero → unlimited". The previous `?? 0`
+    // collapsed both into 0 and the cap-application logic below treated
+    // any 0 as "no override", silently dragging unlimited runs back to
+    // tenant.maxOrdersPerRun = 20 (default).
     const overrideLog = await db.runLog.findFirst({
       where: { jobId, message: { contains: 'maxOrdersOverride' } },
       orderBy: { createdAt: 'desc' },
     });
-    const maxOrdersOverride = (overrideLog?.meta as any)?.maxOrdersPerRun ?? 0;
-    const testMode = !!(overrideLog?.meta as any)?.testMode;
-    if (maxOrdersOverride > 0) {
-      slog.info('config', `Max orders override: ${maxOrdersOverride}`);
+    const overrideMeta = overrideLog?.meta as { maxOrdersPerRun?: number; testMode?: boolean } | undefined;
+    const maxOrdersOverride: number | undefined =
+      typeof overrideMeta?.maxOrdersPerRun === 'number' ? overrideMeta.maxOrdersPerRun : undefined;
+    const testMode = !!overrideMeta?.testMode;
+    if (maxOrdersOverride !== undefined) {
+      slog.info(
+        'config',
+        maxOrdersOverride === 0
+          ? 'Max orders override: UNLIMITED (process all available)'
+          : `Max orders override: ${maxOrdersOverride}`,
+      );
     }
     if (testMode) {
       slog.info('config', 'TEST MODE enabled -- will process but not tag orders in Shopify');
@@ -283,12 +303,26 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       return;
     }
 
-    // Apply limit (override from UI takes priority over tenant default)
-    const effectiveLimit = maxOrdersOverride > 0 ? maxOrdersOverride : tenant.maxOrdersPerRun;
-    if (orders.length > effectiveLimit) {
+    // Apply limit (override from UI takes priority over tenant default).
+    //
+    // Three cases:
+    //   1. override === 0 → UNLIMITED, skip the slice entirely.
+    //      Credit gate below will still cap to live balance.
+    //   2. override > 0 → cap at that exact count.
+    //   3. override === undefined → fall back to tenant.maxOrdersPerRun
+    //      (legacy default, currently 20).
+    //
+    // tenant.maxOrdersPerRun is also honored as 0 = unlimited so a tenant
+    // can set its own default to "no cap" without needing scheduleSlots.
+    const effectiveLimit: number =
+      maxOrdersOverride !== undefined ? maxOrdersOverride : tenant.maxOrdersPerRun;
+    const isUnlimited = effectiveLimit === 0;
+    if (!isUnlimited && orders.length > effectiveLimit) {
       skippedCount = orders.length - effectiveLimit;
       orders = orders.slice(0, effectiveLimit);
       slog.warn('limit', `Limited to ${effectiveLimit} orders, ${skippedCount} skipped`);
+    } else if (isUnlimited) {
+      slog.info('limit', `UNLIMITED run: processing all ${orders.length} pending orders (subject to credit balance)`);
     }
 
     // ── CREDIT-PACK GATE ──
