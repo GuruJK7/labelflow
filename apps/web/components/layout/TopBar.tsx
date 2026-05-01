@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Zap, Plus, Gift } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { TenantSwitcher } from './TenantSwitcher';
 
 /**
  * Sticky top bar with credit counter — visible on every dashboard page.
@@ -58,7 +59,13 @@ export function TopBar({
 
   return (
     <header className="sticky top-0 z-30 backdrop-blur-xl bg-[#050505]/70 border-b border-white/[0.06]">
-      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-end gap-3 pl-16 lg:pl-8">
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-3 pl-16 lg:pl-8">
+        {/* Tenant (store) switcher — left of the fuel gauge. The switcher
+            is a client component (needs useSession + router) but TopBar is
+            a server component, so we just render it as a child here. */}
+        <TenantSwitcher />
+
+        <div className="flex items-center gap-3">
         <Link
           href="/settings/billing"
           aria-label={`${total} envíos disponibles${
@@ -115,6 +122,7 @@ export function TopBar({
         >
           <Plus className="w-4 h-4" strokeWidth={2.5} />
         </Link>
+        </div>
       </div>
     </header>
   );
