@@ -10,7 +10,7 @@ import { DAC_STEPS } from './steps';
 import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
 import { db } from '../db';
-import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT } from './uruguay-geo';
+import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT, isAmbiguousCityName, isValidUruguayProvince } from './uruguay-geo';
 import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 import { handlePaymentFlow, AutoPayConfig, PaymentOutcome } from './payment';
 
@@ -1652,8 +1652,37 @@ export async function createShipment(
   } else if (addr.city) {
     const geoDept = await getDepartmentForCityAsync(addr.city);
     if (geoDept) {
-      // City found in our geo DB — use the correct department
-      if (normalize(geoDept) !== normalize(resolvedDept)) {
+      // City found in our geo DB. Decide whether to apply it as a correction
+      // over the customer's Shopify province.
+      //
+      // Audit 2026-05-05 — AMBIGUOUS-CITY GUARD:
+      //   If the geo lookup would flip a non-Montevideo Shopify province to
+      //   Montevideo, AND the city name is generic (every UY town has a
+      //   "Centro", "Cerro", "Bella Vista" etc.), AND the ZIP does NOT also
+      //   say Montevideo, refuse to override the customer's stated province.
+      //   The pre-fix behavior was misrouting interior orders to Montevideo:
+      //     - #11616 Adriana Martinez — Tacuarembó / city="Centro"
+      //     - #11015 — Rocha / city="Centro"
+      //     - #11129 — Treinta y Tres / city="Centro"
+      //     - #11673 Flavia Falero — Maldonado / city="Centro/San Carlos"
+      //     - #1215  Ines Velazco — Maldonado / city="Bella Vista"
+      //   See apps/worker/src/dac/uruguay-geo.ts AMBIGUOUS_CITY_NAMES.
+      const wouldFlipToMvd = normalize(geoDept) === 'montevideo';
+      const shopifyProvinceIsValidNonMvd =
+        isValidUruguayProvince(addr.province) &&
+        normalize(addr.province ?? '') !== 'montevideo';
+      const cityIsAmbiguous = isAmbiguousCityName(addr.city);
+      const zipDept = getDepartmentFromZip(addr.zip ?? '');
+      const zipCorroboratesMvd = zipDept ? normalize(zipDept) === 'montevideo' : false;
+
+      if (wouldFlipToMvd && shopifyProvinceIsValidNonMvd && cityIsAmbiguous && !zipCorroboratesMvd) {
+        // Trust Shopify — refuse the geo override.
+        slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+          `GEO OVERRIDE BLOCKED: ambiguous city "${addr.city}" geo-resolves to Montevideo but Shopify says "${addr.province}" and ZIP "${addr.zip ?? '(none)'}" does not corroborate — keeping "${addr.province}"`,
+          { ambiguousCity: addr.city, shopifyProvince: addr.province, zipDept: zipDept ?? null, geoSuggestion: geoDept, audit: '2026-05-05' }
+        );
+        resolvedDept = addr.province!;
+      } else if (normalize(geoDept) !== normalize(resolvedDept)) {
         slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
           `GEO CORRECTION: City "${addr.city}" belongs to "${geoDept}" but Shopify says "${addr.province}" — using "${geoDept}"`,
           { shopifyProvince: addr.province, correctedDept: geoDept, city: addr.city }
@@ -1662,17 +1691,18 @@ export async function createShipment(
       } else {
         slog.info(DAC_STEPS.STEP3_SELECT_DEPT, `GEO VERIFIED: City "${addr.city}" correctly in "${geoDept}"`);
       }
-      // If geo resolved to Montevideo, normalize the CITY dropdown selection to
-      // "Montevideo" regardless of what alias the customer typed ("Mvdo.",
-      // "Mdeo", "MVD", etc.). DAC's Montevideo dept has a single city option
-      // ("Montevideo"); the barrio dropdown does the geographic discrimination.
+      // If THE FINAL resolved dept is Montevideo, normalize the CITY dropdown
+      // selection to "Montevideo" and detect a barrio. This block uses
+      // `resolvedDept` (post-guard) NOT `geoDept` — otherwise a blocked
+      // override would still set resolvedCity to "Montevideo" and break the
+      // DAC form for the customer's actual interior province.
       //
       // BEFORE 2026-04-22: resolvedCity was only normalized INSIDE the barrio
       // branch, so orders with an ambiguous ZIP (e.g. 11600 → buceo / malvin /
       // malvin norte) left resolvedCity as the raw alias ("Mvdo."), which
       // never matched the dropdown → city field empty → DAC rejected the form.
       // Regression: order #11492 (Adriana Abeijon, "Juan Ortíz 3315, Mvdo.").
-      if (normalize(geoDept) === 'montevideo') {
+      if (normalize(resolvedDept) === 'montevideo') {
         resolvedCity = 'Montevideo';
         const barrio = intelligent.barrio ?? detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
         if (barrio) {
@@ -1687,16 +1717,41 @@ export async function createShipment(
     } else {
       // City not in geo DB — use intelligent detection
       if (intelligent.barrio) {
-        const iDept = intelligent.department ?? 'Montevideo';
-        slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
-          `City "${addr.city}" not in geo DB but intelligent detected barrio "${intelligent.barrio}" (source: ${intelligent.source}) — using ${iDept}`,
-          { detectedBarrio: intelligent.barrio, source: intelligent.source }
-        );
-        resolvedDept = iDept;
-        // For Montevideo, use "Montevideo" as city (barrio handles the rest).
-        // For other departments, keep Shopify's city to try matching in the dropdown.
-        resolvedCity = iDept === 'Montevideo' ? 'Montevideo' : (addr.city ?? iDept);
-        resolvedBarrioHint = intelligent.barrio;
+        let iDept = intelligent.department ?? 'Montevideo';
+
+        // Audit 2026-05-05 — same AMBIGUOUS-BARRIO guard as above. The
+        // intelligent path defaults to "Montevideo" when ZIP doesn't help,
+        // which is wrong for interior customers whose address text happens
+        // to contain a generic word like "Centro" or "Cerro" (matched as a
+        // MVD barrio alias by detectBarrio). If Shopify says a valid non-MVD
+        // department and the matched barrio name is in our ambiguity list,
+        // refuse the Montevideo default.
+        if (
+          normalize(iDept) === 'montevideo' &&
+          isValidUruguayProvince(addr.province) &&
+          normalize(addr.province ?? '') !== 'montevideo' &&
+          isAmbiguousCityName(intelligent.barrio)
+        ) {
+          slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+            `INTELLIGENT OVERRIDE BLOCKED: ambiguous barrio match "${intelligent.barrio}" defaults to Montevideo, but Shopify says "${addr.province}" — keeping "${addr.province}"`,
+            { ambiguousBarrio: intelligent.barrio, shopifyProvince: addr.province, source: intelligent.source, audit: '2026-05-05' }
+          );
+          iDept = addr.province!;
+          resolvedDept = iDept;
+          // Don't set resolvedBarrioHint — the barrio match was a false positive
+          // (it matched a MVD-barrio name, but the customer is in a different dept).
+          resolvedCity = addr.city ?? iDept;
+        } else {
+          slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
+            `City "${addr.city}" not in geo DB but intelligent detected barrio "${intelligent.barrio}" (source: ${intelligent.source}) — using ${iDept}`,
+            { detectedBarrio: intelligent.barrio, source: intelligent.source }
+          );
+          resolvedDept = iDept;
+          // For Montevideo, use "Montevideo" as city (barrio handles the rest).
+          // For other departments, keep Shopify's city to try matching in the dropdown.
+          resolvedCity = iDept === 'Montevideo' ? 'Montevideo' : (addr.city ?? iDept);
+          resolvedBarrioHint = intelligent.barrio;
+        }
       } else if (intelligent.department) {
         slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
           `City "${addr.city}" not in geo DB, no barrio detected, but ZIP suggests dept "${intelligent.department}"`,
@@ -2225,58 +2280,97 @@ export async function createShipment(
   // a form rejection means DAC did NOT create a shipment — no risk of a
   // duplicate on retry, and we want the next attempt to succeed without
   // hitting the duplicate-submit guard.
-  if (guiaResult.guia.startsWith('PENDING-') && currentUrl.includes('/envios/nuevo')) {
-    try {
-      await db.pendingShipment.deleteMany({
-        where: { tenantId, shopifyOrderId: String(order.id), status: 'PENDING' },
-      });
-    } catch (clearErr) {
-      logger.warn(
-        { error: (clearErr as Error).message, orderId: order.id },
-        '[C-4] Failed to clear PendingShipment after rejected-form path',
-      );
-    }
+  // Mutable copies — the rescue path below may replace the PENDING- sentinel
+  // with a real guía recovered from historial. We can't reassign guiaResult
+  // (const) so we hoist locals here.
+  let finalGuia = guiaResult.guia;
+  let finalTrackingUrl = guiaResult.trackingUrl;
+
+  if (finalGuia.startsWith('PENDING-') && currentUrl.includes('/envios/nuevo')) {
     // Best-effort: capture whatever DAC is actually displaying so the
     // Shopify note reflects the real rejection reason (bad ZIP, missing
     // barrio, invalid phone length, etc.) instead of our catch-all.
+    //
+    // 2026-04-22 — #11497 Jenny Pensotti rescue path. We now scrape the
+    // DAC error box BEFORE deciding this is a real rejection. When the
+    // URL is /envios/nuevo AND DAC is showing no validation error, the
+    // URL signal is unreliable (DAC can redirect back to /envios/nuevo
+    // after a successful submit). In that specific case we try a
+    // recipient-matched historial rescue before giving up and poisoning
+    // a real guía as "rejected".
     const dacErrorText = await scrapeDacErrorBox(page);
-    if (dacErrorText) {
+
+    if (!dacErrorText) {
+      slog.warn(
+        DAC_STEPS.SUBMIT_WAIT_NAV,
+        `[rescue] URL is /envios/nuevo but DAC shows no validation error — attempting recipient-matched historial rescue for "${fullName}"`,
+        { orderName: order.name, recipientName: fullName },
+      );
+      const rescued = await findRecentGuiaForRecipient(
+        page,
+        fullName,
+        usedGuias ? Array.from(usedGuias) : [],
+        slog,
+        order.name,
+      );
+      if (rescued) {
+        finalGuia = rescued.guia;
+        finalTrackingUrl = rescued.trackingUrl;
+      }
+    }
+
+    // If the rescue didn't find a matching guía, this is a true rejection.
+    // Delete the PendingShipment row so the next cron tick isn't blocked
+    // by the C-4 duplicate-submit guard, surface the error, and throw.
+    if (finalGuia.startsWith('PENDING-')) {
+      try {
+        await db.pendingShipment.deleteMany({
+          where: { tenantId, shopifyOrderId: String(order.id), status: 'PENDING' },
+        });
+      } catch (clearErr) {
+        logger.warn(
+          { error: (clearErr as Error).message, orderId: order.id },
+          '[C-4] Failed to clear PendingShipment after rejected-form path',
+        );
+      }
+      if (dacErrorText) {
+        slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV,
+          `[address-rejected] DAC error box: "${dacErrorText}"`,
+          { orderName: order.name },
+        );
+      }
+      // Observability: log whether the AI fallback was actually consulted
+      // before we gave up. A common failure mode is `ANTHROPIC_API_KEY`
+      // being unset in Render → the AI call returns null silently, the
+      // deterministic resolver can't classify "Mvdo.", and we end up here.
+      // This line makes that path visible in the logs.
       slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV,
-        `[address-rejected] DAC error box: "${dacErrorText}"`,
-        { orderName: order.name },
+        `[address-rejected] AI resolver status before throw: ${
+          aiResolution
+            ? `ran (source=${aiResolution.source}, confidence=${aiResolution.confidence}, dept=${aiResolution.department})`
+            : 'NOT invoked or returned null — deterministic path only'
+        }`,
+        {
+          orderName: order.name,
+          aiInvoked: aiResolution != null,
+          city: addr.city,
+          zip: addr.zip,
+        },
+      );
+      throw new DacAddressRejectedError(
+        `DAC rejected the shipment form for ${order.name} (URL stayed on /envios/nuevo and no guía was extracted). ` +
+        `Likely cause: address could not be classified into a valid department/barrio. Review the customer address in Shopify.` +
+        (dacErrorText ? ` DAC validation text: "${dacErrorText}"` : ''),
+        order.name,
+        dacErrorText,
       );
     }
-    // Observability: log whether the AI fallback was actually consulted
-    // before we gave up. A common failure mode is `ANTHROPIC_API_KEY`
-    // being unset in Render → the AI call returns null silently, the
-    // deterministic resolver can't classify "Mvdo.", and we end up here.
-    // This line makes that path visible in the logs.
-    slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV,
-      `[address-rejected] AI resolver status before throw: ${
-        aiResolution
-          ? `ran (source=${aiResolution.source}, confidence=${aiResolution.confidence}, dept=${aiResolution.department})`
-          : 'NOT invoked or returned null — deterministic path only'
-      }`,
-      {
-        orderName: order.name,
-        aiInvoked: aiResolution != null,
-        city: addr.city,
-        zip: addr.zip,
-      },
-    );
-    throw new DacAddressRejectedError(
-      `DAC rejected the shipment form for ${order.name} (URL stayed on /envios/nuevo and no guía was extracted). ` +
-      `Likely cause: address could not be classified into a valid department/barrio. Review the customer address in Shopify.` +
-      (dacErrorText ? ` DAC validation text: "${dacErrorText}"` : ''),
-      order.name,
-      dacErrorText,
-    );
   }
 
   // C-4: DAC accepted the form and we have a real guía. Mark the
   // PendingShipment row resolved so reconcile won't orphan it.
-  if (!guiaResult.guia.startsWith('PENDING-')) {
-    await markSubmitResolved(tenantId, String(order.id), guiaResult.guia);
+  if (!finalGuia.startsWith('PENDING-')) {
+    await markSubmitResolved(tenantId, String(order.id), finalGuia);
   }
 
   // Resolve the payment status to persist on the Label:
@@ -2298,8 +2392,8 @@ export async function createShipment(
   }
 
   return {
-    guia: guiaResult.guia,
-    trackingUrl: guiaResult.trackingUrl,
+    guia: finalGuia,
+    trackingUrl: finalTrackingUrl,
     screenshotPath: '',
     // Pass the AI resolution hash back to the job runner for feedback recording
     aiResolutionHash: aiResolution?.inputHash,
@@ -2402,6 +2496,180 @@ function pickHighestGuia(results: { guia: string; href: string | null }[]): { gu
     if (!best) return curr;
     return BigInt(curr.guia) > BigInt(best.guia) ? curr : best;
   }, results[0]);
+}
+
+/**
+ * Lowercase, strip accents, collapse whitespace. Used to fuzzy-match
+ * recipient names between Shopify (what we filled on the DAC form) and
+ * DAC's historial rows (what DAC stored on its side). DAC sometimes
+ * normalises names (upper-cases, strips accents) so we compare in a
+ * normalised form on both sides.
+ */
+function normalizeNameForMatch(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Pure helper — given a set of historial rows (guía + visible row text)
+ * and a recipient name, return the best candidate guía that belongs to
+ * this recipient, or null if no row can be positively attributed.
+ *
+ * Why we need this:
+ * The post-Finalizar URL is not always a reliable rejection signal.
+ * DAC can create a guía AND then redirect the browser back to
+ * /envios/nuevo (e.g. when the tenant has the "start a new shipment"
+ * flow active). The original guard (shipment.ts:2437-2459) treats every
+ * /envios/nuevo URL as "DAC rejected", disables historial lookup, and
+ * the real guía gets orphaned — no row in our DB, but DAC bills the
+ * tenant anyway. This is the #11497 Jenny Pensotti failure mode
+ * (2026-04-22 20:55): DAC minted guía 8821127182837, our worker threw
+ * DacAddressRejectedError, Shopify got the "dirección confusa" note,
+ * customer never received tracking.
+ *
+ * Why it's safe:
+ * We never pick a historial row blindly. We require every token of
+ * the recipient name (normalised, >=3 chars) to appear in the row's
+ * text. Generic single-letter or short tokens are discarded so an
+ * operator's "Ana" doesn't match every shipment to "Analía".
+ * Guías already in our DB (excludeGuias) are always filtered out.
+ *
+ * Returns null when:
+ *   - the recipient name is too short/empty to be distinctive
+ *   - no row in historial contains all the name tokens
+ *   - every matching row's guía is already in our DB
+ *
+ * Exported for unit testing — the I/O wrapper below calls this.
+ */
+export function pickMatchingHistorialRow(
+  rows: { guia: string; href: string | null; text: string }[],
+  recipientName: string,
+  excludeGuias: string[],
+): { guia: string; href: string | null; text: string } | null {
+  if (!recipientName || recipientName.trim().length < 3) return null;
+
+  const normName = normalizeNameForMatch(recipientName);
+  const nameTokens = normName.split(' ').filter((t) => t.length >= 3);
+  // Require at least TWO distinctive tokens (>=3 chars each). A single
+  // short token like "Ana" would substring-match inside "ANALIA" and
+  // cause false positives. Requiring first+last name (or equivalent)
+  // keeps the rescue path safely narrow.
+  if (nameTokens.length < 2) return null;
+
+  const exclude = new Set(excludeGuias);
+  const candidates = rows.filter((r) => {
+    if (exclude.has(r.guia)) return false;
+    // Split row text into tokens the same way as the name, then check
+    // every name token appears as an EXACT token in the row. This
+    // avoids the "ana" → "analia" substring false positive that a
+    // naive String.includes would cause.
+    const rowTokens = new Set(normalizeNameForMatch(r.text).split(' '));
+    return nameTokens.every((tok) => rowTokens.has(tok));
+  });
+
+  if (candidates.length === 0) return null;
+
+  // Multiple matches for the same recipient name is unusual but possible
+  // (e.g. a repeat customer whose older shipments are still on page 1 of
+  // historial). Pick the HIGHEST-numbered guía — DAC guía numbers are
+  // monotonic, so highest == newest == the one we just created.
+  return candidates.reduce<typeof candidates[number] | null>((best, curr) => {
+    if (!best) return curr;
+    return BigInt(curr.guia) > BigInt(best.guia) ? curr : best;
+  }, null);
+}
+
+/**
+ * Rescue path for the "URL stuck on /envios/nuevo but DAC actually created
+ * the guía" failure mode. Navigates to DAC historial and looks for a row
+ * whose visible text matches the recipient name we filled on the form.
+ *
+ * This is intentionally narrower than the old blind historial lookup:
+ * we require a positive recipient-name match, so orphan guías from
+ * unrelated submissions (the #11481 Noelia Osorio poisoning bug) cannot
+ * be adopted.
+ *
+ * Returns null on any failure (navigation error, empty page, no matching
+ * row). Never throws — the caller falls back to throwing
+ * DacAddressRejectedError.
+ */
+async function findRecentGuiaForRecipient(
+  page: Page,
+  recipientName: string,
+  excludeGuias: string[],
+  slog: StepLogger,
+  orderName: string,
+): Promise<{ guia: string; trackingUrl?: string } | null> {
+  if (!recipientName || recipientName.trim().length < 3) {
+    slog.warn(
+      DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+      '[rescue] recipientName too short — skipping historial rescue to avoid false positives',
+      { recipientName, orderName },
+    );
+    return null;
+  }
+
+  try {
+    await page.goto(DAC_URLS.HISTORY, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+    await page.waitForTimeout(3_000);
+  } catch (navErr) {
+    slog.warn(
+      DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+      `[rescue] Could not navigate to historial: ${(navErr as Error).message}`,
+      { orderName },
+    );
+    return null;
+  }
+
+  let rows: { guia: string; href: string | null; text: string }[] = [];
+  try {
+    const GUIA_REGEX_SRC = '\\b88\\d{10,}\\b';
+    rows = await page.evaluate((regexStr: string) => {
+      const regex = new RegExp(regexStr);
+      const out: { guia: string; href: string | null; text: string }[] = [];
+      // DAC's historial page renders each shipment as a <tr>; we scan
+      // every row for a guía-shaped number, the row's visible text
+      // (for name matching), and any anchor href (tracking URL).
+      const trs = Array.from(document.querySelectorAll('tr'));
+      for (const tr of trs) {
+        const text = (tr as HTMLElement).innerText?.trim() ?? '';
+        const m = text.match(regex);
+        if (!m) continue;
+        const link = tr.querySelector('a') as HTMLAnchorElement | null;
+        out.push({ guia: m[0], href: link?.href ?? null, text });
+      }
+      return out;
+    }, GUIA_REGEX_SRC);
+  } catch (evalErr) {
+    slog.warn(
+      DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+      `[rescue] Historial scrape failed: ${(evalErr as Error).message}`,
+      { orderName },
+    );
+    return null;
+  }
+
+  const picked = pickMatchingHistorialRow(rows, recipientName, excludeGuias);
+  if (!picked) {
+    slog.info(
+      DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+      `[rescue] No historial row matched recipient "${recipientName}" (${rows.length} rows scanned) — true rejection`,
+      { orderName, recipientName, rowCount: rows.length },
+    );
+    return null;
+  }
+
+  slog.success(
+    DAC_STEPS.SUBMIT_OK,
+    `[rescue] Recovered guía ${picked.guia} from historial via recipient match — would have been orphaned`,
+    { orderName, recipientName, guia: picked.guia },
+  );
+  return { guia: picked.guia, trackingUrl: picked.href ?? undefined };
 }
 
 /**

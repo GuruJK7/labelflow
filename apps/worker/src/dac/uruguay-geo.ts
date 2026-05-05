@@ -712,35 +712,178 @@ export const MONTEVIDEO_ZIP_TO_BARRIOS: Record<string, string[]> = {
 };
 
 /**
- * Maps first 2 digits of Uruguayan ZIP to department name.
+ * Maps first 2 digits of Uruguayan ZIP code to department name.
+ *
+ * Audit 2026-05-05 — REWRITTEN. Previous map was systematically wrong:
+ * almost every prefix from 25 onward pointed to the wrong department,
+ * causing Tacuarembó orders (real ZIP 45000) to resolve as "Río Negro",
+ * Río Negro orders (65000) as "Flores", etc. The original errors were
+ * masked because the city-name lookup almost always wins over the ZIP
+ * fallback — but the moment a customer typed an ambiguous city like
+ * "Centro" or left the city blank, the wrong ZIP mapping took over and
+ * the deterministic resolver propagated the wrong department to DAC.
+ *
+ * The new map is verified against ~5,400 real production orders from
+ * the last 180 days (see `scripts/zip-prefix-audit.sql`). Each prefix
+ * here is the dominant city pattern observed in RunLog meta:
+ *
+ *   11/12/13: Montevideo  (633+79+5 orders, all Montevideo barrios)
+ *   15/16:    Canelones   (Costa de Oro: El Pinar, Lagomar, La Floresta)
+ *   20:       Maldonado   (Maldonado, Punta del Este, San Carlos)
+ *   27:       Rocha       (Rocha, Chuy, La Paloma — 3,982 orders!)
+ *   30:       Lavalleja   (Minas, José Pedro Varela)
+ *   33:       Treinta y Tres
+ *   37:       Cerro Largo (Melo, Río Branco)
+ *   40:       Rivera
+ *   45:       Tacuarembó  (Tacuarembó, Paso de los Toros) ← was "Rio Negro"
+ *   50:       Salto
+ *   55:       Artigas
+ *   60:       Paysandú
+ *   65:       Río Negro   (Fray Bentos, Young) ← was "Flores"
+ *   70:       Colonia     (Colonia, Carmelo, Nueva Palmira)
+ *   75:       Soriano     (Mercedes — 400 orders)
+ *   80:       San José    (San José de Mayo, Ciudad del Plata)
+ *   85:       Flores      (Trinidad) ← was "Tacuarembo"
+ *   90/91:    Canelones   (Canelones capital, Las Piedras, Pando, Sauce)
+ *   94:       Florida     (Florida, Sarandí Grande)
+ *
+ * Prefixes 17, 21, 25, 35, 47, 97, 98 were intentionally removed:
+ *   - 17, 25, 35, 47: never observed in production
+ *   - 21: only 2 cases, both Maldonado — handled by city name
+ *   - 97, 98: ambiguous in real data (Rivera vs Durazno, Florida vs
+ *     Durazno) — letting the city-name resolver handle these is safer
+ *     than picking a wrong default.
  */
 export const DEPARTMENT_ZIP_PREFIX: Record<string, string> = {
   '11': 'Montevideo',
   '12': 'Montevideo',
+  '13': 'Montevideo',
   '15': 'Canelones',
   '16': 'Canelones',
-  '17': 'Canelones',
   '20': 'Maldonado',
-  '21': 'Maldonado',
-  '25': 'Rocha',
-  '27': 'Treinta y Tres',
-  '30': 'Cerro Largo',
-  '33': 'Rivera',
-  '35': 'Artigas',
-  '37': 'Salto',
-  '40': 'Paysandu',
-  '45': 'Rio Negro',
-  '47': 'Soriano',
-  '50': 'Colonia',
-  '60': 'San Jose',
-  '65': 'Flores',
-  '70': 'Florida',
-  '75': 'Durazno',
-  '80': 'Lavalleja',
-  '85': 'Tacuarembo',
-  '90': 'Treinta y Tres',
-  '91': 'Cerro Largo',
+  '27': 'Rocha',
+  '30': 'Lavalleja',
+  '33': 'Treinta y Tres',
+  '37': 'Cerro Largo',
+  '40': 'Rivera',
+  '45': 'Tacuarembo',
+  '50': 'Salto',
+  '55': 'Artigas',
+  '60': 'Paysandu',
+  '65': 'Rio Negro',
+  '70': 'Colonia',
+  '75': 'Soriano',
+  '80': 'San Jose',
+  '85': 'Flores',
+  '90': 'Canelones',
+  '91': 'Canelones',
+  '94': 'Florida',
 };
+
+/**
+ * Set of ALL 19 valid Uruguay department names, normalized
+ * (lowercase, accent-stripped). Used by shipment.ts to validate that
+ * a Shopify-supplied `province` is a real Uruguay department before
+ * trusting it over the city's geo lookup.
+ */
+export const URUGUAY_DEPARTMENTS_NORMALIZED: Set<string> = new Set(
+  DEPARTMENTS.map(d =>
+    d.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+  ).concat([
+    // Accent variants the customer or Shopify may emit:
+    'paysandu', 'paysandú',
+    'rio negro', 'río negro',
+    'san jose', 'san josé',
+    'tacuarembo', 'tacuarembó',
+  ])
+);
+
+/**
+ * Names that, when used as a Shopify "city" field, are ambiguous and
+ * must NOT alone be trusted to override the customer's stated province.
+ *
+ * Every Uruguayan town has a "Centro" (downtown) — the customer who
+ * types `city: "Centro"` is naming THEIR town's center, not a barrio of
+ * Montevideo. Same for "Cerro" (also a department: Cerro Largo) and
+ * "Bella Vista" (a town in Maldonado AND a barrio in Montevideo).
+ *
+ * The pre-fix behavior: getDepartmentForCity("Centro") returned
+ * "Montevideo" (because "centro" is in CITY_TO_DEPARTMENT as a MVD
+ * barrio), and shipment.ts then OVERRODE the customer's correct
+ * Shopify province with "Montevideo". Confirmed misroutes from the
+ * 2026-05-05 audit:
+ *   - #11616 Adriana Martinez — Tacuarembó/"Centro" → Montevideo
+ *   - #11015 — Rocha/"Centro" → Montevideo
+ *   - #11129 — Treinta y Tres/"Centro" → Montevideo
+ *   - #11673 Flavia Falero — Maldonado/"Centro/San Carlos" → Montevideo
+ *   - #1215  Ines Velazco — Maldonado/"Bella Vista" → Montevideo
+ *
+ * Names here are normalized (lowercased, accent-stripped). The match
+ * is on the WHOLE city string after normalize() — partial matches are
+ * not flagged (e.g. "Centro Tacuarembó" is a multi-word string and
+ * gets handled by getDepartmentForCity's fuzzy fallbacks).
+ */
+export const AMBIGUOUS_CITY_NAMES: Set<string> = new Set([
+  // Generic descriptors — every town has these
+  'centro',
+  'cerro',
+  'bella vista',
+  'bellavista',
+  'union',
+  'la union',
+  'manga',
+  'prado',
+  'colon',
+  'la paz', // also a town in Canelones AND Colonia
+  // Ambiguous compounds — the slash form a customer types when they
+  // mean "Centro de [their town]"
+  'centro/montevideo',
+  'centro/canelones',
+  'centro/maldonado',
+  'centro/san carlos',
+  'centro/rivera',
+  'centro/salto',
+  'centro/tacuarembo',
+  'centro/durazno',
+  'centro/florida',
+  'centro/colonia',
+]);
+
+/**
+ * Returns true if `city` is a generic name that should not, by itself,
+ * be trusted to override a customer's stated province. See
+ * AMBIGUOUS_CITY_NAMES for the rationale and the audit-confirmed
+ * misroutes that motivated this list.
+ */
+export function isAmbiguousCityName(city: string | null | undefined): boolean {
+  if (!city) return false;
+  const normalized = city
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return AMBIGUOUS_CITY_NAMES.has(normalized);
+}
+
+/**
+ * Returns true if `province` is a recognizable Uruguay department name
+ * (covers accent variants and common Shopify spellings). Used to decide
+ * whether a Shopify `province` field is trustworthy enough to override
+ * an ambiguous geo lookup.
+ */
+export function isValidUruguayProvince(province: string | null | undefined): boolean {
+  if (!province) return false;
+  const normalized = province
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return URUGUAY_DEPARTMENTS_NORMALIZED.has(normalized);
+}
 
 /**
  * Maps major Montevideo street/avenue names to candidate barrios.

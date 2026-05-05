@@ -708,49 +708,55 @@ describe('E. getBarriosFromStreet — all streets', () => {
 // F. getDepartmentFromZip — 40 tests
 // ================================================================
 describe('F. getDepartmentFromZip — all prefixes', () => {
+  // Audit 2026-05-05: corrected expected values to match real Uruguay
+  // postal codes (verified against ~5,400 production orders). The previous
+  // expectations were locked to the buggy mapping — fixing the table here
+  // is part of the same change that fixes the resolver.
   it.each([
-    ['11000', 'Montevideo'], ['12000', 'Montevideo'],
-    ['15000', 'Canelones'], ['16000', 'Canelones'], ['17000', 'Canelones'],
-    ['20000', 'Maldonado'], ['21000', 'Maldonado'],
-    ['25000', 'Rocha'],
-    ['27000', 'Treinta y Tres'],
-    ['30000', 'Cerro Largo'],
-    ['33000', 'Rivera'],
-    ['35000', 'Artigas'],
-    ['37000', 'Salto'],
-    ['40000', 'Paysandu'],
-    ['45000', 'Rio Negro'],
-    ['47000', 'Soriano'],
-    ['50000', 'Colonia'],
-    ['60000', 'San Jose'],
-    ['65000', 'Flores'],
-    ['70000', 'Florida'],
-    ['75000', 'Durazno'],
-    ['80000', 'Lavalleja'],
-    ['85000', 'Tacuarembo'],
-    ['90000', 'Treinta y Tres'],
-    ['91000', 'Cerro Largo'],
+    ['11000', 'Montevideo'], ['12000', 'Montevideo'], ['13000', 'Montevideo'],
+    ['15000', 'Canelones'], ['16000', 'Canelones'],
+    ['20000', 'Maldonado'],
+    ['27000', 'Rocha'],
+    ['30000', 'Lavalleja'],
+    ['33000', 'Treinta y Tres'],
+    ['37000', 'Cerro Largo'],
+    ['40000', 'Rivera'],
+    ['45000', 'Tacuarembo'],
+    ['50000', 'Salto'],
+    ['55000', 'Artigas'],
+    ['60000', 'Paysandu'],
+    ['65000', 'Rio Negro'],
+    ['70000', 'Colonia'],
+    ['75000', 'Soriano'],
+    ['80000', 'San Jose'],
+    ['85000', 'Flores'],
+    ['90000', 'Canelones'],
+    ['91000', 'Canelones'],
+    ['94000', 'Florida'],
   ])('ZIP %s → %s', (zip, expected) => {
     expect(getDepartmentFromZip(zip)).toBe(expected);
   });
 
-  // Invalid
-  it.each([null, undefined, '', '1', '99', '99000', 'abc'])
-  ('invalid %s → null', (zip) => {
+  // Invalid / unmapped (17, 21, 25, 35, 47, 97, 98 are intentionally excluded)
+  it.each([null, undefined, '', '1', '17000', '21000', '25000', '35000', '47000', '97000', '99', '99000', 'abc'])
+  ('invalid/unmapped %s → null', (zip) => {
     const r = getDepartmentFromZip(zip as any);
     expect(r).toBeNull();
   });
 
-  // With extra digits
+  // With extra digits — should match by prefix
   it.each([
     ['11500', 'Montevideo'],
     ['15432', 'Canelones'],
     ['20100', 'Maldonado'],
-    ['37500', 'Salto'],
-    ['50123', 'Colonia'],
-    ['60999', 'San Jose'],
-    ['70001', 'Florida'],
-    ['85999', 'Tacuarembo'],
+    ['37500', 'Cerro Largo'],
+    ['45123', 'Tacuarembo'],
+    ['50123', 'Salto'],
+    ['60999', 'Paysandu'],
+    ['65900', 'Rio Negro'],
+    ['70001', 'Colonia'],
+    ['85999', 'Flores'],
+    ['90999', 'Canelones'],
   ])('5-digit ZIP %s → %s', (zip, expected) => {
     expect(getDepartmentFromZip(zip)).toBe(expected);
   });
@@ -788,7 +794,8 @@ describe('G. Full pipeline integration', () => {
   });
 
   it('Interior: Salto high value USD', () => {
-    const r = simulate('Salto', 'Uruguay 340', null, '37000', '100', 'USD');
+    // Audit 2026-05-05: real Salto ZIP is 50000 (was 37000 — that's Cerro Largo)
+    const r = simulate('Salto', 'Uruguay 340', null, '50000', '100', 'USD');
     expect(r.dept).toBe('Salto');
     expect(r.zipDept).toBe('Salto');
     expect(r.payment).toBe('REMITENTE');
@@ -814,7 +821,8 @@ describe('G. Full pipeline integration', () => {
   });
 
   it('Rivera city', () => {
-    const r = simulate('Rivera', 'Sarandi 500', null, '33000', '4500');
+    // Audit 2026-05-05: real Rivera ZIP is 40000 (was 33000 — that's Treinta y Tres)
+    const r = simulate('Rivera', 'Sarandi 500', null, '40000', '4500');
     expect(r.dept).toBe('Rivera');
     expect(r.payment).toBe('REMITENTE');
   });
@@ -883,7 +891,8 @@ describe('G. Full pipeline integration', () => {
   });
 
   it('Sur (Artigas, not Montevideo barrio)', () => {
-    const r = simulate('Sur', 'Calle Principal 100', null, '35000', '3000');
+    // Audit 2026-05-05: real Artigas ZIP is 55000 (was 35000 — invalid prefix)
+    const r = simulate('Sur', 'Calle Principal 100', null, '55000', '3000');
     expect(r.dept).toBe('Artigas');
     expect(r.zipDept).toBe('Artigas');
   });

@@ -210,17 +210,21 @@ describe('getBarriosFromZip', () => {
 // SECTION 3: getDepartmentFromZip — 10 tests
 // ============================================================
 describe('getDepartmentFromZip', () => {
+  // Audit 2026-05-05: aligned with corrected DEPARTMENT_ZIP_PREFIX
   it.each([
     ['11000', 'Montevideo'],
     ['12500', 'Montevideo'],
     ['15000', 'Canelones'],
     ['20000', 'Maldonado'],
-    ['25000', 'Rocha'],
-    ['37000', 'Salto'],
-    ['40000', 'Paysandu'],
-    ['50000', 'Colonia'],
-    ['60000', 'San Jose'],
-    ['85000', 'Tacuarembo'],
+    ['27000', 'Rocha'],
+    ['37000', 'Cerro Largo'],
+    ['40000', 'Rivera'],
+    ['45000', 'Tacuarembo'],
+    ['50000', 'Salto'],
+    ['60000', 'Paysandu'],
+    ['65000', 'Rio Negro'],
+    ['85000', 'Flores'],
+    ['90000', 'Canelones'],
   ])('ZIP %s → %s', (zip, expected) => {
     expect(getDepartmentFromZip(zip)).toBe(expected);
   });
@@ -681,8 +685,9 @@ describe('Full address resolution (integration)', () => {
     expect(r.extraObs).toBe('Apto 12');
   });
 
-  it('Interior order: Salto city, ZIP 37000', () => {
-    const r = resolveAddress('Salto', 'Uruguay 340', null, '37000');
+  it('Interior order: Salto city, ZIP 50000', () => {
+    // Audit 2026-05-05: real Salto ZIP is 50000 (was 37000 — that's Cerro Largo)
+    const r = resolveAddress('Salto', 'Uruguay 340', null, '50000');
     expect(r.dept).toBe('Salto');
     expect(r.zipDept).toBe('Salto');
     expect(r.zipBarrios).toBeNull(); // Not Montevideo
@@ -720,8 +725,9 @@ describe('Full address resolution (integration)', () => {
     expect(r.extraObs).toBe('Casa 15');
   });
 
-  it('Rivera city: ZIP 33000', () => {
-    const r = resolveAddress('Rivera', 'Sarandi 500', null, '33000');
+  it('Rivera city: ZIP 40000', () => {
+    // Audit 2026-05-05: real Rivera ZIP is 40000 (was 33000 — that's Treinta y Tres)
+    const r = resolveAddress('Rivera', 'Sarandi 500', null, '40000');
     expect(r.dept).toBe('Rivera');
     expect(r.zipDept).toBe('Rivera');
   });

@@ -469,12 +469,14 @@ describe('ZIP and street geo detection (15 tests)', () => {
     expect(getDepartmentFromZip('20100')).toBe('Maldonado');
   });
 
-  it('T79: ZIP 70101 → Florida', () => {
-    expect(getDepartmentFromZip('70101')).toBe('Florida');
+  it('T79: ZIP 70101 → Colonia', () => {
+    // Audit 2026-05-05: was Florida (wrong); 70 is Colonia per real UY codes
+    expect(getDepartmentFromZip('70101')).toBe('Colonia');
   });
 
-  it('T80: ZIP 75000 → Durazno', () => {
-    expect(getDepartmentFromZip('75000')).toBe('Durazno');
+  it('T80: ZIP 75000 → Soriano', () => {
+    // Audit 2026-05-05: was Durazno (wrong); 75 is Soriano (Mercedes capital)
+    expect(getDepartmentFromZip('75000')).toBe('Soriano');
   });
 
   it('T81: ZIP null → null', () => {
