@@ -943,26 +943,42 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             priorGuia: (err as DuplicateSubmitError).existingGuia,
           });
         } else if (isDacAddressRejected) {
-          slog.warn('order-fail', `Order ${order.name}: DAC rejected form — address confusa, needs operator to contact customer`, {
-            orderId: order.id,
-            orderName: order.name,
-            shopifyCity: addr.city,
-            shopifyAddress1: addr.address1,
-            shopifyAddress2: addr.address2,
-            shopifyZip: addr.zip,
-          });
+          // Audit 2026-05-06: distinguish "rescue failed (possible orphan guía in DAC)"
+          // from "genuine rejection (no guía exists)". The first case is more dangerous
+          // — we must NOT auto-retry or we pile up orphan guías DAC charges us for.
+          const rescueFailed = (err as DacAddressRejectedError).rescueFailed;
+          slog.warn(
+            'order-fail',
+            rescueFailed
+              ? `Order ${order.name}: DAC silent reject + rescue exhausted — possible ORPHAN GUÍA in DAC; manual operator verification required (PendingShipment preserved to block auto-retry)`
+              : `Order ${order.name}: DAC rejected form — address confusa, needs operator to contact customer`,
+            {
+              orderId: order.id,
+              orderName: order.name,
+              recipientName: customerName,
+              shopifyCity: addr.city,
+              shopifyAddress1: addr.address1,
+              shopifyAddress2: addr.address2,
+              shopifyZip: addr.zip,
+              rescueFailed,
+            },
+          );
         } else {
           slog.error('order-fail', `Order ${order.name} failed: ${errorMsg}`);
         }
 
         // BUG FIX 5: Upsert instead of create to handle retries
+        const dacRescueFailed =
+          isDacAddressRejected && (err as DacAddressRejectedError).rescueFailed;
         const labelErrorMsg = isDacGuiaConstraint
           ? 'Guia already assigned to another order'
           : isDuplicateSubmit
             ? `C-4: prior submit exists (status=${(err as DuplicateSubmitError).existingStatus}, guia=${(err as DuplicateSubmitError).existingGuia ?? 'n/a'}); check DAC historial`
-            : isDacAddressRejected
-              ? 'Dirección del cliente en Shopify no se pudo interpretar — contactar al cliente para corregirla y reprocesar.'
-              : errorMsg.substring(0, 500);
+            : dacRescueFailed
+              ? `Posible guía huérfana en DAC para ${customerName}. Verificar manualmente en historial DAC y vincular o desbloquear (PendingShipment preservado para evitar duplicados).`
+              : isDacAddressRejected
+                ? 'Dirección del cliente en Shopify no se pudo interpretar — contactar al cliente para corregirla y reprocesar.'
+                : errorMsg.substring(0, 500);
         const labelTargetStatus: 'FAILED' | 'NEEDS_REVIEW' =
           isDuplicateSubmit || isDacAddressRejected ? 'NEEDS_REVIEW' : 'FAILED';
 
@@ -1017,14 +1033,32 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           const dacErrText = isDacAddressRejected
             ? (err as DacAddressRejectedError).dacErrorText
             : '';
+          // Audit 2026-05-06: distinguish three cases for the operator:
+          //   (a) genuine rejection w/ DAC error box → contact customer
+          //   (b) genuine rejection w/o DAC error box → contact customer
+          //   (c) silent reject + rescue exhausted → POSSIBLE ORPHAN GUÍA
+          //       in DAC. Operator must verify historial first; the worker
+          //       will NOT auto-retry (PendingShipment is preserved) to
+          //       avoid creating duplicate guías DAC charges for.
           const noteText = isDacAddressRejected
-            ? `LabelFlow: no se pudo crear el envío en DAC — dirección confusa o incompleta en Shopify ` +
-              `(ciudad="${addr.city ?? ''}", dirección="${addr.address1 ?? ''}"${addr.address2 ? `, referencia="${addr.address2}"` : ''}` +
-              `${addr.zip ? `, código postal="${addr.zip}"` : ''}). ` +
-              (dacErrText
-                ? `DAC mostró este mensaje de validación: "${dacErrText}". `
-                : `DAC rechazó el formulario porque la localidad/barrio no pudo identificarse. `) +
-              `Acción: contactar al cliente para corregir la dirección en Shopify y el worker la va a reprocesar solo en el próximo ciclo.`
+            ? dacRescueFailed
+              ? `LabelFlow: DAC NO confirmó si se creó la guía para ${customerName} — ` +
+                `URL quedó en /envios/nuevo, error box vacío, y el rescue del historial no encontró la guía después de 3 intentos. ` +
+                `Es POSIBLE que DAC haya creado una guía huérfana para este cliente.\n\n` +
+                `ACCIÓN del operador (en este orden):\n` +
+                `1. Entrar a DAC → Historial → buscar última guía a nombre de "${customerName}".\n` +
+                `2. Si la guía EXISTE: copiar el número y vincularla manualmente en LabelFlow (admin → vincular guía).\n` +
+                `3. Si la guía NO EXISTE: revisar la dirección con el cliente (ciudad="${addr.city ?? ''}", ` +
+                `dirección="${addr.address1 ?? ''}"${addr.zip ? `, código postal="${addr.zip}"` : ''}), corregirla en Shopify, ` +
+                `y desbloquear esta orden (admin → eliminar PendingShipment) para reintento.\n\n` +
+                `IMPORTANTE: el worker NO va a reintentar automáticamente para evitar crear guías duplicadas.`
+              : `LabelFlow: no se pudo crear el envío en DAC — dirección confusa o incompleta en Shopify ` +
+                `(ciudad="${addr.city ?? ''}", dirección="${addr.address1 ?? ''}"${addr.address2 ? `, referencia="${addr.address2}"` : ''}` +
+                `${addr.zip ? `, código postal="${addr.zip}"` : ''}). ` +
+                (dacErrText
+                  ? `DAC mostró este mensaje de validación: "${dacErrText}". `
+                  : `DAC rechazó el formulario porque la localidad/barrio no pudo identificarse. `) +
+                `Acción: contactar al cliente para corregir la dirección en Shopify y el worker la va a reprocesar solo en el próximo ciclo.`
             : `LabelFlow ERROR: ${errorMsg.substring(0, 200)}`;
           try {
             const { data } = await shopifyClient.get(`/orders/${order.id}.json`);

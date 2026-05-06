@@ -99,4 +99,48 @@ describe('DacAddressRejectedError — address-rejected-by-DAC error class', () =
       throw new Error('instanceof narrowing failed — contract regression');
     }
   });
+
+  // ── 2026-05-06 audit: rescueFailed flag ──
+  //
+  // Distinguishes "DAC silent reject + historial rescue exhausted"
+  // (POSSIBLE orphan guía in DAC, do NOT auto-retry) from "DAC genuine
+  // reject" (no guía exists, safe to retry after operator fixes Shopify).
+  // The job layer reads this flag to decide whether to preserve the
+  // PendingShipment row (rescueFailed=true) or delete it (false).
+
+  it('defaults rescueFailed to false when not provided (backwards-compat)', () => {
+    const err = new DacAddressRejectedError('msg', '#1');
+    expect(err.rescueFailed).toBe(false);
+  });
+
+  it('rescueFailed=true marks the silent-reject + rescue-exhausted case', () => {
+    const err = new DacAddressRejectedError(
+      'DAC silently rejected the form for #11724 (URL on /envios/nuevo, error box empty, rescue exhausted).',
+      '#11724',
+      '', // empty error box — that's part of the trigger condition
+      true, // rescueFailed
+    );
+    expect(err.rescueFailed).toBe(true);
+    expect(err.dacErrorText).toBe('');
+  });
+
+  it('rescueFailed=false for genuine rejections (DAC error box has text)', () => {
+    const err = new DacAddressRejectedError(
+      'DAC rejected form',
+      '#100',
+      'El código postal no es válido para la localidad seleccionada.',
+      false,
+    );
+    expect(err.rescueFailed).toBe(false);
+    expect(err.dacErrorText).not.toBe('');
+  });
+
+  it('rescueFailed is accessible via instanceof narrowing', () => {
+    const err: unknown = new DacAddressRejectedError('msg', '#1', '', true);
+    if (err instanceof DacAddressRejectedError) {
+      expect(err.rescueFailed).toBe(true);
+    } else {
+      throw new Error('instanceof narrowing failed');
+    }
+  });
 });

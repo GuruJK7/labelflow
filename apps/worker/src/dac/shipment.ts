@@ -78,14 +78,32 @@ export class DacAddressRejectedError extends Error {
    * job-level note builder.
    */
   readonly dacErrorText: string;
+  /**
+   * True when DAC's error box was empty AND the historial-rescue path
+   * also failed to find a matching guía. In that ambiguous state the
+   * order MIGHT have an orphan guía in DAC (the rescue couldn't see it
+   * for timing/pagination reasons) OR DAC genuinely rejected the form
+   * silently. Either way, we cannot safely retry — a retry could create
+   * a duplicate orphan guía. The PendingShipment row is preserved by
+   * the caller in this case so the C-4 duplicate-submit guard parks the
+   * order until the operator manually verifies DAC historial.
+   *
+   * Audit 2026-05-06 — see #11724 Marcela Pascal, #11733 Silvia Aranda,
+   * #11746 CLAUDIA GARCIA MENENDEZ for the production cases that
+   * motivated this. Some of those retries scanned only 1–5 historial
+   * rows on first load, missing real guías that existed in DAC.
+   */
+  readonly rescueFailed: boolean;
   constructor(
     message: string,
     readonly orderName: string,
     dacErrorText: string = '',
+    rescueFailed: boolean = false,
   ) {
     super(message);
     this.name = 'DacAddressRejectedError';
     this.dacErrorText = dacErrorText;
+    this.rescueFailed = rescueFailed;
   }
 }
 
@@ -2319,26 +2337,59 @@ export async function createShipment(
       }
     }
 
-    // If the rescue didn't find a matching guía, this is a true rejection.
-    // Delete the PendingShipment row so the next cron tick isn't blocked
-    // by the C-4 duplicate-submit guard, surface the error, and throw.
+    // If the rescue didn't find a matching guía, decide whether this is
+    // (a) a GENUINE rejection — DAC showed a validation error, no guía
+    //     exists, safe to retry after operator fixes Shopify; OR
+    // (b) a SILENT-REJECT-AMBIGUOUS state — DAC's error box was empty
+    //     AND the rescue couldn't find a matching guía. The guía MIGHT
+    //     exist in DAC (rescue missed it for timing/pagination reasons)
+    //     or DAC silently rejected. We can't tell from here.
+    //
+    // For (a): delete PendingShipment, throw, operator fixes address,
+    // next cron retries cleanly.
+    //
+    // For (b): KEEP PendingShipment so the C-4 duplicate-submit guard
+    // parks the order. Otherwise the next cron creates ANOTHER orphan
+    // guía, and the next, and the next ("guía pile-up"). The operator
+    // must manually verify DAC's historial and either link an existing
+    // guía or unblock the order. Audit 2026-05-06.
     if (finalGuia.startsWith('PENDING-')) {
-      try {
-        await db.pendingShipment.deleteMany({
-          where: { tenantId, shopifyOrderId: String(order.id), status: 'PENDING' },
-        });
-      } catch (clearErr) {
-        logger.warn(
-          { error: (clearErr as Error).message, orderId: order.id },
-          '[C-4] Failed to clear PendingShipment after rejected-form path',
-        );
-      }
-      if (dacErrorText) {
+      const rescueFailed = !dacErrorText;
+
+      if (!rescueFailed) {
+        // Genuine rejection — safe to clear the C-4 guard.
+        try {
+          await db.pendingShipment.deleteMany({
+            where: { tenantId, shopifyOrderId: String(order.id), status: 'PENDING' },
+          });
+        } catch (clearErr) {
+          logger.warn(
+            { error: (clearErr as Error).message, orderId: order.id },
+            '[C-4] Failed to clear PendingShipment after rejected-form path',
+          );
+        }
         slog.warn(DAC_STEPS.SUBMIT_WAIT_NAV,
           `[address-rejected] DAC error box: "${dacErrorText}"`,
           { orderName: order.name },
         );
+      } else {
+        // Silent reject + rescue exhausted — preserve PendingShipment so
+        // the C-4 guard blocks the next cron tick from creating a
+        // duplicate guía. Operator must verify and unblock.
+        slog.warn(
+          DAC_STEPS.SUBMIT_WAIT_NAV,
+          `[rescue-failed] DAC error box empty AND historial rescue failed — KEEPING PendingShipment to prevent duplicate-guía creation. Operator must verify DAC historial for "${fullName}" and either link the guía or manually clear the PendingShipment row.`,
+          {
+            orderName: order.name,
+            recipientName: fullName,
+            shopifyCity: addr.city,
+            shopifyAddress1: addr.address1,
+            shopifyZip: addr.zip,
+            audit: '2026-05-06',
+          },
+        );
       }
+
       // Observability: log whether the AI fallback was actually consulted
       // before we gave up. A common failure mode is `ANTHROPIC_API_KEY`
       // being unset in Render → the AI call returns null silently, the
@@ -2355,14 +2406,19 @@ export async function createShipment(
           aiInvoked: aiResolution != null,
           city: addr.city,
           zip: addr.zip,
+          rescueFailed,
         },
       );
       throw new DacAddressRejectedError(
-        `DAC rejected the shipment form for ${order.name} (URL stayed on /envios/nuevo and no guía was extracted). ` +
-        `Likely cause: address could not be classified into a valid department/barrio. Review the customer address in Shopify.` +
-        (dacErrorText ? ` DAC validation text: "${dacErrorText}"` : ''),
+        rescueFailed
+          ? `DAC silently rejected the form for ${order.name} (URL on /envios/nuevo, error box empty, rescue exhausted). ` +
+            `An orphan guía MAY exist in DAC for "${fullName}" — operator must verify historial manually.`
+          : `DAC rejected the shipment form for ${order.name} (URL stayed on /envios/nuevo and no guía was extracted). ` +
+            `Likely cause: address could not be classified into a valid department/barrio. Review the customer address in Shopify.` +
+            (dacErrorText ? ` DAC validation text: "${dacErrorText}"` : ''),
         order.name,
         dacErrorText,
+        rescueFailed,
       );
     }
   }
@@ -2585,9 +2641,105 @@ export function pickMatchingHistorialRow(
 }
 
 /**
+ * Scan the currently-rendered DAC historial page and return every row
+ * containing a guía number. Pure DOM read — no navigation, no waiting.
+ * Used by findRecentGuiaForRecipient on each retry / pagination step.
+ */
+async function scrapeHistorialRows(
+  page: Page,
+): Promise<{ guia: string; href: string | null; text: string }[]> {
+  const GUIA_REGEX_SRC = '\\b88\\d{10,}\\b';
+  return page.evaluate((regexStr: string) => {
+    const regex = new RegExp(regexStr);
+    const out: { guia: string; href: string | null; text: string }[] = [];
+    // DAC's historial page renders each shipment as a <tr>; we scan
+    // every row for a guía-shaped number, the row's visible text
+    // (for name matching), and any anchor href (tracking URL).
+    const trs = Array.from(document.querySelectorAll('tr'));
+    for (const tr of trs) {
+      const text = (tr as HTMLElement).innerText?.trim() ?? '';
+      const m = text.match(regex);
+      if (!m) continue;
+      const link = tr.querySelector('a') as HTMLAnchorElement | null;
+      out.push({ guia: m[0], href: link?.href ?? null, text });
+    }
+    return out;
+  }, GUIA_REGEX_SRC);
+}
+
+/**
+ * Best-effort: try to load more historial rows by clicking pagination /
+ * "load more" controls. DAC's historial uses server-side pagination with
+ * "Siguiente" / page-number links and (sometimes) infinite scroll.
+ *
+ * Returns true if more rows were likely loaded (so the caller should
+ * re-scrape), false if no obvious pagination control was found.
+ *
+ * Defensive: any error returns false rather than throwing — pagination
+ * is an optimization, not a hard requirement. The caller decides whether
+ * to retry without it.
+ */
+async function loadMoreHistorialRows(page: Page): Promise<boolean> {
+  try {
+    const advanced = await page.evaluate(() => {
+      // 1. "Siguiente" / "Next" link in pagination
+      const links = Array.from(document.querySelectorAll('a, button')) as HTMLElement[];
+      for (const el of links) {
+        const txt = (el.innerText ?? '').trim().toLowerCase();
+        if (txt === 'siguiente' || txt === 'next' || txt === '›' || txt === 'next ›') {
+          const ariaDisabled = el.getAttribute('aria-disabled');
+          const cls = el.className ?? '';
+          if (ariaDisabled !== 'true' && !/\bdisabled\b/.test(cls)) {
+            (el as HTMLAnchorElement | HTMLButtonElement).click();
+            return true;
+          }
+        }
+      }
+      // 2. "Cargar más" / "Mostrar más" infinite-scroll buttons
+      for (const el of links) {
+        const txt = (el.innerText ?? '').trim().toLowerCase();
+        if (txt.startsWith('cargar más') || txt.startsWith('mostrar más') || txt.startsWith('load more')) {
+          (el as HTMLElement).click();
+          return true;
+        }
+      }
+      // 3. Scroll to bottom in case DAC uses scroll-triggered lazy-load
+      window.scrollTo(0, document.body.scrollHeight);
+      return false;
+    });
+    if (advanced) {
+      // Give DAC a moment to fetch & render the next page
+      await page.waitForTimeout(2_000);
+    }
+    return advanced;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Rescue path for the "URL stuck on /envios/nuevo but DAC actually created
  * the guía" failure mode. Navigates to DAC historial and looks for a row
  * whose visible text matches the recipient name we filled on the form.
+ *
+ * Audit 2026-05-06 — robustness rewrite. The previous single-shot lookup
+ * was failing intermittently in production: DAC's historial occasionally
+ * showed only 1–5 rows on first load (race between our navigation and
+ * DAC's server-side render), so the just-created guía wasn't visible
+ * even when it existed. Result: orphan guías DAC charged us for, no
+ * tracking link, and the order got reprocessed on the next cron tick →
+ * second orphan guía, third, etc. ("guía pile-up").
+ *
+ * The new path:
+ *   1. Navigate with `networkidle` (waits for fetch/XHR to settle, not
+ *      just initial HTML)
+ *   2. Wait an additional 6 s for DAC's server-rendered shipments table
+ *      to finish populating
+ *   3. Retry the scrape up to 3 times (5 s, 10 s, 15 s backoff) — if
+ *      historial was still incomplete on attempt 1, attempt 2 usually
+ *      catches it
+ *   4. On each attempt, scan multiple historial pages by clicking
+ *      "Siguiente" / "Cargar más" (best-effort, errors are non-fatal)
  *
  * This is intentionally narrower than the old blind historial lookup:
  * we require a positive recipient-name match, so orphan guías from
@@ -2596,7 +2748,7 @@ export function pickMatchingHistorialRow(
  *
  * Returns null on any failure (navigation error, empty page, no matching
  * row). Never throws — the caller falls back to throwing
- * DacAddressRejectedError.
+ * DacAddressRejectedError with `rescueFailed=true`.
  */
 async function findRecentGuiaForRecipient(
   page: Page,
@@ -2614,62 +2766,103 @@ async function findRecentGuiaForRecipient(
     return null;
   }
 
-  try {
-    await page.goto(DAC_URLS.HISTORY, { waitUntil: 'domcontentloaded', timeout: 15_000 });
-    await page.waitForTimeout(3_000);
-  } catch (navErr) {
-    slog.warn(
-      DAC_STEPS.SUBMIT_EXTRACT_GUIA,
-      `[rescue] Could not navigate to historial: ${(navErr as Error).message}`,
-      { orderName },
-    );
-    return null;
-  }
+  // Cap at 3 attempts, with backoff between attempts. Each attempt does a
+  // fresh navigation + multi-page scrape.
+  const ATTEMPT_BACKOFF_MS = [0, 5_000, 10_000];
+  const MAX_PAGINATION_PAGES = 3;
+  let lastRowCount = 0;
 
-  let rows: { guia: string; href: string | null; text: string }[] = [];
-  try {
-    const GUIA_REGEX_SRC = '\\b88\\d{10,}\\b';
-    rows = await page.evaluate((regexStr: string) => {
-      const regex = new RegExp(regexStr);
-      const out: { guia: string; href: string | null; text: string }[] = [];
-      // DAC's historial page renders each shipment as a <tr>; we scan
-      // every row for a guía-shaped number, the row's visible text
-      // (for name matching), and any anchor href (tracking URL).
-      const trs = Array.from(document.querySelectorAll('tr'));
-      for (const tr of trs) {
-        const text = (tr as HTMLElement).innerText?.trim() ?? '';
-        const m = text.match(regex);
-        if (!m) continue;
-        const link = tr.querySelector('a') as HTMLAnchorElement | null;
-        out.push({ guia: m[0], href: link?.href ?? null, text });
+  for (let attempt = 1; attempt <= ATTEMPT_BACKOFF_MS.length; attempt++) {
+    if (ATTEMPT_BACKOFF_MS[attempt - 1] > 0) {
+      slog.info(
+        DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+        `[rescue] Attempt ${attempt}/${ATTEMPT_BACKOFF_MS.length} — backing off ${ATTEMPT_BACKOFF_MS[attempt - 1]}ms before retry`,
+        { orderName, recipientName },
+      );
+      await page.waitForTimeout(ATTEMPT_BACKOFF_MS[attempt - 1]);
+    }
+
+    try {
+      // networkidle waits for fetch/XHR (used by DAC's historial table).
+      // 30 s budget — DAC's historial is sometimes slow under load.
+      await page.goto(DAC_URLS.HISTORY, { waitUntil: 'networkidle', timeout: 30_000 });
+      // Extra grace period on top of networkidle for any server-rendered
+      // delayed content (DAC's historial table has been observed empty
+      // for ~5 s after networkidle fires).
+      await page.waitForTimeout(6_000);
+    } catch (navErr) {
+      slog.warn(
+        DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+        `[rescue] Attempt ${attempt} — could not navigate to historial: ${(navErr as Error).message}`,
+        { orderName, attempt },
+      );
+      continue; // try the next attempt
+    }
+
+    // Scrape page 1, then walk pagination up to MAX_PAGINATION_PAGES.
+    let allRows: { guia: string; href: string | null; text: string }[] = [];
+    try {
+      allRows = await scrapeHistorialRows(page);
+    } catch (evalErr) {
+      slog.warn(
+        DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+        `[rescue] Attempt ${attempt} — page-1 scrape failed: ${(evalErr as Error).message}`,
+        { orderName, attempt },
+      );
+      continue;
+    }
+
+    let firstMatch = pickMatchingHistorialRow(allRows, recipientName, excludeGuias);
+    let pageNum = 1;
+    while (!firstMatch && pageNum < MAX_PAGINATION_PAGES) {
+      const advanced = await loadMoreHistorialRows(page);
+      if (!advanced) break;
+      pageNum++;
+      try {
+        const moreRows = await scrapeHistorialRows(page);
+        // Merge — dedup by guía
+        const seen = new Set(allRows.map((r) => r.guia));
+        for (const r of moreRows) {
+          if (!seen.has(r.guia)) {
+            allRows.push(r);
+            seen.add(r.guia);
+          }
+        }
+        firstMatch = pickMatchingHistorialRow(allRows, recipientName, excludeGuias);
+      } catch (pageErr) {
+        slog.warn(
+          DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+          `[rescue] Attempt ${attempt} — page-${pageNum} scrape failed: ${(pageErr as Error).message}`,
+          { orderName, attempt, pageNum },
+        );
+        break;
       }
-      return out;
-    }, GUIA_REGEX_SRC);
-  } catch (evalErr) {
-    slog.warn(
-      DAC_STEPS.SUBMIT_EXTRACT_GUIA,
-      `[rescue] Historial scrape failed: ${(evalErr as Error).message}`,
-      { orderName },
-    );
-    return null;
-  }
+    }
 
-  const picked = pickMatchingHistorialRow(rows, recipientName, excludeGuias);
-  if (!picked) {
+    lastRowCount = allRows.length;
+
+    if (firstMatch) {
+      slog.success(
+        DAC_STEPS.SUBMIT_OK,
+        `[rescue] Recovered guía ${firstMatch.guia} from historial via recipient match — would have been orphaned`,
+        { orderName, recipientName, guia: firstMatch.guia, attempt, rowsScanned: allRows.length, pagesScanned: pageNum },
+      );
+      return { guia: firstMatch.guia, trackingUrl: firstMatch.href ?? undefined };
+    }
+
     slog.info(
       DAC_STEPS.SUBMIT_EXTRACT_GUIA,
-      `[rescue] No historial row matched recipient "${recipientName}" (${rows.length} rows scanned) — true rejection`,
-      { orderName, recipientName, rowCount: rows.length },
+      `[rescue] Attempt ${attempt}: no match in ${allRows.length} rows across ${pageNum} page(s)`,
+      { orderName, recipientName, attempt, rowsScanned: allRows.length, pagesScanned: pageNum },
     );
-    return null;
   }
 
-  slog.success(
-    DAC_STEPS.SUBMIT_OK,
-    `[rescue] Recovered guía ${picked.guia} from historial via recipient match — would have been orphaned`,
-    { orderName, recipientName, guia: picked.guia },
+  slog.warn(
+    DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+    `[rescue] All ${ATTEMPT_BACKOFF_MS.length} attempts exhausted — no historial row matched recipient "${recipientName}" (last scan: ${lastRowCount} rows)`,
+    { orderName, recipientName, totalAttempts: ATTEMPT_BACKOFF_MS.length, lastRowCount },
   );
-  return { guia: picked.guia, trackingUrl: picked.href ?? undefined };
+  return null;
 }
 
 /**
