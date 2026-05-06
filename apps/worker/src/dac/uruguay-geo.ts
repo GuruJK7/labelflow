@@ -569,6 +569,221 @@ export const DEPARTMENTS = [
 export type Department = typeof DEPARTMENTS[number];
 
 /**
+ * Map of each Uruguay department to its capital city — the city the
+ * customer's package will be routed to when DAC's city dropdown for the
+ * department doesn't have an option matching the customer-typed city.
+ *
+ * Audit 2026-05-06 — motivation: order #11748 (naza fernandez) had
+ * Shopify city = "San José" with province = "San José". DAC's San José
+ * dept dropdown has options like "San José de Mayo", "Libertad", "Ciudad
+ * del Plata" — but NOT "San José" alone. The form silently rejected.
+ * Same pattern affects Cerro Largo (capital is "Melo"), Soriano ("Mercedes"),
+ * Río Negro ("Fray Bentos"), Lavalleja ("Minas"), Flores ("Trinidad"),
+ * Colonia ("Colonia del Sacramento").
+ *
+ * Used by `correctCityWhenEqualsDepartment()` below. Only the dept names
+ * whose capital differs from the dept name get corrected — for the rest
+ * (Maldonado, Florida, Rocha, Salto, etc.) "city == dept name" is a
+ * legitimate match (the capital IS named after the dept).
+ */
+export const DEPARTMENT_CAPITALS: Record<string, string> = {
+  'Artigas': 'Artigas',
+  'Canelones': 'Canelones',
+  'Cerro Largo': 'Melo',
+  'Colonia': 'Colonia del Sacramento',
+  'Durazno': 'Durazno',
+  'Flores': 'Trinidad',
+  'Florida': 'Florida',
+  'Lavalleja': 'Minas',
+  'Maldonado': 'Maldonado',
+  'Montevideo': 'Montevideo',
+  'Paysandu': 'Paysandu',
+  'Rio Negro': 'Fray Bentos',
+  'Rivera': 'Rivera',
+  'Rocha': 'Rocha',
+  'Salto': 'Salto',
+  'San Jose': 'San Jose de Mayo',
+  'Soriano': 'Mercedes',
+  'Tacuarembo': 'Tacuarembo',
+  'Treinta y Tres': 'Treinta y Tres',
+};
+
+/**
+ * Returns the capital city for a department, or null if the department
+ * isn't recognized. Accepts accent variants ("San José" → "San Jose").
+ */
+export function getCapitalCity(department: string | null | undefined): string | null {
+  if (!department) return null;
+  const normalized = department
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  for (const [dept, capital] of Object.entries(DEPARTMENT_CAPITALS)) {
+    if (
+      dept.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') === normalized
+    ) {
+      return capital;
+    }
+  }
+  return null;
+}
+
+/**
+ * If the customer-typed `city` is the SAME string as the resolved
+ * department name (e.g. "San José" + dept "San José"), substitute it
+ * with the department capital so DAC's city dropdown has a chance of
+ * matching. No-op when city == capital already (e.g. dept Maldonado +
+ * city Maldonado is fine — DAC's Maldonado dropdown HAS Maldonado).
+ *
+ * Returns the corrected city (or the original if no correction was
+ * needed). Empty/null inputs return as-is.
+ *
+ * Audit 2026-05-06 — see #11748 naza fernandez for the production case
+ * that drove this. Customer typed `city: "San José"` and DAC silently
+ * rejected because no city option matched.
+ */
+export function correctCityWhenEqualsDepartment(
+  city: string | null | undefined,
+  department: string | null | undefined,
+): string | null | undefined {
+  if (!city || !department) return city;
+  const cityNorm = city.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+  const deptNorm = department.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+  if (cityNorm !== deptNorm) return city; // Different — no correction needed
+  const capital = getCapitalCity(department);
+  if (!capital) return city; // Unknown department — leave as-is
+  // If capital equals the department name (e.g. Maldonado/Maldonado),
+  // the original city is fine.
+  const capitalNorm = capital.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+  if (capitalNorm === deptNorm) return city;
+  return capital;
+}
+
+/**
+ * Compute the Levenshtein edit distance between two strings (number of
+ * single-character insertions, deletions, or substitutions to turn `a`
+ * into `b`). Used by `fuzzyMatchCity` for typo correction. Internal
+ * helper exported only for tests.
+ *
+ * Standard DP implementation. O(|a|·|b|) time, O(min(|a|,|b|)) space.
+ * For our use case (city names ≤ 30 chars vs ~600 candidates) this is
+ * trivially fast.
+ */
+export function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  // Always iterate over the shorter string in the inner loop
+  const [s, t] = a.length <= b.length ? [a, b] : [b, a];
+  const m = s.length;
+  const n = t.length;
+  let prev = new Array<number>(m + 1);
+  let curr = new Array<number>(m + 1);
+  for (let i = 0; i <= m; i++) prev[i] = i;
+  for (let j = 1; j <= n; j++) {
+    curr[0] = j;
+    for (let i = 1; i <= m; i++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      curr[i] = Math.min(
+        curr[i - 1] + 1,        // insertion
+        prev[i] + 1,            // deletion
+        prev[i - 1] + cost,     // substitution
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[m];
+}
+
+/**
+ * Returns the canonical city key from CITY_TO_DEPARTMENT that most
+ * closely matches `typedCity` within an edit-distance threshold. Used
+ * to recover from common typos before the address resolver runs:
+ *
+ *   "parque batalle"   → "parque batlle"   (dist 1)
+ *   "monteideo"        → "montevideo"      (dist 1)
+ *   "tacuarmebó"       → "tacuarembo"      (dist 2)
+ *   "fray bento"       → "fray bentos"     (dist 1)
+ *
+ * Safety constraints (audit 2026-05-06 — false positives here re-route
+ * packages to the wrong department, so this is conservative):
+ *
+ *   - Input must be ≥ 5 normalized characters. Shorter strings are too
+ *     easy to falsely match ("Sur" → "Sus"? no thanks).
+ *   - Distance threshold defaults to 1. Pass `maxDistance=2` when you
+ *     want slightly more tolerance (and accept slightly more risk).
+ *   - All candidates within the threshold MUST resolve to the SAME
+ *     department. If two equally-close candidates resolve to different
+ *     departments (e.g. "Centro" ambiguity), we return null — let the
+ *     AI resolver or operator decide.
+ *   - If `typedCity` is already an EXACT match in CITY_TO_DEPARTMENT,
+ *     this function returns that match (with distance 0).
+ *
+ * Returns null when no safe match exists. Returns the canonical key
+ * (lowercase, accent-stripped) when one is found — the caller can look
+ * up the department via CITY_TO_DEPARTMENT[result].
+ *
+ * Audit 2026-05-06: motivation is order #11705 (Valeria Ramírez) where
+ * Shopify city = "Parque batalle" caused the deterministic resolver to
+ * fall through to the AI fallback, which returned an inconsistent dept
+ * and DAC silently rejected. A pre-resolver typo-fix would have
+ * normalized this to "parque batlle" → unambiguously Montevideo.
+ */
+export function fuzzyMatchCity(
+  typedCity: string | null | undefined,
+  maxDistance: number = 1,
+): string | null {
+  if (!typedCity) return null;
+  const normalized = typedCity
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[.]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (normalized.length < 5) return null; // too short to safely fuzzy-match
+
+  // Exact match short-circuit (free, common case)
+  if (CITY_TO_DEPARTMENT[normalized] !== undefined) {
+    return normalized;
+  }
+
+  // Find the minimum distance and the candidates achieving it
+  let bestDist = Infinity;
+  let bestCandidates: string[] = [];
+  for (const key of Object.keys(CITY_TO_DEPARTMENT)) {
+    // Quick length-prune: if the lengths differ by more than maxDistance,
+    // there's no way the edit distance can be ≤ maxDistance.
+    if (Math.abs(key.length - normalized.length) > maxDistance) continue;
+    const d = levenshtein(normalized, key);
+    if (d > maxDistance) continue;
+    if (d < bestDist) {
+      bestDist = d;
+      bestCandidates = [key];
+    } else if (d === bestDist) {
+      bestCandidates.push(key);
+    }
+  }
+
+  if (bestCandidates.length === 0) return null;
+
+  // Multiple candidates at the same min distance — only safe if they
+  // all resolve to the same department.
+  if (bestCandidates.length > 1) {
+    const depts = new Set(bestCandidates.map((k) => CITY_TO_DEPARTMENT[k]));
+    if (depts.size > 1) return null; // ambiguous
+    // Same dept — pick the alphabetically-first key for deterministic output
+    bestCandidates.sort();
+  }
+
+  return bestCandidates[0];
+}
+
+/**
  * Reverse lookup: get all cities for a given department.
  */
 export function getCitiesByDepartment(department: string): string[] {

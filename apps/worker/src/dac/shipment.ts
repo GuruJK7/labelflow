@@ -10,7 +10,8 @@ import { DAC_STEPS } from './steps';
 import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
 import { db } from '../db';
-import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT, isAmbiguousCityName, isValidUruguayProvince } from './uruguay-geo';
+import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT, isAmbiguousCityName, isValidUruguayProvince, correctCityWhenEqualsDepartment, fuzzyMatchCity } from './uruguay-geo';
+import { preprocessShopifyAddress } from './address-cleanup';
 import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 import { handlePaymentFlow, AutoPayConfig, PaymentOutcome } from './payment';
 
@@ -1396,6 +1397,99 @@ export async function createShipment(
 
   if (!addr || !addr.address1) {
     throw new Error(`Order ${order.name} has no shipping address`);
+  }
+
+  // ── ADDRESS-QUALITY PREPROCESSING (audit 2026-05-06) ──
+  //
+  // Customer-typed Shopify addresses sometimes have structural issues
+  // that DAC's silent validator rejects WITHOUT showing an error
+  // message. The form click "succeeds" (URL stays on /envios/nuevo,
+  // error box empty) but no guía is created. The downstream rescue
+  // path can't recover what doesn't exist.
+  //
+  // Production cases this preprocessor addresses:
+  //   #11733 Silvia Aranda  — "Asencio1666"      → "Asencio 1666"
+  //   #11724 Marcela Pascal — "La Paloma"        → no number → fail fast
+  //   #11705 Valeria Ramírez — "Parque batalle"  → "Parque Batlle"
+  //   #11748 naza fernandez  — city="San José"   → "San Jose de Mayo"
+  //
+  // We mutate `addr` in place so all downstream code (mergeAddress,
+  // resolver, DAC form fill, AI fallback, Label upsert) sees the
+  // cleaned values transparently. Originals are logged for audit.
+  {
+    // (1) Normalize address1: insert space between letter+digit pairs
+    //     ("Asencio1666" → "Asencio 1666"). Idempotent.
+    const originalAddress1 = addr.address1;
+    const prep = preprocessShopifyAddress(addr.address1);
+    if (prep.wasNormalized) {
+      addr.address1 = prep.cleanedAddress1;
+      slog.info(
+        DAC_STEPS.PREPROCESS_ADDRESS,
+        `Address1 normalized (street/number spacing): "${originalAddress1}" → "${addr.address1}"`,
+        { before: originalAddress1, after: addr.address1, audit: '2026-05-06' },
+      );
+    }
+
+    // (2) Fail fast when address1 has NO digit anywhere — DAC requires
+    //     a numeric street number to create a guía. Submitting without
+    //     one is silently rejected, the rescue can't find anything,
+    //     and we'd log it as a "possible orphan" when in fact no guía
+    //     was ever created. Bypass DAC entirely for this case.
+    if (prep.missingStreetNumber) {
+      slog.warn(
+        DAC_STEPS.PREPROCESS_ADDRESS,
+        `Address1 has no street number — failing fast (no DAC submit): "${addr.address1}"`,
+        { orderName: order.name, address1: addr.address1, audit: '2026-05-06' },
+      );
+      throw new DacAddressRejectedError(
+        `Address1 lacks any digit for ${order.name}: "${addr.address1}". DAC requires a numeric street number — operator must contact the customer to obtain it.`,
+        order.name,
+        'Dirección sin número de calle (no se intentó cargar en DAC).',
+        false, // not a rescue-failed case — no guía created, safe to clear PendingShipment when next attempt fixes the address
+      );
+    }
+
+    // (3) Fuzzy city typo correction. Searches CITY_TO_DEPARTMENT for
+    //     a canonical key within edit-distance 1 of the typed city.
+    //     Skips when the typed city already resolves to an exact match
+    //     after accent/case normalization (avoids "fixing" "San José"
+    //     → "San Jose" on accents alone).
+    if (addr.city) {
+      const cityNormalized = addr.city
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const fuzzy = fuzzyMatchCity(addr.city, 1);
+      if (fuzzy && fuzzy !== cityNormalized) {
+        const originalCity = addr.city;
+        // Title-case the canonical key for DAC dropdown matching
+        addr.city = fuzzy.replace(/\b\w/g, (c) => c.toUpperCase());
+        slog.info(
+          DAC_STEPS.PREPROCESS_ADDRESS,
+          `City typo corrected: "${originalCity}" → "${addr.city}" (Levenshtein dist 1)`,
+          { before: originalCity, after: addr.city, audit: '2026-05-06' },
+        );
+      }
+    }
+
+    // (4) When customer typed the DEPARTMENT name as the city
+    //     (e.g. city="San José", province="San José") and the
+    //     department's capital is a DIFFERENT name (e.g. "San José
+    //     de Mayo"), substitute. DAC's city dropdown for that dept
+    //     doesn't have an option matching the dept name.
+    const correctedCity = correctCityWhenEqualsDepartment(addr.city, addr.province);
+    if (correctedCity && correctedCity !== addr.city) {
+      const originalCity = addr.city;
+      addr.city = correctedCity;
+      slog.info(
+        DAC_STEPS.PREPROCESS_ADDRESS,
+        `City equals department — substituted with capital: "${originalCity}" → "${addr.city}" (dept: ${addr.province})`,
+        { before: originalCity, after: addr.city, dept: addr.province, audit: '2026-05-06' },
+      );
+    }
   }
 
   // C-4 (2026-04-21 audit): refuse to re-enter the DAC form if a prior

@@ -15,6 +15,10 @@ export const DAC_STEPS = {
   LOGIN_OK: 'login:ok',
   LOGIN_FAIL: 'login:fail',
 
+  // -- Address-quality preprocessing (audit 2026-05-06) --
+  // Runs once at the top of createShipment, before any DAC interaction.
+  PREPROCESS_ADDRESS: 'preprocess:address',
+
   // -- Navigate to form --
   NAV_NEW_SHIPMENT: 'nav:new-shipment',
   NAV_FORM_LOADED: 'nav:form-loaded',
