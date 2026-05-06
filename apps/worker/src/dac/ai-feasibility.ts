@@ -1,0 +1,385 @@
+/**
+ * AI-driven address-feasibility assessment.
+ *
+ * Audit 2026-05-06 — when the deterministic preprocessor wants to bounce
+ * an order ("no street number, contact customer"), or when DAC silently
+ * rejected the form and the rescue couldn't recover it, ask Claude
+ * Haiku for a SECOND OPINION before declaring the address unshippable.
+ *
+ * Why this exists:
+ *   The deterministic preprocessor in shipment.ts is conservative — it
+ *   throws DacAddressRejectedError as soon as address1 has no digit, on
+ *   the assumption that DAC needs a numeric street number. But customer
+ *   data is often messier than that:
+ *
+ *     - The "address" might be in address2 or order.note instead.
+ *     - The customer might have given a landmark + city, recoverable.
+ *     - The customer's prior orders (stored in DB) might have a usable
+ *       address we can reuse.
+ *     - DAC sometimes silently rejects valid addresses for unrelated
+ *       reasons (rate-limiting, transient form bugs); calling the
+ *       address "broken" in those cases puts the burden on the
+ *       customer when really we should retry or just escalate.
+ *
+ *   The AI verdict turns these ambiguous cases into actionable answers:
+ *   "yes, ship it with this fix" or "no, here's the specific question
+ *   the operator must ask the customer before any shipping attempt".
+ *
+ * Cost: ~$0.001 per call (Haiku 4.5 with no web_search). At ~10–20
+ * stuck orders/day this is ~$0.02/day — negligible.
+ *
+ * This module is INTENTIONALLY narrower than ai-resolver.ts:
+ *   - No web_search (the resolver already does that for normal cases)
+ *   - No prompt caching (called on rare paths, cache benefit is small)
+ *   - No DB cache (each stuck order is unique enough that hash hits
+ *     would be rare)
+ *   - No daily quota check (it gates on AI being configured at all)
+ *
+ * The verdict is logged and surfaced to the operator via the Shopify
+ * note. We do NOT mutate the order based on AI suggestion alone — the
+ * caller decides whether to apply the suggestedAddress1 / suggestedCity.
+ */
+
+import Anthropic from '@anthropic-ai/sdk';
+import logger from '../logger';
+import { calculateAICost, TokenUsage, VALID_DEPARTMENTS } from './ai-resolver';
+
+// Same model as the resolver — Haiku 4.5, fast + cheap.
+const MODEL = 'claude-haiku-4-5-20251001';
+const MAX_TOKENS = 384;
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Why we're asking for an AI verdict. Different reasons lead to slightly
+ * different prompts and different operator notes.
+ */
+export type FeasibilityReason =
+  | 'no-street-number'    // Pre-DAC: address1 has no digit anywhere.
+  | 'dac-silent-reject';  // Post-DAC: form clicked, URL stuck on /envios/nuevo, rescue exhausted.
+
+export interface FeasibilityInput {
+  reason: FeasibilityReason;
+  // Tenant context (for logging only; not used in the prompt)
+  tenantId: string;
+  orderName: string;
+  // Customer info (helps AI decide if a prior shipment is recoverable)
+  customerName: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  orderNotes?: string;
+  // Raw Shopify shipping_address fields
+  city?: string;
+  address1: string;
+  address2?: string;
+  zip?: string;
+  province?: string;
+  country?: string;
+  // Only for reason='dac-silent-reject' — what dept/city/barrio we tried
+  attemptedDept?: string;
+  attemptedCity?: string;
+  attemptedBarrio?: string;
+}
+
+export interface FeasibilityResult {
+  /**
+   * AI verdict on whether this order can be shipped at all.
+   *   true  — AI thinks it's shippable, possibly with a repair suggestion
+   *   false — AI thinks the address is fundamentally incomplete; operator
+   *           MUST contact the customer before any shipping attempt
+   */
+  shippable: boolean;
+  confidence: 'high' | 'medium' | 'low';
+  /** 1–2 sentence justification for audit trail. */
+  reasoning: string;
+  /**
+   * If shippable=true and AI is confident the customer's address1 can be
+   * fixed (e.g. found a number in address2 / order.note), the suggested
+   * cleaned-up address1. Empty string when no concrete fix is available.
+   */
+  suggestedAddress1?: string;
+  /**
+   * If shippable=true and AI suggests a different city than the
+   * customer typed (e.g. resolved a misspelling beyond Levenshtein 1).
+   */
+  suggestedCity?: string;
+  /**
+   * If shippable=false, the SPECIFIC question the operator should ask
+   * the customer (in Spanish). Goes into the Shopify operator note
+   * verbatim. Empty when shippable=true.
+   */
+  operatorQuestion?: string;
+  /** 'ai' on real call, 'unavailable' when API key is missing or all retries failed. */
+  source: 'ai' | 'unavailable';
+  aiCostUsd?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Tool definition
+// ─────────────────────────────────────────────────────────────────────────
+
+const FEASIBILITY_TOOL: Anthropic.Tool = {
+  name: 'address_feasibility_verdict',
+  description:
+    'Decide si una direccion uruguaya puede enviarse a DAC tal cual o si necesita corregirse antes (contactar al cliente).',
+  input_schema: {
+    type: 'object',
+    properties: {
+      shippable: {
+        type: 'boolean',
+        description:
+          'true si la direccion es enviable tal cual o con un fix concreto que puedas sugerir. false si la informacion del cliente esta tan incompleta que el operador DEBE contactarlo antes de cualquier intento de envio.',
+      },
+      confidence: {
+        type: 'string',
+        enum: ['high', 'medium', 'low'],
+        description: 'Tu certeza sobre el veredicto.',
+      },
+      reasoning: {
+        type: 'string',
+        description: 'Explicacion corta (1-2 oraciones, en espanol). Sirve para auditoria.',
+      },
+      suggestedAddress1: {
+        type: 'string',
+        description:
+          'Si shippable=true Y podes sugerir un address1 reparado (ej. extraer el numero de address2 o de order.notes), pone aca la direccion completa "Calle Numero". String vacio si no hay sugerencia concreta.',
+      },
+      suggestedCity: {
+        type: 'string',
+        description:
+          'Si shippable=true Y la ciudad que tipeo el cliente es claramente erronea (typo no obvio, abreviatura, etc), pone la ciudad correcta. String vacio si la ciudad original esta bien.',
+      },
+      operatorQuestion: {
+        type: 'string',
+        description:
+          'Si shippable=false, la PREGUNTA EXACTA en espanol que el operador le tiene que hacer al cliente para conseguir el dato faltante. Ej: "Por favor confirme el nombre completo de la calle y el numero de puerta". String vacio si shippable=true.',
+      },
+    },
+    required: [
+      'shippable',
+      'confidence',
+      'reasoning',
+      'suggestedAddress1',
+      'suggestedCity',
+      'operatorQuestion',
+    ],
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// Prompts
+// ─────────────────────────────────────────────────────────────────────────
+
+const SYSTEM_PROMPT = `Sos un asistente experto en direcciones uruguayas y logistica de envios DAC.
+
+Tu trabajo es decidir si una direccion que un cliente ingreso en Shopify es ENVIABLE como esta o si necesita correccion del cliente antes de cualquier intento.
+
+CONTEXTO DAC:
+- Uruguay tiene 19 departamentos: ${VALID_DEPARTMENTS.join(', ')}.
+- Para crear un envio en DAC necesitas: departamento, ciudad/localidad valida del dropdown del depto, y address1 con calle + numero (DAC rechaza silenciosamente si falta el numero).
+- Si la ciudad es Montevideo, ademas necesitas el barrio (58 opciones fijas).
+
+REGLAS DE DECISION:
+1. shippable=true cuando:
+   - El address1 ya tiene calle + numero claros, O
+   - El numero esta en address2 o order.notes y podes recuperarlo, O
+   - Una abreviatura/typo de ciudad puede corregirse sin ambiguedad (ej. "Mvdo" → "Montevideo").
+   - En esos casos pone suggestedAddress1 / suggestedCity con el fix concreto.
+
+2. shippable=false cuando:
+   - El cliente solo escribio el nombre del pueblo o departamento como direccion (ej. "La Paloma" como address1 y nada mas), Y
+   - No hay numero de puerta deducible en address2 ni order.notes ni el resto del pedido.
+   - En esos casos pone operatorQuestion con la pregunta EXACTA que el operador tiene que hacerle al cliente (en espanol, formal-amable, una sola oracion).
+
+3. Si tenes dudas razonables, prefere shippable=false con confidence=medium y una operatorQuestion clara — es mejor que un orphan guia en DAC.
+
+4. NO inventes calles ni numeros que no aparezcan en los campos. Si el customer no dio el dato, el operador tiene que pedirlo.
+
+5. Para "dac-silent-reject" (DAC ya rechazo el formulario silenciosamente):
+   - Mira que dept/city/barrio probamos.
+   - Si pensas que probamos algo equivocado y hay una alternativa razonable (ej. otro barrio, otra ciudad cercana del mismo depto), pone shippable=true + suggestedCity con la alternativa y explica en reasoning.
+   - Si la direccion ya parece bien y DAC fallo por otra razon (rate limit, bug del form), pone shippable=true con confidence=medium, suggestedAddress1/City vacios, y reasoning describiendo que es un posible bug de DAC.
+   - Si la direccion es realmente confusa o incompleta, pone shippable=false como en regla 2.
+
+Respondes SIEMPRE invocando la herramienta address_feasibility_verdict.`;
+
+function buildUserMessage(input: FeasibilityInput): string {
+  const lines: string[] = [];
+  lines.push(`MOTIVO DE LA CONSULTA: ${input.reason}`);
+  if (input.reason === 'no-street-number') {
+    lines.push(
+      '  → Nuestro preprocesador detecto que address1 no tiene NINGUN digito. Antes de bouncear el pedido al operador con "contactar cliente", queremos tu veredicto.',
+    );
+  } else {
+    lines.push(
+      '  → DAC rechazo el formulario silenciosamente despues de hacer click en Finalizar (URL quedo en /envios/nuevo, sin error visible). El rescue del historial tampoco encontro la guia. Antes de declarar "posible guia huerfana", queremos tu veredicto.',
+    );
+  }
+  lines.push('');
+  lines.push(`PEDIDO: ${input.orderName}`);
+  lines.push(`CLIENTE: ${input.customerName}`);
+  if (input.customerEmail) lines.push(`  email: ${input.customerEmail}`);
+  if (input.customerPhone) lines.push(`  phone: ${input.customerPhone}`);
+  if (input.country) lines.push(`  country: ${input.country}`);
+  lines.push('');
+  lines.push('SHIPPING ADDRESS (Shopify):');
+  lines.push(`  city:     ${JSON.stringify(input.city ?? '')}`);
+  lines.push(`  province: ${JSON.stringify(input.province ?? '')}`);
+  lines.push(`  zip:      ${JSON.stringify(input.zip ?? '')}`);
+  lines.push(`  address1: ${JSON.stringify(input.address1)}`);
+  lines.push(`  address2: ${JSON.stringify(input.address2 ?? '')}`);
+  if (input.orderNotes) {
+    lines.push(`  order.note: ${JSON.stringify(input.orderNotes)}`);
+  }
+  if (input.reason === 'dac-silent-reject') {
+    lines.push('');
+    lines.push('LO QUE INTENTAMOS EN DAC (y fue silently-rejected):');
+    if (input.attemptedDept) lines.push(`  department: ${input.attemptedDept}`);
+    if (input.attemptedCity) lines.push(`  city:       ${input.attemptedCity}`);
+    if (input.attemptedBarrio) lines.push(`  barrio:     ${input.attemptedBarrio}`);
+  }
+  return lines.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Main entry point
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Ask Claude Haiku whether the given address is shippable. Always returns
+ * a result — when AI is unavailable (no API key, all retries failed) the
+ * result has source='unavailable' and shippable=false (conservative —
+ * caller falls back to the existing operator-bounce path).
+ */
+export async function assessAddressFeasibility(
+  input: FeasibilityInput,
+): Promise<FeasibilityResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    logger.warn(
+      { tenantId: input.tenantId, orderName: input.orderName, reason: input.reason },
+      'AI feasibility: ANTHROPIC_API_KEY not set — falling back to caller default',
+    );
+    return {
+      shippable: false,
+      confidence: 'low',
+      reasoning: 'AI feasibility unavailable (ANTHROPIC_API_KEY not set).',
+      operatorQuestion: '',
+      source: 'unavailable',
+    };
+  }
+
+  const client = new Anthropic({ apiKey, timeout: REQUEST_TIMEOUT_MS });
+  const userMessage = buildUserMessage(input);
+
+  // Up to 3 retries on transient errors. Pattern matches ai-resolver.ts
+  // but capped lower (2 vs 4) since this is a fallback path — if the
+  // first 2 attempts fail we'd rather bounce to the operator than
+  // block the cron tick for 60+ seconds.
+  const MAX_ATTEMPTS = 3;
+  let response: Anthropic.Message | null = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      response = await client.messages.create({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        system: SYSTEM_PROMPT,
+        tools: [FEASIBILITY_TOOL],
+        tool_choice: { type: 'tool' as const, name: 'address_feasibility_verdict' },
+        messages: [{ role: 'user' as const, content: userMessage }],
+      });
+      break;
+    } catch (err) {
+      const status = (err as any)?.status;
+      const retryable =
+        status === 429 ||
+        status === 529 ||
+        (typeof status === 'number' && status >= 500 && status < 600);
+      if (!retryable || attempt === MAX_ATTEMPTS) {
+        logger.error(
+          {
+            tenantId: input.tenantId,
+            orderName: input.orderName,
+            reason: input.reason,
+            status,
+            attempt,
+            error: (err as Error).message,
+          },
+          'AI feasibility: API call failed (non-retryable or out of attempts)',
+        );
+        return {
+          shippable: false,
+          confidence: 'low',
+          reasoning: `AI feasibility call failed (${(err as Error).message.substring(0, 80)}).`,
+          operatorQuestion: '',
+          source: 'unavailable',
+        };
+      }
+      const backoffMs = Math.min(15_000, Math.pow(3, attempt - 1) * 1_000);
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+
+  if (!response) {
+    return {
+      shippable: false,
+      confidence: 'low',
+      reasoning: 'AI feasibility: no response after retries.',
+      operatorQuestion: '',
+      source: 'unavailable',
+    };
+  }
+
+  // Extract tool_use
+  const toolUse = response.content.find(
+    (c) => c.type === 'tool_use' && c.name === 'address_feasibility_verdict',
+  );
+  if (!toolUse || toolUse.type !== 'tool_use') {
+    logger.warn(
+      { tenantId: input.tenantId, orderName: input.orderName, reason: input.reason },
+      'AI feasibility: response did not invoke address_feasibility_verdict tool',
+    );
+    return {
+      shippable: false,
+      confidence: 'low',
+      reasoning: 'AI feasibility: tool not invoked in response.',
+      operatorQuestion: '',
+      source: 'unavailable',
+    };
+  }
+
+  const toolInput = toolUse.input as Record<string, unknown>;
+  const usage: TokenUsage = {
+    input_tokens: response.usage.input_tokens,
+    output_tokens: response.usage.output_tokens,
+    cache_creation_input_tokens: (response.usage as any).cache_creation_input_tokens,
+    cache_read_input_tokens: (response.usage as any).cache_read_input_tokens,
+  };
+  const cost = calculateAICost(usage);
+
+  const result: FeasibilityResult = {
+    shippable: Boolean(toolInput.shippable),
+    confidence: (toolInput.confidence as 'high' | 'medium' | 'low') ?? 'low',
+    reasoning: typeof toolInput.reasoning === 'string' ? toolInput.reasoning : '',
+    suggestedAddress1: typeof toolInput.suggestedAddress1 === 'string' ? toolInput.suggestedAddress1 : '',
+    suggestedCity: typeof toolInput.suggestedCity === 'string' ? toolInput.suggestedCity : '',
+    operatorQuestion: typeof toolInput.operatorQuestion === 'string' ? toolInput.operatorQuestion : '',
+    source: 'ai',
+    aiCostUsd: cost,
+  };
+
+  logger.info(
+    {
+      tenantId: input.tenantId,
+      orderName: input.orderName,
+      reason: input.reason,
+      shippable: result.shippable,
+      confidence: result.confidence,
+      hasSuggestedAddress1: Boolean(result.suggestedAddress1),
+      hasSuggestedCity: Boolean(result.suggestedCity),
+      aiCostUsd: cost,
+    },
+    'AI feasibility verdict',
+  );
+
+  return result;
+}

@@ -12,6 +12,7 @@ import logger from '../logger';
 import { db } from '../db';
 import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT, isAmbiguousCityName, isValidUruguayProvince, correctCityWhenEqualsDepartment, fuzzyMatchCity, splitHyphenatedCityName } from './uruguay-geo';
 import { preprocessShopifyAddress } from './address-cleanup';
+import { assessAddressFeasibility } from './ai-feasibility';
 import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 import { handlePaymentFlow, AutoPayConfig, PaymentOutcome } from './payment';
 
@@ -1430,23 +1431,85 @@ export async function createShipment(
       );
     }
 
-    // (2) Fail fast when address1 has NO digit anywhere — DAC requires
-    //     a numeric street number to create a guía. Submitting without
-    //     one is silently rejected, the rescue can't find anything,
-    //     and we'd log it as a "possible orphan" when in fact no guía
-    //     was ever created. Bypass DAC entirely for this case.
+    // (2) Address1 has NO digit anywhere — DAC requires a numeric street
+    //     number to create a guía. BUT before bouncing to the operator,
+    //     give Claude Haiku a second opinion: maybe the number is hiding
+    //     in address2 / order.notes and AI can extract it, or maybe the
+    //     order really IS too broken and we should mark it as such with
+    //     a specific operator question.
+    //
+    //     Audit 2026-05-06 — design rationale:
+    //       Customer data is messier than what regex can catch. AI sees
+    //       the full order context (city, address1, address2, notes,
+    //       customer name/email/phone) and decides whether the address
+    //       is recoverable. Cost ~$0.001 per call, called only on stuck
+    //       orders, total ~$0.02/day.
     if (prep.missingStreetNumber) {
-      slog.warn(
+      slog.info(
         DAC_STEPS.PREPROCESS_ADDRESS,
-        `Address1 has no street number — failing fast (no DAC submit): "${addr.address1}"`,
+        `Address1 has no street number — invoking AI feasibility verdict before bouncing`,
         { orderName: order.name, address1: addr.address1, audit: '2026-05-06' },
       );
-      throw new DacAddressRejectedError(
-        `Address1 lacks any digit for ${order.name}: "${addr.address1}". DAC requires a numeric street number — operator must contact the customer to obtain it.`,
-        order.name,
-        'Dirección sin número de calle (no se intentó cargar en DAC).',
-        false, // not a rescue-failed case — no guía created, safe to clear PendingShipment when next attempt fixes the address
-      );
+      const recipientName =
+        `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente';
+      const verdict = await assessAddressFeasibility({
+        reason: 'no-street-number',
+        tenantId,
+        orderName: order.name,
+        customerName: recipientName,
+        customerEmail: order.email ?? undefined,
+        customerPhone: addr.phone ?? undefined,
+        orderNotes: order.note ?? undefined,
+        city: addr.city ?? undefined,
+        address1: addr.address1,
+        address2: addr.address2 ?? undefined,
+        zip: addr.zip ?? undefined,
+        province: addr.province ?? undefined,
+        country: addr.country ?? undefined,
+      });
+
+      if (verdict.shippable && verdict.suggestedAddress1 && /\d/.test(verdict.suggestedAddress1)) {
+        // AI recovered a usable address (e.g. found a number in address2 or notes).
+        // Apply the repair and continue through the normal flow.
+        const beforeRepair = addr.address1;
+        addr.address1 = verdict.suggestedAddress1;
+        slog.info(
+          DAC_STEPS.PREPROCESS_ADDRESS,
+          `AI recovered missing street number: "${beforeRepair}" → "${addr.address1}" (confidence=${verdict.confidence})`,
+          {
+            before: beforeRepair,
+            after: addr.address1,
+            aiConfidence: verdict.confidence,
+            aiReasoning: verdict.reasoning,
+            aiCostUsd: verdict.aiCostUsd,
+            audit: '2026-05-06',
+          },
+        );
+      } else {
+        // AI confirmed (or AI unavailable, conservative default):
+        // address is unrecoverable without operator intervention.
+        slog.warn(
+          DAC_STEPS.PREPROCESS_ADDRESS,
+          `AI feasibility verdict: NOT shippable (confidence=${verdict.confidence}, source=${verdict.source}) — bouncing with operator question`,
+          {
+            orderName: order.name,
+            address1: addr.address1,
+            aiReasoning: verdict.reasoning,
+            aiOperatorQuestion: verdict.operatorQuestion,
+            aiCostUsd: verdict.aiCostUsd,
+            audit: '2026-05-06',
+          },
+        );
+        const dacText = verdict.operatorQuestion
+          ? `Dirección incompleta. ${verdict.reasoning} Pregunta sugerida al cliente: "${verdict.operatorQuestion}"`
+          : `Dirección sin número de calle (AI ${verdict.source}: ${verdict.reasoning || 'sin razón'}).`;
+        throw new DacAddressRejectedError(
+          `Address unrecoverable for ${order.name}: AI verdict "${verdict.reasoning || 'no street number'}". Operator question: "${verdict.operatorQuestion ?? '(none)'}".`,
+          order.name,
+          dacText,
+          false, // not a rescue-failed case — no guía created, safe to clear PendingShipment when address is fixed
+        );
+      }
     }
 
     // (2.5) Hyphen-joined "City-Department" form (e.g. "Dolores-Soriano",
@@ -2502,6 +2565,76 @@ export async function createShipment(
         );
       }
 
+      // Audit 2026-05-06 — AI feasibility second-opinion on the silent
+      // reject. The note we send Shopify changes meaningfully depending
+      // on AI's verdict:
+      //   - shippable=true (no concrete fix): probable DAC bug or transient
+      //     issue; operator should check historial first, then maybe
+      //     unblock for retry.
+      //   - shippable=true (fix suggested): operator can apply the fix
+      //     manually in Shopify and unblock.
+      //   - shippable=false: address really IS broken; operator's
+      //     specific question to ask the customer is in operatorQuestion.
+      // The verdict is best-effort — if AI is unavailable we just fall
+      // back to the original "verify historial" note.
+      let dacFeasibilityNote = '';
+      if (rescueFailed) {
+        try {
+          const verdict = await assessAddressFeasibility({
+            reason: 'dac-silent-reject',
+            tenantId,
+            orderName: order.name,
+            customerName: fullName,
+            customerEmail: order.email ?? undefined,
+            customerPhone: addr.phone ?? undefined,
+            orderNotes: order.note ?? undefined,
+            city: addr.city ?? undefined,
+            address1: addr.address1,
+            address2: addr.address2 ?? undefined,
+            zip: addr.zip ?? undefined,
+            province: addr.province ?? undefined,
+            country: addr.country ?? undefined,
+            attemptedDept: resolvedDept || undefined,
+            attemptedCity: resolvedCity || undefined,
+            attemptedBarrio: resolvedBarrioHint ?? undefined,
+          });
+          if (verdict.source === 'ai') {
+            slog.info(
+              DAC_STEPS.SUBMIT_WAIT_NAV,
+              `[rescue-failed] AI feasibility verdict: shippable=${verdict.shippable}, confidence=${verdict.confidence}`,
+              {
+                orderName: order.name,
+                aiShippable: verdict.shippable,
+                aiConfidence: verdict.confidence,
+                aiReasoning: verdict.reasoning,
+                aiOperatorQuestion: verdict.operatorQuestion,
+                aiSuggestedAddress1: verdict.suggestedAddress1,
+                aiSuggestedCity: verdict.suggestedCity,
+                aiCostUsd: verdict.aiCostUsd,
+                audit: '2026-05-06',
+              },
+            );
+            // Compose a concise feasibility line for the Shopify note.
+            if (!verdict.shippable && verdict.operatorQuestion) {
+              dacFeasibilityNote = `AI análisis: dirección incompleta. ${verdict.reasoning} Pregunta sugerida al cliente: "${verdict.operatorQuestion}"`;
+            } else if (verdict.shippable && (verdict.suggestedAddress1 || verdict.suggestedCity)) {
+              const fixes: string[] = [];
+              if (verdict.suggestedAddress1) fixes.push(`dirección sugerida: "${verdict.suggestedAddress1}"`);
+              if (verdict.suggestedCity) fixes.push(`ciudad sugerida: "${verdict.suggestedCity}"`);
+              dacFeasibilityNote = `AI análisis: dirección probablemente válida con fix. ${fixes.join(', ')}. ${verdict.reasoning}`;
+            } else if (verdict.shippable) {
+              dacFeasibilityNote = `AI análisis: dirección parece válida — probable bug de DAC. ${verdict.reasoning}`;
+            }
+          }
+        } catch (verdictErr) {
+          // Never fail the throw because of an AI-call hiccup.
+          logger.warn(
+            { error: (verdictErr as Error).message, orderName: order.name },
+            '[rescue-failed] AI feasibility call threw; falling back to default note',
+          );
+        }
+      }
+
       // Observability: log whether the AI fallback was actually consulted
       // before we gave up. A common failure mode is `ANTHROPIC_API_KEY`
       // being unset in Render → the AI call returns null silently, the
@@ -2521,15 +2654,24 @@ export async function createShipment(
           rescueFailed,
         },
       );
+      // The dacErrorText surfaces in the Shopify operator note via
+      // process-orders.job.ts. For silent-rejects we pass the AI
+      // feasibility verdict (when available) so the note tells the
+      // operator EXACTLY what to do next instead of a generic
+      // "verify historial".
+      const errorTextForNote = rescueFailed
+        ? (dacFeasibilityNote || '')
+        : dacErrorText;
       throw new DacAddressRejectedError(
         rescueFailed
           ? `DAC silently rejected the form for ${order.name} (URL on /envios/nuevo, error box empty, rescue exhausted). ` +
-            `An orphan guía MAY exist in DAC for "${fullName}" — operator must verify historial manually.`
+            `An orphan guía MAY exist in DAC for "${fullName}" — operator must verify historial manually.` +
+            (dacFeasibilityNote ? ` AI verdict: ${dacFeasibilityNote}` : '')
           : `DAC rejected the shipment form for ${order.name} (URL stayed on /envios/nuevo and no guía was extracted). ` +
             `Likely cause: address could not be classified into a valid department/barrio. Review the customer address in Shopify.` +
             (dacErrorText ? ` DAC validation text: "${dacErrorText}"` : ''),
         order.name,
-        dacErrorText,
+        errorTextForNote,
         rescueFailed,
       );
     }

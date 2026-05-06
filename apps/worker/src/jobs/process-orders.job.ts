@@ -1040,11 +1040,20 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           //       in DAC. Operator must verify historial first; the worker
           //       will NOT auto-retry (PendingShipment is preserved) to
           //       avoid creating duplicate guías DAC charges for.
+          // Audit 2026-05-06 — surface the AI feasibility verdict in
+          // the operator note. The AI's reasoning + operatorQuestion
+          // (when shippable=false) gives the operator a concrete next
+          // step instead of a generic "contact customer". For
+          // rescue-failed cases the AI also tells the operator
+          // whether the address looks like a real problem or just a
+          // DAC platform hiccup — useful when deciding whether to
+          // retry or escalate.
           const noteText = isDacAddressRejected
             ? dacRescueFailed
               ? `LabelFlow: DAC NO confirmó si se creó la guía para ${customerName} — ` +
                 `URL quedó en /envios/nuevo, error box vacío, y el rescue del historial no encontró la guía después de 3 intentos. ` +
                 `Es POSIBLE que DAC haya creado una guía huérfana para este cliente.\n\n` +
+                (dacErrText ? `${dacErrText}\n\n` : '') +
                 `ACCIÓN del operador (en este orden):\n` +
                 `1. Entrar a DAC → Historial → buscar última guía a nombre de "${customerName}".\n` +
                 `2. Si la guía EXISTE: copiar el número y vincularla manualmente en LabelFlow (admin → vincular guía).\n` +
@@ -1052,11 +1061,11 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
                 `dirección="${addr.address1 ?? ''}"${addr.zip ? `, código postal="${addr.zip}"` : ''}), corregirla en Shopify, ` +
                 `y desbloquear esta orden (admin → eliminar PendingShipment) para reintento.\n\n` +
                 `IMPORTANTE: el worker NO va a reintentar automáticamente para evitar crear guías duplicadas.`
-              : `LabelFlow: no se pudo crear el envío en DAC — dirección confusa o incompleta en Shopify ` +
+              : `LabelFlow: no se pudo crear el envío en DAC — dirección incompleta o confusa en Shopify ` +
                 `(ciudad="${addr.city ?? ''}", dirección="${addr.address1 ?? ''}"${addr.address2 ? `, referencia="${addr.address2}"` : ''}` +
                 `${addr.zip ? `, código postal="${addr.zip}"` : ''}). ` +
                 (dacErrText
-                  ? `DAC mostró este mensaje de validación: "${dacErrText}". `
+                  ? `${dacErrText} `
                   : `DAC rechazó el formulario porque la localidad/barrio no pudo identificarse. `) +
                 `Acción: contactar al cliente para corregir la dirección en Shopify y el worker la va a reprocesar solo en el próximo ciclo.`
             : `LabelFlow ERROR: ${errorMsg.substring(0, 200)}`;
