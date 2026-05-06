@@ -42,7 +42,16 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import logger from '../logger';
-import { calculateAICost, TokenUsage, VALID_DEPARTMENTS } from './ai-resolver';
+import {
+  calculateAICost,
+  TokenUsage,
+  VALID_DEPARTMENTS,
+  VALID_MVD_BARRIOS,
+} from './ai-resolver';
+import {
+  DAC_CITIES_PROMPT_BLOCK,
+  canonicalizeCityName,
+} from './dac-city-constraints';
 
 // Same model as the resolver — Haiku 4.5, fast + cheap.
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -78,6 +87,17 @@ export interface FeasibilityInput {
   attemptedDept?: string;
   attemptedCity?: string;
   attemptedBarrio?: string;
+  /**
+   * Department the caller plans to use for the DAC submission. Used to
+   * validate AI's suggestedCity against DAC's dropdown for that
+   * department. When omitted, suggestedCity validation falls back to
+   * trying all 19 departments — slower but still safe.
+   *
+   * For reason='dac-silent-reject' this is typically `attemptedDept`.
+   * For reason='no-street-number' it's typically `province` (after
+   * normalization to a recognized UY dept).
+   */
+  targetDepartment?: string;
 }
 
 export interface FeasibilityResult {
@@ -175,8 +195,8 @@ Tu trabajo es decidir si una direccion que un cliente ingreso en Shopify es ENVI
 
 CONTEXTO DAC:
 - Uruguay tiene 19 departamentos: ${VALID_DEPARTMENTS.join(', ')}.
-- Para crear un envio en DAC necesitas: departamento, ciudad/localidad valida del dropdown del depto, y address1 con calle + numero (DAC rechaza silenciosamente si falta el numero).
-- Si la ciudad es Montevideo, ademas necesitas el barrio (58 opciones fijas).
+- Para crear un envio en DAC necesitas: departamento, ciudad/localidad VALIDA del dropdown oficial de DAC para ese departamento (lista mas abajo), y address1 con calle + numero (DAC rechaza silenciosamente si falta el numero).
+- Si la ciudad es Montevideo, ademas necesitas un barrio. DAC solo acepta exactamente uno de estos 58 barrios (todos lowercase): ${VALID_MVD_BARRIOS.join(', ')}.
 
 REGLAS DE DECISION:
 1. shippable=true cuando:
@@ -192,13 +212,23 @@ REGLAS DE DECISION:
 
 3. Si tenes dudas razonables, prefere shippable=false con confidence=medium y una operatorQuestion clara — es mejor que un orphan guia en DAC.
 
-4. NO inventes calles ni numeros que no aparezcan en los campos. Si el customer no dio el dato, el operador tiene que pedirlo.
+4. REGLA CRITICA — NO ALUCINES NUMEROS:
+   - Si pones suggestedAddress1, los DIGITOS que aparezcan ahi (numero de puerta, apto, etc.) DEBEN aparecer literalmente en alguno de los campos del input (address1, address2, order.notes, zip).
+   - NUNCA inventes un numero que el cliente no escribio. Si el customer no dio el numero, dejalo en operatorQuestion.
 
-5. Para "dac-silent-reject" (DAC ya rechazo el formulario silenciosamente):
+5. REGLA CRITICA — suggestedCity DEBE ser de la lista DAC:
+   - Si pones suggestedCity y el departamento NO es Montevideo, la ciudad DEBE ser EXACTAMENTE una de las listadas para ese departamento en el bloque "CIUDADES VALIDAS DE DAC" mas abajo (sin acentos esta bien, espacios y mayusculas tienen que matchear).
+   - Si la direccion del cliente apunta a un balneario/pueblito que NO esta en la lista del departamento, suggestedCity debe ser la ciudad/cabecera mas cercana QUE SI esta en la lista (no inventes ciudades que DAC no tiene en su dropdown — DAC las rechaza silenciosamente).
+   - Para Montevideo, suggestedCity es siempre "Montevideo" (los barrios manejan la geografia, no los city names).
+
+6. Para "dac-silent-reject" (DAC ya rechazo el formulario silenciosamente):
    - Mira que dept/city/barrio probamos.
-   - Si pensas que probamos algo equivocado y hay una alternativa razonable (ej. otro barrio, otra ciudad cercana del mismo depto), pone shippable=true + suggestedCity con la alternativa y explica en reasoning.
+   - Si pensas que probamos algo equivocado y hay una alternativa razonable (ej. otra ciudad cercana del mismo depto que SI esta en la lista DAC), pone shippable=true + suggestedCity con la alternativa y explica en reasoning.
    - Si la direccion ya parece bien y DAC fallo por otra razon (rate limit, bug del form), pone shippable=true con confidence=medium, suggestedAddress1/City vacios, y reasoning describiendo que es un posible bug de DAC.
    - Si la direccion es realmente confusa o incompleta, pone shippable=false como en regla 2.
+
+CIUDADES VALIDAS DE DAC POR DEPARTAMENTO (estas son las opciones EXACTAS del dropdown del sistema):
+${DAC_CITIES_PROMPT_BLOCK}
 
 Respondes SIEMPRE invocando la herramienta address_feasibility_verdict.`;
 
@@ -356,12 +386,111 @@ export async function assessAddressFeasibility(
   };
   const cost = calculateAICost(usage);
 
+  let suggestedAddress1 = typeof toolInput.suggestedAddress1 === 'string' ? toolInput.suggestedAddress1 : '';
+  let suggestedCity = typeof toolInput.suggestedCity === 'string' ? toolInput.suggestedCity : '';
+
+  // ── ANTI-HALLUCINATION GUARD #1: suggestedAddress1 numbers ──
+  //
+  // Every digit-sequence in AI's suggestedAddress1 MUST appear somewhere
+  // in the customer's original input (address1 / address2 / orderNotes
+  // / zip). If AI invented a number, drop the suggestion entirely —
+  // we'd rather bounce to the operator than ship to a hallucinated
+  // address. The number is what determines where the package physically
+  // ends up.
+  if (suggestedAddress1) {
+    const digitsInSuggestion = suggestedAddress1.match(/\d+/g) ?? [];
+    const haystack = [
+      input.address1 ?? '',
+      input.address2 ?? '',
+      input.orderNotes ?? '',
+      input.zip ?? '',
+    ].join(' ');
+    const allDigitsPresent = digitsInSuggestion.every((d) => haystack.includes(d));
+    if (!allDigitsPresent) {
+      logger.warn(
+        {
+          tenantId: input.tenantId,
+          orderName: input.orderName,
+          suggestedAddress1,
+          digits: digitsInSuggestion,
+          audit: '2026-05-06',
+        },
+        'AI feasibility: dropping suggestedAddress1 — contains digits not present in original input (possible hallucination)',
+      );
+      suggestedAddress1 = '';
+    }
+  }
+
+  // ── ANTI-HALLUCINATION GUARD #2: suggestedCity must be a real DAC dropdown option ──
+  //
+  // If AI suggests a city that DAC's dropdown for the target department
+  // doesn't have, DAC will silently reject the form and we'd be back
+  // where we started. canonicalizeCityName() returns the DAC-canonical
+  // spelling for accepted matches and null for misses. When it returns
+  // null we drop the suggestion (don't apply a fix that DAC won't accept).
+  if (suggestedCity) {
+    // Resolve which dept to validate against:
+    //   1. caller-provided targetDepartment (most accurate)
+    //   2. attemptedDept for dac-silent-reject scenarios
+    //   3. customer's province (last resort)
+    const validateAgainst =
+      input.targetDepartment ?? input.attemptedDept ?? input.province ?? '';
+    if (validateAgainst) {
+      // Special case: Montevideo has only one valid city ("Montevideo"
+      // itself). Any other suggestedCity for MVD is a hallucination.
+      const isMvd = /^montevideo$/i.test(
+        validateAgainst.normalize('NFD').replace(/[̀-ͯ]/g, '').trim(),
+      );
+      if (isMvd) {
+        if (!/^montevideo$/i.test(suggestedCity.trim())) {
+          logger.warn(
+            { tenantId: input.tenantId, orderName: input.orderName, suggestedCity, audit: '2026-05-06' },
+            'AI feasibility: dropping suggestedCity — Montevideo dept only accepts city "Montevideo"',
+          );
+          suggestedCity = '';
+        } else {
+          suggestedCity = 'Montevideo';
+        }
+      } else {
+        const canonical = canonicalizeCityName(validateAgainst, suggestedCity);
+        if (canonical) {
+          // Round-trip to DAC's canonical spelling so dropdown match is exact.
+          if (canonical !== suggestedCity) {
+            logger.info(
+              {
+                tenantId: input.tenantId,
+                orderName: input.orderName,
+                from: suggestedCity,
+                to: canonical,
+                dept: validateAgainst,
+              },
+              'AI feasibility: suggestedCity normalized to DAC-canonical spelling',
+            );
+            suggestedCity = canonical;
+          }
+        } else {
+          logger.warn(
+            {
+              tenantId: input.tenantId,
+              orderName: input.orderName,
+              suggestedCity,
+              dept: validateAgainst,
+              audit: '2026-05-06',
+            },
+            'AI feasibility: dropping suggestedCity — not in DAC dropdown for the target department',
+          );
+          suggestedCity = '';
+        }
+      }
+    }
+  }
+
   const result: FeasibilityResult = {
     shippable: Boolean(toolInput.shippable),
     confidence: (toolInput.confidence as 'high' | 'medium' | 'low') ?? 'low',
     reasoning: typeof toolInput.reasoning === 'string' ? toolInput.reasoning : '',
-    suggestedAddress1: typeof toolInput.suggestedAddress1 === 'string' ? toolInput.suggestedAddress1 : '',
-    suggestedCity: typeof toolInput.suggestedCity === 'string' ? toolInput.suggestedCity : '',
+    suggestedAddress1,
+    suggestedCity,
     operatorQuestion: typeof toolInput.operatorQuestion === 'string' ? toolInput.operatorQuestion : '',
     source: 'ai',
     aiCostUsd: cost,

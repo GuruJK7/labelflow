@@ -248,4 +248,138 @@ describe('assessAddressFeasibility', () => {
       expect(result.aiCostUsd).toBeLessThan(0.01);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────
+  // ANTI-HALLUCINATION GUARDS (audit 2026-05-06)
+  // ─────────────────────────────────────────────────────────────────
+
+  describe('suggestedAddress1 anti-hallucination guard', () => {
+    it('keeps suggestedAddress1 when all digits appear in original input', async () => {
+      mockAiResponse({
+        shippable: true,
+        confidence: 'high',
+        reasoning: 'Found number in order.notes',
+        suggestedAddress1: 'Calle del Mar 245',
+        suggestedCity: '',
+        operatorQuestion: '',
+      });
+      const result = await assessAddressFeasibility({
+        ...baseInput,
+        orderNotes: 'Mi dirección es Calle del Mar 245',
+      });
+      expect(result.suggestedAddress1).toBe('Calle del Mar 245');
+    });
+
+    it('drops suggestedAddress1 when AI invents a number not in input', async () => {
+      mockAiResponse({
+        shippable: true,
+        confidence: 'high',
+        reasoning: 'Made up a number',
+        suggestedAddress1: 'Calle del Mar 999',
+        suggestedCity: '',
+        operatorQuestion: '',
+      });
+      const result = await assessAddressFeasibility({
+        ...baseInput,
+        // No mention of 999 anywhere
+        orderNotes: 'frente a la plaza',
+      });
+      expect(result.suggestedAddress1).toBe('');
+    });
+
+    it('keeps suggestedAddress1 even when suggestion includes numbers from address2 or zip', async () => {
+      mockAiResponse({
+        shippable: true,
+        confidence: 'high',
+        reasoning: 'extracted number',
+        suggestedAddress1: '8 de Octubre 1234',
+        suggestedCity: '',
+        operatorQuestion: '',
+      });
+      const result = await assessAddressFeasibility({
+        ...baseInput,
+        address1: '8 de Octubre',
+        address2: 'Apto 5, casa 1234', // 1234 lives here
+      });
+      expect(result.suggestedAddress1).toBe('8 de Octubre 1234');
+    });
+  });
+
+  describe('suggestedCity anti-hallucination guard', () => {
+    it('drops suggestedCity when not in DAC dropdown for the target dept', async () => {
+      mockAiResponse({
+        shippable: true,
+        confidence: 'medium',
+        reasoning: 'AI invented a city',
+        suggestedAddress1: '',
+        suggestedCity: 'Punta Inventada', // Made up
+        operatorQuestion: '',
+      });
+      const result = await assessAddressFeasibility({
+        ...baseInput,
+        targetDepartment: 'Rocha',
+      });
+      expect(result.suggestedCity).toBe('');
+    });
+
+    it('keeps suggestedCity when it IS in DAC dropdown', async () => {
+      mockAiResponse({
+        shippable: true,
+        confidence: 'high',
+        reasoning: 'Customer typed wrong city',
+        suggestedAddress1: '',
+        suggestedCity: 'La Paloma',
+        operatorQuestion: '',
+      });
+      const result = await assessAddressFeasibility({
+        ...baseInput,
+        province: 'Rocha',
+        targetDepartment: 'Rocha',
+        address1: 'Calle X 100',
+      });
+      // Result should keep La Paloma OR canonicalize it
+      expect(result.suggestedCity?.toLowerCase()).toContain('paloma');
+    });
+
+    it('forces "Montevideo" when target dept is Montevideo', async () => {
+      mockAiResponse({
+        shippable: true,
+        confidence: 'high',
+        reasoning: 'MVD shipment',
+        suggestedAddress1: '',
+        // AI tried to suggest a barrio as city — invalid for MVD dropdown
+        suggestedCity: 'Pocitos',
+        operatorQuestion: '',
+      });
+      const result = await assessAddressFeasibility({
+        ...baseInput,
+        province: 'Montevideo',
+        targetDepartment: 'Montevideo',
+        address1: 'Calle X 100',
+      });
+      // Anti-hallucination drops the suggestion (Pocitos is a barrio not a city for DAC)
+      expect(result.suggestedCity).toBe('');
+    });
+
+    it('does NOT validate suggestedCity when targetDepartment is missing', async () => {
+      // When caller doesn't pass a target dept (legacy / older callers),
+      // we can't safely validate. We pass through whatever AI said,
+      // logging it but not rejecting.
+      mockAiResponse({
+        shippable: true,
+        confidence: 'medium',
+        reasoning: 'no target dept passed',
+        suggestedAddress1: '',
+        suggestedCity: 'Some Random City',
+        operatorQuestion: '',
+      });
+      const result = await assessAddressFeasibility({
+        ...baseInput,
+        province: undefined,
+        targetDepartment: undefined,
+      });
+      // Without a target, we don't validate (caller must do it).
+      expect(result.suggestedCity).toBe('Some Random City');
+    });
+  });
 });

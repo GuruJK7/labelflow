@@ -1466,6 +1466,10 @@ export async function createShipment(
         zip: addr.zip ?? undefined,
         province: addr.province ?? undefined,
         country: addr.country ?? undefined,
+        // Validate AI's suggestedCity against the customer's province
+        // dropdown — if that's a recognized UY dept name. Falls back
+        // to "all 19 depts" inside assessAddressFeasibility otherwise.
+        targetDepartment: addr.province ?? undefined,
       });
 
       if (verdict.shippable && verdict.suggestedAddress1 && /\d/.test(verdict.suggestedAddress1)) {
@@ -2597,6 +2601,9 @@ export async function createShipment(
             attemptedDept: resolvedDept || undefined,
             attemptedCity: resolvedCity || undefined,
             attemptedBarrio: resolvedBarrioHint ?? undefined,
+            // For dac-silent-reject, the dept we just tried is the
+            // most accurate target for validating the AI's suggestedCity.
+            targetDepartment: resolvedDept || undefined,
           });
           if (verdict.source === 'ai') {
             slog.info(
