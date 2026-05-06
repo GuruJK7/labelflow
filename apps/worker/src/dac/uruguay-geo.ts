@@ -663,6 +663,49 @@ export function correctCityWhenEqualsDepartment(
 }
 
 /**
+ * Handle the customer-typed pattern "City-Department" (e.g.
+ * "Dolores-Soriano", "Cardona-Soriano") — common when the Shopify
+ * checkout doesn't have a separate dept selector and the customer
+ * concatenates both into the city field.
+ *
+ * Returns just the city part if:
+ *   - the input contains exactly one hyphen
+ *   - the first part is a recognized city in CITY_TO_DEPARTMENT
+ *
+ * Otherwise returns the input unchanged.
+ *
+ * Audit 2026-05-06 — production case #11733 Silvia Aranda
+ * (city="Dolores-Soriano"). The deterministic resolver returned
+ * undefined for the full string, the fuzzy matcher couldn't reach it
+ * (length difference > 1), so the order fell into the AI fallback. AI
+ * sometimes recovers but not always. This makes the resolution
+ * deterministic.
+ *
+ * Safety: we only substitute when the first part is in our geo dict.
+ * Random pre-hyphen text ("foo-bar") returns unchanged.
+ */
+export function splitHyphenatedCityName(
+  city: string | null | undefined,
+): string {
+  if (!city) return '';
+  if (!city.includes('-')) return city;
+  const parts = city.split('-').map((p) => p.trim()).filter(Boolean);
+  // Require exactly two parts — three-hyphen forms ("a-b-c") are weird
+  // and we'd rather pass through unchanged than guess wrong.
+  if (parts.length !== 2) return city;
+  const firstNormalized = parts[0]
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (CITY_TO_DEPARTMENT[firstNormalized] !== undefined) {
+    return parts[0]; // preserve customer's original casing
+  }
+  return city;
+}
+
+/**
  * Compute the Levenshtein edit distance between two strings (number of
  * single-character insertions, deletions, or substitutions to turn `a`
  * into `b`). Used by `fuzzyMatchCity` for typo correction. Internal

@@ -4,6 +4,7 @@ import {
   fuzzyMatchCity,
   getCapitalCity,
   levenshtein,
+  splitHyphenatedCityName,
   DEPARTMENT_CAPITALS,
   CITY_TO_DEPARTMENT,
 } from '../dac/uruguay-geo';
@@ -262,6 +263,68 @@ describe('fuzzyMatchCity', () => {
         expect(fuzzy).not.toBeNull();
         expect(CITY_TO_DEPARTMENT[fuzzy!]).toBeDefined();
       }
+    });
+  });
+});
+
+describe('splitHyphenatedCityName', () => {
+  describe('production case (audit 2026-05-06)', () => {
+    it('#11733 Silvia Aranda — "Dolores-Soriano" → "Dolores"', () => {
+      // Real case: customer's checkout joined city + dept with a hyphen.
+      // Without this split, getDepartmentForCity returned undefined and
+      // the order fell into the AI fallback path (non-deterministic).
+      expect(splitHyphenatedCityName('Dolores-Soriano')).toBe('Dolores');
+    });
+  });
+
+  describe('extracts city when first part is a known city', () => {
+    it.each([
+      ['Dolores-Soriano', 'Dolores'],
+      ['Cardona-Soriano', 'Cardona'],
+      ['Mercedes-Soriano', 'Mercedes'],
+      ['Florida-Florida', 'Florida'],
+      // Preserves customer's original casing
+      ['DOLORES-SORIANO', 'DOLORES'],
+      ['  Dolores  -  Soriano  ', 'Dolores'],
+    ])('"%s" → "%s"', (input, expected) => {
+      expect(splitHyphenatedCityName(input)).toBe(expected);
+    });
+  });
+
+  describe('returns input unchanged when first part is NOT a known city', () => {
+    // Random strings shouldn't be split — pass through unchanged.
+    it.each([
+      'foo-bar',
+      'asdf-qwer',
+      'random-text',
+    ])('"%s" — unchanged', (input) => {
+      expect(splitHyphenatedCityName(input)).toBe(input);
+    });
+  });
+
+  describe('returns input unchanged when no hyphen', () => {
+    it.each([
+      'Dolores',
+      'Av. Bolivia 2338',
+      'San José de Mayo',
+      'Pocitos',
+    ])('"%s" — unchanged', (input) => {
+      expect(splitHyphenatedCityName(input)).toBe(input);
+    });
+  });
+
+  describe('returns input unchanged for 3+ part forms (avoid wrong guess)', () => {
+    it.each([
+      'a-b-c',
+      'Dolores-Centro-Soriano',
+    ])('"%s" — unchanged', (input) => {
+      expect(splitHyphenatedCityName(input)).toBe(input);
+    });
+  });
+
+  describe('null/empty handling', () => {
+    it.each([null, undefined, ''])('"%s" → ""', (input) => {
+      expect(splitHyphenatedCityName(input)).toBe('');
     });
   });
 });

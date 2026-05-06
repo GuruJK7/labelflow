@@ -10,7 +10,7 @@ import { DAC_STEPS } from './steps';
 import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
 import { db } from '../db';
-import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT, isAmbiguousCityName, isValidUruguayProvince, correctCityWhenEqualsDepartment, fuzzyMatchCity } from './uruguay-geo';
+import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT, isAmbiguousCityName, isValidUruguayProvince, correctCityWhenEqualsDepartment, fuzzyMatchCity, splitHyphenatedCityName } from './uruguay-geo';
 import { preprocessShopifyAddress } from './address-cleanup';
 import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 import { handlePaymentFlow, AutoPayConfig, PaymentOutcome } from './payment';
@@ -1447,6 +1447,24 @@ export async function createShipment(
         'Dirección sin número de calle (no se intentó cargar en DAC).',
         false, // not a rescue-failed case — no guía created, safe to clear PendingShipment when next attempt fixes the address
       );
+    }
+
+    // (2.5) Hyphen-joined "City-Department" form (e.g. "Dolores-Soriano",
+    //       "Cardona-Soriano"). When the customer's checkout lacked a
+    //       separate dept dropdown and they typed both into the city
+    //       field, extract just the city. Runs BEFORE fuzzy match so
+    //       the cleaned city has a chance to exact-match in step 3.
+    if (addr.city) {
+      const splitCity = splitHyphenatedCityName(addr.city);
+      if (splitCity !== addr.city) {
+        const originalCity = addr.city;
+        addr.city = splitCity;
+        slog.info(
+          DAC_STEPS.PREPROCESS_ADDRESS,
+          `Hyphenated city split: "${originalCity}" → "${addr.city}"`,
+          { before: originalCity, after: addr.city, audit: '2026-05-06' },
+        );
+      }
     }
 
     // (3) Fuzzy city typo correction. Searches CITY_TO_DEPARTMENT for
