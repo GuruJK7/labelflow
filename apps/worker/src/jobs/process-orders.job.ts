@@ -26,6 +26,7 @@ import {
   type ProductCache,
 } from '../rules/product-filter';
 import { evaluateShippingRules, type ShippingRuleRow } from '../rules/shipping';
+import { partitionByCompletedLabels } from './order-dedup-filter';
 import { sendShipmentNotification } from '../notifier/email';
 import { uploadLabelPdf } from '../storage/upload';
 import { createStepLogger } from '../logger';
@@ -216,10 +217,13 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     // picker returns it again on the next cron tick, and the worker mints
     // a second DAC guía — DAC bills the tenant twice.
     //
-    // Skip rule: if the tenant already has ANY COMPLETED Label (with a
-    // real, non-PENDING guía) for this order, skip the order — the DB
-    // says we already shipped it, and Shopify's "unfulfilled" flag is
-    // unreliable while our fulfillment call is broken.
+    // Skip rule: if ANY tenant pointing at the SAME shopifyStoreUrl has a
+    // COMPLETED Label (with a real, non-PENDING guía) for this order, skip
+    // the order — the DB says we already shipped it. Cross-tenant scope is
+    // load-bearing: when two tenants share a shop (intentionally, or after
+    // an operator-driven re-OAuth), each tenant only sees its own Labels in
+    // the per-tenant query, so an order Alex-tenant fulfilled would get
+    // re-fulfilled by NuevaTienda-tenant on the next cron — DAC billed twice.
     //
     // Operator redo workflow: use the dashboard "Reenviar" action (or
     // manually delete Label + PendingShipment rows). Deleting the Label
@@ -229,37 +233,36 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     // Design choice: indefinite skip (no TTL). A time-based escape hatch
     // would re-open the duplication window exactly when the
     // Shopify-fulfill bug is unfixed — the failure window has no upper
-    // bound until the root cause (missing write_orders / write_fulfillments
-    // scope) is resolved on the Shopify app side.
+    // bound until the root cause (missing fulfillment_orders scopes) is
+    // resolved on the Shopify app side.
+    const sharedTenantIds = tenant.shopifyStoreUrl
+      ? (await db.tenant.findMany({
+          where: { shopifyStoreUrl: tenant.shopifyStoreUrl },
+          select: { id: true },
+        })).map((t) => t.id)
+      : [tenantId];
     const existingCompletedLabels = await db.label.findMany({
       where: {
-        tenantId,
+        tenantId: { in: sharedTenantIds },
         status: 'COMPLETED',
         NOT: { dacGuia: { startsWith: 'PENDING-' } },
       },
-      select: { shopifyOrderId: true, dacGuia: true, updatedAt: true },
+      select: { shopifyOrderId: true, dacGuia: true, updatedAt: true, tenantId: true },
     });
-    const completedByOrderId = new Map(
-      existingCompletedLabels.map((l) => [l.shopifyOrderId, l] as const),
-    );
 
     const beforeCompletedSkip = orders.length;
-    const completedSkipped: Array<{ orderName: string; guia: string | null; completedAt: Date }> = [];
-    orders = orders.filter((o) => {
-      const prev = completedByOrderId.get(String(o.id));
-      if (!prev) return true;
-      completedSkipped.push({
-        orderName: o.name,
-        guia: prev.dacGuia,
-        completedAt: prev.updatedAt,
-      });
-      return false;
-    });
+    const partitioned = partitionByCompletedLabels(orders, existingCompletedLabels, tenantId);
+    orders = partitioned.kept;
+    const completedSkipped = partitioned.skipped;
     if (completedSkipped.length > 0) {
+      const crossTenant = completedSkipped.filter((s) => !s.sameTenant).length;
+      const crossTenantNote = crossTenant > 0
+        ? ` ${crossTenant} of these were processed by another tenant pointing at the same shop — cross-tenant skip prevented duplicate DAC shipments.`
+        : '';
       slog.warn(
         'filter',
-        `Skipped ${completedSkipped.length} unfulfilled order(s) with a COMPLETED Label already in DB (prevents duplicate DAC shipments). If Shopify still shows them as unfulfilled, the Shopify fulfillment POST is failing — investigate the Shopify app scope (write_orders / write_fulfillments). To force a redo, use the dashboard "Reenviar" action or delete the Label + PendingShipment rows.`,
-        { skipped: completedSkipped.slice(0, 10), totalSkipped: completedSkipped.length, beforeCompletedSkip },
+        `Skipped ${completedSkipped.length} unfulfilled order(s) with a COMPLETED Label already in DB (prevents duplicate DAC shipments).${crossTenantNote} If Shopify still shows them as unfulfilled, the Shopify fulfillment POST is failing — investigate the Shopify app scopes (read/write_assigned_fulfillment_orders, read/write_merchant_managed_fulfillment_orders). To force a redo, use the dashboard "Reenviar" action or delete the Label + PendingShipment rows.`,
+        { skipped: completedSkipped.slice(0, 10), totalSkipped: completedSkipped.length, crossTenantSkipped: crossTenant, beforeCompletedSkip, sharedTenantIds },
       );
     }
 
