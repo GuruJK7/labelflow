@@ -27,8 +27,18 @@ const HOST = process.env.BRIDGE_HOST || '0.0.0.0';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || `${os.homedir()}/.local/bin/claude`;
 const SECRET = process.env.LABELFLOW_BRIDGE_SECRET;
 const MAX_BODY = 64 * 1024; // 64 KiB — address JSON is well under 4 KiB
-const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS || 90_000);
+// Sonnet + WebSearch/WebFetch can take 60-120s on hard cases (multi-step
+// research + page fetches). Default 180s; YELLOW corrections still finish
+// in ~20-30s because the prompt tells Claude to skip tools when not needed.
+const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS || 180_000);
 const TMP_DIR = process.env.BRIDGE_TMP_DIR || '/tmp';
+// 2026-05-08 — Address Resolver Pro (Fase 1+2). Default model upgraded to
+// sonnet (richer reasoning for HARD cases — narrative/cross-street/no-number
+// addresses); Claude tools enabled for web research; pythonHelpers dir is the
+// optional Fase 2 path with offline DAC catalog + Nominatim geocoder.
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'sonnet';
+const CLAUDE_TOOLS = process.env.CLAUDE_TOOLS || 'Read,Write,WebSearch,WebFetch,Bash';
+const PYTHON_HELPERS_DIR = process.env.PYTHON_HELPERS_DIR || `${os.homedir()}/labelflow-tools`;
 
 if (!SECRET || SECRET.length < 16) {
   console.error('[bridge] FATAL: LABELFLOW_BRIDGE_SECRET must be set (>=16 chars)');
@@ -126,23 +136,36 @@ async function runClaudeCorrection(context) {
   await fs.rename(tmp, ctxPath);
 
   const reasons = (context.classificationReasons || []).join(', ');
+  const mode = context.mode === 'hard' ? 'hard' : 'yellow';
+  // Address Resolver Pro prompt — single prompt covers both modes. For YELLOW
+  // (typical case) the resolution paths are simple and Claude won't reach for
+  // WebSearch/WebFetch unless instructed. For HARD (no-number, cross-street,
+  // narrative, sucursal-pickup) the playbook below tells Claude exactly which
+  // tools to use and in what order.
   const prompt =
     `Read ${ctxPath}. You are correcting a Shopify shipping address for Uruguay courier DAC.\n` +
-    `The order was classified YELLOW due to: ${reasons}.\n` +
-    `Resolve: (1) map city to the correct DAC department from validDepartments, ` +
-    `(2) strip apartment/floor markers from address1 and put them in notes, ` +
-    `(3) normalize phone to 8 digits only (use "00000000" if clearly invalid).\n` +
-    `Write the result to ${resPath} as JSON:\n` +
-    `  Success: {"success":true,"override":{"address1":"...","notes":"...","department":"...","city":"...","phone":"..."},"reasoning":"..."}\n` +
-    `  Failure: {"success":false,"reasoning":"cannot resolve — <reason>"}\n` +
-    `Only include fields in override that actually need correcting. Exit after writing the file.`;
+    `Mode: ${mode}. Original classification reasons: ${reasons || '(none)'}.\n\n` +
+    `Resolution playbook (apply in order — stop at the first that succeeds):\n` +
+    `1. APARTMENT/FLOOR markers (apto, piso, dpto, depto) → MOVE from address1 to notes.\n` +
+    `2. CITY/DEPARTMENT mismatch → map city to the correct entry in validDepartments. If the city is not in the list, look it up: try Bash with the offline catalog first ('python3 ${PYTHON_HELPERS_DIR}/dac_catalog.py "<city>"' if the file exists), otherwise WebSearch "<city> Uruguay department".\n` +
+    `3. PHONE → keep ONLY the 8 digits. If clearly invalid or empty, use "00000000".\n` +
+    `4. NO STREET NUMBER ("s/n", "S/N", or just a street name like "Cisnes"): the address is incomplete. First, try Bash with 'python3 ${PYTHON_HELPERS_DIR}/geocode.py "<address1>, <city>, Uruguay"' if it exists — it returns Nominatim/OSM matches. If a clear single match with a number is returned, use it. Otherwise return success=false with operatorQuestion explaining what to ask the customer.\n` +
+    `5. CROSS-STREET REFERENCE ("entre X y Y", "esquina X y Y"): use the geocode helper above. The lat/lng can be reverse-geocoded to a numbered address.\n` +
+    `6. SUCURSAL/PICKUP REQUEST (address says "Sucursal Dac X", "Dac <ciudad>", "Pickup", "Retiro en agencia"): customer wants to PICK UP at a DAC branch, not home delivery. Return success=false with reasoning="pickup_request" and operatorQuestion="Customer requested pickup at <branch>. LabelFlow does not yet support pickup mode — operator must mark the order accordingly."\n` +
+    `7. NARRATIVE/BUILDING reference ("Edificio X por calle Y, entre Z..."): WebSearch the building name + city to find its civic number (e.g. "Edificio Golden Gate Punta del Este civic number"). If found, replace the narrative with the standard "<calle> <numero>" form.\n\n` +
+    `Output (write to ${resPath}):\n` +
+    `  Success: {"success":true,"override":{...only fields that need correcting...},"reasoning":"..."}\n` +
+    `  Failure: {"success":false,"reasoning":"...","operatorQuestion":"specific question for the operator/customer"}\n\n` +
+    `Override fields available: address1, notes, department, city, phone, recipientName.\n` +
+    `Cost discipline: do NOT use WebSearch or WebFetch unless the playbook explicitly tells you to. For typical YELLOW corrections (steps 1-3) you can decide everything from the context file alone.\n` +
+    `Exit immediately after writing the result file.`;
 
   try {
     const result = await new Promise((resolve) => {
       const child = spawn(CLAUDE_BIN, [
         '-p',
-        '--model', 'haiku',
-        '--allowed-tools', 'Read,Write',
+        '--model', CLAUDE_MODEL,
+        '--allowed-tools', CLAUDE_TOOLS,
         '--output-format', 'json',
         prompt,
       ], { stdio: ['ignore', 'pipe', 'pipe'], env: buildClaudeChildEnv() });
@@ -293,7 +316,15 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  log('info', 'listening', { host: HOST, port: PORT, claudeBin: CLAUDE_BIN });
+  log('info', 'listening', {
+    host: HOST,
+    port: PORT,
+    claudeBin: CLAUDE_BIN,
+    model: CLAUDE_MODEL,
+    tools: CLAUDE_TOOLS,
+    timeoutMs: CLAUDE_TIMEOUT_MS,
+    pythonHelpersDir: PYTHON_HELPERS_DIR,
+  });
 });
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
