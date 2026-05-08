@@ -28,6 +28,7 @@ import {
   apiError,
   apiSuccess,
 } from '@/lib/api-utils';
+import { getCreditHolderTenantIdForUser } from '@/lib/credit-holder';
 
 export async function POST(req: Request) {
   const auth = await getAuthenticatedUser();
@@ -52,8 +53,6 @@ export async function POST(req: Request) {
       name: true,
       slug: true,
       onboardingComplete: true,
-      shipmentCredits: true,
-      referralBonusCredits: true,
     },
   });
 
@@ -63,13 +62,27 @@ export async function POST(req: Request) {
     return apiError('Tenant no encontrado o no tenés permiso', 403);
   }
 
+  // Audit 2026-05-08 — multi-store credit pool. The wallet lives on
+  // the user's CREDIT-HOLDER tenant (oldest one). The switcher dropdown
+  // shows the SAME shared balance for every store, so users understand
+  // the wallet is one shared pool.
+  const holderId = await getCreditHolderTenantIdForUser(auth.userId);
+  const holderWallet = holderId
+    ? await db.tenant.findUnique({
+        where: { id: holderId },
+        select: { shipmentCredits: true, referralBonusCredits: true },
+      })
+    : null;
+  const sharedAvailable =
+    (holderWallet?.shipmentCredits ?? 0) + (holderWallet?.referralBonusCredits ?? 0);
+
   return apiSuccess({
     tenant: {
       id: tenant.id,
       name: tenant.name,
       slug: tenant.slug,
       onboardingComplete: tenant.onboardingComplete,
-      availableCredits: tenant.shipmentCredits + tenant.referralBonusCredits,
+      availableCredits: sharedAvailable,
     },
   });
 }

@@ -1,5 +1,6 @@
 import { db } from '../db';
 import { deductCreditsAndStamp } from '../credits';
+import { getCreditHolderTenantId } from '../credit-holder';
 import { decryptIfPresent, decryptOrRaw } from '../encryption';
 import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify/client';
@@ -337,11 +338,21 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     // expirado, etc.), abortamos limpiamente — DAC no se factura, no se
     // imprime nada, el job queda en COMPLETED con 0 órdenes y el
     // scheduler no volverá a encolar hasta que el tenant compre un pack.
+    //
+    // Audit 2026-05-08 — multi-store credit pool. Wallet lives on the
+    // user's CREDIT-HOLDER tenant (oldest). For non-holder tenants the
+    // local shipmentCredits is always 0 by design (welcome bonus
+    // suppressed at create-time, all incoming credit lands on holder).
+    // We must read the holder's balance to gate, otherwise the new
+    // store always aborts with "saldo=0" even when the user has a
+    // healthy wallet on Curvadivina.
+    const holderId = await getCreditHolderTenantId(tenantId);
     const liveCredits = await db.tenant.findUnique({
-      where: { id: tenantId },
-      select: { shipmentCredits: true },
+      where: { id: holderId },
+      select: { shipmentCredits: true, referralBonusCredits: true },
     });
-    const availableCredits = liveCredits?.shipmentCredits ?? 0;
+    const availableCredits =
+      (liveCredits?.shipmentCredits ?? 0) + (liveCredits?.referralBonusCredits ?? 0);
     if (availableCredits <= 0) {
       slog.warn(
         'credits',

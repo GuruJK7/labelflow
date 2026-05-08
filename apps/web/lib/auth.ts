@@ -86,13 +86,23 @@ export const authOptions: NextAuthOptions = {
         if (typeof requestedTenantId === 'string' && token.id) {
           const owned = await db.tenant.findFirst({
             where: { id: requestedTenantId, userId: token.id as string },
-            select: { id: true, slug: true, isActive: true, subscriptionStatus: true },
+            select: { id: true, slug: true },
           });
           if (owned) {
+            // Audit 2026-05-08 — multi-store credit pool. tenantId/slug
+            // come from the requested store (the user is choosing which
+            // store to be active in), but isActive/subscriptionStatus
+            // come from the user's CREDIT-HOLDER tenant (oldest one).
+            // All of the user's stores share the holder's billing state.
+            const holder = await db.tenant.findFirst({
+              where: { userId: token.id as string },
+              orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+              select: { isActive: true, subscriptionStatus: true },
+            });
             token.tenantId = owned.id;
             token.tenantSlug = owned.slug;
-            token.isActive = owned.isActive;
-            token.subscriptionStatus = owned.subscriptionStatus;
+            token.isActive = holder?.isActive ?? false;
+            token.subscriptionStatus = holder?.subscriptionStatus ?? 'INACTIVE';
             token.tenantRefreshedAt = Math.floor(Date.now() / 1000);
             return token;
           }
@@ -123,16 +133,37 @@ export const authOptions: NextAuthOptions = {
         //      pick the first tenant the user owns ordered by createdAt.
         //      This is the deterministic default for multi-store accounts:
         //      "the store you originally onboarded with".
-        const tenant = token.tenantId
-          ? await db.tenant.findFirst({
-              where: { id: token.tenantId as string, userId: token.id as string },
-              select: { id: true, slug: true, isActive: true, subscriptionStatus: true },
-            })
-          : await db.tenant.findFirst({
-              where: { userId: token.id as string },
-              orderBy: { createdAt: 'asc' },
-              select: { id: true, slug: true, isActive: true, subscriptionStatus: true },
-            });
+        // Audit 2026-05-08 — multi-store credit pool. tenantId/slug
+        // come from whichever store the user picked (or the holder on
+        // first mint). isActive/subscriptionStatus ALWAYS come from
+        // the user's CREDIT-HOLDER tenant (oldest one) so the JWT
+        // billing flags reflect the user's account state, not the
+        // selected store's local flags.
+        const [activeStore, holder] = await Promise.all([
+          token.tenantId
+            ? db.tenant.findFirst({
+                where: { id: token.tenantId as string, userId: token.id as string },
+                select: { id: true, slug: true },
+              })
+            : db.tenant.findFirst({
+                where: { userId: token.id as string },
+                orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+                select: { id: true, slug: true },
+              }),
+          db.tenant.findFirst({
+            where: { userId: token.id as string },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            select: { isActive: true, subscriptionStatus: true },
+          }),
+        ]);
+        const tenant = activeStore && holder
+          ? {
+              id: activeStore.id,
+              slug: activeStore.slug,
+              isActive: holder.isActive,
+              subscriptionStatus: holder.subscriptionStatus,
+            }
+          : null;
         // Audit 2026-05-08 — refresh-stamp logic rewritten.
         //
         // OLD behavior: stamped `tenantRefreshedAt = now` UNCONDITIONALLY,

@@ -184,16 +184,18 @@ export function startScheduler(): void {
       // Los suscriptores legacy (modelo viejo, en wind-down) recibieron
       // créditos al final de su ciclo, así que entran por la misma puerta.
       //
-      // Audit 2026-05-08 — multi-store credit pool. Credits live on the
-      // USER's oldest tenant (the credit holder), so we can't filter on
-      // tenant.shipmentCredits anymore — a non-holder tenant may have 0
-      // local credits while the user's wallet has thousands. We query
-      // active tenants without the credit filter, then drop the ones
-      // whose USER holder has 0 credits in the application loop below.
+      // Audit 2026-05-08 — multi-store credit pool. BOTH the credit
+      // wallet AND the billing flag (isActive) live on the user's
+      // oldest tenant (credit holder). Non-holder tenants have:
+      //   - shipmentCredits = 0 by default (welcome-bonus suppressed)
+      //   - isActive = false by default (only set on MP PAID, which
+      //     credits the holder, not the new store)
+      // So we can't filter on either at SQL level. Query active-creds
+      // tenants without those filters, then in TS drop the ones whose
+      // user holder has isActive=false OR balance=0.
       // Cost is negligible (worker runs every minute, < 1000 tenants).
       const tenants = await db.tenant.findMany({
         where: {
-          isActive: true,
           shopifyStoreUrl: { not: null },
           shopifyToken: { not: null },
           dacUsername: { not: null },
@@ -209,27 +211,41 @@ export function startScheduler(): void {
         },
       });
 
-      // Compute each user's credit-holder balance once. Users with 0
-      // balance get filtered out — none of their tenants are eligible
-      // for scheduling.
+      // Compute each user's credit-holder state once: balance + active
+      // flag. Users with 0 balance OR isActive=false get filtered out
+      // — none of their tenants are eligible for scheduling.
       const uniqueUserIds = Array.from(new Set(tenants.map((t) => t.userId)));
-      const holderBalances = uniqueUserIds.length === 0
-        ? new Map<string, number>()
+      const holderState = uniqueUserIds.length === 0
+        ? new Map<string, { balance: number; isActive: boolean }>()
         : new Map(
             await Promise.all(
               uniqueUserIds.map(async (uid) => {
                 const holder = await db.tenant.findFirst({
                   where: { userId: uid },
                   orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-                  select: { shipmentCredits: true, referralBonusCredits: true },
+                  select: {
+                    shipmentCredits: true,
+                    referralBonusCredits: true,
+                    isActive: true,
+                  },
                 });
-                const total = (holder?.shipmentCredits ?? 0) + (holder?.referralBonusCredits ?? 0);
-                return [uid, total] as const;
+                return [
+                  uid,
+                  {
+                    balance:
+                      (holder?.shipmentCredits ?? 0) +
+                      (holder?.referralBonusCredits ?? 0),
+                    isActive: holder?.isActive ?? false,
+                  },
+                ] as const;
               }),
             ),
           );
 
-      const eligibleTenants = tenants.filter((t) => (holderBalances.get(t.userId) ?? 0) > 0);
+      const eligibleTenants = tenants.filter((t) => {
+        const s = holderState.get(t.userId);
+        return s !== undefined && s.isActive && s.balance > 0;
+      });
 
       const now = new Date();
 
