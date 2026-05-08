@@ -1,4 +1,5 @@
 import { db } from './db';
+import { getCreditHolderTenantId } from './credit-holder';
 
 /**
  * Web-side equivalent of `apps/worker/src/credits.ts:deductCreditsAndStamp`.
@@ -29,6 +30,10 @@ export async function deductCreditsAndStamp(
   successCount: number,
 ): Promise<{ bonusUsed: number; paidUsed: number }> {
   if (successCount <= 0) {
+    // Defensive: still bump lastRunAt on the originating tenant even on
+    // zero-success runs, so the dashboard "Último run" stays honest.
+    // Short-circuit BEFORE the holder lookup so the no-op path doesn't
+    // waste DB queries.
     await db.tenant.update({
       where: { id: tenantId },
       data: { lastRunAt: new Date() },
@@ -36,28 +41,54 @@ export async function deductCreditsAndStamp(
     return { bonusUsed: 0, paidUsed: 0 };
   }
 
+  // Audit 2026-05-08 — multi-store credit pool. Wallet on holder,
+  // per-store metrics on the originating tenant. For single-tenant
+  // users holderId === tenantId so we collapse to one update.
+  const holderId = await getCreditHolderTenantId(tenantId);
+
   return db.$transaction(async (tx) => {
-    const t = await tx.tenant.findUnique({
-      where: { id: tenantId },
+    const holder = await tx.tenant.findUnique({
+      where: { id: holderId },
       select: { referralBonusCredits: true, shipmentCredits: true },
     });
-    if (!t) return { bonusUsed: 0, paidUsed: 0 };
+    if (!holder) return { bonusUsed: 0, paidUsed: 0 };
 
-    const bonusUsed = Math.min(successCount, t.referralBonusCredits);
+    const bonusUsed = Math.min(successCount, holder.referralBonusCredits);
     const paidUsed = successCount - bonusUsed;
 
+    if (holderId === tenantId) {
+      // Single-tenant case — one update covers wallet + metrics.
+      await tx.tenant.update({
+        where: { id: tenantId },
+        data: {
+          referralBonusCredits: { decrement: bonusUsed },
+          shipmentCredits: { decrement: paidUsed },
+          creditsConsumed: { increment: successCount },
+          labelsThisMonth: { increment: successCount },
+          labelsTotal: { increment: successCount },
+          lastRunAt: new Date(),
+        },
+      });
+      return { bonusUsed, paidUsed };
+    }
+
+    // Multi-tenant non-holder — split wallet (holder) + metrics (originating).
     await tx.tenant.update({
-      where: { id: tenantId },
+      where: { id: holderId },
       data: {
         referralBonusCredits: { decrement: bonusUsed },
         shipmentCredits: { decrement: paidUsed },
         creditsConsumed: { increment: successCount },
+      },
+    });
+    await tx.tenant.update({
+      where: { id: tenantId },
+      data: {
         labelsThisMonth: { increment: successCount },
         labelsTotal: { increment: successCount },
         lastRunAt: new Date(),
       },
     });
-
     return { bonusUsed, paidUsed };
   });
 }

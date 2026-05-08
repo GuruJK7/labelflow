@@ -30,7 +30,7 @@ export async function GET() {
 
   const tenants = await db.tenant.findMany({
     where: { userId: auth.userId },
-    orderBy: { createdAt: 'asc' },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     select: {
       id: true,
       name: true,
@@ -47,6 +47,15 @@ export async function GET() {
     },
   });
 
+  // Audit 2026-05-08 — multi-store credit pool. The wallet lives on the
+  // user's CREDIT-HOLDER tenant (the first one above, since we ordered
+  // by createdAt asc + id asc). Every tenant in the switcher dropdown
+  // shows the SAME shared `availableCredits` so the user sees a unified
+  // wallet regardless of which store is currently active.
+  const holder = tenants[0];
+  const sharedAvailable =
+    (holder?.shipmentCredits ?? 0) + (holder?.referralBonusCredits ?? 0);
+
   return apiSuccess({
     tenants: tenants.map((t) => ({
       id: t.id,
@@ -55,9 +64,9 @@ export async function GET() {
       shopifyStoreUrl: t.shopifyStoreUrl,
       onboardingComplete: t.onboardingComplete,
       isActive: t.isActive,
-      // Total available credits = paid pool + bonus pool. Worker drains
-      // bonus first; UI shows the combined number for simplicity.
-      availableCredits: t.shipmentCredits + t.referralBonusCredits,
+      // Shared user-level wallet — same value for all of the user's
+      // tenants. Worker drains bonus first; UI shows the combined number.
+      availableCredits: sharedAvailable,
       createdAt: t.createdAt.toISOString(),
     })),
   });

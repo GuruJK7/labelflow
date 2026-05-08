@@ -1,5 +1,6 @@
 import { db } from './db';
 import { trackWorker } from './analytics';
+import { getCreditHolderTenantId } from './credit-holder';
 
 /**
  * Atomically deduct N successful labels' worth of credits from a tenant.
@@ -27,7 +28,8 @@ export async function deductCreditsAndStamp(
 ): Promise<{ bonusUsed: number; paidUsed: number }> {
   if (successCount <= 0) {
     // Defensive: still bump lastRunAt so the dashboard "Último run" stays
-    // honest even on zero-success runs.
+    // honest even on zero-success runs. Short-circuit BEFORE the holder
+    // lookup so the no-op path doesn't waste DB queries.
     await db.tenant.update({
       where: { id: tenantId },
       data: { lastRunAt: new Date() },
@@ -35,45 +37,84 @@ export async function deductCreditsAndStamp(
     return { bonusUsed: 0, paidUsed: 0 };
   }
 
+  // Audit 2026-05-08 — multi-store credit pool. The wallet (paid +
+  // bonus credits) lives on the user's CREDIT-HOLDER tenant (oldest
+  // one), so all of the user's stores share a single balance. Per-store
+  // metrics (labelsThisMonth, labelsTotal, lastRunAt) stay on the
+  // ORIGINATING tenant — they're meaningful per-store ("how many labels
+  // did Aura process this month?"). For single-tenant users (the common
+  // case) holderId === tenantId, so we collapse the two updates into one.
+  const holderId = await getCreditHolderTenantId(tenantId);
+
   const result = await db.$transaction(async (tx) => {
-    const t = await tx.tenant.findUnique({
-      where: { id: tenantId },
+    const holder = await tx.tenant.findUnique({
+      where: { id: holderId },
       // labelsTotal is read here so we can detect "this is the tenant's
       // very first successful shipment" — used to fire #11
-      // first_shipment_created exactly once per tenant lifetime. A read
-      // BEFORE the increment is the canonical "first-time?" check.
+      // first_shipment_created exactly once per tenant lifetime. Only
+      // meaningful when holderId === tenantId; for non-holders we read
+      // it separately below.
       select: {
         referralBonusCredits: true,
         shipmentCredits: true,
         labelsTotal: true,
       },
     });
-    // Tenant must exist if we got this far (job referenced it). If somehow
-    // gone, fall through with zeros — the calling job will log the failure
-    // via its own error path.
-    if (!t) return { bonusUsed: 0, paidUsed: 0, wasFirstShipment: false };
 
-    const bonusUsed = Math.min(successCount, t.referralBonusCredits);
+    if (!holder) return { bonusUsed: 0, paidUsed: 0, wasFirstShipment: false };
+
+    const bonusUsed = Math.min(successCount, holder.referralBonusCredits);
     const paidUsed = successCount - bonusUsed;
-    const wasFirstShipment = t.labelsTotal === 0;
+
+    if (holderId === tenantId) {
+      // Single-tenant user (or the originating tenant IS the holder) —
+      // one update covers wallet + per-store metrics. This is the
+      // common case and matches the pre-multi-store behavior.
+      await tx.tenant.update({
+        where: { id: tenantId },
+        data: {
+          referralBonusCredits: { decrement: bonusUsed },
+          shipmentCredits: { decrement: paidUsed },
+          creditsConsumed: { increment: successCount },
+          labelsThisMonth: { increment: successCount },
+          labelsTotal: { increment: successCount },
+          lastRunAt: new Date(),
+        },
+      });
+      return { bonusUsed, paidUsed, wasFirstShipment: holder.labelsTotal === 0 };
+    }
+
+    // Multi-tenant non-holder path: wallet on the holder, per-store
+    // metrics on the originating tenant. Two updates inside the same
+    // transaction so they're atomic.
+    const originating = await tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { labelsTotal: true },
+    });
+
+    await tx.tenant.update({
+      where: { id: holderId },
+      data: {
+        referralBonusCredits: { decrement: bonusUsed },
+        shipmentCredits: { decrement: paidUsed },
+        creditsConsumed: { increment: successCount },
+      },
+    });
 
     await tx.tenant.update({
       where: { id: tenantId },
       data: {
-        // Both decrements clamped via the read above so we never go negative.
-        // shipmentCredits CAN technically go negative if a tenant runs out
-        // mid-job — that's fine, the gate at job-start prevents it from
-        // being scheduled and any overrun is cheap to forgive.
-        referralBonusCredits: { decrement: bonusUsed },
-        shipmentCredits: { decrement: paidUsed },
-        creditsConsumed: { increment: successCount },
         labelsThisMonth: { increment: successCount },
         labelsTotal: { increment: successCount },
         lastRunAt: new Date(),
       },
     });
 
-    return { bonusUsed, paidUsed, wasFirstShipment };
+    return {
+      bonusUsed,
+      paidUsed,
+      wasFirstShipment: (originating?.labelsTotal ?? 0) === 0,
+    };
   });
 
   // Fire #11 outside the transaction so a PostHog hiccup never rolls

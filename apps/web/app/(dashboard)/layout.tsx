@@ -7,6 +7,7 @@ import { LowCreditsBanner } from '@/components/onboarding/LowCreditsBanner';
 import { CreditExhaustedModal } from '@/components/onboarding/CreditExhaustedModal';
 import { getAuthenticatedTenant } from '@/lib/api-utils';
 import { db } from '@/lib/db';
+import { getCreditHolderTenantId } from '@/lib/credit-holder';
 
 /**
  * Server-component dashboard layout.
@@ -37,8 +38,10 @@ export default async function DashboardLayout({
     where: { id: auth.tenantId },
     select: {
       onboardingComplete: true,
-      shipmentCredits: true,
-      referralBonusCredits: true,
+      // shipmentCredits/referralBonusCredits intentionally NOT selected
+      // here — they live on the user's CREDIT-HOLDER tenant (oldest one),
+      // not necessarily on the currently-active tenant. We fetch them
+      // separately below via getCreditHolderTenantId.
       firstJobCompletedAt: true,
       shopifyStoreUrl: true,
       shopifyToken: true,
@@ -53,6 +56,18 @@ export default async function DashboardLayout({
   });
 
   if (!tenant) redirect('/login');
+
+  // Audit 2026-05-08 — multi-store credit pool. The wallet (paid +
+  // bonus) lives on the user's oldest tenant (the "credit holder").
+  // For single-tenant users, holder == auth.tenantId so this is just
+  // a no-op extra read.
+  const holderTenantId = await getCreditHolderTenantId(auth.tenantId);
+  const wallet = await db.tenant.findUnique({
+    where: { id: holderTenantId },
+    select: { shipmentCredits: true, referralBonusCredits: true },
+  });
+  const sharedShipmentCredits = wallet?.shipmentCredits ?? 0;
+  const sharedReferralBonusCredits = wallet?.referralBonusCredits ?? 0;
 
   // Email-verification gate. Off by default so a Resend outage or a fresh
   // preview deploy without `RESEND_API_KEY` doesn't lock everyone out. Once
@@ -114,8 +129,12 @@ export default async function DashboardLayout({
   // distinguimos pago vs bonus aquí, porque el worker drena bonus primero
   // de forma transparente. El TopBar SÍ separa las dos métricas para que
   // el usuario vea de dónde sale el saldo.
-  const paidCredits = tenant.shipmentCredits;
-  const bonusCredits = tenant.referralBonusCredits;
+  //
+  // Audit 2026-05-08 — credit pool is shared across all of the user's
+  // tenants (multi-store). We display the user-level wallet here, not
+  // the per-store one. See lib/credit-holder.ts for the architecture.
+  const paidCredits = sharedShipmentCredits;
+  const bonusCredits = sharedReferralBonusCredits;
   const totalCredits = paidCredits + bonusCredits;
 
   return (

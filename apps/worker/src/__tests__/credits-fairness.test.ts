@@ -40,6 +40,17 @@ vi.mock('../db', () => ({
   },
 }));
 
+// Audit 2026-05-08 — multi-store credit pool. Tests focus on the SINGLE-
+// tenant happy path where the holder == originating tenant (the common
+// case, ~99% of users). We mock getCreditHolderTenantId to return the
+// input as-is so the function-under-test takes the collapsed-update path
+// (wallet + metrics in one update — same as pre-multi-store behavior).
+// Multi-tenant edge cases (holder != originating) are covered by a
+// separate integration test against a real DB.
+vi.mock('../credit-holder', () => ({
+  getCreditHolderTenantId: async (tenantId: string) => tenantId,
+}));
+
 import { deductCreditsAndStamp } from '../credits';
 
 const TENANT = 'tenant-abc';

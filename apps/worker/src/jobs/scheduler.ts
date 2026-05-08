@@ -183,10 +183,17 @@ export function startScheduler(): void {
       // créditos no se programan — el frontend les muestra cómo recargar.
       // Los suscriptores legacy (modelo viejo, en wind-down) recibieron
       // créditos al final de su ciclo, así que entran por la misma puerta.
+      //
+      // Audit 2026-05-08 — multi-store credit pool. Credits live on the
+      // USER's oldest tenant (the credit holder), so we can't filter on
+      // tenant.shipmentCredits anymore — a non-holder tenant may have 0
+      // local credits while the user's wallet has thousands. We query
+      // active tenants without the credit filter, then drop the ones
+      // whose USER holder has 0 credits in the application loop below.
+      // Cost is negligible (worker runs every minute, < 1000 tenants).
       const tenants = await db.tenant.findMany({
         where: {
           isActive: true,
-          shipmentCredits: { gt: 0 },
           shopifyStoreUrl: { not: null },
           shopifyToken: { not: null },
           dacUsername: { not: null },
@@ -194,6 +201,7 @@ export function startScheduler(): void {
         },
         select: {
           id: true,
+          userId: true,
           cronSchedule: true,
           scheduleSlots: true,
           timezone: true,
@@ -201,9 +209,31 @@ export function startScheduler(): void {
         },
       });
 
+      // Compute each user's credit-holder balance once. Users with 0
+      // balance get filtered out — none of their tenants are eligible
+      // for scheduling.
+      const uniqueUserIds = Array.from(new Set(tenants.map((t) => t.userId)));
+      const holderBalances = uniqueUserIds.length === 0
+        ? new Map<string, number>()
+        : new Map(
+            await Promise.all(
+              uniqueUserIds.map(async (uid) => {
+                const holder = await db.tenant.findFirst({
+                  where: { userId: uid },
+                  orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+                  select: { shipmentCredits: true, referralBonusCredits: true },
+                });
+                const total = (holder?.shipmentCredits ?? 0) + (holder?.referralBonusCredits ?? 0);
+                return [uid, total] as const;
+              }),
+            ),
+          );
+
+      const eligibleTenants = tenants.filter((t) => (holderBalances.get(t.userId) ?? 0) > 0);
+
       const now = new Date();
 
-      for (const tenant of tenants) {
+      for (const tenant of eligibleTenants) {
         if (!tenant.cronSchedule || tenant.cronSchedule.trim().split(/\s+/).length < 5) continue;
 
         const tz = tenant.timezone ?? 'America/Montevideo';

@@ -4,6 +4,7 @@ import { getPreApprovalClient, getPaymentClient, PLANS, type PlanId } from '@/li
 import { db } from '@/lib/db';
 import { calcReferralKickback } from '@/lib/credit-packs';
 import { trackServer } from '@/lib/analytics.server';
+import { getCreditHolderTenantId } from '@/lib/credit-holder';
 
 /**
  * Verify MercadoPago webhook signature (x-signature header).
@@ -365,9 +366,13 @@ async function handleCreditPackPayment(
       return;
     }
 
-    // Acreditar envíos al tenant.
+    // Audit 2026-05-08 — multi-store credit pool. The user's wallet
+    // lives on their CREDIT-HOLDER tenant (oldest one). When they
+    // bought the pack from a non-holder tenant, we still credit the
+    // holder so the wallet is unified across all their stores.
+    const purchaseHolderId = await getCreditHolderTenantId(purchase.tenantId);
     await db.tenant.update({
-      where: { id: purchase.tenantId },
+      where: { id: purchaseHolderId },
       data: {
         shipmentCredits: { increment: purchase.shipments },
         creditsPurchased: { increment: purchase.shipments },
@@ -375,7 +380,7 @@ async function handleCreditPackPayment(
     });
 
     console.info(
-      `MercadoPago: credit pack PAID — tenant=${purchase.tenantId}, shipments=${purchase.shipments}`,
+      `MercadoPago: credit pack PAID — purchaseTenant=${purchase.tenantId}, holderTenant=${purchaseHolderId}, shipments=${purchase.shipments}`,
     );
 
     // Fire #12 subscription_activated — only on the FIRST paid pack per
@@ -414,21 +419,26 @@ async function handleCreditPackPayment(
     if (wasUpdated.count === 0) return; // ya estaba refunded o nunca estuvo PAID
 
     // Debitar el saldo restante (clamp a 0 si ya consumió todo).
-    const tenant = await db.tenant.findUnique({
-      where: { id: purchase.tenantId },
+    //
+    // Audit 2026-05-08 — multi-store credit pool: the credit was added
+    // to the user's HOLDER tenant (oldest one) on the original PAID
+    // event, so the refund debit must also target the holder.
+    const refundHolderId = await getCreditHolderTenantId(purchase.tenantId);
+    const holderTenant = await db.tenant.findUnique({
+      where: { id: refundHolderId },
       select: { shipmentCredits: true },
     });
-    if (tenant) {
-      const debit = Math.min(tenant.shipmentCredits, purchase.shipments);
+    if (holderTenant) {
+      const debit = Math.min(holderTenant.shipmentCredits, purchase.shipments);
       if (debit > 0) {
         await db.tenant.update({
-          where: { id: purchase.tenantId },
+          where: { id: refundHolderId },
           data: { shipmentCredits: { decrement: debit } },
         });
       }
       if (debit < purchase.shipments) {
         console.warn(
-          `MercadoPago: refund of ${purchase.shipments} shipments but only ${debit} available — ${purchase.shipments - debit} shipments unrecoverable for tenant ${purchase.tenantId}`,
+          `MercadoPago: refund of ${purchase.shipments} shipments but only ${debit} available on holder ${refundHolderId} — ${purchase.shipments - debit} shipments unrecoverable for purchase tenant ${purchase.tenantId}`,
         );
       }
     }
@@ -476,10 +486,18 @@ async function accrueReferralKickback(
   // el process crashea entre crear el accrual y actualizar al tenant, el
   // sourcePurchaseId @unique queda bloqueando el retry y el referrer
   // quedaba sin sus créditos. La txn elimina ese hueco TOCTOU.
+  //
+  // Audit 2026-05-08 — multi-store credit pool: kickback goes to the
+  // referrer's HOLDER tenant (oldest one) so it lands in the unified
+  // wallet rather than getting stuck on a non-active store.
+  const referrerHolderId = await getCreditHolderTenantId(referee.referredById);
   try {
     await db.$transaction([
       db.referralCreditAccrual.create({
         data: {
+          // Keep the original referredBy linkage as the accrual record —
+          // this is for audit ("which referrer earned this kickback?").
+          // The actual credit lands on referrerHolderId below.
           referrerTenantId: referee.referredById,
           refereeTenantId,
           sourcePurchaseId,
@@ -487,7 +505,7 @@ async function accrueReferralKickback(
         },
       }),
       db.tenant.update({
-        where: { id: referee.referredById },
+        where: { id: referrerHolderId },
         data: {
           shipmentCredits: { increment: accrued },
           referralCreditsEarned: { increment: accrued },
