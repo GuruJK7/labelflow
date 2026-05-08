@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
+import { getCreditHolderTenantId } from '@/lib/credit-holder';
 
 /**
  * MCP endpoint — simplified Streamable HTTP transport.
@@ -83,7 +84,16 @@ export async function POST(req: NextRequest) {
 
     try {
       if (toolName === 'process_pending_orders') {
-        if (!tenant.isActive || tenant.subscriptionStatus !== 'ACTIVE') {
+        // Audit 2026-05-08 — multi-store credit pool. Plan-active flag
+        // lives on the user's CREDIT-HOLDER tenant. The MCP API key
+        // identifies a specific tenant (could be non-holder), so we
+        // resolve to the holder's billing flags before gating.
+        const holderId = await getCreditHolderTenantId(tenant.id);
+        const holder = await db.tenant.findUnique({
+          where: { id: holderId },
+          select: { isActive: true, subscriptionStatus: true },
+        });
+        if (!holder?.isActive || holder.subscriptionStatus !== 'ACTIVE') {
           return mcpResult({ error: 'Plan inactivo. Activa tu suscripcion.' });
         }
         const running = await isJobRunning(tenant.id);

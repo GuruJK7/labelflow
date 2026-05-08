@@ -2,6 +2,7 @@ import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getPlanLimit } from '@/lib/mercadopago';
+import { getCreditHolderTenantId } from '@/lib/credit-holder';
 
 export async function POST(req: Request) {
   const auth = await getAuthenticatedTenant();
@@ -19,22 +20,41 @@ export async function POST(req: Request) {
     // No body or invalid JSON — default to normal mode
   }
 
-  // Check tenant is active
-  const tenant = await db.tenant.findUnique({
-    where: { id: auth.tenantId },
-    select: {
-      isActive: true,
-      subscriptionStatus: true,
-      stripePriceId: true,
-      labelsThisMonth: true,
-    },
-  });
+  // Audit 2026-05-08 — multi-store credit pool. Billing flags
+  // (isActive, subscriptionStatus, stripePriceId/plan tier) live on
+  // the user's CREDIT-HOLDER tenant (oldest one), same model as the
+  // credit wallet. Per-store metrics (labelsThisMonth) stay on the
+  // originating tenant.
+  const holderId = await getCreditHolderTenantId(auth.tenantId);
+  const [holder, originating] = await Promise.all([
+    db.tenant.findUnique({
+      where: { id: holderId },
+      select: {
+        isActive: true,
+        subscriptionStatus: true,
+        stripePriceId: true,
+      },
+    }),
+    db.tenant.findUnique({
+      where: { id: auth.tenantId },
+      select: { labelsThisMonth: true },
+    }),
+  ]);
 
-  if (!tenant) return apiError('Tenant no encontrado', 404);
+  if (!holder || !originating) return apiError('Tenant no encontrado', 404);
 
-  if (!tenant.isActive || tenant.subscriptionStatus !== 'ACTIVE') {
+  if (!holder.isActive || holder.subscriptionStatus !== 'ACTIVE') {
     return apiError('Tu plan no esta activo. Activa una suscripcion para procesar pedidos.', 403);
   }
+
+  // Tenant alias for the rest of the function — combines holder flags
+  // with originating per-store metrics so existing reads keep working.
+  const tenant = {
+    isActive: holder.isActive,
+    subscriptionStatus: holder.subscriptionStatus,
+    stripePriceId: holder.stripePriceId,
+    labelsThisMonth: originating.labelsThisMonth,
+  };
 
   // Check plan limit
   const limit = getPlanLimit(tenant.stripePriceId);

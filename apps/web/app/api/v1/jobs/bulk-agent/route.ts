@@ -2,6 +2,7 @@ import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { enqueueProcessOrdersBulk, isJobRunning } from '@/lib/queue';
 import { getPlanLimit } from '@/lib/mercadopago';
+import { getCreditHolderTenantId } from '@/lib/credit-holder';
 
 /**
  * POST /api/v1/jobs/bulk-agent
@@ -16,28 +17,49 @@ export async function POST(_req: Request) {
   const auth = await getAuthenticatedTenant();
   if (!auth) return apiError('No autorizado', 401);
 
-  // Check tenant is active
-  const tenant = await db.tenant.findUnique({
-    where: { id: auth.tenantId },
-    select: {
-      isActive: true,
-      subscriptionStatus: true,
-      stripePriceId: true,
-      labelsThisMonth: true,
-      dacUsername: true,
-      dacPassword: true,
-      shopifyStoreUrl: true,
-    },
-  });
+  // Audit 2026-05-08 — multi-store credit pool. Billing flags read from
+  // the user's CREDIT-HOLDER tenant (oldest one); per-store + per-config
+  // fields stay on the originating tenant (DAC/Shopify creds are
+  // configured per-store).
+  const holderId = await getCreditHolderTenantId(auth.tenantId);
+  const [holder, originating] = await Promise.all([
+    db.tenant.findUnique({
+      where: { id: holderId },
+      select: {
+        isActive: true,
+        subscriptionStatus: true,
+        stripePriceId: true,
+      },
+    }),
+    db.tenant.findUnique({
+      where: { id: auth.tenantId },
+      select: {
+        labelsThisMonth: true,
+        dacUsername: true,
+        dacPassword: true,
+        shopifyStoreUrl: true,
+      },
+    }),
+  ]);
 
-  if (!tenant) return apiError('Tenant no encontrado', 404);
+  if (!holder || !originating) return apiError('Tenant no encontrado', 404);
 
-  if (!tenant.isActive || tenant.subscriptionStatus !== 'ACTIVE') {
+  if (!holder.isActive || holder.subscriptionStatus !== 'ACTIVE') {
     return apiError(
       'Tu plan no está activo. Activá una suscripción para procesar pedidos.',
       403,
     );
   }
+
+  const tenant = {
+    isActive: holder.isActive,
+    subscriptionStatus: holder.subscriptionStatus,
+    stripePriceId: holder.stripePriceId,
+    labelsThisMonth: originating.labelsThisMonth,
+    dacUsername: originating.dacUsername,
+    dacPassword: originating.dacPassword,
+    shopifyStoreUrl: originating.shopifyStoreUrl,
+  };
 
   // Bulk requires both Shopify and DAC configured
   if (!tenant.shopifyStoreUrl) {
