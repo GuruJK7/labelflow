@@ -5,6 +5,7 @@ export interface ShopifyOrder {
   total_price: string;
   currency: string;
   tags: string;
+  fulfillment_status?: string | null;
   shipping_address: {
     first_name: string;
     last_name: string;

@@ -81,7 +81,18 @@ export async function POST(req: Request) {
 
       if (!foRes.ok) {
         const errText = await foRes.text();
-        // If 404 or already fulfilled, check order status
+        // 403 + "required permission" = the Custom App is missing the four
+        // *_fulfillment_orders scopes. Surface the action items so the operator
+        // sees them in the retry results instead of a vague status code.
+        if (foRes.status === 403 && /required permission/i.test(errText)) {
+          results.push({
+            orderName: label.shopifyOrderName,
+            guia,
+            success: false,
+            error: 'Missing scopes on Shopify Custom App. Required: read/write_assigned_fulfillment_orders + read/write_merchant_managed_fulfillment_orders. Fix: Shopify Partners → app config → API access scopes → tick all four → save → reinstall app.',
+          });
+          continue;
+        }
         results.push({ orderName: label.shopifyOrderName, guia, success: false, error: `Fulfillment orders fetch failed (${foRes.status}): ${errText.substring(0, 200)}` });
         continue;
       }

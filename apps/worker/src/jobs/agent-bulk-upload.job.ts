@@ -44,7 +44,7 @@ import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { downloadLabel } from '../dac/label';
 import { createShopifyClient } from '../shopify/client';
 import { markOrderProcessed, addOrderNote } from '../shopify/orders';
-import { fulfillOrderWithTracking } from '../shopify/fulfillment';
+import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify/fulfillment';
 import { sendShipmentNotification } from '../notifier/email';
 import fsSync from 'fs';
 
@@ -447,10 +447,16 @@ export async function agentBulkUploadJob(job: {
             );
             slog.success('order-fulfill', `Shopify fulfilled: ${order.name}`);
           } catch (fulfillErr) {
-            slog.warn(
-              'order-fulfill',
-              `Fulfillment failed (non-fatal): ${(fulfillErr as Error).message}`,
-            );
+            if (fulfillErr instanceof ShopifyAlreadyFulfilledError) {
+              slog.info('order-fulfill', `Already fulfilled in Shopify (status: ${fulfillErr.status}) — skipping ${order.name}`);
+            } else if (fulfillErr instanceof ShopifyMissingScopesError) {
+              slog.error('order-fulfill', `Shopify CONFIG ERROR: ${fulfillErr.message}`);
+            } else {
+              slog.warn(
+                'order-fulfill',
+                `Fulfillment failed (non-fatal): ${(fulfillErr as Error).message}`,
+              );
+            }
           }
         } else if (skipShopify) {
           slog.info('order-fulfill', `SKIP_SHOPIFY: not fulfilling ${order.name} (guia=${result.guia})`);

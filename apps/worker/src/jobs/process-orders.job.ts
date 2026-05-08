@@ -5,7 +5,7 @@ import { decryptIfPresent, decryptOrRaw } from '../encryption';
 import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify/client';
 import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify/orders';
-import { fulfillOrderWithTracking } from '../shopify/fulfillment';
+import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify/fulfillment';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress, DuplicateSubmitError, DacAddressRejectedError } from '../dac/shipment';
@@ -770,16 +770,34 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         } catch { /* fallback to 'on' */ }
         const shouldFulfill = fulfillMode !== 'off';
         const forceAll = fulfillMode === 'always';
+        // Tracks whether Shopify fulfillment ended in a real failure (not "already
+        // fulfilled" which is a benign skip). Used downstream to suppress the
+        // misleading "Order processed successfully" log when fulfillment actually
+        // failed — DAC has the guia and the customer has nothing in Shopify.
+        let fulfillFailedFatally = false;
         if (!testMode && shouldFulfill && result.guia && !result.guia.startsWith('PENDING-')) {
           try {
             slog.info('order-fulfill', `Marking order ${order.name} as Prepared in Shopify (mode: ${fulfillMode})...`, { trackingUrl: result.trackingUrl ?? 'fallback' });
             await fulfillOrderWithTracking(shopifyClient, order.id, result.guia, result.trackingUrl, forceAll);
             slog.success('order-fulfill', `Order ${order.name} fulfilled in Shopify — tracking sent to customer`, { guia: result.guia, trackingUrl: result.trackingUrl ?? 'fallback' });
           } catch (fulfillErr) {
-            if (forceAll) {
+            if (fulfillErr instanceof ShopifyAlreadyFulfilledError) {
+              // Multi-tenant race or manual fulfillment — not an error. Tracking
+              // already went out via whoever fulfilled first; we just shouldn't
+              // double-fulfill. The DAC guia is still valid for our records.
+              slog.info('order-fulfill', `Order ${order.name} already fulfilled in Shopify (status: ${fulfillErr.status}) — skipping`, { guia: result.guia });
+            } else if (fulfillErr instanceof ShopifyMissingScopesError) {
+              // Configuration problem on the Shopify Custom App — not transient.
+              // The error message itself contains the action items the operator
+              // needs to take. Always ERROR level (regardless of forceAll).
+              slog.error('order-fulfill', `Shopify CONFIG ERROR: ${fulfillErr.message}`, { guia: result.guia });
+              fulfillFailedFatally = true;
+            } else if (forceAll) {
               slog.error('order-fulfill', `Shopify fulfillment FAILED (force mode): ${(fulfillErr as Error).message}`, { guia: result.guia });
+              fulfillFailedFatally = true;
             } else {
               slog.warn('order-fulfill', `Shopify fulfillment failed (non-fatal): ${(fulfillErr as Error).message}`, { guia: result.guia });
+              fulfillFailedFatally = true;
             }
           }
         } else if (testMode) {
@@ -828,9 +846,19 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           }
         }
 
-        slog.success('order-complete', `Order ${order.name} processed successfully`, {
-          guia: result.guia, paymentType, emailSent,
-        });
+        if (fulfillFailedFatally) {
+          // DAC succeeded (label in DB, PDF saved, customer email sent if SMTP
+          // configured) but Shopify never marked the order Prepared. Don't
+          // claim success — the operator needs to know they have to mark it
+          // manually OR fix the underlying config (typically missing scopes).
+          slog.warn('order-complete', `Order ${order.name} partially processed: DAC OK but Shopify fulfillment failed — see prior order-fulfill log`, {
+            guia: result.guia, paymentType, emailSent,
+          });
+        } else {
+          slog.success('order-complete', `Order ${order.name} processed successfully`, {
+            guia: result.guia, paymentType, emailSent,
+          });
+        }
 
         // ─ Billing fairness guard (2026-04-29) ──────────────────────────────
         // Only count toward the tenant's billed shipments when the customer
