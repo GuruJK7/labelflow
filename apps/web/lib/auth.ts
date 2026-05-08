@@ -133,15 +133,38 @@ export const authOptions: NextAuthOptions = {
               orderBy: { createdAt: 'asc' },
               select: { id: true, slug: true, isActive: true, subscriptionStatus: true },
             });
-        // Always stamp the refresh time — even when tenant is null — so we
-        // don't hit the DB on every request for users whose tenant row is
-        // missing (e.g. interrupted OAuth sign-in flow).
-        token.tenantRefreshedAt = now;
+        // Audit 2026-05-08 — refresh-stamp logic rewritten.
+        //
+        // OLD behavior: stamped `tenantRefreshedAt = now` UNCONDITIONALLY,
+        // even when the tenant lookup returned null. The intent was to
+        // protect the DB from per-request retries when a user has no
+        // tenant (interrupted OAuth, etc.).
+        //
+        // BUG: when the tenant query failed for a transient reason
+        // (Supabase incident, pgbouncer prepared-statement glitch, race
+        // with very recent signup), the user's JWT got "lobotomized":
+        // it had `id` set but `tenantId` undefined, AND `tenantRefreshedAt`
+        // freshly stamped → no further retries for 15 minutes →
+        // `getAuthenticatedTenant()` returns null on every API call →
+        // user sees "No autorizado" on every protected endpoint until
+        // they manually log out and back in.
+        //
+        // FIX: stamp the refresh time differently for each outcome:
+        //   - tenant FOUND        → stamp now (full 15-min cooldown)
+        //   - tenant MISSING but
+        //     token had tenantId  → tenant was deleted/transferred away;
+        //                           clear and stamp now (no retry needed)
+        //   - tenant MISSING and
+        //     token had none      → potential transient issue or new
+        //                           signup race. Use a SHORT cooldown
+        //                           (60s) so the next request tries again
+        //                           soon — but don't hammer the DB.
         if (tenant) {
           token.tenantId = tenant.id;
           token.tenantSlug = tenant.slug;
           token.isActive = tenant.isActive;
           token.subscriptionStatus = tenant.subscriptionStatus;
+          token.tenantRefreshedAt = now;
         } else if (token.tenantId) {
           // The previously-selected tenant no longer exists or no longer
           // belongs to this user (e.g. they deleted the store, or admin
@@ -149,6 +172,18 @@ export const authOptions: NextAuthOptions = {
           // back to "first tenant" path above.
           delete token.tenantId;
           delete token.tenantSlug;
+          token.tenantRefreshedAt = now;
+        } else {
+          // No tenant found and no prior tenantId in the token. The
+          // most likely causes are (a) very recent signup where the
+          // tenant row's transaction wasn't visible to this connection
+          // yet, (b) a transient DB error, or (c) genuinely a user
+          // without any tenant (rare — interrupted OAuth flow). For
+          // (a) and (b) we want to retry soon; for (c) the cost of an
+          // occasional retry is negligible. Back-date by
+          // (REFRESH_INTERVAL_S - 60) so the next request triggers a
+          // fresh refresh in ~60 seconds.
+          token.tenantRefreshedAt = now - REFRESH_INTERVAL_S + 60;
         }
       }
       return token;
