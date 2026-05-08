@@ -170,6 +170,29 @@ export interface AIResolverInput {
   customerLastName?: string;
   /** ISO country from Shopify shipping address (defensive: reject non-UY). */
   country?: string;
+  // ── Phase-2 enrichment (2026-05-07) — deterministic-resolver hint ──
+  /**
+   * What our deterministic resolver guessed about the barrio (one of the
+   * 58 valid MVD barrios) before invoking AI. Provided ONLY as a hint
+   * so Claude can confirm/correct without needing web_search when the
+   * deterministic guess looks plausible. AI is free to override.
+   *
+   * Cost optimization: production data showed many MVD calls did
+   * web_search to discover a barrio that the deterministic intelligent
+   * detection had already inferred (with low confidence). Surfacing the
+   * hint lets Claude validate from training data instead of searching.
+   */
+  intelligentBarrioHint?: string;
+  /**
+   * Confidence level the deterministic resolver assigned to its barrio
+   * guess. Helps Claude weigh how much to trust the hint.
+   */
+  intelligentConfidence?: 'high' | 'medium' | 'low';
+  /**
+   * Source of the intelligent guess (alias / zip / street). Helps Claude
+   * decide whether to confirm or override.
+   */
+  intelligentSource?: 'alias' | 'zip' | 'street' | 'none';
 }
 
 export interface AIResolverResult {
@@ -1487,9 +1510,24 @@ export async function resolveAddressWithAI(
     // still keep it in AIResolverInput because it is used for the DB history
     // lookup (matching prior shipments by phone digits when email is absent).
     input.orderNotes ? `Order notes: ${input.orderNotes.slice(0, 400)}` : '',
+    // Phase-2 hint (audit 2026-05-07): deterministic resolver's guess.
+    // Surfaced so Claude can confirm without needing web_search when
+    // our guess is plausible. Marked as a HINT, not authoritative.
+    input.intelligentBarrioHint
+      ? `Hint del resolver deterministico: barrio="${input.intelligentBarrioHint}" (confianza ${input.intelligentConfidence ?? 'unknown'}, source ${input.intelligentSource ?? 'unknown'}). Si tu analisis lo confirma, responde sin web_search.`
+      : '',
     historyBlock,
-    'If the address is unambiguous or matches the customer history, respond directly with the resolve_address tool.',
-    'If the street/city is unfamiliar, ambiguous, or you are about to return confidence="low", FIRST use the web_search tool to look it up, THEN respond with resolve_address.',
+    // Cost optimization (audit 2026-05-07): tighter web_search criteria.
+    // Production data showed Claude was searching for streets it could
+    // identify from training data (Av Italia, 8 de Octubre, Bvar Artigas,
+    // etc.) which wasted ~$0.02/call. The new wording demands the model
+    // try ALL of: training data, customer history, ZIP-derived dept,
+    // and DAC city/barrio whitelists FIRST.
+    'EFICIENCIA DE COSTO — IMPORTANTE:',
+    '1. Si la calle es conocida (Av Italia, 8 de Octubre, Bvar Artigas, Rambla, etc.) o el barrio es deducible del ZIP+dept+address, responde DIRECTAMENTE con resolve_address. NO uses web_search.',
+    '2. Si HISTORIAL DEL CLIENTE muestra una direccion previa cercana (mismo barrio/ciudad), reusa esa resolucion sin web_search.',
+    '3. Solo usa web_search cuando la direccion es DESCONOCIDA y NO podes deducir el barrio de ninguna otra senal. Cada search cuesta plata real.',
+    '4. Tenes 1 sola web_search por call. Usala bien.',
   ]
     .filter(Boolean)
     .join('\n');
@@ -1531,10 +1569,18 @@ export async function resolveAddressWithAI(
       // 400). Rule 14 in the system prompt already tells the AI to include
       // "Uruguay" in every search query, which achieves the same geo-bias
       // without needing the location hint.
+      //
+      // Cost optimization (audit 2026-05-07): max_uses lowered from 2 → 1.
+      // Production data analysis (30 days, 102 web-search-bearing calls)
+      // showed that ~$1.84 of $5.20 spent on web_search came from the
+      // OPTIONAL second search. Capping at 1 search saves ~30% on
+      // search-bearing calls (~$2/month) with negligible effectiveness
+      // loss — Claude almost always finds the answer in the first
+      // search; the second was a sanity check rarely changing the verdict.
       {
         type: 'web_search_20250305' as const,
         name: 'web_search' as const,
-        max_uses: 2,
+        max_uses: 1,
       },
       {
         ...ADDRESS_RESOLVER_TOOL,

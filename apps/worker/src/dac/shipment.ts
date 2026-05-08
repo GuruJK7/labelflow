@@ -1806,6 +1806,13 @@ export async function createShipment(
         customerFirstName: addr.first_name ?? '',
         customerLastName: addr.last_name ?? '',
         country: addr.country ?? '',
+        // Phase-2 enrichment (audit 2026-05-07): pass the deterministic
+        // resolver's barrio guess to AI as a HINT. Lets Claude confirm
+        // from training data without invoking web_search when our guess
+        // is plausible. Saves ~$0.02/call when AI accepts the hint.
+        intelligentBarrioHint: intelligent.barrio ?? undefined,
+        intelligentConfidence: intelligent.confidence,
+        intelligentSource: intelligent.source,
       });
       if (aiResolution) {
         slog.success(DAC_STEPS.STEP3_SELECT_DEPT,
