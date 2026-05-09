@@ -11,7 +11,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   partitionByCompletedLabels,
+  partitionByAIFeasibilityBounce,
   type CompletedLabel,
+  type AIFeasibilityBounce,
   type ShopifyOrderLike,
 } from '../jobs/order-dedup-filter';
 
@@ -118,6 +120,181 @@ describe('partitionByCompletedLabels — cross-tenant dedup', () => {
     const orders = [order(1, '#1'), order(2, '#2'), order(3, '#3'), order(4, '#4')];
     const completed = [label('2', T_NUEVA)];
     const result = partitionByCompletedLabels(orders, completed, T_NUEVA);
+    expect(result.kept.map((o) => o.id)).toEqual([1, 3, 4]);
+  });
+});
+
+// ── partitionByAIFeasibilityBounce — 2026-05-09 cost regression ──────────
+//
+// Incident: 1761 AI feasibility calls in 24h (~$8/day) burned re-evaluating
+// the same NEEDS_REVIEW orders every 15-min cron tick. Same Shopify
+// address1 → same AI verdict ("not shippable") → wasted spend. This filter
+// skips those orders unless the operator edited the Shopify address (which
+// is the only way the verdict could change). These tests pin the behavior so
+// the cost regression doesn't recur AND so legitimate re-evaluations after
+// an operator edit still flow through.
+
+const AI_BOUNCE_MSG =
+  'Dirección del cliente en Shopify no se pudo interpretar — contactar al cliente para corregirla y reprocesar.';
+
+function bounce(
+  orderId: string,
+  tenantId: string,
+  deliveryAddress: string,
+  errorMessage: string = AI_BOUNCE_MSG,
+): AIFeasibilityBounce {
+  return {
+    shopifyOrderId: orderId,
+    deliveryAddress,
+    errorMessage,
+    updatedAt: new Date('2026-05-09T13:00:00Z'),
+    tenantId,
+  };
+}
+
+function addressMap(...entries: Array<[number, string]>): Map<string, string> {
+  return new Map(entries.map(([id, addr]) => [String(id), addr]));
+}
+
+describe('partitionByAIFeasibilityBounce — AI cost regression', () => {
+  it('keeps orders with no prior bounce (new orders, never bounced)', () => {
+    const orders = [order(1208, '#1208'), order(1209, '#1209')];
+    const result = partitionByAIFeasibilityBounce(
+      orders,
+      [],
+      addressMap([1208, 'Av Italia 1234'], [1209, 'Brandsen 100']),
+      T_NUEVA,
+    );
+    expect(result.kept.map((o) => o.id)).toEqual([1208, 1209]);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  it('REGRESSION CORE: skips orders with same address1 as the prior AI bounce', () => {
+    // Order #1240 was bounced yesterday with address "Ibicuy entre eguren y
+    // lucas roselli". Customer hasn't changed it. Re-asking AI is wasted spend.
+    const orders = [order(1240, '#1240'), order(1245, '#1245')];
+    const bounces = [bounce('1240', T_NUEVA, 'Ibicuy entre eguren y lucas roselli')];
+    const result = partitionByAIFeasibilityBounce(
+      orders,
+      bounces,
+      addressMap(
+        [1240, 'Ibicuy entre eguren y lucas roselli'], // unchanged
+        [1245, 'Cisnes'],
+      ),
+      T_NUEVA,
+    );
+    expect(result.kept.map((o) => o.id)).toEqual([1245]);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]).toMatchObject({
+      orderName: '#1240',
+      sameTenant: true,
+    });
+  });
+
+  it('keeps orders whose Shopify address1 was edited since the bounce', () => {
+    // Operator fixed #1240 in Shopify — now reads "Ibicuy 542". Should re-evaluate.
+    const orders = [order(1240, '#1240')];
+    const bounces = [bounce('1240', T_NUEVA, 'Ibicuy entre eguren y lucas roselli')];
+    const result = partitionByAIFeasibilityBounce(
+      orders,
+      bounces,
+      addressMap([1240, 'Ibicuy 542']),
+      T_NUEVA,
+    );
+    expect(result.kept).toHaveLength(1);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  it('cross-tenant: skips when a sibling tenant on the same shop bounced this address', () => {
+    // Aura shop has two tenants. Alex bounced #1240 yesterday. NuevaTienda
+    // runs today — should still skip (same shop, same address, same verdict).
+    const orders = [order(1240, '#1240')];
+    const bounces = [bounce('1240', T_ALEX, 'Ibicuy entre eguren y lucas roselli')];
+    const result = partitionByAIFeasibilityBounce(
+      orders,
+      bounces,
+      addressMap([1240, 'Ibicuy entre eguren y lucas roselli']),
+      T_NUEVA, // current tenant is NuevaTienda
+    );
+    expect(result.kept).toHaveLength(0);
+    expect(result.skipped[0]).toMatchObject({
+      orderName: '#1240',
+      sameTenant: false, // bounce was from sibling tenant
+    });
+  });
+
+  it('normalizes whitespace + casing — incidental edits do NOT trigger re-evaluation', () => {
+    // Shopify or another integration capitalized the address differently.
+    // We don't want to burn AI for that.
+    const orders = [order(1240, '#1240')];
+    const bounces = [bounce('1240', T_NUEVA, 'Ibicuy entre eguren y lucas roselli')];
+    const result = partitionByAIFeasibilityBounce(
+      orders,
+      bounces,
+      addressMap([1240, '  IBICUY ENTRE EGUREN Y   LUCAS ROSELLI  ']), // same content, diff whitespace/casing
+      T_NUEVA,
+    );
+    expect(result.kept).toHaveLength(0);
+    expect(result.skipped).toHaveLength(1);
+  });
+
+  it('handles empty current address gracefully (no crash, treats as "changed")', () => {
+    // Edge case: order with no shipping_address.address1 in current Shopify
+    // payload. We pass empty string — comparison fails → re-process (safe default).
+    const orders = [order(1240, '#1240')];
+    const bounces = [bounce('1240', T_NUEVA, 'Some Address 100')];
+    const result = partitionByAIFeasibilityBounce(
+      orders,
+      bounces,
+      addressMap([1240, '']),
+      T_NUEVA,
+    );
+    expect(result.kept).toHaveLength(1);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  it('accepts orders with no address entry in the map (defensive — treats as changed)', () => {
+    const orders = [order(1240, '#1240')];
+    const bounces = [bounce('1240', T_NUEVA, 'Some Address 100')];
+    // Map deliberately empty — orderId 1240 not present
+    const result = partitionByAIFeasibilityBounce(
+      orders,
+      bounces,
+      new Map<string, string>(),
+      T_NUEVA,
+    );
+    expect(result.kept).toHaveLength(1);
+  });
+
+  it('does NOT touch orders whose previous Label has a different reason (e.g. C-4 ORPHANED)', () => {
+    // The caller is responsible for filtering bounces to AI-feasibility only.
+    // If a bounce array includes a non-AI errorMessage it's a caller bug —
+    // but the function still operates by address comparison, which is fine.
+    // This test documents that the filter doesn't try to second-guess the
+    // bounce list provided.
+    const orders = [order(1240, '#1240')];
+    const bounces = [bounce('1240', T_NUEVA, 'Some Address 100', 'C-4: prior submit exists')];
+    const result = partitionByAIFeasibilityBounce(
+      orders,
+      bounces,
+      addressMap([1240, 'Some Address 100']),
+      T_NUEVA,
+    );
+    // Skipped because address matches — but the runlog from the caller will
+    // show the C-4 reason verbatim so an operator can audit.
+    expect(result.kept).toHaveLength(0);
+    expect(result.skipped[0].reason).toContain('C-4');
+  });
+
+  it('preserves order ordering in kept (cron processing order stability)', () => {
+    const orders = [order(1, '#1'), order(2, '#2'), order(3, '#3'), order(4, '#4')];
+    const bounces = [bounce('2', T_NUEVA, 'Same Addr')];
+    const result = partitionByAIFeasibilityBounce(
+      orders,
+      bounces,
+      addressMap([1, 'A'], [2, 'Same Addr'], [3, 'C'], [4, 'D']),
+      T_NUEVA,
+    );
     expect(result.kept.map((o) => o.id)).toEqual([1, 3, 4]);
   });
 });

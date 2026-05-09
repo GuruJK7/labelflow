@@ -26,7 +26,7 @@ import {
   type ProductCache,
 } from '../rules/product-filter';
 import { evaluateShippingRules, type ShippingRuleRow } from '../rules/shipping';
-import { partitionByCompletedLabels } from './order-dedup-filter';
+import { partitionByCompletedLabels, partitionByAIFeasibilityBounce } from './order-dedup-filter';
 import { sendShipmentNotification } from '../notifier/email';
 import { uploadLabelPdf } from '../storage/upload';
 import { createStepLogger } from '../logger';
@@ -263,6 +263,64 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         'filter',
         `Skipped ${completedSkipped.length} unfulfilled order(s) with a COMPLETED Label already in DB (prevents duplicate DAC shipments).${crossTenantNote} If Shopify still shows them as unfulfilled, the Shopify fulfillment POST is failing — investigate the Shopify app scopes (read/write_assigned_fulfillment_orders, read/write_merchant_managed_fulfillment_orders). To force a redo, use the dashboard "Reenviar" action or delete the Label + PendingShipment rows.`,
         { skipped: completedSkipped.slice(0, 10), totalSkipped: completedSkipped.length, crossTenantSkipped: crossTenant, beforeCompletedSkip, sharedTenantIds },
+      );
+    }
+
+    // ── AI-feasibility bounce skip (2026-05-09 cost fix) ─────────────────
+    //
+    // Audit on 2026-05-09 found that ~98% of daily AI feasibility spend
+    // (~$8/day) was wasted re-evaluating the same NEEDS_REVIEW orders every
+    // 15-min cron tick. Each bounce produces a Label.errorMessage like
+    // "Dirección del cliente en Shopify no se pudo interpretar — contactar al
+    // cliente para corregirla y reprocesar". The same Shopify address
+    // produces the same AI verdict, so re-asking is wasted spend.
+    //
+    // This filter skips those orders UNTIL the operator edits the address1
+    // in Shopify (which makes the comparison miss → the order flows through
+    // again). All OTHER NEEDS_REVIEW reasons (C-4 ORPHANED, REMITENTE
+    // manual, possible orphan guía, PDF upload failure) are NOT skipped here
+    // — they have separate gates downstream.
+    //
+    // Cross-tenant scope: same as the COMPLETED filter. A bounce in a sibling
+    // tenant pointing at the same shop counts as "we already evaluated this
+    // address" — no need for the second tenant to re-burn AI.
+    const aiFeasibilityBounces = await db.label.findMany({
+      where: {
+        tenantId: { in: sharedTenantIds },
+        status: 'NEEDS_REVIEW',
+        errorMessage: { contains: 'no se pudo interpretar' },
+      },
+      select: {
+        shopifyOrderId: true,
+        deliveryAddress: true,
+        errorMessage: true,
+        updatedAt: true,
+        tenantId: true,
+      },
+    });
+    const currentAddress1ByOrderId = new Map<string, string>(
+      orders.map((o) => [String(o.id), o.shipping_address?.address1 ?? ''] as const),
+    );
+    const beforeStuckSkip = orders.length;
+    const stuckPartition = partitionByAIFeasibilityBounce(
+      orders,
+      aiFeasibilityBounces,
+      currentAddress1ByOrderId,
+      tenantId,
+    );
+    orders = stuckPartition.kept;
+    const stuckSkipped = stuckPartition.skipped;
+    if (stuckSkipped.length > 0) {
+      const crossTenantStuck = stuckSkipped.filter((s) => !s.sameTenant).length;
+      slog.info(
+        'filter',
+        `Skipped ${stuckSkipped.length} order(s) previously bounced by AI feasibility (same Shopify address1 → same verdict; would burn ~$${(stuckSkipped.length * 0.0045).toFixed(3)} re-asking AI). To force a re-evaluation, edit the address in Shopify or delete the Label row.`,
+        {
+          skipped: stuckSkipped.slice(0, 10).map((s) => ({ order: s.orderName, sameTenant: s.sameTenant })),
+          totalSkipped: stuckSkipped.length,
+          crossTenantStuckSkipped: crossTenantStuck,
+          beforeStuckSkip,
+        },
       );
     }
 
