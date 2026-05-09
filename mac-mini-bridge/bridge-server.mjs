@@ -216,114 +216,6 @@ async function runClaudeCorrection(context) {
   }
 }
 
-// ─── generic prompt runner ──────────────────────────────────────────────────
-// 2026-05-08 — added so ai-feasibility.ts and ai-resolver.ts can route their
-// Anthropic SDK calls through the Mac Mini Claude Max subscription instead of
-// the API. The previous /correct-address endpoint is YELLOW-only (worker calls
-// it during classification); these other two functions are called many times
-// per cron tick and account for >90% of the worker's daily AI cost.
-//
-// Contract: caller passes system + user + model + allowedTools + responseFormat
-// (json|text). Returns { ok, content } where content is the parsed JSON (when
-// responseFormat='json') or the raw text. On any failure the caller falls back
-// to its own Anthropic SDK path so we never block a cron tick on a broken bridge.
-async function runClaudePrompt(input) {
-  const runId = randomUUID();
-  const ctxPath = path.join(TMP_DIR, `labelflow-bridge-pctx-${runId}.txt`);
-  const resPath = path.join(TMP_DIR, `labelflow-bridge-pres-${runId}.txt`);
-
-  // Write the user message to a file so it can be arbitrarily long without
-  // blowing past argv limits or shell-escaping pitfalls.
-  const tmp = ctxPath + '.tmp';
-  await fs.writeFile(tmp, input.user, { mode: 0o600 });
-  await fs.rename(tmp, ctxPath);
-
-  const responseFormat = input.responseFormat === 'text' ? 'text' : 'json';
-  const formatHint =
-    responseFormat === 'json'
-      ? `Respond ONLY with valid JSON written to ${resPath}. No prose, no code fences, no commentary — just the JSON object. ${input.schemaHint ? `JSON schema: ${input.schemaHint}` : ''}`
-      : `Write your response (plain text, no markdown) to ${resPath}.`;
-
-  const prompt =
-    `Read your input message from the file ${ctxPath} (treat its contents as the user message). ` +
-    formatHint;
-
-  const model = (input.model || CLAUDE_MODEL).trim();
-  const tools = (input.allowedTools || 'Read,Write').trim();
-
-  try {
-    const result = await new Promise((resolve) => {
-      const args = [
-        '-p',
-        '--model', model,
-        '--allowed-tools', tools,
-        '--output-format', 'json',
-      ];
-      if (input.system) {
-        args.push('--append-system-prompt', input.system);
-      }
-      args.push(prompt);
-
-      const child = spawn(CLAUDE_BIN, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: buildClaudeChildEnv(),
-      });
-
-      let stderr = '';
-      let stdout = '';
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        try { child.kill('SIGTERM'); } catch {}
-        setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 5000);
-      }, CLAUDE_TIMEOUT_MS);
-
-      child.stdout?.on('data', (c) => { stdout += c.toString(); });
-      child.stderr?.on('data', (c) => { stderr += c.toString(); });
-
-      child.on('close', async (code) => {
-        clearTimeout(timer);
-        if (timedOut) {
-          resolve({ ok: false, error: 'timeout', detail: `spawn exceeded ${CLAUDE_TIMEOUT_MS}ms` });
-          return;
-        }
-        try {
-          const raw = (await fs.readFile(resPath, 'utf8')).trim();
-          if (responseFormat === 'json') {
-            // Be forgiving: strip code fences if Claude added any despite the
-            // instruction. A common failure mode is ```json {...} ```.
-            const stripped = raw.replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
-            try {
-              const parsed = JSON.parse(stripped);
-              resolve({ ok: true, content: parsed });
-            } catch (parseErr) {
-              resolve({ ok: false, error: 'json-parse', detail: `${parseErr.message}: ${stripped.slice(0, 200)}` });
-            }
-          } else {
-            resolve({ ok: true, content: raw });
-          }
-        } catch (err) {
-          resolve({
-            ok: false,
-            error: `claude exited ${code ?? 'null'} without writing result`,
-            detail: (stderr || stdout).slice(0, 500) || 'no output',
-          });
-        }
-      });
-
-      child.on('error', (err) => {
-        clearTimeout(timer);
-        resolve({ ok: false, error: `spawn failed: ${err.message}` });
-      });
-    });
-
-    return result;
-  } finally {
-    await fs.unlink(ctxPath).catch(() => {});
-    await fs.unlink(resPath).catch(() => {});
-  }
-}
-
 // ─── routes ─────────────────────────────────────────────────────────────────
 async function handle(req, res) {
   // Health check — unauthenticated, for LaunchAgent / Tailscale probe
@@ -333,7 +225,7 @@ async function handle(req, res) {
     return;
   }
 
-  if (req.method !== 'POST' || (req.url !== '/correct-address' && req.url !== '/claude-prompt')) {
+  if (req.method !== 'POST' || req.url !== '/correct-address') {
     res.writeHead(404, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: 'not found' }));
     return;
@@ -383,37 +275,21 @@ async function handle(req, res) {
       return;
     }
 
-    // Route validation — the two endpoints have different required fields.
-    if (req.url === '/correct-address') {
-      if (!context || typeof context !== 'object' || !context.shipping_address) {
-        res.writeHead(400, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'missing shipping_address' }));
-        return;
-      }
-    } else if (req.url === '/claude-prompt') {
-      if (!context || typeof context !== 'object' || typeof context.user !== 'string' || !context.user.length) {
-        res.writeHead(400, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'missing user prompt' }));
-        return;
-      }
+    if (!context || typeof context !== 'object' || !context.shipping_address) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'missing shipping_address' }));
+      return;
     }
 
-    log('info', 'claude-start', {
-      jobId: context.jobId,
-      orderId: context.orderId,
-      route: req.url,
-    });
+    log('info', 'claude-start', { jobId: context.jobId, orderId: context.orderId });
 
     try {
-      const result = req.url === '/claude-prompt'
-        ? await runClaudePrompt(context)
-        : await runClaudeCorrection(context);
+      const result = await runClaudeCorrection(context);
       const ms = Date.now() - t0;
       log('info', 'claude-done', {
         jobId: context.jobId,
         orderId: context.orderId,
-        route: req.url,
-        success: req.url === '/claude-prompt' ? !!result.ok : !!result.success,
+        success: !!result.success,
         ms,
       });
       res.writeHead(200, { 'content-type': 'application/json' });

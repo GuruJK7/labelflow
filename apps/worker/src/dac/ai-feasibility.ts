@@ -52,7 +52,6 @@ import {
   DAC_CITIES_PROMPT_BLOCK,
   canonicalizeCityName,
 } from './dac-city-constraints';
-import { callClaudeJSONViaBridge } from '../agent/claude-call';
 
 // Same model as the resolver — Haiku 4.5, fast + cheap.
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -284,156 +283,108 @@ function buildUserMessage(input: FeasibilityInput): string {
 export async function assessAddressFeasibility(
   input: FeasibilityInput,
 ): Promise<FeasibilityResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    logger.warn(
+      { tenantId: input.tenantId, orderName: input.orderName, reason: input.reason },
+      'AI feasibility: ANTHROPIC_API_KEY not set — falling back to caller default',
+    );
+    return {
+      shippable: false,
+      confidence: 'low',
+      reasoning: 'AI feasibility unavailable (ANTHROPIC_API_KEY not set).',
+      operatorQuestion: '',
+      source: 'unavailable',
+    };
+  }
+
+  const client = new Anthropic({ apiKey, timeout: REQUEST_TIMEOUT_MS });
   const userMessage = buildUserMessage(input);
 
-  // 1) Try the Mac Mini bridge first ($0, uses Claude Max subscription).
-  //    On any failure (bridge unavailable, timeout, schema mismatch) we fall
-  //    through to the existing Anthropic SDK path below — backward-compatible.
-  //
-  //    Bridge integration added 2026-05-08 after audit found the prior code
-  //    path went 100% to the API: the bridge was only wired to YELLOW address
-  //    correction (`agent/invoke-claude.ts`), so this function and ai-resolver
-  //    were burning ~$2/day on Anthropic API calls that the user's Claude Max
-  //    sub already covers.
-  let toolInput: Record<string, unknown> | null = null;
-  let usedBridge = false;
-  let cost = 0;
-
-  try {
-    const bridgeResult = await callClaudeJSONViaBridge({
-      jobId: 'feasibility',
-      orderId: input.orderName,
-      system: SYSTEM_PROMPT,
-      user: userMessage,
-      model: 'haiku',
-      allowedTools: 'Read,Write',
-      schemaHint:
-        '{ "shippable": boolean, "confidence": "high"|"medium"|"low", ' +
-        '"reasoning": string, "suggestedAddress1": string, ' +
-        '"suggestedCity": string, "operatorQuestion": string }',
-    });
-    if (
-      bridgeResult &&
-      typeof bridgeResult === 'object' &&
-      !Array.isArray(bridgeResult) &&
-      'shippable' in (bridgeResult as object)
-    ) {
-      toolInput = bridgeResult as Record<string, unknown>;
-      usedBridge = true;
-      // cost stays 0 — subscription, not metered.
-    }
-  } catch (err) {
-    // callClaudeJSONViaBridge is meant to never throw, but defense in depth.
-    logger.warn(
-      { tenantId: input.tenantId, orderName: input.orderName, error: (err as Error).message },
-      'AI feasibility: bridge attempt threw (falling through to API)',
-    );
-  }
-
-  // 2) Bridge didn't deliver — use the Anthropic SDK as before.
-  if (!toolInput) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      logger.warn(
-        { tenantId: input.tenantId, orderName: input.orderName, reason: input.reason },
-        'AI feasibility: bridge unavailable AND ANTHROPIC_API_KEY not set — falling back to caller default',
-      );
-      return {
-        shippable: false,
-        confidence: 'low',
-        reasoning: 'AI feasibility unavailable (ANTHROPIC_API_KEY not set and bridge unavailable).',
-        operatorQuestion: '',
-        source: 'unavailable',
-      };
-    }
-
-    const client = new Anthropic({ apiKey, timeout: REQUEST_TIMEOUT_MS });
-
-    // Up to 3 retries on transient errors. Pattern matches ai-resolver.ts
-    // but capped lower since this is a fallback path — if the first 2
-    // attempts fail we'd rather bounce to the operator than block the
-    // cron tick for 60+ seconds.
-    const MAX_ATTEMPTS = 3;
-    let response: Anthropic.Message | null = null;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        response = await client.messages.create({
-          model: MODEL,
-          max_tokens: MAX_TOKENS,
-          system: SYSTEM_PROMPT,
-          tools: [FEASIBILITY_TOOL],
-          tool_choice: { type: 'tool' as const, name: 'address_feasibility_verdict' },
-          messages: [{ role: 'user' as const, content: userMessage }],
-        });
-        break;
-      } catch (err) {
-        const status = (err as any)?.status;
-        const retryable =
-          status === 429 ||
-          status === 529 ||
-          (typeof status === 'number' && status >= 500 && status < 600);
-        if (!retryable || attempt === MAX_ATTEMPTS) {
-          logger.error(
-            {
-              tenantId: input.tenantId,
-              orderName: input.orderName,
-              reason: input.reason,
-              status,
-              attempt,
-              error: (err as Error).message,
-            },
-            'AI feasibility: API call failed (non-retryable or out of attempts)',
-          );
-          return {
-            shippable: false,
-            confidence: 'low',
-            reasoning: `AI feasibility call failed (${(err as Error).message.substring(0, 80)}).`,
-            operatorQuestion: '',
-            source: 'unavailable',
-          };
-        }
-        const backoffMs = Math.min(15_000, Math.pow(3, attempt - 1) * 1_000);
-        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+  // Up to 3 retries on transient errors. Pattern matches ai-resolver.ts
+  // but capped lower (2 vs 4) since this is a fallback path — if the
+  // first 2 attempts fail we'd rather bounce to the operator than
+  // block the cron tick for 60+ seconds.
+  const MAX_ATTEMPTS = 3;
+  let response: Anthropic.Message | null = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      response = await client.messages.create({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        system: SYSTEM_PROMPT,
+        tools: [FEASIBILITY_TOOL],
+        tool_choice: { type: 'tool' as const, name: 'address_feasibility_verdict' },
+        messages: [{ role: 'user' as const, content: userMessage }],
+      });
+      break;
+    } catch (err) {
+      const status = (err as any)?.status;
+      const retryable =
+        status === 429 ||
+        status === 529 ||
+        (typeof status === 'number' && status >= 500 && status < 600);
+      if (!retryable || attempt === MAX_ATTEMPTS) {
+        logger.error(
+          {
+            tenantId: input.tenantId,
+            orderName: input.orderName,
+            reason: input.reason,
+            status,
+            attempt,
+            error: (err as Error).message,
+          },
+          'AI feasibility: API call failed (non-retryable or out of attempts)',
+        );
+        return {
+          shippable: false,
+          confidence: 'low',
+          reasoning: `AI feasibility call failed (${(err as Error).message.substring(0, 80)}).`,
+          operatorQuestion: '',
+          source: 'unavailable',
+        };
       }
+      const backoffMs = Math.min(15_000, Math.pow(3, attempt - 1) * 1_000);
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
     }
-
-    if (!response) {
-      return {
-        shippable: false,
-        confidence: 'low',
-        reasoning: 'AI feasibility: no response after retries.',
-        operatorQuestion: '',
-        source: 'unavailable',
-      };
-    }
-
-    // Extract tool_use
-    const toolUse = response.content.find(
-      (c) => c.type === 'tool_use' && c.name === 'address_feasibility_verdict',
-    );
-    if (!toolUse || toolUse.type !== 'tool_use') {
-      logger.warn(
-        { tenantId: input.tenantId, orderName: input.orderName, reason: input.reason },
-        'AI feasibility: response did not invoke address_feasibility_verdict tool',
-      );
-      return {
-        shippable: false,
-        confidence: 'low',
-        reasoning: 'AI feasibility: tool not invoked in response.',
-        operatorQuestion: '',
-        source: 'unavailable',
-      };
-    }
-
-    toolInput = toolUse.input as Record<string, unknown>;
-    const usage: TokenUsage = {
-      input_tokens: response.usage.input_tokens,
-      output_tokens: response.usage.output_tokens,
-      cache_creation_input_tokens: (response.usage as any).cache_creation_input_tokens,
-      cache_read_input_tokens: (response.usage as any).cache_read_input_tokens,
-    };
-    cost = calculateAICost(usage);
   }
+
+  if (!response) {
+    return {
+      shippable: false,
+      confidence: 'low',
+      reasoning: 'AI feasibility: no response after retries.',
+      operatorQuestion: '',
+      source: 'unavailable',
+    };
+  }
+
+  // Extract tool_use
+  const toolUse = response.content.find(
+    (c) => c.type === 'tool_use' && c.name === 'address_feasibility_verdict',
+  );
+  if (!toolUse || toolUse.type !== 'tool_use') {
+    logger.warn(
+      { tenantId: input.tenantId, orderName: input.orderName, reason: input.reason },
+      'AI feasibility: response did not invoke address_feasibility_verdict tool',
+    );
+    return {
+      shippable: false,
+      confidence: 'low',
+      reasoning: 'AI feasibility: tool not invoked in response.',
+      operatorQuestion: '',
+      source: 'unavailable',
+    };
+  }
+
+  const toolInput = toolUse.input as Record<string, unknown>;
+  const usage: TokenUsage = {
+    input_tokens: response.usage.input_tokens,
+    output_tokens: response.usage.output_tokens,
+    cache_creation_input_tokens: (response.usage as any).cache_creation_input_tokens,
+    cache_read_input_tokens: (response.usage as any).cache_read_input_tokens,
+  };
+  const cost = calculateAICost(usage);
 
   let suggestedAddress1 = typeof toolInput.suggestedAddress1 === 'string' ? toolInput.suggestedAddress1 : '';
   let suggestedCity = typeof toolInput.suggestedCity === 'string' ? toolInput.suggestedCity : '';
@@ -555,7 +506,6 @@ export async function assessAddressFeasibility(
       hasSuggestedAddress1: Boolean(result.suggestedAddress1),
       hasSuggestedCity: Boolean(result.suggestedCity),
       aiCostUsd: cost,
-      transport: usedBridge ? 'bridge' : 'api',
     },
     'AI feasibility verdict',
   );
