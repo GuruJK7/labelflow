@@ -21,6 +21,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import crypto from 'crypto';
 import { db } from '../db';
 import logger from '../logger';
+import { callClaudeJSONViaBridge } from '../agent/claude-call';
 import {
   DAC_CITIES_PROMPT_BLOCK,
   canonicalizeCityName,
@@ -1532,7 +1533,63 @@ export async function resolveAddressWithAI(
     .filter(Boolean)
     .join('\n');
 
+  // 4b. Try the Mac Mini bridge first ($0, uses Claude Max subscription).
+  //
+  //     Added 2026-05-08 after audit found this function was burning ~$0.40/day
+  //     on the Anthropic API for ~111 calls — none of them needed to. The
+  //     bridge runs `claude -p` with WebSearch enabled, which gives equivalent
+  //     research capability to Anthropic's server-side web_search (just a
+  //     different implementation). Prompt caching is API-only so the bridge
+  //     trades a small per-call latency cost for $0 marginal cost.
+  //
+  //     On any failure (bridge offline, schema mismatch, JSON parse error)
+  //     we fall through to the existing Anthropic SDK code path below — zero
+  //     risk to the existing flow. The downstream validation (lines 1653-…)
+  //     runs on the bridge's parsed JSON identically to the API's tool_use
+  //     output, so anti-hallucination guards are preserved.
+  let aiResult: AIToolResponse | null = null;
+  let usedBridge = false;
+  let bridgeWebSearches = 0; // bridge doesn't expose this counter; default 0
+  let usage: TokenUsage = { input_tokens: 0, output_tokens: 0 };
+  let response: Anthropic.Message | null = null;
+
+  try {
+    const bridgeRaw = await callClaudeJSONViaBridge({
+      jobId: 'ai-resolver',
+      orderId: input.tenantId, // best-correlation key we have here
+      system: SYSTEM_PROMPT,
+      user: userMessage,
+      model: 'haiku',
+      // WebSearch + WebFetch + Bash give Claude equivalent research to
+      // Anthropic's server-side web_search tool. Bash also enables the
+      // optional Python helpers on the Mac Mini (~/labelflow-tools).
+      allowedTools: 'Read,Write,WebSearch,WebFetch,Bash',
+      schemaHint:
+        '{ "barrio": string|null, "city": string, "department": string, ' +
+        '"deliveryAddress": string, "extraObservations": string, ' +
+        '"confidence": "high"|"medium"|"low", "reasoning": string }',
+    });
+    if (
+      bridgeRaw &&
+      typeof bridgeRaw === 'object' &&
+      !Array.isArray(bridgeRaw) &&
+      'department' in (bridgeRaw as object) &&
+      'deliveryAddress' in (bridgeRaw as object)
+    ) {
+      aiResult = bridgeRaw as AIToolResponse;
+      usedBridge = true;
+      // cost stays 0 — subscription, not metered.
+    }
+  } catch (err) {
+    logger.warn(
+      { hash, error: (err as Error).message },
+      'AI resolver: bridge attempt threw (falling through to API)',
+    );
+  }
+
   // 5. Call Claude Haiku with tool use + web_search + prompt caching.
+  //
+  //    Skipped when the bridge already produced a valid result above.
   //
   // Tool set:
   //   - resolve_address: our structured-output tool (final answer)
@@ -1552,7 +1609,13 @@ export async function resolveAddressWithAI(
   // For implementation details see:
   //   https://platform.claude.com/docs/en/build-with-claude/prompt-caching
   //   https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
-  const client = new Anthropic({ apiKey });
+  if (aiResult) {
+    // Bridge succeeded — skip API entirely. We still need a synthesized
+    // `usage`/`response` for the downstream cost-calc + cache-write code,
+    // but they remain zero/null so the writeRow() path treats this as a
+    // free resolution.
+  } else {
+    const client = new Anthropic({ apiKey });
   const requestBody = {
     model: MODEL,
     max_tokens: MAX_TOKENS,
@@ -1596,7 +1659,8 @@ export async function resolveAddressWithAI(
   // hit it even though steady-state throughput is fine. We also retry on
   // transient 5xx and overloaded_error (529). Non-retryable errors (400, 401,
   // 403, 404) return null immediately so we don't waste time on them.
-  let response: Anthropic.Message | null = null;
+  // (response variable hoisted to the outer scope above so the bridge-only
+  // path can leave it null without redeclaring inside this else block.)
   const MAX_ATTEMPTS = 4;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
@@ -1647,7 +1711,19 @@ export async function resolveAddressWithAI(
     logger.error({ hash }, 'AI resolver did not return tool_use block');
     return null;
   }
-  const result = toolUse.input as AIToolResponse;
+  aiResult = toolUse.input as AIToolResponse;
+  } // ── end of else (API-path branch). Both branches set aiResult to a
+    // valid AIToolResponse; the validation below operates on it identically
+    // regardless of which transport produced it.
+
+  if (!aiResult) {
+    // Defensive: should be unreachable. The bridge branch sets aiResult on
+    // success; the API branch returns null on every failure path before
+    // getting here. Belt-and-suspenders.
+    logger.error({ hash }, 'AI resolver: both bridge and API failed to produce a result');
+    return null;
+  }
+  const result: AIToolResponse = aiResult;
 
   // 7. Validate against whitelists (reject hallucinations)
   if (!VALID_DEPARTMENTS.includes(result.department as any)) {
@@ -1753,22 +1829,30 @@ export async function resolveAddressWithAI(
   // The three categories sum to the total input token count. In steady-state
   // batch processing, cache_read dominates and the average per-call cost
   // drops to ~30% of the uncached baseline.
-  const inputTokens = response.usage.input_tokens;
-  const outputTokens = response.usage.output_tokens;
-  const cacheCreationTokens =
-    (response.usage as any).cache_creation_input_tokens ?? 0;
-  const cacheReadTokens =
-    (response.usage as any).cache_read_input_tokens ?? 0;
-  const webSearchRequests =
-    (response.usage as any).server_tool_use?.web_search_requests ?? 0;
+  // When the bridge produced the result we don't have token usage from
+  // Anthropic — the call is subscription-backed and free. costUsd = 0 and
+  // webSearchRequests = 0 keep the cache row + the cost telemetry honest.
+  const inputTokens = response ? response.usage.input_tokens : 0;
+  const outputTokens = response ? response.usage.output_tokens : 0;
+  const cacheCreationTokens = response
+    ? ((response.usage as any).cache_creation_input_tokens ?? 0)
+    : 0;
+  const cacheReadTokens = response
+    ? ((response.usage as any).cache_read_input_tokens ?? 0)
+    : 0;
+  const webSearchRequests = response
+    ? ((response.usage as any).server_tool_use?.web_search_requests ?? 0)
+    : bridgeWebSearches;
 
-  const costUsd = calculateAICost({
-    input_tokens: inputTokens,
-    output_tokens: outputTokens,
-    cache_creation_input_tokens: cacheCreationTokens,
-    cache_read_input_tokens: cacheReadTokens,
-    web_search_requests: webSearchRequests,
-  });
+  const costUsd = response
+    ? calculateAICost({
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cache_creation_input_tokens: cacheCreationTokens,
+        cache_read_input_tokens: cacheReadTokens,
+        web_search_requests: webSearchRequests,
+      })
+    : 0;
 
   // 9. Persist to cache + audit log
   try {
@@ -1838,6 +1922,7 @@ export async function resolveAddressWithAI(
       cacheHit: cacheReadTokens > 0,
       webSearchRequests,
       priorShipmentsUsed: priorShipments.length,
+      transport: usedBridge ? 'bridge' : 'api',
     },
     'AI resolver SUCCESS',
   );
