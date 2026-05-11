@@ -12,8 +12,10 @@ import { describe, it, expect } from 'vitest';
 import {
   partitionByCompletedLabels,
   partitionByAIFeasibilityBounce,
+  partitionByStuckPendingShipment,
   type CompletedLabel,
   type AIFeasibilityBounce,
+  type StuckPendingShipment,
   type ShopifyOrderLike,
 } from '../jobs/order-dedup-filter';
 
@@ -296,5 +298,139 @@ describe('partitionByAIFeasibilityBounce — AI cost regression', () => {
       T_NUEVA,
     );
     expect(result.kept.map((o) => o.id)).toEqual([1, 3, 4]);
+  });
+});
+
+// ── partitionByStuckPendingShipment — incident #11865-batch-starvation ────
+//
+// 2026-05-11 Nueva tienda incident: 5 orders stuck in ORPHANED status for
+// ~66h kept filling all 5 slots of the batch cap every cron tick, returning
+// 0 success / 5 failed every cycle. Real new orders never got a slot. The
+// C-4 guard inside shipment.ts was doing its job (refusing to risk a
+// duplicate guía) but the cron had no early-skip to free up batch capacity.
+// This filter is that early-skip.
+
+function stuckShipment(
+  orderId: string,
+  status: 'PENDING' | 'ORPHANED',
+  ageHours: number,
+  guia: string | null = null,
+  now: number = Date.now(),
+): StuckPendingShipment {
+  return {
+    shopifyOrderId: orderId,
+    status,
+    resolvedGuia: guia,
+    submitAttemptedAt: new Date(now - ageHours * 3_600_000),
+  };
+}
+
+describe('partitionByStuckPendingShipment — batch-starvation guard (incident 2026-05-11)', () => {
+  const NOW = new Date('2026-05-11T17:00:00Z').getTime();
+
+  it('keeps every order when no stuck PendingShipment exists', () => {
+    const orders = [order(1100, '#1100'), order(1101, '#1101')];
+    const result = partitionByStuckPendingShipment(orders, [], NOW);
+    expect(result.kept.map((o) => o.id)).toEqual([1100, 1101]);
+    expect(result.skipped).toEqual([]);
+  });
+
+  it('skips orders with ORPHANED PendingShipment (the production failure mode)', () => {
+    const orders = [
+      order(6913805222066, '#1191'),
+      order(6932584071346, '#1207'),
+      order(7000000000000, '#1300'), // new order — must still flow through
+    ];
+    const stuck: StuckPendingShipment[] = [
+      stuckShipment('6913805222066', 'ORPHANED', 65.8, null, NOW),
+      stuckShipment('6932584071346', 'ORPHANED', 65.8, null, NOW),
+    ];
+    const result = partitionByStuckPendingShipment(orders, stuck, NOW);
+    expect(result.kept.map((o) => o.id)).toEqual([7000000000000]);
+    expect(result.skipped).toHaveLength(2);
+    expect(result.skipped.map((s) => s.orderName).sort()).toEqual(['#1191', '#1207']);
+    for (const s of result.skipped) {
+      expect(s.status).toBe('ORPHANED');
+      expect(s.guia).toBeNull();
+      expect(s.ageMs / 3_600_000).toBeCloseTo(65.8, 1);
+    }
+  });
+
+  it('skips orders with PENDING PendingShipment (worker crashed mid-Finalizar)', () => {
+    const orders = [order(2000, '#2000')];
+    const stuck: StuckPendingShipment[] = [
+      stuckShipment('2000', 'PENDING', 0.5, null, NOW),
+    ];
+    const result = partitionByStuckPendingShipment(orders, stuck, NOW);
+    expect(result.kept).toEqual([]);
+    expect(result.skipped[0]).toMatchObject({ orderName: '#2000', status: 'PENDING' });
+  });
+
+  it('forwards the guía when ORPHANED row has a guía linked (rare but possible)', () => {
+    // ORPHANED with guía: rescue path adopted a guía but downstream PDF/
+    // fulfillment marker failed. C-4 still blocks for safety until operator
+    // reconciles. We surface the guía for operator visibility.
+    const orders = [order(3000, '#3000')];
+    const stuck: StuckPendingShipment[] = [
+      stuckShipment('3000', 'ORPHANED', 12, '8821166614737', NOW),
+    ];
+    const result = partitionByStuckPendingShipment(orders, stuck, NOW);
+    expect(result.kept).toEqual([]);
+    expect(result.skipped[0]).toMatchObject({
+      orderName: '#3000',
+      status: 'ORPHANED',
+      guia: '8821166614737',
+    });
+  });
+
+  it('preserves order ordering in kept', () => {
+    const orders = [order(1, '#1'), order(2, '#2'), order(3, '#3'), order(4, '#4')];
+    const stuck: StuckPendingShipment[] = [
+      stuckShipment('2', 'ORPHANED', 24, null, NOW),
+    ];
+    const result = partitionByStuckPendingShipment(orders, stuck, NOW);
+    expect(result.kept.map((o) => o.id)).toEqual([1, 3, 4]);
+  });
+
+  it('age computation uses injected `now` (deterministic test)', () => {
+    const orders = [order(1, '#1')];
+    const stuck: StuckPendingShipment[] = [
+      stuckShipment('1', 'ORPHANED', 24, null, NOW), // submitted 24h before NOW
+    ];
+    const result = partitionByStuckPendingShipment(orders, stuck, NOW);
+    expect(result.skipped[0].ageMs).toBe(24 * 3_600_000);
+  });
+
+  it('empty orders array returns empty kept + empty skipped without throwing', () => {
+    const result = partitionByStuckPendingShipment([], [], NOW);
+    expect(result).toEqual({ kept: [], skipped: [] });
+  });
+
+  it('regression — Nueva tienda 5-order pile-up (exact production scenario)', () => {
+    // The exact 5 orders that filled batch capacity on 2026-05-11. Validates
+    // that all 5 get partitioned out and new orders ARE picked up.
+    const stuckOrderIds = [
+      '6913805222066', // #1191
+      '6932584071346', // #1207
+      '6955708448946', // #1214
+      '6958300659890',
+      '6965151596722',
+    ];
+    const stuck: StuckPendingShipment[] = stuckOrderIds.map((id) =>
+      stuckShipment(id, 'ORPHANED', 60, null, NOW),
+    );
+    // Imagine 45 unfulfilled orders fetched from Shopify; the 5 stuck ones
+    // come back at the top because they keep cycling on unfulfilled-list.
+    const newerOrders = Array.from({ length: 8 }, (_, i) =>
+      order(7000000000000 + i, `#NEW-${i}`),
+    );
+    const allOrders = [
+      ...stuckOrderIds.map((id, i) => order(Number(id), `#STUCK-${i}`)),
+      ...newerOrders,
+    ];
+    const result = partitionByStuckPendingShipment(allOrders, stuck, NOW);
+    // All 5 stuck filtered out, 8 new orders kept (would have been starved).
+    expect(result.kept).toHaveLength(8);
+    expect(result.skipped).toHaveLength(5);
   });
 });

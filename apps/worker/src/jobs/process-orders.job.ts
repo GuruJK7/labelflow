@@ -26,7 +26,11 @@ import {
   type ProductCache,
 } from '../rules/product-filter';
 import { evaluateShippingRules, type ShippingRuleRow } from '../rules/shipping';
-import { partitionByCompletedLabels, partitionByAIFeasibilityBounce } from './order-dedup-filter';
+import {
+  partitionByCompletedLabels,
+  partitionByAIFeasibilityBounce,
+  partitionByStuckPendingShipment,
+} from './order-dedup-filter';
 import { sendShipmentNotification } from '../notifier/email';
 import { uploadLabelPdf } from '../storage/upload';
 import { createStepLogger } from '../logger';
@@ -320,6 +324,72 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           totalSkipped: stuckSkipped.length,
           crossTenantStuckSkipped: crossTenantStuck,
           beforeStuckSkip,
+        },
+      );
+    }
+
+    // ── Stuck PendingShipment skip (2026-05-11) ──────────────────────────
+    //
+    // Incident: Nueva tienda had 5 orders stuck in ORPHANED status for ~66h.
+    // The C-4 guard inside shipment.ts blocked them on every cron tick (safe
+    // default — orphan guía in DAC might exist), but Shopify still showed
+    // them unfulfilled, so newest_first fetch pulled them again, the 5-order
+    // batch cap took all 5 of them, every cycle returned 0 success / 5
+    // failed. Real new orders never got a slot.
+    //
+    // Fix: at the FILTER level, skip orders with PENDING/ORPHANED
+    // PendingShipment so they don't consume batch capacity. The C-4 guard
+    // inside shipment.ts is kept as defence-in-depth — it just rarely needs
+    // to fire now.
+    //
+    // Operator unblocks via:
+    //   1. Dashboard "Reenviar" action (deletes PendingShipment + Label)
+    //   2. Manual SQL: DELETE FROM "PendingShipment" WHERE id = '...'
+    //   3. Cancelling the Shopify order (it falls off the unfulfilled list)
+    //
+    // Scope: tenant-local only. PendingShipment.tenantId is unique per
+    // (tenant, shopifyOrderId), so cross-tenant doesn't apply here.
+    const stuckPendingShipments = await db.pendingShipment.findMany({
+      where: {
+        tenantId,
+        status: { in: ['PENDING', 'ORPHANED'] },
+        shopifyOrderId: { in: orders.map((o) => String(o.id)) },
+      },
+      select: {
+        shopifyOrderId: true,
+        status: true,
+        resolvedGuia: true,
+        submitAttemptedAt: true,
+      },
+    });
+    const beforeStuckPendingSkip = orders.length;
+    // Cast: the where-clause restricts to PENDING/ORPHANED but Prisma's
+    // return type still has the full enum. Runtime filter is authoritative.
+    const stuckPendingPartition = partitionByStuckPendingShipment(
+      orders,
+      stuckPendingShipments as Array<{
+        shopifyOrderId: string;
+        status: 'PENDING' | 'ORPHANED';
+        resolvedGuia: string | null;
+        submitAttemptedAt: Date;
+      }>,
+    );
+    orders = stuckPendingPartition.kept;
+    const stuckPendingSkipped = stuckPendingPartition.skipped;
+    if (stuckPendingSkipped.length > 0) {
+      const oldestHours = Math.max(...stuckPendingSkipped.map((s) => s.ageMs / 3_600_000));
+      slog.warn(
+        'filter',
+        `Skipped ${stuckPendingSkipped.length} order(s) blocked by C-4 (PendingShipment status=PENDING/ORPHANED, oldest=${oldestHours.toFixed(1)}h). These need OPERATOR reconciliation — check DAC historial for an orphan guía and either link it or delete the PendingShipment row via the dashboard "Reenviar" action. Until then they will NOT consume batch slots, so new orders can flow through.`,
+        {
+          skipped: stuckPendingSkipped.slice(0, 10).map((s) => ({
+            order: s.orderName,
+            status: s.status,
+            guia: s.guia,
+            ageHours: Number((s.ageMs / 3_600_000).toFixed(1)),
+          })),
+          totalSkipped: stuckPendingSkipped.length,
+          beforeStuckPendingSkip,
         },
       );
     }

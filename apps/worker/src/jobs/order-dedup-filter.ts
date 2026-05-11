@@ -2,7 +2,7 @@
 // so it can be unit-tested independently from the giant processOrders function
 // + its DB dependencies.
 //
-// Two filters live here:
+// Three filters live here:
 //
 // 1. partitionByCompletedLabels — the original cross-tenant filter. Skips any
 //    order that already has a COMPLETED Label (any sibling tenant pointing at
@@ -20,6 +20,21 @@
 //    operator edited the address in Shopify (in which case re-evaluation is
 //    desired). Same-address comparison is normalized (trim + lowercase) for
 //    robustness against incidental whitespace/casing changes.
+//
+// 3. partitionByStuckPendingShipment — added 2026-05-11 after the Nueva
+//    tienda batch-starvation incident. The C-4 guard inside DAC's
+//    assertNoPriorSubmit blocks orders with PendingShipment.status in
+//    ['PENDING','ORPHANED'] FOREVER (the safe default — those orders might
+//    have an orphan guía in DAC historial we never linked). Problem: those
+//    blocked orders STILL stay unfulfilled in Shopify and STILL come back
+//    every cron tick. Shopify's newest_first sort puts them at the top of
+//    the unfulfilled list, the limit cap takes the first N, and every cycle
+//    gets `0 success / N failed / 0 skipped` — real new orders never get
+//    processed. The fix is to skip them at the FILTER level (before the
+//    limit cap) so they stop consuming batch capacity. The C-4 guard inside
+//    shipment.ts is kept intact as defence-in-depth — this filter just
+//    means the C-4 guard rarely needs to fire. Operator unblocks via the
+//    dashboard "Reenviar" action or by deleting the PendingShipment row.
 
 export type CompletedLabel = {
   shopifyOrderId: string;
@@ -137,6 +152,72 @@ export function partitionByAIFeasibilityBounce<T extends ShopifyOrderLike>(
       reason: prev.errorMessage ?? '',
       bouncedAt: prev.updatedAt,
       sameTenant: prev.tenantId === currentTenantId,
+    });
+    return false;
+  });
+
+  return { kept, skipped };
+}
+
+// ── Stuck PendingShipment skip (2026-05-11) ──────────────────────────────
+
+/**
+ * A PendingShipment row whose status is ambiguous (PENDING or ORPHANED) and
+ * therefore blocks re-submission via the C-4 guard inside shipment.ts. Those
+ * orders need OPERATOR reconciliation (check DAC historial, link an orphan
+ * guía or delete the row). Until that happens, we skip them at the cron
+ * filter level so they don't fill up batch slots.
+ *
+ * status meaning:
+ *   - PENDING:  worker started, never reported back. Likely the worker
+ *               crashed/timed out mid-Finalizar. DAC may or may not have
+ *               minted a guía.
+ *   - ORPHANED: worker finished but rescue path could not link the guía
+ *               (silent reject + historial scan exhausted). Guía MIGHT
+ *               exist in DAC under a different recipient match.
+ */
+export type StuckPendingShipment = {
+  shopifyOrderId: string;
+  status: 'PENDING' | 'ORPHANED';
+  resolvedGuia: string | null;
+  submitAttemptedAt: Date;
+};
+
+export type StuckPendingSkipRecord = {
+  orderName: string;
+  status: 'PENDING' | 'ORPHANED';
+  guia: string | null;
+  ageMs: number;
+};
+
+/**
+ * Skip orders that have a PendingShipment in PENDING or ORPHANED state.
+ * RESOLVED rows are NOT skipped here — the C-4 guard inside shipment.ts
+ * handles those (recent ones block, >72h auto-clears). We only short-circuit
+ * the ambiguous statuses, which are the ones that would always re-block
+ * downstream and waste batch capacity.
+ *
+ * @param now Reference timestamp for age computation. Defaults to Date.now().
+ *            Injected as a parameter so unit tests can pin time deterministically.
+ */
+export function partitionByStuckPendingShipment<T extends ShopifyOrderLike>(
+  orders: T[],
+  stuckShipments: StuckPendingShipment[],
+  now: number = Date.now(),
+): { kept: T[]; skipped: StuckPendingSkipRecord[] } {
+  const stuckByOrderId = new Map<string, StuckPendingShipment>(
+    stuckShipments.map((s) => [s.shopifyOrderId, s] as const),
+  );
+
+  const skipped: StuckPendingSkipRecord[] = [];
+  const kept = orders.filter((o) => {
+    const prev = stuckByOrderId.get(String(o.id));
+    if (!prev) return true;
+    skipped.push({
+      orderName: o.name,
+      status: prev.status,
+      guia: prev.resolvedGuia,
+      ageMs: now - prev.submitAttemptedAt.getTime(),
     });
     return false;
   });
