@@ -389,3 +389,101 @@ describe('v3 individual detection signals', () => {
     expect(INTERNAL_METADATA_NAME_RE.test('apartment')).toBe(false);
   });
 });
+
+// ── 2026-05-11 regression: multi-paragraph LabelFlow diagnostic note ────
+//
+// Production failure (order #11997 Camila Ibarra): the worker writes a
+// multi-paragraph note to Shopify on failure. First line has "LabelFlow:"
+// (filtered correctly). Downstream paragraphs ("AI análisis:", "ACCIÓN
+// del operador", numbered operator steps, "IMPORTANTE: el worker NO va a
+// reintentar...") DO NOT re-mention "LabelFlow" and so the line-by-line
+// filter passed them through to the DAC observations on the next retry.
+// Result: DAC printed label said "supermercado gaona | contactar por
+// telefono para numero de puerta | ai análisis: dirección incompleta..."
+// when it should have just been "supermercado gaona | contactar por
+// telefono para numero de puerta".
+describe('isLabelflowInternal — multi-paragraph diagnostic note (incident #11997)', () => {
+  it('blocks "AI análisis: …" paragraph (Claude reasoning text)', () => {
+    expect(
+      isLabelflowInternal(
+        "AI análisis: dirección incompleta. La dirección contiene 'S/N' (sin número)…",
+      ),
+    ).toBe(true);
+  });
+
+  it('blocks "AI verdict: …" English variant', () => {
+    expect(isLabelflowInternal('AI verdict: address looks valid — probable DAC bug')).toBe(true);
+  });
+
+  it('blocks "AI reasoning: …" variant', () => {
+    expect(isLabelflowInternal('AI reasoning: the address has no street number')).toBe(true);
+  });
+
+  it('blocks "ACCIÓN del operador" instruction header', () => {
+    expect(isLabelflowInternal('ACCIÓN del operador (en este orden):')).toBe(true);
+    expect(isLabelflowInternal('ACCION del operador:')).toBe(true);
+  });
+
+  it('blocks the "IMPORTANTE: el worker NO va a reintentar..." footer', () => {
+    expect(
+      isLabelflowInternal(
+        'IMPORTANTE: el worker NO va a reintentar automáticamente para evitar crear guías duplicadas.',
+      ),
+    ).toBe(true);
+  });
+
+  it('blocks numbered operator-instruction lines', () => {
+    expect(isLabelflowInternal('1. Entrar a DAC → Historial → buscar última guía a nombre de "X".')).toBe(true);
+    expect(isLabelflowInternal('2. Si la guía EXISTE: copiar el número y vincularla manualmente.')).toBe(true);
+    expect(isLabelflowInternal('3. Si la guía NO EXISTE: revisar la dirección con el cliente.')).toBe(true);
+    expect(isLabelflowInternal('3. Revisar la dirección y desbloquear esta orden.')).toBe(true);
+  });
+
+  it('blocks inline mention of LabelFlow internal mechanisms', () => {
+    expect(isLabelflowInternal('...desbloquear esta orden (admin → eliminar PendingShipment) para reintento.')).toBe(true);
+    expect(isLabelflowInternal('Operador debe vincular guía manualmente.')).toBe(true);
+    expect(isLabelflowInternal('Posible guía huérfana en DAC para este cliente.')).toBe(true);
+  });
+
+  it('does NOT block legitimate customer comments that look similar', () => {
+    // Customer-typed notes that happen to contain similar but harmless words.
+    expect(isLabelflowInternal('Avísenme cuando llegue, gracias!')).toBe(false);
+    expect(isLabelflowInternal('Dejar en recepción por favor')).toBe(false);
+    expect(isLabelflowInternal('Tocar timbre 3 veces')).toBe(false);
+    expect(isLabelflowInternal('Acción urgente — el cliente está fuera')).toBe(false); // similar to "ACCIÓN del operador" but different context
+    expect(isLabelflowInternal('1. Por favor llamar antes')).toBe(false); // numbered customer instruction
+    expect(isLabelflowInternal('La guía verde está en la puerta')).toBe(false); // "guía" used in non-internal sense
+  });
+
+  it('end-to-end: the exact #11997 verbose note paragraph filter', () => {
+    // Reproduces the leak verbatim from the production Shopify note.
+    const note = `LabelFlow: DAC NO confirmó si se creó la guía para Camila Ibarra — URL quedó en /envios/nuevo, error box vacío.
+
+AI análisis: dirección incompleta. La dirección contiene 'S/N'. Pregunta sugerida al cliente: "¿Cuál es el número de puerta?"
+
+ACCIÓN del operador (en este orden):
+1. Entrar a DAC → Historial → buscar última guía a nombre de "Camila Ibarra".
+2. Si la guía EXISTE: copiar el número y vincularla manualmente en LabelFlow (admin → vincular guía).
+3. Si la guía NO EXISTE: revisar la dirección con el cliente, corregirla en Shopify, y desbloquear esta orden (admin → eliminar PendingShipment) para reintento.
+
+IMPORTANTE: el worker NO va a reintentar automáticamente para evitar crear guías duplicadas.
+LabelFlow-GUIA: 8821170710683 | 2026-05-11T21:45:29.172Z`;
+
+    const remaining = note
+      .split('\n')
+      .filter((line) => !isLabelflowInternal(line))
+      .join('\n')
+      .trim();
+
+    // After filtering, ALL the LabelFlow-internal lines must be gone.
+    expect(remaining).not.toMatch(/labelflow/i);
+    expect(remaining).not.toMatch(/AI\s+an[áa]lisis/i);
+    expect(remaining).not.toMatch(/ACCI[ÓO]N\s+del\s+operador/i);
+    expect(remaining).not.toMatch(/IMPORTANTE.*worker/i);
+    expect(remaining).not.toMatch(/PendingShipment/i);
+    expect(remaining).not.toMatch(/vincular\s+gu[íi]a/i);
+    expect(remaining).not.toMatch(/Entrar\s+a\s+DAC/i);
+    // Customer text (if any) would survive — in this case it's all
+    // LabelFlow-generated so nothing meaningful remains.
+  });
+});

@@ -392,6 +392,49 @@ export const ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}[tT ]\d{2}:\d{2}:\d{2}/;
 export const LONG_NUMERIC_ID_RE = /^\s*\d{10,}\s*$/;
 
 /**
+ * Signal 5 (added 2026-05-11): the diagnostic paragraphs LabelFlow writes
+ * to the Shopify order note on failure. These DO contain the literal word
+ * "LabelFlow" on their FIRST line, so the existing LABELFLOW_WORD_RE
+ * filter catches that line. But the note is multi-paragraph and the
+ * downstream lines (the AI verdict, the operator action steps, the
+ * "IMPORTANTE" footer) DON'T re-mention "LabelFlow" — so a line-by-line
+ * filter let them through to DAC observations on the next retry attempt.
+ *
+ * Production trigger: order #11997 (Camila Ibarra, 2026-05-11). First
+ * attempt failed → worker wrote a verbose multi-paragraph note to
+ * Shopify. Operator manually re-processed via "Procesar Ahora" → worker
+ * read the note back from Shopify → only the "LabelFlow: DAC NO
+ * confirmó..." line was filtered → the "AI análisis: ...", "ACCIÓN del
+ * operador:", and the numbered operator instructions all leaked into
+ * the DAC observations on the second attempt. The DAC printed label
+ * said "supermercado gaona | contactar por telefono para numero de
+ * puerta | ai análisis: dirección incompleta..." when it should have
+ * just said "supermercado gaona | contactar por telefono para numero
+ * de puerta".
+ *
+ * Patterns observed in the verbose note that should NEVER leak to DAC:
+ *   - "AI análisis: …"      / "AI verdict: …"     (Claude's reasoning)
+ *   - "ACCIÓN del operador" (instructions to the human operator)
+ *   - "IMPORTANTE: el worker NO va a reintentar…"
+ *   - Numbered operator steps ("1. Entrar a DAC → Historial → buscar última guía…")
+ *   - "PendingShipment", "vincular guía" (internal mechanism names)
+ *
+ * The regex below is a union of these markers. Anchored at start-of-line
+ * where possible to avoid false-positives on customer notes that
+ * happen to contain similar words mid-sentence.
+ */
+export const LABELFLOW_INTERNAL_NOTE_RE =
+  /^\s*(AI\s+(an[áa]lisis|verdict|reasoning)|ACCI[ÓO]N\s+del\s+operador|IMPORTANTE:\s*el\s+worker|\d+\.\s+(Entrar\s+a\s+DAC|Si\s+la\s+gu[íi]a|Revisar\s+la\s+direcci[óo]n))/i;
+
+/** Signal 6 (added 2026-05-11): inline LabelFlow-internal keywords (not
+ * line-anchored). Catches lines that reference our internal mechanisms by
+ * name even when wrapped in a sentence — e.g. "...desbloquear esta orden
+ * (admin → eliminar PendingShipment)..." or "...vincular guía manualmente..."
+ */
+export const LABELFLOW_INTERNAL_KEYWORD_RE =
+  /\b(PendingShipment|vincular\s+gu[íi]a|gu[íi]a\s+hu[éeèê]rfana|orphan\s+gu[íi]a|rescue\s+del\s+historial)\b/i;
+
+/**
  * Legacy alias kept for any external caller that still imports the v1/v2 name.
  * Prefer isLabelflowInternal() for new code.
  */
@@ -399,7 +442,8 @@ export const LABELFLOW_MARKER_RE = LABELFLOW_WORD_RE;
 
 /**
  * True if the given text contains ANY LabelFlow-internal marker, tracking
- * metadata, or ISO timestamp that should not leak into DAC observations.
+ * metadata, ISO timestamp, or diagnostic paragraph that should not leak
+ * into DAC observations.
  *
  * This is the authoritative check used by the sanitizer. Any caller that
  * needs to gate content before sending to DAC should use this function.
@@ -408,6 +452,8 @@ export function isLabelflowInternal(text: string): boolean {
   if (!text) return false;
   if (LABELFLOW_WORD_RE.test(text)) return true;
   if (ISO_TIMESTAMP_RE.test(text)) return true;
+  if (LABELFLOW_INTERNAL_NOTE_RE.test(text)) return true;
+  if (LABELFLOW_INTERNAL_KEYWORD_RE.test(text)) return true;
   return false;
 }
 
@@ -1697,22 +1743,25 @@ export async function createShipment(
         const changes: string[] = [];
         if (validation.corrections.department && validation.corrections.department !== before.province) {
           addr.province = validation.corrections.department;
-          changes.push(`province "${before.province || '(empty)'}" → "${validation.corrections.department}"`);
+          changes.push(`province ${before.province || '∅'}→${validation.corrections.department}`);
         }
         if (validation.corrections.zip && validation.corrections.zip !== before.zip) {
           addr.zip = validation.corrections.zip;
-          changes.push(`zip "${before.zip || '(empty)'}" → "${validation.corrections.zip}"`);
+          changes.push(`zip ${before.zip || '∅'}→${validation.corrections.zip}`);
         }
         if (changes.length > 0) {
-          const reasonText = validation.issues.length > 0 ? ` (motivo: ${validation.issues.join('; ')})` : '';
-          addressAutoCorrectionNote = `AI corrigio: ${changes.join(', ')}${reasonText}`;
+          // 2026-05-11 — concise note for the DAC printed label. Operator
+          // request: keep observations short so they fit on the sticker.
+          // Verbose motivos / Claude's reasoning still go to slog + RunLog
+          // for audit, but NOT to the DAC observations field.
+          addressAutoCorrectionNote = `AI corrigió: ${changes.join(', ')}`;
           slog.info(
             DAC_STEPS.PREPROCESS_ADDRESS,
             `Address auto-corrected by AI validator (high confidence): ${changes.join(', ')}`,
             {
               orderName: order.name,
               changes,
-              issues: validation.issues,
+              issues: validation.issues, // kept in audit log, not on label
               transport: validation.transport,
               aiCostUsd: validation.aiCostUsd,
               audit: '2026-05-11',
