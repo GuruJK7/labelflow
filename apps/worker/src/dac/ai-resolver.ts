@@ -21,6 +21,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import crypto from 'crypto';
 import { db } from '../db';
 import logger from '../logger';
+import { callClaudeJSONViaBridge } from '../agent/claude-call';
 import {
   DAC_CITIES_PROMPT_BLOCK,
   canonicalizeCityName,
@@ -1532,27 +1533,75 @@ export async function resolveAddressWithAI(
     .filter(Boolean)
     .join('\n');
 
-  // 5. Call Claude Haiku with tool use + web_search + prompt caching.
+  // 4b. Try the Mac Mini bridge first ($0, uses Claude Max subscription).
   //
-  // Tool set:
+  //     The bridge runs `claude -p` with WebSearch enabled, giving Claude
+  //     equivalent research capability to Anthropic's server-side web_search
+  //     tool (different implementation; same outcomes on hard addresses).
+  //     Anthropic-only features we lose on the bridge path: prompt caching
+  //     (5-min ephemeral cache → 0.1x input price) and structured tool_use
+  //     enforcement. Those are nice-to-have but not load-bearing — the
+  //     resolver's downstream validation runs on the bridge's JSON output
+  //     identically to the API tool_use input.
+  //
+  //     Bridge helper has 8s timeout + circuit breaker, so a cold Mac Mini
+  //     never costs more than ~40s wasted per cron tick (and ~0 once the
+  //     breaker opens for 2 min). On any failure we fall through to the
+  //     Anthropic SDK code path below — zero risk to the existing flow.
+  let aiResult: AIToolResponse | null = null;
+  let usedBridge = false;
+  let response: Anthropic.Message | null = null;
+
+  try {
+    const bridgeRaw = await callClaudeJSONViaBridge({
+      jobId: 'ai-resolver',
+      orderId: input.tenantId,
+      system: SYSTEM_PROMPT,
+      user: userMessage,
+      model: 'haiku',
+      allowedTools: 'Read,Write,WebSearch,WebFetch,Bash',
+      schemaHint:
+        '{ "barrio": string|null, "city": string, "department": string, ' +
+        '"deliveryAddress": string, "extraObservations": string, ' +
+        '"confidence": "high"|"medium"|"low", "reasoning": string }',
+    });
+    if (
+      bridgeRaw &&
+      typeof bridgeRaw === 'object' &&
+      !Array.isArray(bridgeRaw) &&
+      'department' in (bridgeRaw as object) &&
+      'deliveryAddress' in (bridgeRaw as object)
+    ) {
+      aiResult = bridgeRaw as AIToolResponse;
+      usedBridge = true;
+    }
+  } catch (err) {
+    logger.warn(
+      { hash, error: (err as Error).message },
+      'AI resolver: bridge attempt threw (falling through to API)',
+    );
+  }
+
+  // 5. Call Claude Haiku via Anthropic API — skipped when bridge already
+  //    produced a valid result above.
+  //
+  // Tool set (API path):
   //   - resolve_address: our structured-output tool (final answer)
-  //   - web_search: Anthropic server-side tool, auto-executes. Capped at 2 uses
-  //     per request to keep latency + cost bounded.
+  //   - web_search: Anthropic server-side tool, auto-executes (max 1 use).
   //
-  // tool_choice = "auto" (not forced). Claude picks web_search when uncertain
-  // and resolve_address when it has enough info. For clear addresses, only the
-  // resolve_address call happens (same latency/cost as before). For ambiguous
-  // ones, 1–2 server-side web searches add ~2–5s latency and ~$0.01/search but
-  // turn otherwise-manual review cases into automatic resolutions.
-  //
-  // Cache breakpoint stays on the last tool so system + tool schemas cache.
-  // The user message remains uncached (changes per request). After first call
-  // in a 5-min window, cached portion pays 0.1x base input.
+  // tool_choice = "auto" (not forced). Cache breakpoint stays on the last
+  // tool so system + tool schemas cache (0.1x base input on subsequent calls
+  // within the 5-min window). The user message remains uncached.
   //
   // For implementation details see:
   //   https://platform.claude.com/docs/en/build-with-claude/prompt-caching
   //   https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
-  const client = new Anthropic({ apiKey });
+  if (aiResult) {
+    // Bridge succeeded — skip the API call. The downstream validation
+    // (whitelists, city canonicalization, etc.) runs on aiResult identically
+    // regardless of which transport produced it.
+  } else {
+    const client = new Anthropic({ apiKey });
   const requestBody = {
     model: MODEL,
     max_tokens: MAX_TOKENS,
@@ -1596,7 +1645,7 @@ export async function resolveAddressWithAI(
   // hit it even though steady-state throughput is fine. We also retry on
   // transient 5xx and overloaded_error (529). Non-retryable errors (400, 401,
   // 403, 404) return null immediately so we don't waste time on them.
-  let response: Anthropic.Message | null = null;
+  // (response is hoisted to outer scope so the bridge path can leave it null.)
   const MAX_ATTEMPTS = 4;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
@@ -1647,7 +1696,18 @@ export async function resolveAddressWithAI(
     logger.error({ hash }, 'AI resolver did not return tool_use block');
     return null;
   }
-  const result = toolUse.input as AIToolResponse;
+  aiResult = toolUse.input as AIToolResponse;
+  } // ── end of API-path else (bridge fall-through). Both branches set
+    // aiResult to a valid AIToolResponse; the validation below operates on
+    // it identically regardless of which transport produced it.
+
+  if (!aiResult) {
+    // Defensive: should be unreachable. Bridge branch sets aiResult on
+    // success; API branch returns null on every failure path before here.
+    logger.error({ hash }, 'AI resolver: both bridge and API failed to produce a result');
+    return null;
+  }
+  const result: AIToolResponse = aiResult;
 
   // 7. Validate against whitelists (reject hallucinations)
   if (!VALID_DEPARTMENTS.includes(result.department as any)) {
@@ -1753,22 +1813,30 @@ export async function resolveAddressWithAI(
   // The three categories sum to the total input token count. In steady-state
   // batch processing, cache_read dominates and the average per-call cost
   // drops to ~30% of the uncached baseline.
-  const inputTokens = response.usage.input_tokens;
-  const outputTokens = response.usage.output_tokens;
-  const cacheCreationTokens =
-    (response.usage as any).cache_creation_input_tokens ?? 0;
-  const cacheReadTokens =
-    (response.usage as any).cache_read_input_tokens ?? 0;
-  const webSearchRequests =
-    (response.usage as any).server_tool_use?.web_search_requests ?? 0;
+  // When the bridge produced the result we don't have Anthropic token usage —
+  // the call is subscription-backed and free. costUsd = 0 and
+  // webSearchRequests = 0 keep the cache row + cost telemetry honest.
+  const inputTokens = response ? response.usage.input_tokens : 0;
+  const outputTokens = response ? response.usage.output_tokens : 0;
+  const cacheCreationTokens = response
+    ? ((response.usage as any).cache_creation_input_tokens ?? 0)
+    : 0;
+  const cacheReadTokens = response
+    ? ((response.usage as any).cache_read_input_tokens ?? 0)
+    : 0;
+  const webSearchRequests = response
+    ? ((response.usage as any).server_tool_use?.web_search_requests ?? 0)
+    : 0;
 
-  const costUsd = calculateAICost({
-    input_tokens: inputTokens,
-    output_tokens: outputTokens,
-    cache_creation_input_tokens: cacheCreationTokens,
-    cache_read_input_tokens: cacheReadTokens,
-    web_search_requests: webSearchRequests,
-  });
+  const costUsd = response
+    ? calculateAICost({
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cache_creation_input_tokens: cacheCreationTokens,
+        cache_read_input_tokens: cacheReadTokens,
+        web_search_requests: webSearchRequests,
+      })
+    : 0;
 
   // 9. Persist to cache + audit log
   try {
@@ -1838,6 +1906,7 @@ export async function resolveAddressWithAI(
       cacheHit: cacheReadTokens > 0,
       webSearchRequests,
       priorShipmentsUsed: priorShipments.length,
+      transport: usedBridge ? 'bridge' : 'api',
     },
     'AI resolver SUCCESS',
   );
