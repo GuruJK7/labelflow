@@ -22,10 +22,17 @@
 
 import logger from '../logger';
 
-// Bridge per-call hard timeout. Picked so a hung bridge can't stall the
-// cron tick: most successful haiku calls finish in 3-5s, sonnet in 15-30s.
-// 8s catches haiku timeouts comfortably while still failing fast.
-const BRIDGE_HARD_TIMEOUT_MS = Number(process.env.LABELFLOW_BRIDGE_TIMEOUT_MS) || 8_000;
+// Bridge per-call hard timeout. Calibrated 2026-05-11 against live calls
+// through Funnel: haiku /claude-prompt averages 12-17 s end-to-end (includes
+// Claude CLI startup + Funnel round-trip + JSON parse). 30 s gives ~2x
+// headroom over typical and still fails fast vs the bridge's internal
+// 180 s budget when the Mac Mini is genuinely hung.
+//
+// The circuit breaker (below) makes the practical worst-case cost much
+// lower: after 5 consecutive 30 s timeouts (~150 s total wall-clock) the
+// breaker opens and subsequent calls return null in ~0 ms for the next
+// 2 minutes — straight to API fallback.
+const BRIDGE_HARD_TIMEOUT_MS = Number(process.env.LABELFLOW_BRIDGE_TIMEOUT_MS) || 30_000;
 
 // Circuit-breaker config — when the Mac Mini is offline we want to stop
 // trying for a while instead of burning 8s on every call.
