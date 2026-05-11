@@ -2178,7 +2178,35 @@ export async function createShipment(
   // 3. Set lat/lng hidden fields (BUG B: DAC requires geocoded address)
   slog.info(DAC_STEPS.STEP3_SIGUIENTE, 'Skipping Step 3 Siguiente (silent validation bug) — forcing Step 4 visible');
 
-  await page.evaluate(() => {
+  // 2026-05-11 INCIDENT — order #11865 (Curvadivina): the lat/lng bypass
+  // below uses the DAC dropdown's selected-option text to look up department
+  // coordinates. Previously it lowercased without normalizing diacritics, so
+  // "Tacuarembó".toLowerCase() = "tacuarembó" (accent preserved) ≠ "tacuarembo"
+  // (the coords-map key) → coords lookup returned undefined → fell back to the
+  // MONTEVIDEO coordinates → DAC's backend used those coords as the
+  // authoritative destination → guías for Tacuarembó / Paysandú / Río Negro /
+  // San José all got created with destino MONTEVIDEO regardless of what we
+  // selected in the K_Estado/K_Ciudad dropdowns.
+  //
+  // Symptom: order destined for Tacuarembó, customer's DAC tracking shows
+  // "Destino: MONTEVIDEO". Package gets routed to the wrong DAC distribution
+  // center and either bounces back or is held at an MVD branch.
+  //
+  // Affected departments (accent-bearing names):
+  //   • Tacuarembó  → tacuarembó (✗ undefined) ⇒ MVD fallback
+  //   • Paysandú    → paysandú    (✗ undefined) ⇒ MVD fallback
+  //   • Río Negro   → río negro   (✗ undefined) ⇒ MVD fallback
+  //   • San José    → san josé    (✗ undefined) ⇒ MVD fallback
+  //
+  // Fix: NFD-normalize + strip combining marks before lookup. This makes
+  // "Tacuarembó" → "tacuarembo", "Río Negro" → "rio negro", etc. The coords
+  // map keys stay accent-free as-is (they're internal); normalization happens
+  // only on the dropdown text we read back.
+  //
+  // The pageHasLogger boolean ensures we surface a clear warning if a future
+  // DAC dropdown introduces a new department name we don't know about, instead
+  // of silently routing it to Montevideo.
+  const coordResult = await page.evaluate(() => {
     // Force Step 4 visible
     const fieldset = document.getElementById('cargaEnvios');
     if (fieldset) {
@@ -2188,37 +2216,63 @@ export async function createShipment(
     // Set approximate lat/lng based on department for geocoding validation
     const lat = document.querySelector('[name="latitude"]') as HTMLInputElement;
     const lng = document.querySelector('[name="longitude"]') as HTMLInputElement;
-    if (lat && lng) {
-      // Use department center coordinates (set by outer scope)
-      const deptEl = document.querySelector('[name="K_Estado"]') as HTMLSelectElement;
-      const deptText = deptEl?.options[deptEl.selectedIndex]?.text?.toLowerCase() ?? '';
-      const coords: Record<string, [string, string]> = {
-        'montevideo': ['-34.9011', '-56.1645'],
-        'canelones': ['-34.5229', '-56.2817'],
-        'maldonado': ['-34.9093', '-54.9588'],
-        'colonia': ['-34.4625', '-57.8399'],
-        'salto': ['-31.3883', '-57.9609'],
-        'paysandu': ['-32.3213', '-58.0756'],
-        'rivera': ['-30.9053', '-55.5508'],
-        'tacuarembo': ['-31.7110', '-55.9834'],
-        'rocha': ['-34.4833', '-54.2220'],
-        'florida': ['-34.0994', '-56.2144'],
-        'durazno': ['-33.3794', '-56.5227'],
-        'lavalleja': ['-34.3519', '-55.2331'],
-        'san jose': ['-34.3369', '-56.7133'],
-        'soriano': ['-33.5098', '-57.7524'],
-        'rio negro': ['-33.1195', '-58.3025'],
-        'flores': ['-33.5239', '-56.8919'],
-        'artigas': ['-30.4006', '-56.4674'],
-        'cerro largo': ['-32.3739', '-54.1784'],
-        'treinta y tres': ['-33.2305', '-54.3836'],
-      };
-      const c = coords[deptText] ?? coords['montevideo'];
-      lat.value = c[0];
-      lng.value = c[1];
-    }
+    if (!lat || !lng) return { reason: 'no-lat-lng-fields', deptText: null, normalized: null, usedFallback: false };
+    // Use department center coordinates (set by outer scope)
+    const deptEl = document.querySelector('[name="K_Estado"]') as HTMLSelectElement;
+    const deptTextRaw = deptEl?.options[deptEl.selectedIndex]?.text ?? '';
+    // CRITICAL: normalize diacritics so "Tacuarembó" matches the "tacuarembo"
+    // key. NFD splits the accent into a combining char which we then strip.
+    const deptText = deptTextRaw
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '') // strip combining diacritical marks
+      .trim();
+    const coords: Record<string, [string, string]> = {
+      'montevideo': ['-34.9011', '-56.1645'],
+      'canelones': ['-34.5229', '-56.2817'],
+      'maldonado': ['-34.9093', '-54.9588'],
+      'colonia': ['-34.4625', '-57.8399'],
+      'salto': ['-31.3883', '-57.9609'],
+      'paysandu': ['-32.3213', '-58.0756'],
+      'rivera': ['-30.9053', '-55.5508'],
+      'tacuarembo': ['-31.7110', '-55.9834'],
+      'rocha': ['-34.4833', '-54.2220'],
+      'florida': ['-34.0994', '-56.2144'],
+      'durazno': ['-33.3794', '-56.5227'],
+      'lavalleja': ['-34.3519', '-55.2331'],
+      'san jose': ['-34.3369', '-56.7133'],
+      'soriano': ['-33.5098', '-57.7524'],
+      'rio negro': ['-33.1195', '-58.3025'],
+      'flores': ['-33.5239', '-56.8919'],
+      'artigas': ['-30.4006', '-56.4674'],
+      'cerro largo': ['-32.3739', '-54.1784'],
+      'treinta y tres': ['-33.2305', '-54.3836'],
+    };
+    const exact = coords[deptText];
+    const c = exact ?? coords['montevideo'];
+    lat.value = c[0];
+    lng.value = c[1];
+    return {
+      reason: exact ? 'exact-match' : 'fallback-mvd',
+      deptText: deptTextRaw,
+      normalized: deptText,
+      usedFallback: !exact,
+      coords: c,
+    };
   });
-  slog.info(DAC_STEPS.STEP3_SIGUIENTE, 'Forced cargaEnvios visible + set lat/lng for geocoding bypass');
+  if (coordResult.usedFallback) {
+    slog.warn(
+      DAC_STEPS.STEP3_SIGUIENTE,
+      `[lat-lng] Department "${coordResult.deptText}" (normalized="${coordResult.normalized}") not in coords map — falling back to Montevideo. THIS WILL MISCLASSIFY THE GUÍA. Add this department to the coords map.`,
+      coordResult,
+    );
+  } else {
+    slog.info(
+      DAC_STEPS.STEP3_SIGUIENTE,
+      `Forced cargaEnvios visible + set lat/lng for geocoding bypass (dept="${coordResult.deptText}" → coords=${coordResult.coords?.[0]},${coordResult.coords?.[1]})`,
+      coordResult,
+    );
+  }
 
   // ===== STEP 4: Package type + Quantity + Submit =====
   slog.info(DAC_STEPS.STEP4_START, 'Filling Step 4: package type and quantity');
@@ -2588,6 +2642,11 @@ export async function createShipment(
         usedGuias ? Array.from(usedGuias) : [],
         slog,
         order.name,
+        // 2026-05-11 incident #11865 — pass the destination we just typed/
+        // selected so the rescue refuses to adopt a guía whose historial
+        // destination row text doesn't contain the expected city/dept.
+        // Prevents the "Tacuarembó order → MONTEVIDEO guía adopted" bug.
+        { city: resolvedCity, department: resolvedDept },
       );
       if (rescued) {
         finalGuia = rescued.guia;
@@ -2946,6 +3005,23 @@ export function pickMatchingHistorialRow(
   rows: { guia: string; href: string | null; text: string }[],
   recipientName: string,
   excludeGuias: string[],
+  // 2026-05-11 incident — order #11865 Curvadivina. DAC silently created a
+  // guía with destination MONTEVIDEO even though our form said Tacuarembó
+  // (root cause: lat/lng coords map missed accent-bearing dept names; see
+  // shipment.ts:~2193). The rescue path then adopted that bogus guía because
+  // the recipient name matched — name was the only check. Customer's tracking
+  // page showed "Destino: MONTEVIDEO" for a Tacuarembó order.
+  //
+  // Defence-in-depth: when the caller knows the expected destination, ALSO
+  // require the row text to mention the expected city OR department. If a row
+  // matches by name but the destination is wrong, we treat it as a
+  // misclassified DAC-side guía and refuse to adopt it. The order falls
+  // through to "silent reject + rescue exhausted" and the operator must
+  // verify manually (PendingShipment keeps the order parked, no duplicate).
+  //
+  // Pass `null`/undefined for expectedDestination to keep the legacy
+  // name-only behaviour (used by older tests).
+  expectedDestination?: { city?: string | null; department?: string | null } | null,
 ): { guia: string; href: string | null; text: string } | null {
   if (!recipientName || recipientName.trim().length < 3) return null;
 
@@ -2958,14 +3034,38 @@ export function pickMatchingHistorialRow(
   if (nameTokens.length < 2) return null;
 
   const exclude = new Set(excludeGuias);
+
+  // Build the destination-token set we'll require. We accept a match if the
+  // row text contains EITHER the expected city OR the expected department
+  // (both normalised). DAC historial rows display "CITY · DEPT" or just one
+  // of them depending on the row, so requiring either is the most forgiving
+  // correct check.
+  const destTokens: string[] = [];
+  if (expectedDestination) {
+    for (const v of [expectedDestination.city, expectedDestination.department]) {
+      if (!v) continue;
+      const norm = normalizeNameForMatch(v);
+      if (norm.length >= 4) destTokens.push(norm);
+    }
+  }
+  const requireDestination = destTokens.length > 0;
+
   const candidates = rows.filter((r) => {
     if (exclude.has(r.guia)) return false;
     // Split row text into tokens the same way as the name, then check
     // every name token appears as an EXACT token in the row. This
     // avoids the "ana" → "analia" substring false positive that a
     // naive String.includes would cause.
-    const rowTokens = new Set(normalizeNameForMatch(r.text).split(' '));
-    return nameTokens.every((tok) => rowTokens.has(tok));
+    const rowNormalised = normalizeNameForMatch(r.text);
+    const rowTokens = new Set(rowNormalised.split(' '));
+    const nameMatches = nameTokens.every((tok) => rowTokens.has(tok));
+    if (!nameMatches) return false;
+    if (!requireDestination) return true;
+    // Destination check uses INCLUDES (substring) on the joined normalised
+    // text — destinations can be multi-word ("rio negro", "treinta y tres",
+    // "punta del este") and may appear as a phrase rather than as discrete
+    // tokens. Any of the expected dest strings is sufficient.
+    return destTokens.some((d) => rowNormalised.includes(d));
   });
 
   if (candidates.length === 0) return null;
@@ -3096,6 +3196,12 @@ async function findRecentGuiaForRecipient(
   excludeGuias: string[],
   slog: StepLogger,
   orderName: string,
+  // 2026-05-11 — passed through to pickMatchingHistorialRow so the rescue
+  // refuses to adopt a guía whose historial-row destination doesn't match
+  // the order's resolved city/department. Caller passes the city + dept it
+  // just typed/selected on the DAC form. Pass null to disable the check
+  // (legacy callers / tests).
+  expectedDestination: { city?: string | null; department?: string | null } | null = null,
 ): Promise<{ guia: string; trackingUrl?: string } | null> {
   if (!recipientName || recipientName.trim().length < 3) {
     slog.warn(
@@ -3111,6 +3217,10 @@ async function findRecentGuiaForRecipient(
   const ATTEMPT_BACKOFF_MS = [0, 5_000, 10_000];
   const MAX_PAGINATION_PAGES = 3;
   let lastRowCount = 0;
+  // Tracks whether name-only matches existed but were filtered out by the
+  // destination check. We surface this so the operator can investigate
+  // (DAC almost certainly minted a misclassified guía — see #11865 incident).
+  let sawNameOnlyMatchWithWrongDest = false;
 
   for (let attempt = 1; attempt <= ATTEMPT_BACKOFF_MS.length; attempt++) {
     if (ATTEMPT_BACKOFF_MS[attempt - 1] > 0) {
@@ -3152,7 +3262,7 @@ async function findRecentGuiaForRecipient(
       continue;
     }
 
-    let firstMatch = pickMatchingHistorialRow(allRows, recipientName, excludeGuias);
+    let firstMatch = pickMatchingHistorialRow(allRows, recipientName, excludeGuias, expectedDestination);
     let pageNum = 1;
     while (!firstMatch && pageNum < MAX_PAGINATION_PAGES) {
       const advanced = await loadMoreHistorialRows(page);
@@ -3168,7 +3278,7 @@ async function findRecentGuiaForRecipient(
             seen.add(r.guia);
           }
         }
-        firstMatch = pickMatchingHistorialRow(allRows, recipientName, excludeGuias);
+        firstMatch = pickMatchingHistorialRow(allRows, recipientName, excludeGuias, expectedDestination);
       } catch (pageErr) {
         slog.warn(
           DAC_STEPS.SUBMIT_EXTRACT_GUIA,
@@ -3184,10 +3294,47 @@ async function findRecentGuiaForRecipient(
     if (firstMatch) {
       slog.success(
         DAC_STEPS.SUBMIT_OK,
-        `[rescue] Recovered guía ${firstMatch.guia} from historial via recipient match — would have been orphaned`,
-        { orderName, recipientName, guia: firstMatch.guia, attempt, rowsScanned: allRows.length, pagesScanned: pageNum },
+        `[rescue] Recovered guía ${firstMatch.guia} from historial via recipient + destination match — would have been orphaned`,
+        {
+          orderName,
+          recipientName,
+          guia: firstMatch.guia,
+          attempt,
+          rowsScanned: allRows.length,
+          pagesScanned: pageNum,
+          expectedCity: expectedDestination?.city ?? null,
+          expectedDepartment: expectedDestination?.department ?? null,
+        },
       );
       return { guia: firstMatch.guia, trackingUrl: firstMatch.href ?? undefined };
+    }
+
+    // Did we have any name-matching rows that the destination filter
+    // rejected? If yes, that's an EXTREMELY informative signal — DAC almost
+    // certainly created a guía with the wrong destination. We surface that
+    // separately so the operator (and our metrics) can tell it apart from
+    // a clean "no guía was ever created" case.
+    //
+    // (At this point firstMatch is null — the early `if (firstMatch)` block
+    // above returned. So a `nameOnly` hit means the row was filtered out by
+    // the destination check specifically.)
+    if (expectedDestination) {
+      const nameOnly = pickMatchingHistorialRow(allRows, recipientName, excludeGuias, null);
+      if (nameOnly) {
+        sawNameOnlyMatchWithWrongDest = true;
+        slog.warn(
+          DAC_STEPS.SUBMIT_EXTRACT_GUIA,
+          `[rescue] Found name-match guía ${nameOnly.guia} but its destination does NOT contain expected city/dept — REFUSING to adopt to prevent misclassified-guía bug (incident #11865)`,
+          {
+            orderName,
+            recipientName,
+            candidateGuia: nameOnly.guia,
+            candidateRowText: nameOnly.text,
+            expectedCity: expectedDestination.city,
+            expectedDepartment: expectedDestination.department,
+          },
+        );
+      }
     }
 
     slog.info(
@@ -3199,8 +3346,8 @@ async function findRecentGuiaForRecipient(
 
   slog.warn(
     DAC_STEPS.SUBMIT_EXTRACT_GUIA,
-    `[rescue] All ${ATTEMPT_BACKOFF_MS.length} attempts exhausted — no historial row matched recipient "${recipientName}" (last scan: ${lastRowCount} rows)`,
-    { orderName, recipientName, totalAttempts: ATTEMPT_BACKOFF_MS.length, lastRowCount },
+    `[rescue] All ${ATTEMPT_BACKOFF_MS.length} attempts exhausted — no historial row matched recipient "${recipientName}"${sawNameOnlyMatchWithWrongDest ? ' WITH the expected destination (a name-match with wrong dest existed — likely DAC-side misclassification)' : ''} (last scan: ${lastRowCount} rows)`,
+    { orderName, recipientName, totalAttempts: ATTEMPT_BACKOFF_MS.length, lastRowCount, sawNameOnlyMatchWithWrongDest },
   );
   return null;
 }
