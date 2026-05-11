@@ -2545,15 +2545,23 @@ export async function createShipment(
   // missingStreetNumber handler when AI couldn't recover the number AND the
   // address isn't a pickup-at-DAC-branch.
   if (noNumberOperatorNote) observations.push(noNumberOperatorNote);
-  // 2026-05-11 — surface AI-applied corrections to the DAC operator. When
-  // the address validator auto-changed province/zip (high confidence), the
-  // operator sees on the printed label what was modified vs the original
-  // customer entry. Empty when no correction happened.
-  if (addressAutoCorrectionNote) observations.push(addressAutoCorrectionNote);
-  // 2026-05-11 — same idea for last-name recovery from email handle. The
-  // note is empty when the customer's last name was already complete or
-  // when no inference was possible.
-  if (lastNameInferenceNote) observations.push(lastNameInferenceNote);
+  // 2026-05-11 v2 — DAC observations field should ONLY contain operator-
+  // actionable text (the customer's note + the no-number action note).
+  // Earlier today this was injecting AI-correction audit trail too
+  // ("AI corrigió: province X→Y" / "AI corrigió apellido: P → Pieri")
+  // but the operator's feedback ("super mal") is that those messages
+  // clutter the printed label without giving the operator any decision
+  // to make — the AI already applied the fix, the label already has the
+  // correct values. Operator just ships. So we leave those audit notes
+  // in slog + RunLog (where they're queryable for SRE/debugging) but
+  // do NOT push them to the DAC observations field anymore.
+  //
+  // The variables `addressAutoCorrectionNote` and `lastNameInferenceNote`
+  // are intentionally retained — they could resurface in other places
+  // (e.g. Shopify order note for operator-side visibility) without
+  // touching the DAC printed label.
+  void addressAutoCorrectionNote; // kept for audit logs, NOT pushed to DAC obs
+  void lastNameInferenceNote;     // kept for audit logs, NOT pushed to DAC obs
   if (order.note) {
     const cleanNote = order.note
       .split('\n')
