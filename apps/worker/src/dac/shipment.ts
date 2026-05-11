@@ -1381,6 +1381,35 @@ export function applyAddressOverride(
  *   4. Guia regex only matches numbers starting with 88 and 12+ digits
  *   5. Ultra-detailed step logging to console + DB
  */
+/**
+ * Detects whether the customer requested PICKUP AT A DAC BRANCH instead of
+ * home delivery. The DAC submission form has a separate flow for this
+ * (TipoEntrega=Agencia, no address1+number required). Examples that match:
+ *
+ *   - "Retiro en agencia" / "retiro en sucursal" / "retiro en DAC"
+ *   - "Retiro" (as the whole address1)
+ *   - "DAC Barros Blancos" / "Dac Las Piedras" (address1 starts with "DAC <city>")
+ *   - "Sucursal de Dac Buceo" / "Sucursal Dac X"
+ *   - "Pickup" anywhere in note
+ *
+ * Exported so unit tests can pin the recognition surface.
+ */
+export function isPickupAtDacBranch(
+  address1: string | null | undefined,
+  address2: string | null | undefined,
+  orderNote: string | null | undefined,
+): boolean {
+  const a1 = (address1 ?? '').trim();
+  const combined = `${a1} ${address2 ?? ''} ${orderNote ?? ''}`.toLowerCase();
+  return (
+    /retiro\s+(en\s+)?(dac|agencia|sucursal|local|oficina)/i.test(combined) ||
+    /^retiro\b/i.test(a1) ||
+    /\bsucursal\s+(de\s+)?dac\b/i.test(combined) ||
+    /^\s*dac\s+\S/i.test(a1) || // "DAC Barros Blancos", "Dac Las Piedras"
+    /\bpickup\b/i.test(combined)
+  );
+}
+
 export async function createShipment(
   page: Page,
   order: ShopifyOrder,
@@ -1395,6 +1424,10 @@ export async function createShipment(
 ): Promise<DacShipmentResult> {
   const slog = createStepLogger(jobId ?? 'manual', tenantId);
   const addr = order.shipping_address;
+  // 2026-05-11 — note appended to DAC observations when we ship an order
+  // with no street number per operator directive. Injected into the
+  // observations array at the step-4 fill site below.
+  let noNumberOperatorNote: string | null = null;
 
   if (!addr || !addr.address1) {
     throw new Error(`Order ${order.name} has no shipping address`);
@@ -1445,74 +1478,107 @@ export async function createShipment(
     //       is recoverable. Cost ~$0.001 per call, called only on stuck
     //       orders, total ~$0.02/day.
     if (prep.missingStreetNumber) {
-      slog.info(
-        DAC_STEPS.PREPROCESS_ADDRESS,
-        `Address1 has no street number — invoking AI feasibility verdict before bouncing`,
-        { orderName: order.name, address1: addr.address1, audit: '2026-05-06' },
-      );
-      const recipientName =
-        `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente';
-      const verdict = await assessAddressFeasibility({
-        reason: 'no-street-number',
-        tenantId,
-        orderName: order.name,
-        customerName: recipientName,
-        customerEmail: order.email ?? undefined,
-        customerPhone: addr.phone ?? undefined,
-        orderNotes: order.note ?? undefined,
-        city: addr.city ?? undefined,
-        address1: addr.address1,
-        address2: addr.address2 ?? undefined,
-        zip: addr.zip ?? undefined,
-        province: addr.province ?? undefined,
-        country: addr.country ?? undefined,
-        // Validate AI's suggestedCity against the customer's province
-        // dropdown — if that's a recognized UY dept name. Falls back
-        // to "all 19 depts" inside assessAddressFeasibility otherwise.
-        targetDepartment: addr.province ?? undefined,
-      });
+      // 2026-05-11 operator directive — two behavior changes vs the prior
+      // "always bounce when AI says not shippable" path:
+      //
+      //   (a) PICKUP AT DAC BRANCH ("Retiro en agencia", "DAC Barros Blancos",
+      //       "Sucursal de Dac X", etc.) → skip the AI feasibility call entirely
+      //       and let the order flow through. The DAC submission code further
+      //       down detects the pickup pattern and uses TipoEntrega=Agencia,
+      //       which does NOT require a street number.
+      //
+      //   (b) ALL OTHER NO-NUMBER ADDRESSES → ship anyway with an operator
+      //       note ("CONTACTAR POR TELEFONO PARA NUMERO DE PUERTA") in the
+      //       DAC observations field. The DAC operator calls the customer
+      //       to get the missing number before physical delivery. We still
+      //       give AI one shot to RECOVER the number from address2/notes
+      //       (preserves the existing "AI found the number" happy path) —
+      //       only when AI can't recover do we fall through to the
+      //       ship-with-note flow that replaces the previous bounce.
+      //
+      // Trade-off the operator explicitly accepted on 2026-05-11: some
+      // genuinely broken addresses (e.g. "La Paloma" alone) may now get
+      // silently rejected by DAC and end up as orphan PendingShipments
+      // (caught by the C-4 guard). Net behavior: more orders attempted,
+      // a few more silent rejects, far fewer "needs operator review"
+      // pile-ups for addresses that DAC operators can handle.
 
-      if (verdict.shippable && verdict.suggestedAddress1 && /\d/.test(verdict.suggestedAddress1)) {
-        // AI recovered a usable address (e.g. found a number in address2 or notes).
-        // Apply the repair and continue through the normal flow.
-        const beforeRepair = addr.address1;
-        addr.address1 = verdict.suggestedAddress1;
+      if (isPickupAtDacBranch(addr.address1, addr.address2, order.note)) {
         slog.info(
           DAC_STEPS.PREPROCESS_ADDRESS,
-          `AI recovered missing street number: "${beforeRepair}" → "${addr.address1}" (confidence=${verdict.confidence})`,
-          {
-            before: beforeRepair,
-            after: addr.address1,
-            aiConfidence: verdict.confidence,
-            aiReasoning: verdict.reasoning,
-            aiCostUsd: verdict.aiCostUsd,
-            audit: '2026-05-06',
-          },
+          `Pickup-at-agency pattern detected ("${addr.address1}") — skipping AI feasibility; DAC submission will use TipoEntrega=Agencia`,
+          { orderName: order.name, address1: addr.address1, audit: '2026-05-11' },
         );
+        // Continue through the normal flow. The block at line ~1611 detects
+        // the same pattern and switches the DAC form into pickup mode.
       } else {
-        // AI confirmed (or AI unavailable, conservative default):
-        // address is unrecoverable without operator intervention.
-        slog.warn(
+        slog.info(
           DAC_STEPS.PREPROCESS_ADDRESS,
-          `AI feasibility verdict: NOT shippable (confidence=${verdict.confidence}, source=${verdict.source}) — bouncing with operator question`,
-          {
-            orderName: order.name,
-            address1: addr.address1,
-            aiReasoning: verdict.reasoning,
-            aiOperatorQuestion: verdict.operatorQuestion,
-            aiCostUsd: verdict.aiCostUsd,
-            audit: '2026-05-06',
-          },
+          `Address1 has no street number — invoking AI feasibility to try to recover the number from address2/notes (will ship-with-note if AI cannot recover, per 2026-05-11 directive)`,
+          { orderName: order.name, address1: addr.address1, audit: '2026-05-11' },
         );
-        const dacText = verdict.operatorQuestion
-          ? `Dirección incompleta. ${verdict.reasoning} Pregunta sugerida al cliente: "${verdict.operatorQuestion}"`
-          : `Dirección sin número de calle (AI ${verdict.source}: ${verdict.reasoning || 'sin razón'}).`;
-        throw new DacAddressRejectedError(
-          `Address unrecoverable for ${order.name}: AI verdict "${verdict.reasoning || 'no street number'}". Operator question: "${verdict.operatorQuestion ?? '(none)'}".`,
-          order.name,
-          dacText,
-          false, // not a rescue-failed case — no guía created, safe to clear PendingShipment when address is fixed
-        );
+        const recipientName =
+          `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente';
+        const verdict = await assessAddressFeasibility({
+          reason: 'no-street-number',
+          tenantId,
+          orderName: order.name,
+          customerName: recipientName,
+          customerEmail: order.email ?? undefined,
+          customerPhone: addr.phone ?? undefined,
+          orderNotes: order.note ?? undefined,
+          city: addr.city ?? undefined,
+          address1: addr.address1,
+          address2: addr.address2 ?? undefined,
+          zip: addr.zip ?? undefined,
+          province: addr.province ?? undefined,
+          country: addr.country ?? undefined,
+          // Validate AI's suggestedCity against the customer's province
+          // dropdown — if that's a recognized UY dept name. Falls back
+          // to "all 19 depts" inside assessAddressFeasibility otherwise.
+          targetDepartment: addr.province ?? undefined,
+        });
+
+        if (verdict.shippable && verdict.suggestedAddress1 && /\d/.test(verdict.suggestedAddress1)) {
+          // AI recovered a usable address (e.g. found a number in address2
+          // or notes). Apply the repair and continue through the normal flow.
+          // This is the existing happy path, preserved bit-for-bit.
+          const beforeRepair = addr.address1;
+          addr.address1 = verdict.suggestedAddress1;
+          slog.info(
+            DAC_STEPS.PREPROCESS_ADDRESS,
+            `AI recovered missing street number: "${beforeRepair}" → "${addr.address1}" (confidence=${verdict.confidence})`,
+            {
+              before: beforeRepair,
+              after: addr.address1,
+              aiConfidence: verdict.confidence,
+              aiReasoning: verdict.reasoning,
+              aiCostUsd: verdict.aiCostUsd,
+              audit: '2026-05-11',
+            },
+          );
+        } else {
+          // AI couldn't recover the number. 2026-05-11 directive: ship anyway
+          // with a note for the DAC operator (was: bounce as NEEDS_REVIEW).
+          // Mark address1 with "S/N" if it doesn't already carry that marker,
+          // so DAC's number field has something to display.
+          if (!/\bs\/n\b|sin\s+n[uú]mero/i.test(addr.address1)) {
+            addr.address1 = addr.address1.trim() + ' S/N';
+          }
+          noNumberOperatorNote = 'CONTACTAR POR TELEFONO PARA NUMERO DE PUERTA';
+          slog.warn(
+            DAC_STEPS.PREPROCESS_ADDRESS,
+            `No street number recovered — shipping anyway with operator-call note in DAC observations (replaces prior bounce per 2026-05-11 directive). AI reasoning: ${verdict.reasoning ?? '(no reasoning)'}`,
+            {
+              orderName: order.name,
+              addressWithSn: addr.address1,
+              aiReasoning: verdict.reasoning,
+              aiConfidence: verdict.confidence,
+              aiCostUsd: verdict.aiCostUsd,
+              audit: '2026-05-11',
+            },
+          );
+        }
       }
     }
 
@@ -1609,12 +1675,13 @@ export async function createShipment(
   }
 
   // ===== DETECT RETIRO EN AGENCIA =====
-  // If the customer wrote "retiro en DAC" / "retiro en agencia" / "retiro en sucursal"
-  // in their address, this is a pickup at DAC branch — not home delivery.
-  const combinedAddrText = `${addr.address1 ?? ''} ${addr.address2 ?? ''} ${order.note ?? ''}`.toLowerCase();
-  const isRetiroEnAgencia = /retiro\s+(en\s+)?(dac|agencia|sucursal|local|oficina)/i.test(combinedAddrText)
-    || /^retiro\b/i.test((addr.address1 ?? '').trim())
-    || /retiro\s+en\s+(dac|agencia)|pickup/i.test(order.note ?? '');
+  // If the customer wrote "retiro en DAC" / "retiro en agencia" / "retiro en sucursal" /
+  // "DAC <ciudad>" / "Sucursal de Dac X" / "pickup" anywhere in the address fields
+  // or order note, this is a pickup at DAC branch — not home delivery.
+  // 2026-05-11 — recognition broadened (was a 3-regex inline check that missed
+  // "Sucursal de Dac Buceo" and "DAC Barros Blancos"). The shared
+  // isPickupAtDacBranch() helper covers all the variants and is unit-tested.
+  const isRetiroEnAgencia = isPickupAtDacBranch(addr.address1, addr.address2, order.note);
 
   if (isRetiroEnAgencia) {
     slog.info(DAC_STEPS.STEP1_START, `RETIRO EN AGENCIA detected — address: "${addr.address1}", will use TipoEntrega=Agencia`);
@@ -2211,6 +2278,11 @@ export async function createShipment(
   //   - sanitizeObservationLine: final belt-and-suspenders pass
   const observations: string[] = [];
   if (extraObs) observations.push(extraObs);
+  // 2026-05-11 directive — inject the "call customer for missing door number"
+  // note when an order shipped without a street number. Set upstream by the
+  // missingStreetNumber handler when AI couldn't recover the number AND the
+  // address isn't a pickup-at-DAC-branch.
+  if (noNumberOperatorNote) observations.push(noNumberOperatorNote);
   if (order.note) {
     const cleanNote = order.note
       .split('\n')
