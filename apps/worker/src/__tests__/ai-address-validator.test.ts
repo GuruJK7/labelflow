@@ -306,6 +306,121 @@ describe('validateAddressConsistency — fallback behaviour', () => {
   });
 });
 
+describe('validateAddressConsistency — 2026-05-11 directive-style corrections (operator request)', () => {
+  // The operator explicitly asked: "no solo digas confidence baja" — when
+  // the input has a clear inconsistency the validator should DECIDE and
+  // CORRECT, not punt. These tests pin the contract for the
+  // higher-aggression cases we expect haiku to handle with the new prompt.
+
+  it('CITY IS A MVD BARRIO mistyped as another dept → corrects to Montevideo (high)', async () => {
+    // Customer typed "Aires Puros" (which is a MVD barrio) but selected
+    // Canelones as province. Claude must recognize the barrio and correct.
+    bridgeMock.mockResolvedValueOnce({
+      consistent: false,
+      corrections: { department: 'Montevideo' },
+      confidence: 'high',
+      issues: ['aires puros es un barrio de montevideo no canelones'],
+    });
+    const r = await validateAddressConsistency({
+      ...baseInput,
+      city: 'Aires Puros',
+      province: 'Canelones',
+      zip: '11700',
+    });
+    expect(r.consistent).toBe(false);
+    expect(r.confidence).toBe('high');
+    expect(r.corrections).toEqual({ department: 'Montevideo' });
+  });
+
+  it('AMBIGUOUS but ZIP disambiguates → high confidence (not low)', async () => {
+    // San José could be the dept capital or a MVD barrio. ZIP 80000 is
+    // San José dept territory → high confidence. Claude returns the
+    // accented Spanish spelling; the coercion canonicalises it to
+    // VALID_DEPARTMENTS' accent-free form ("San Jose").
+    bridgeMock.mockResolvedValueOnce({
+      consistent: false,
+      corrections: { department: 'San José' },
+      confidence: 'high',
+      issues: ['zip 80000 corresponde a san josé depto'],
+    });
+    const r = await validateAddressConsistency({
+      ...baseInput,
+      city: 'San José',
+      province: 'Montevideo',
+      zip: '80000',
+    });
+    expect(r.confidence).toBe('high');
+    // Canonical form (matches VALID_DEPARTMENTS), not the accented Spanish
+    // form Claude returned.
+    expect(r.corrections?.department).toBe('San Jose');
+  });
+
+  it('accent normalization — Claude returns "Paysandú" → canonicalised to "Paysandu"', async () => {
+    bridgeMock.mockResolvedValueOnce({
+      consistent: false,
+      corrections: { department: 'Paysandú' },
+      confidence: 'high',
+      issues: ['city corresponds to paysandu dept'],
+    });
+    const r = await validateAddressConsistency({
+      ...baseInput,
+      city: 'Quebracho',
+      province: 'Salto',
+      zip: '60100',
+    });
+    expect(r.corrections?.department).toBe('Paysandu');
+  });
+
+  it('accent normalization — "Río Negro" canonicalised to "Rio Negro"', async () => {
+    bridgeMock.mockResolvedValueOnce({
+      consistent: false,
+      corrections: { department: 'Río Negro' },
+      confidence: 'high',
+      issues: ['fray bentos is rio negro'],
+    });
+    const r = await validateAddressConsistency({
+      ...baseInput,
+      city: 'Fray Bentos',
+      province: 'Colonia',
+      zip: '65000',
+    });
+    expect(r.corrections?.department).toBe('Rio Negro');
+  });
+
+  it('accent normalization — "Tacuarembó" canonicalised to "Tacuarembo"', async () => {
+    bridgeMock.mockResolvedValueOnce({
+      consistent: false,
+      corrections: { department: 'Tacuarembó' },
+      confidence: 'high',
+      issues: ['city in tacuarembo dept'],
+    });
+    const r = await validateAddressConsistency({
+      ...baseInput,
+      city: 'Paso de los Toros',
+      province: 'Rivera',
+      zip: '45000',
+    });
+    expect(r.corrections?.department).toBe('Tacuarembo');
+  });
+
+  it('Atlántida (a Canelones beach town typed as Maldonado) → high confidence Canelones', async () => {
+    bridgeMock.mockResolvedValueOnce({
+      consistent: false,
+      corrections: { department: 'Canelones' },
+      confidence: 'high',
+      issues: ['atlántida es de canelones no maldonado'],
+    });
+    const r = await validateAddressConsistency({
+      ...baseInput,
+      city: 'Atlántida',
+      province: 'Maldonado',
+      zip: '15500',
+    });
+    expect(r.confidence).toBe('high');
+    expect(r.corrections).toEqual({ department: 'Canelones' });
+  });
+});
+
 describe('validateAddressConsistency — observability contract', () => {
   it('cost is 0 on bridge success', async () => {
     bridgeMock.mockResolvedValueOnce({

@@ -128,55 +128,94 @@ interface ClaudeValidatorOutput {
   issues?: string[];
 }
 
-const SYSTEM_PROMPT = `You are an Uruguay address consistency validator for the DAC courier service.
+const SYSTEM_PROMPT = `You are a Uruguay address consistency CORRECTOR for the DAC courier service. Your job is NOT just to flag problems — it is to FIX them when you can verify the correct value.
 
 INPUT: A Shopify shipping address with fields { address1, address2?, city, province, zip }. The customer may have typed any of city/province/zip incorrectly.
 
-TASK: Decide if the (city, province, zip) tuple is internally consistent for Uruguay. If not, propose minimal conservative corrections.
+YOU HAVE TOOLS AVAILABLE — USE THEM:
+- WebSearch / WebFetch: search the open web for "[city] Uruguay department" or look up a postal code if you're not 100% sure. ALWAYS prefer verification over guessing.
+- Bash (read-only useful): run \`python3 ~/labelflow-tools/dac_catalog.py "<city>"\` if the file exists (offline DAC catalog) for canonical city→department mappings. If unavailable, skip — don't error.
+- Read/Write: temp files only.
 
-URUGUAY GEOGRAPHY YOU KNOW:
-- 19 departments. Valid department names (use these exact spellings): ${VALID_DEPARTMENTS.join(', ')}.
-- ZIP codes are 5 digits. Montevideo uses the 11000-11999 range (split by barrio, e.g. Centro≈11100, Cordón≈11200, Pocitos≈11300, Punta Carretas≈11300, Carrasco≈11500, Aires Puros≈11700, Brazo Oriental≈11800).
-- Most other departments use 90000-99999 for capitals (Canelones: Pando=91000, Las Piedras=90200, Ciudad de la Costa=15008, etc.).
-- 15xxx is a mix: 15000-15999 covers parts of Canelones + some MVD-adjacent zones. Don't over-correct ZIPs in this range.
-- Maldonado: 20000-20999. Punta del Este ≈ 20100.
-- Colonia: 70000-70999.
-- Paysandú: 60000-60999.
-- Salto: 50000-50999.
+YOU ARE EXPLICITLY ALLOWED TO USE TOOLS when uncertain. The user prefers a slow correct answer over a fast "low confidence" punt. Do NOT default to "low confidence" — verify first.
 
-RULES:
-1. If everything matches → consistent=true, no corrections.
-2. If city is in a different department than province says (e.g. Pando + Montevideo → Pando is actually in Canelones), correct the DEPARTMENT to match the city. Confidence=high if the city is unambiguous (Pando, Las Piedras, Maldonado, etc.).
-3. If ZIP doesn't match the city (e.g. Pando + ZIP 15600 — Pando is 91000), correct the ZIP. Confidence=high only if the city is unambiguous AND the ZIP is clearly outside the expected range.
-4. NEVER change the city name. NEVER change address1. If the city itself is wrong, set confidence=low and let the operator fix.
-5. NEVER suggest a correction that contradicts a clearly-correct field. If province=Montevideo + zip=11200 + city="some unknown barrio", trust province and zip; flag city as unclear with confidence=low.
-6. If multiple fields conflict and you can't tell which is right, confidence=low.
-7. Borderline ZIPs (off by a few hundred from expected) → leave alone (confidence=low or just consistent=true). DAC's own validator is the final arbiter.
+OUTPUT FIELDS YOU CAN PROPOSE TO CORRECT (NEVER any others):
+- "department" — the Uruguay department (=province). 19 valid names exact-spell: ${VALID_DEPARTMENTS.join(', ')}.
+- "zip" — 4 or 5 digit Uruguay postal code.
+
+FIELDS YOU MUST NEVER TOUCH OR PROPOSE TO CHANGE:
+- address1 (street + number)        ← the operator says: customer's input stays as typed
+- city (the locality name itself)   ← customer-typed identity, off-limits even if it's a typo (the upstream fuzzy-match preprocessor handles typos)
+- name, phone, email                ← personal data, never touch
+
+URUGUAY GEOGRAPHY (your prior knowledge — use as starting point, verify with tools when needed):
+- 19 departments. ZIP codes are 5 digits.
+- Montevideo: 11000-11999 (barrios split: Centro/Cordón~11100-11200, Pocitos~11300, Punta Carretas~11300, Buceo~11400, Carrasco~11500, Malvín~11400, Aires Puros/Brazo Oriental/Cerrito~11700-11800).
+- Canelones: capital Canelones~90000, Pando=91000, Las Piedras=90200, Atlántida=15500, Salinas=15500, Ciudad de la Costa~15008, Barros Blancos~91300, Sauce~90600.
+- Maldonado: 20000-20999 (Maldonado~20000, Punta del Este~20100, Piriápolis~20200, San Carlos~20400).
+- Colonia: 70000-70999 (Colonia del Sacramento, Carmelo).
+- Paysandú: 60000-60999. Salto: 50000-50999. Rivera: 40000-40999.
+- Rocha: 27000+, Treinta y Tres: 33000+, Cerro Largo: 37000+, Tacuarembó: 45000+, Artigas: 55000+, Soriano: 75000+, Río Negro: 65000+, Flores: 85000+, Florida: 94000+, Durazno: 97000+, Lavalleja: 30000+, San José: 80000+.
+
+CORRECTION POLICY — BE DECISIVE:
+
+1. CITY IS IN A DIFFERENT DEPARTMENT THAN CLAIMED PROVINCE
+   Example: city="Pando", province="Montevideo". Pando is in Canelones, full stop. CORRECT the department.
+   → confidence: "high", corrections: { department: "Canelones" }.
+   If you're not 100% sure where the city is, USE WebSearch FIRST, then decide.
+
+2. CITY IS ACTUALLY A MONTEVIDEO BARRIO (operator catches this often)
+   Example: city="Aires Puros", province="Canelones". "Aires Puros" is a barrio of MVD. Department must be Montevideo.
+   → confidence: "high", corrections: { department: "Montevideo" }.
+   Common MVD barrios that customers type as "city": Centro, Cordón, Pocitos, Punta Carretas, Carrasco, Buceo, Malvín, Aires Puros, Brazo Oriental, Cerrito, Pueblo Victoria, Maroñas, Ituzaingó, Sayago, La Blanqueada, Tres Cruces, Aguada, Bella Vista, Goes, Reducto, Paso de las Duranas, Prado, Capurro, Atahualpa, Belvedere, Conciliación, Cerro, Casabó, La Teja, Nuevo París, Peñarol, Lavalleja (the barrio, not dept), Colón, Sayago, Piedras Blancas, Manga, Toledo, Punta Gorda, Punta de Rieles, Flor de Maroñas, Jardines del Hipódromo, Villa Española, etc.
+
+3. ZIP DOES NOT MATCH THE CITY
+   Example: city="Pando", zip="15600". Pando is 91000, 15600 is a MVD-adjacent zone. CORRECT the zip.
+   → confidence: "high" only if the city is CLEAR and the zip is OBVIOUSLY outside the expected range (off by a whole barrio/department, not by 100).
+
+4. BORDERLINE ZIP (off by a few hundred)
+   Example: city="Aires Puros", zip="11200". Aires Puros ~11700, Cordón ~11200. Both MVD. ZIP doesn't affect DAC's destination routing — barrio dropdown does.
+   → consistent: true (DAC will accept). NO correction needed.
+
+5. CITY UNKNOWN OR AMBIGUOUS
+   Example: city="DesconocidoVille". Cannot verify on WebSearch either.
+   → consistent: false, corrections: null, confidence: "low", issues: ["..."].
+   This is the ONLY case where you say "low" — when you genuinely cannot resolve.
+
+6. MULTIPLE PLAUSIBLE PROVINCES FOR SAME CITY NAME
+   Example: city="San José". Could be San José de Mayo (San José dept), Ciudad del Plata (San José dept), or just a barrio name. Use the ZIP to disambiguate.
+   → If ZIP is clear: confidence="high" with the matching department.
+   → If ZIP is also ambiguous: confidence="medium", best-guess correction. Be decisive — don't default to "low" unless truly impossible.
+
+KEY PRINCIPLE (the operator emphasized this): "no solo digas confidence baja". When uncertain, USE THE TOOLS to find the answer. Only "low" if even tool-based verification can't resolve it.
 
 OUTPUT (JSON only, no prose, no fences):
 {
   "consistent": boolean,
   "corrections": { "department"?: string, "zip"?: string } | null,
   "confidence": "high" | "medium" | "low",
-  "issues": [<concise problem descriptions, lower-case>]
+  "issues": [<concise problem descriptions in spanish, lower-case>]
 }
 
-EXAMPLES:
+EXAMPLES (showing the decisive style):
 
 Input: { city: "Pando", province: "Montevideo", zip: "15600" }
-Output: { "consistent": false, "corrections": { "department": "Canelones", "zip": "91000" }, "confidence": "high", "issues": ["pando está en canelones, no montevideo", "zip 15600 no corresponde a pando"] }
+Output: { "consistent": false, "corrections": { "department": "Canelones", "zip": "91000" }, "confidence": "high", "issues": ["pando es de canelones no montevideo", "zip 15600 no corresponde a pando (91000)"] }
+
+Input: { city: "Aires Puros", province: "Canelones", zip: "11200" }
+Output: { "consistent": false, "corrections": { "department": "Montevideo" }, "confidence": "high", "issues": ["aires puros es un barrio de montevideo no canelones"] }
+
+Input: { city: "Aires Puros", province: "Montevideo", zip: "11200" }
+Output: { "consistent": true, "corrections": null, "confidence": "high", "issues": [] }
 
 Input: { city: "Punta del Este", province: "Maldonado", zip: "20100" }
 Output: { "consistent": true, "corrections": null, "confidence": "high", "issues": [] }
 
-Input: { city: "Cordón", province: "Montevideo", zip: "11200" }
-Output: { "consistent": true, "corrections": null, "confidence": "high", "issues": [] }
-
-Input: { city: "Aires Puros", province: "Montevideo", zip: "11200" }
-Output: { "consistent": true, "corrections": null, "confidence": "medium", "issues": ["zip 11200 corresponds to cordón; aires puros expected ~11700, but both are in montevideo so dac should still accept"] }
+Input: { city: "Atlántida", province: "Maldonado", zip: "15500" }
+Output: { "consistent": false, "corrections": { "department": "Canelones" }, "confidence": "high", "issues": ["atlántida es de canelones no maldonado"] }
 
 Input: { city: "DesconocidoVille", province: "Maldonado", zip: "20000" }
-Output: { "consistent": false, "corrections": null, "confidence": "low", "issues": ["city 'desconocidoville' not recognized as a uruguay locality"] }
+Output: { "consistent": false, "corrections": null, "confidence": "low", "issues": ["ciudad 'desconocidoville' no se pudo verificar"] }
 `;
 
 function buildUserMessage(input: AddressValidationInput): string {
@@ -222,10 +261,20 @@ function coerceResult(
   if (!consistent && obj.corrections && typeof obj.corrections === 'object') {
     const dept = obj.corrections.department;
     const zip = obj.corrections.zip;
-    const validDeptSet = new Set(VALID_DEPARTMENTS.map((d) => d.toLowerCase()));
+    // VALID_DEPARTMENTS uses accent-free spellings (e.g. "San Jose",
+    // "Paysandu", "Rio Negro") but Claude commonly returns the Spanish
+    // form ("San José", "Paysandú", "Río Negro"). Normalize both sides
+    // for comparison, then map back to the CANONICAL spelling used by
+    // the DAC form / VALID_DEPARTMENTS so downstream code doesn't get
+    // mixed accented vs unaccented strings.
+    const stripAccents = (s: string) =>
+      s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    const validDeptByNormalized = new Map(
+      VALID_DEPARTMENTS.map((d) => [stripAccents(d), d] as const),
+    );
     const validDept =
-      typeof dept === 'string' && dept.length > 0 && validDeptSet.has(dept.toLowerCase())
-        ? dept
+      typeof dept === 'string' && dept.length > 0
+        ? validDeptByNormalized.get(stripAccents(dept))
         : undefined;
     // ZIP must be 4-5 digit Uruguay format. Tolerate leading zeros / spaces.
     const trimmedZip =
@@ -282,10 +331,18 @@ export async function validateAddressConsistency(
       system: SYSTEM_PROMPT,
       user: userMessage,
       model: 'haiku',
-      // Validator doesn't need tools — pure reasoning over the address
-      // tuple. Keep allowedTools minimal so claude CLI doesn't spawn a
-      // browser/web-search subprocess.
-      allowedTools: 'Read,Write',
+      // 2026-05-11 — tools enabled per operator request ("que use las
+      // tools que sea"). The system prompt instructs Claude to use
+      // WebSearch when uncertain about a city's department, instead of
+      // defaulting to confidence="low". This is bounded by:
+      //   - Claude haiku rarely invokes tools unless prompted
+      //   - The downstream coercion still validates corrections against
+      //     VALID_DEPARTMENTS + zip regex, so a hallucinated tool result
+      //     can't poison the address
+      //   - Bash is read-only in practice (the helper scripts are pure
+      //     lookups). The bridge env-whitelist already restricts what
+      //     spawned subprocesses see.
+      allowedTools: 'Read,Write,WebSearch,WebFetch,Bash',
       schemaHint:
         '{ "consistent": bool, "corrections": { "department"?: string, "zip"?: string } | null, "confidence": "high"|"medium"|"low", "issues": [string] }',
     });
