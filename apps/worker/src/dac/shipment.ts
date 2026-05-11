@@ -13,6 +13,7 @@ import { db } from '../db';
 import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT, isAmbiguousCityName, isValidUruguayProvince, correctCityWhenEqualsDepartment, fuzzyMatchCity, splitHyphenatedCityName } from './uruguay-geo';
 import { preprocessShopifyAddress } from './address-cleanup';
 import { assessAddressFeasibility } from './ai-feasibility';
+import { validateAddressConsistency } from './ai-address-validator';
 import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 import { handlePaymentFlow, AutoPayConfig, PaymentOutcome } from './payment';
 
@@ -1652,6 +1653,100 @@ export async function createShipment(
   // Re-entering the form in either case risks a duplicate DAC shipment.
   await assertNoPriorSubmit(tenantId, String(order.id), slog);
 
+  // ── AI ADDRESS VALIDATOR (2026-05-11) ──────────────────────────────
+  //
+  // Two production silent rejects today (#12001 Esmeralda P + #12002 Liria
+  // Pouso) had internally inconsistent (city, province, zip) tuples — DAC's
+  // server-side validator rejected without showing an error. The
+  // deterministic city→dept resolver returned HIGH confidence so neither
+  // ai-feasibility nor ai-resolver fired, and the bad address went
+  // straight to DAC.
+  //
+  // The validator below runs PROACTIVELY before every DAC submit (vs the
+  // existing ai-feasibility / ai-resolver which fire reactively on
+  // specific triggers). It uses the Mac Mini bridge (Claude Max, $0)
+  // when available, falls back to the Anthropic API otherwise. NEVER
+  // throws — on any error returns `skipped` and we proceed with the
+  // original address. Only HIGH-CONFIDENCE corrections are auto-applied;
+  // medium/low get logged for operator visibility but don't mutate addr.
+  //
+  // Scope of corrections (validator self-restricted):
+  //   • department / province  — yes (e.g. "Pando + MVD" → "Pando + Canelones")
+  //   • ZIP code               — yes (e.g. Pando + 15600 → 91000)
+  //   • city, address1, names  — NEVER. Preserving the customer's typed
+  //     identity fields keeps the audit trail clean and avoids
+  //     "the customer typed X but the label says Y" complaints.
+  let addressAutoCorrectionNote: string | null = null;
+  try {
+    const validation = await validateAddressConsistency({
+      tenantId,
+      orderName: order.name,
+      address1: addr.address1,
+      address2: addr.address2 ?? undefined,
+      city: addr.city ?? undefined,
+      province: addr.province ?? undefined,
+      zip: addr.zip ?? undefined,
+      country: addr.country ?? 'Uruguay',
+    });
+    if (!validation.skipped && !validation.consistent && validation.corrections) {
+      if (validation.confidence === 'high') {
+        const before = {
+          province: addr.province ?? '',
+          zip: addr.zip ?? '',
+        };
+        const changes: string[] = [];
+        if (validation.corrections.department && validation.corrections.department !== before.province) {
+          addr.province = validation.corrections.department;
+          changes.push(`province "${before.province || '(empty)'}" → "${validation.corrections.department}"`);
+        }
+        if (validation.corrections.zip && validation.corrections.zip !== before.zip) {
+          addr.zip = validation.corrections.zip;
+          changes.push(`zip "${before.zip || '(empty)'}" → "${validation.corrections.zip}"`);
+        }
+        if (changes.length > 0) {
+          const reasonText = validation.issues.length > 0 ? ` (motivo: ${validation.issues.join('; ')})` : '';
+          addressAutoCorrectionNote = `AI corrigio: ${changes.join(', ')}${reasonText}`;
+          slog.info(
+            DAC_STEPS.PREPROCESS_ADDRESS,
+            `Address auto-corrected by AI validator (high confidence): ${changes.join(', ')}`,
+            {
+              orderName: order.name,
+              changes,
+              issues: validation.issues,
+              transport: validation.transport,
+              aiCostUsd: validation.aiCostUsd,
+              audit: '2026-05-11',
+            },
+          );
+        }
+      } else {
+        // Medium/low confidence — flag for visibility but don't mutate.
+        // The address proceeds as-is; if DAC rejects, the rescue + operator
+        // note path will surface the issues for manual review.
+        slog.warn(
+          DAC_STEPS.PREPROCESS_ADDRESS,
+          `AI validator flagged inconsistencies (confidence=${validation.confidence}, NOT auto-applying): ${validation.issues.join('; ')}`,
+          {
+            orderName: order.name,
+            issues: validation.issues,
+            suggestedCorrections: validation.corrections,
+            transport: validation.transport,
+            confidence: validation.confidence,
+            audit: '2026-05-11',
+          },
+        );
+      }
+    }
+  } catch (validatorErr) {
+    // Defense-in-depth — validator is documented to never throw, but if it
+    // somehow does, the order still ships with the original address.
+    slog.info(
+      DAC_STEPS.PREPROCESS_ADDRESS,
+      `Address validator failed unexpectedly — proceeding with original address: ${(validatorErr as Error).message}`,
+      { orderName: order.name },
+    );
+  }
+
   await ensureLoggedIn(page, dacUsername, dacPassword, tenantId);
 
   slog.info(DAC_STEPS.NAV_NEW_SHIPMENT, `Navigating to new shipment form for ${order.name}`, {
@@ -2337,6 +2432,11 @@ export async function createShipment(
   // missingStreetNumber handler when AI couldn't recover the number AND the
   // address isn't a pickup-at-DAC-branch.
   if (noNumberOperatorNote) observations.push(noNumberOperatorNote);
+  // 2026-05-11 — surface AI-applied corrections to the DAC operator. When
+  // the address validator auto-changed province/zip (high confidence), the
+  // operator sees on the printed label what was modified vs the original
+  // customer entry. Empty when no correction happened.
+  if (addressAutoCorrectionNote) observations.push(addressAutoCorrectionNote);
   if (order.note) {
     const cleanNote = order.note
       .split('\n')
