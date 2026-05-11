@@ -14,6 +14,7 @@ import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, get
 import { preprocessShopifyAddress } from './address-cleanup';
 import { assessAddressFeasibility } from './ai-feasibility';
 import { validateAddressConsistency } from './ai-address-validator';
+import { inferLastNameFromEmail } from './recipient-name-inference';
 import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 import { handlePaymentFlow, AutoPayConfig, PaymentOutcome } from './payment';
 
@@ -1889,8 +1890,71 @@ export async function createShipment(
   slog.info(DAC_STEPS.STEP3_START, 'Filling Step 3: recipient data');
   await dacBrowser.screenshot(page, `step3-before-${order.name.replace('#', '')}`);
 
+  // ── RECIPIENT NAME — short-last-name auto-recovery (2026-05-11) ──
+  //
+  // Incident #12001 Esmeralda P: Shopify name = "Esmeralda P" (single-letter
+  // last name from incomplete checkout). DAC server-side validator silently
+  // rejected — no error in the form, URL stayed on /envios/nuevo, rescue
+  // exhausted, order parqueado.
+  //
+  // Root cause confirmed by querying historic Labels: in the tenant's
+  // entire history, ALL successful Aires Puros orders had multi-word
+  // names; #12001 was the ONLY single-letter-last-name order ever, and
+  // it failed. DAC rejects names below a (~undocumented) minimum length.
+  //
+  // Recovery: try to infer the missing last name from the customer's
+  // email handle. The function is DETERMINISTIC (no AI, no hallucination
+  // surface) — it only returns a candidate when the firstName appears
+  // verbatim in the email handle and there's a ≥3-char alphabetic
+  // remainder. Otherwise returns null and we ship with the original
+  // (likely short) name, letting DAC's reject or accept decide.
+  //
+  // Example: "pieriesmeralda@gmail.com" + firstName "Esmeralda" + lastName "P"
+  //   → handle "pieriesmeralda" contains "esmeralda" at idx=5
+  //   → remainder "pieri" (5 alpha chars) → inferred last name = "Pieri"
+  //   → submit DAC with name "Esmeralda Pieri" + observation note about
+  //     the AI-recovered last name (audit trail for operator).
+  const rawFirstName = (addr.first_name ?? '').trim();
+  const rawLastName = (addr.last_name ?? '').trim();
+  let lastNameInferenceNote: string | null = null;
+  let effectiveLastName = rawLastName;
+
+  if (rawLastName.length <= 2 && rawFirstName.length > 0) {
+    const inference = inferLastNameFromEmail({
+      firstName: rawFirstName,
+      lastName: rawLastName,
+      email: order.email ?? addr.phone ?? '',
+    });
+    if (inference.inferredLastName) {
+      effectiveLastName = inference.inferredLastName;
+      lastNameInferenceNote = `AI corrigió apellido: "${rawLastName || '∅'}" → "${inference.inferredLastName}" (inferido del email)`;
+      slog.info(
+        DAC_STEPS.STEP3_FILL_NAME,
+        `Short last name recovered from email: "${rawLastName}" → "${inference.inferredLastName}"`,
+        {
+          orderName: order.name,
+          originalLastName: rawLastName,
+          inferredLastName: inference.inferredLastName,
+          reasoning: inference.reasoning,
+          audit: '2026-05-11',
+        },
+      );
+    } else {
+      slog.warn(
+        DAC_STEPS.STEP3_FILL_NAME,
+        `Short last name "${rawLastName}" but no inference possible — submitting as-is, may trigger DAC silent reject. ${inference.reasoning}`,
+        {
+          orderName: order.name,
+          originalLastName: rawLastName,
+          reasoning: inference.reasoning,
+          audit: '2026-05-11',
+        },
+      );
+    }
+  }
+
   const fullName = addressOverride?.recipientName
-    ?? (`${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente');
+    ?? (`${rawFirstName} ${effectiveLastName}`.trim() || 'Cliente');
   const phone = addressOverride?.phone ?? cleanPhone(addr.phone);
 
   // BUG FIX 5 (NAME CROSS-ASSIGNMENT): Clear ALL recipient fields BEFORE filling
@@ -2486,6 +2550,10 @@ export async function createShipment(
   // operator sees on the printed label what was modified vs the original
   // customer entry. Empty when no correction happened.
   if (addressAutoCorrectionNote) observations.push(addressAutoCorrectionNote);
+  // 2026-05-11 — same idea for last-name recovery from email handle. The
+  // note is empty when the customer's last name was already complete or
+  // when no inference was possible.
+  if (lastNameInferenceNote) observations.push(lastNameInferenceNote);
   if (order.note) {
     const cleanNote = order.note
       .split('\n')
