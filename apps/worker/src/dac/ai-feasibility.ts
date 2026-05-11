@@ -231,7 +231,30 @@ REGLAS DE DECISION:
 CIUDADES VALIDAS DE DAC POR DEPARTAMENTO (estas son las opciones EXACTAS del dropdown del sistema):
 ${DAC_CITIES_PROMPT_BLOCK}
 
-Respondes SIEMPRE invocando la herramienta address_feasibility_verdict.`;
+OUTPUT FORMAT (regla MAS importante — la cumplis SIEMPRE):
+Tu respuesta es exactamente un objeto JSON con estos 6 campos. Sin prosa
+antes ni despues, sin code fences (sin \`\`\`), sin comentarios:
+
+  {
+    "shippable": true | false,
+    "confidence": "high" | "medium" | "low",
+    "reasoning": "<espanol, 1-2 oraciones, sirve para auditoria>",
+    "suggestedAddress1": "<string vacio si no hay sugerencia>",
+    "suggestedCity": "<string vacio si no hay sugerencia>",
+    "operatorQuestion": "<vacio si shippable=true; sino, la pregunta exacta en espanol formal>"
+  }
+
+DOS MODOS DE ENTREGAR ESTE JSON (cualquiera es equivalente):
+- (A) Si tenes acceso a una herramienta llamada "address_feasibility_verdict",
+  INVOCALA pasando los 6 campos como parametros. El sistema captura tu
+  invocacion como respuesta.
+- (B) Si NO tenes esa herramienta, escribi el objeto JSON literal en el
+  archivo de salida que el usuario te indica (la instruccion del usuario
+  te va a decir donde escribir).
+
+Nunca mezcles los dos modos. Nunca devuelvas texto libre, prosa, ni
+explicaciones fuera del JSON / tool_use — el sistema downstream solo
+parsea el objeto estructurado.`;
 
 function buildUserMessage(input: FeasibilityInput): string {
   const lines: string[] = [];
