@@ -42,6 +42,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import logger from '../logger';
+import { db } from '../db';
 import {
   calculateAICost,
   TokenUsage,
@@ -579,6 +580,34 @@ export async function assessAddressFeasibility(
     },
     'AI feasibility verdict',
   );
+
+  // 2026-05-11 — surface transport (bridge vs api) to RunLog so we can audit
+  // bridge usage / cost ratios from the DB dashboard without scraping pino
+  // stdout. Fire-and-forget — a RunLog write failure must never break the
+  // worker. jobId is omitted (we don't have it in scope here); RunLog allows
+  // NULL jobId so the row still inserts with tenantId/level/meta intact.
+  const transport = usedBridge ? 'bridge' : 'api';
+  db.runLog
+    .create({
+      data: {
+        tenantId: input.tenantId,
+        level: 'INFO',
+        message: `[ai-feasibility] verdict transport=${transport} shippable=${result.shippable} confidence=${result.confidence} cost=$${cost.toFixed(4)}`,
+        meta: {
+          step: 'ai-feasibility',
+          orderName: input.orderName,
+          reason: input.reason,
+          transport,
+          aiCostUsd: cost,
+          shippable: result.shippable,
+          confidence: result.confidence,
+        } as unknown as object,
+      },
+    })
+    .catch(() => {
+      // RunLog write failure should never crash the worker — same policy
+      // as createStepLogger's writeToDB (apps/worker/src/logger.ts:39).
+    });
 
   return result;
 }

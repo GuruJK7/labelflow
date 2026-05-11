@@ -1929,6 +1929,36 @@ export async function resolveAddressWithAI(
     'AI resolver SUCCESS',
   );
 
+  // 2026-05-11 — surface transport (bridge vs api) to RunLog so we can audit
+  // bridge usage / cost ratios from the DB dashboard without scraping pino
+  // stdout. Fire-and-forget — a RunLog write failure must never break the
+  // worker. jobId is omitted (we don't have it in scope at this depth);
+  // RunLog allows NULL jobId so the row still inserts with tenantId/meta intact.
+  const resolverTransport = usedBridge ? 'bridge' : 'api';
+  db.runLog
+    .create({
+      data: {
+        tenantId: input.tenantId,
+        level: 'INFO',
+        message: `[ai-resolver] resolved transport=${resolverTransport} dept=${result.department} city=${result.city} confidence=${result.confidence} cost=$${costUsd.toFixed(4)}`,
+        meta: {
+          step: 'ai-resolver',
+          transport: resolverTransport,
+          aiCostUsd: costUsd,
+          confidence: result.confidence,
+          department: result.department,
+          city: result.city,
+          barrio: result.barrio,
+          cacheHit: cacheReadTokens > 0,
+          webSearchRequests,
+        } as unknown as object,
+      },
+    })
+    .catch(() => {
+      // RunLog write failure should never crash the worker — same policy
+      // as createStepLogger's writeToDB (apps/worker/src/logger.ts:39).
+    });
+
   return {
     barrio: result.barrio,
     city: result.city,
