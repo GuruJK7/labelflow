@@ -1613,7 +1613,16 @@ export async function createShipment(
           if (!/\bs\/n\b|sin\s+n[uú]mero/i.test(addr.address1)) {
             addr.address1 = addr.address1.trim() + ' S/N';
           }
-          noNumberOperatorNote = 'CONTACTAR POR TELEFONO PARA NUMERO DE PUERTA';
+          // 2026-05-12 operator update — include the customer's phone in the
+          // note so the DAC delivery person can call directly without
+          // looking up the order. Also include the customer name for
+          // operator clarity. Falls back to a generic message when phone
+          // is missing (rare but possible).
+          const phoneForNote = (addr.phone ?? '').trim();
+          const recipientForNote = `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim();
+          noNumberOperatorNote = phoneForNote
+            ? `FALTA DATO EN DIRECCION — CONTACTAR AL CLIENTE ${recipientForNote || ''} TEL ${phoneForNote} PARA CONFIRMAR DATOS COMPLETOS`.replace(/\s+/g, ' ').trim()
+            : 'FALTA DATO EN DIRECCION — CONTACTAR AL CLIENTE PARA CONFIRMAR DATOS COMPLETOS (sin telefono en la orden)';
           slog.warn(
             DAC_STEPS.PREPROCESS_ADDRESS,
             `No street number recovered — shipping anyway with operator-call note in DAC observations (replaces prior bounce per 2026-05-11 directive). AI reasoning: ${verdict.reasoning ?? '(no reasoning)'}`,

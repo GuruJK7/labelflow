@@ -174,3 +174,62 @@ describe('preprocessShopifyAddress (one-shot pipeline)', () => {
     expect(r.wasNormalized).toBe(false);
   });
 });
+
+// 2026-05-12 — cross-street-without-building-number incidents:
+//   - Alfonsina Garibotti: "Av aigua esquina camino de los gauchos"  → no number
+//   - Grace Gurin:         "Batlle Entre 18 De Julio Y Lubkov"       → digit "18" is in the cross-street NAME, not a building number
+// Both silent-rejected by DAC because K_Direccion has no real number.
+// The broader incomplete-address detector below catches these via the
+// cross-street keywords ("esquina", "entre", "casi") + street-name digit
+// stripping.
+describe('preprocessShopifyAddress — cross-street incomplete (incidents 2026-05-12)', () => {
+  it('"Av aigua esquina camino de los gauchos" → missingStreetNumber=true', () => {
+    const r = preprocessShopifyAddress('Av aigua esquina camino de los gauchos');
+    expect(r.missingStreetNumber).toBe(true);
+  });
+
+  it('"Batlle Entre 18 De Julio Y Lubkov" → missingStreetNumber=true (the "18" belongs to a street name)', () => {
+    const r = preprocessShopifyAddress('Batlle Entre 18 De Julio Y Lubkov');
+    expect(r.missingStreetNumber).toBe(true);
+  });
+
+  it('"Av 8 de Octubre 1234" → missingStreetNumber=false (1234 is a real number)', () => {
+    // The "8" belongs to a street name; "1234" is the building number.
+    // After stripping street-name digits, "1234" survives → has a real number.
+    const r = preprocessShopifyAddress('Av 8 de Octubre 1234');
+    expect(r.missingStreetNumber).toBe(false);
+  });
+
+  it('"Av 8 de Octubre esquina Bolivia" → missingStreetNumber=true (no real number)', () => {
+    const r = preprocessShopifyAddress('Av 8 de Octubre esquina Bolivia');
+    expect(r.missingStreetNumber).toBe(true);
+  });
+
+  it('"Avenida Italia 4500 esquina Bolivia" → missingStreetNumber=false (4500 is a real number)', () => {
+    // Address WITH a building number that ALSO mentions the cross street.
+    // Must not false-positive on this legitimate case.
+    const r = preprocessShopifyAddress('Avenida Italia 4500 esquina Bolivia');
+    expect(r.missingStreetNumber).toBe(false);
+  });
+
+  it('"Calle Principal casi Mercado" → missingStreetNumber=true', () => {
+    const r = preprocessShopifyAddress('Calle Principal casi Mercado');
+    expect(r.missingStreetNumber).toBe(true);
+  });
+
+  it('"Ruta 1 km 30" stays false (a real address even though minimal)', () => {
+    // Ruta + km is a legitimate UY rural address form. Don't false-positive.
+    const r = preprocessShopifyAddress('Ruta 1 km 30');
+    expect(r.missingStreetNumber).toBe(false);
+  });
+
+  it('"Avenida 33 Orientales 500" → false (500 is real building number)', () => {
+    const r = preprocessShopifyAddress('Avenida 33 Orientales 500');
+    expect(r.missingStreetNumber).toBe(false);
+  });
+
+  it('"Avenida 33 Orientales esquina Plaza" → true (only digits are in street name)', () => {
+    const r = preprocessShopifyAddress('Avenida 33 Orientales esquina Plaza');
+    expect(r.missingStreetNumber).toBe(true);
+  });
+});
