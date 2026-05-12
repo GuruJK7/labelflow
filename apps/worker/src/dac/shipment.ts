@@ -3459,7 +3459,7 @@ async function loadMoreHistorialRows(page: Page): Promise<boolean> {
  * row). Never throws — the caller falls back to throwing
  * DacAddressRejectedError with `rescueFailed=true`.
  */
-async function findRecentGuiaForRecipient(
+export async function findRecentGuiaForRecipient(
   page: Page,
   recipientName: string,
   excludeGuias: string[],

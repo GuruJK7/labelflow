@@ -9,6 +9,7 @@ import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingS
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress, DuplicateSubmitError, DacAddressRejectedError } from '../dac/shipment';
+import { reconcileOrphansForTenant } from '../dac/orphan-reconcile';
 import { withTenantDacLock, DacLockHeldError } from '../dac/tenant-lock';
 import {
   buildRemitenteShopifyNote,
@@ -525,6 +526,27 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         data: { status: 'FAILED', totalOrders, errorMessage: 'DAC login failed', finishedAt: new Date(), durationMs: Date.now() - startTime },
       });
       return;
+    }
+
+    // STEP 3.5: Orphan-PendingShipment auto-reconcile (2026-05-12).
+    //
+    // Best-effort pass that uses the same logged-in DAC session to scan
+    // historial for ORPHANED PendingShipments. Each one is either RESOLVED
+    // (guía found → linked on Label, next cycle does PDF + Shopify
+    // fulfill) or RESET-FOR-RETRY (no guía → PendingShipment deleted, Label
+    // back to PENDING → next cycle ships fresh). See dac/orphan-reconcile.ts
+    // for the full contract.
+    //
+    // Wrapped in try/catch so a historial-scan failure can't take down the
+    // whole cycle — the main processing path runs regardless. Worst case
+    // the orphans stay ORPHANED and the next cycle retries this pass.
+    try {
+      await reconcileOrphansForTenant(page, tenantId, slog);
+    } catch (orphanErr) {
+      slog.warn(
+        'orphan-reconcile',
+        `Orphan reconcile pass threw — leaving orphans untouched, continuing with main cycle: ${(orphanErr as Error).message}`,
+      );
     }
 
     // STEP 4: Process each order sequentially with retry
