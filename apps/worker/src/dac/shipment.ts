@@ -2163,7 +2163,42 @@ export async function createShipment(
       const zipDept = getDepartmentFromZip(addr.zip ?? '');
       const zipCorroboratesMvd = zipDept ? normalize(zipDept) === 'montevideo' : false;
 
-      if (wouldFlipToMvd && shopifyProvinceIsValidNonMvd && cityIsAmbiguous && !zipCorroboratesMvd) {
+      // 2026-05-12 — SYMMETRIC AMBIGUOUS-CITY GUARD (incident #12020 Elisa
+      // Bordes). The original 2026-05-05 guard above only protected against
+      // wrongly flipping TO Montevideo. But the inverse case is also a real
+      // bug: "La Aguada" is BOTH a MVD barrio AND a small Rocha locality.
+      // For #12020 the customer typed:
+      //     city="La Aguada", province="Montevideo", zip="11800"
+      // The intelligent detection correctly identified the MVD barrio
+      // (source=alias, barrio="aguada"). Then getDepartmentForCityAsync
+      // returned "Rocha" (the geo DB picks one when the city is ambiguous),
+      // the !== check fired, and the GEO CORRECTION over-rode the MVD
+      // verdict to Rocha. DAC silently rejected because La Aguada isn't a
+      // valid city/barrio in DAC's Rocha dropdown.
+      //
+      // Fix: BEFORE applying the geo correction, check if BOTH signals
+      // corroborate Montevideo:
+      //   - Shopify province says Montevideo, AND
+      //   - ZIP is in the MVD range (11xxx), AND
+      //   - intelligent.barrio detected a MVD barrio (alias-matched)
+      // In that case, trust Shopify+ZIP+intelligent over the city-lookup,
+      // even when the city-lookup found a non-MVD match. This is the same
+      // "trust the corroborating signals" pattern as the original guard,
+      // just flipped direction.
+      const wouldFlipAwayFromMvd = normalize(geoDept) !== 'montevideo';
+      const shopifyProvinceIsMvd = normalize(addr.province ?? '') === 'montevideo';
+      const intelligentSaysMvd = normalize(intelligent.department ?? '') === 'montevideo';
+
+      if (wouldFlipAwayFromMvd && shopifyProvinceIsMvd && zipCorroboratesMvd && intelligentSaysMvd && intelligent.barrio) {
+        // Shopify+ZIP+barrio-alias all agree MVD — refuse the city-lookup
+        // override. The city name is ambiguous between dept and a MVD
+        // barrio, and all corroborating signals point at MVD.
+        slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+          `GEO OVERRIDE BLOCKED (mvd-direction): city "${addr.city}" geo-resolves to "${geoDept}" but Shopify=Montevideo + ZIP=${addr.zip ?? '?'} + intelligent.barrio="${intelligent.barrio}" all say Montevideo — keeping Montevideo`,
+          { ambiguousCity: addr.city, shopifyProvince: addr.province, zipDept: zipDept ?? null, geoSuggestion: geoDept, intelligentBarrio: intelligent.barrio, audit: '2026-05-12' }
+        );
+        resolvedDept = 'Montevideo';
+      } else if (wouldFlipToMvd && shopifyProvinceIsValidNonMvd && cityIsAmbiguous && !zipCorroboratesMvd) {
         // Trust Shopify — refuse the geo override.
         slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
           `GEO OVERRIDE BLOCKED: ambiguous city "${addr.city}" geo-resolves to Montevideo but Shopify says "${addr.province}" and ZIP "${addr.zip ?? '(none)'}" does not corroborate — keeping "${addr.province}"`,
