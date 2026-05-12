@@ -96,6 +96,17 @@ export const CITY_TO_DEPARTMENT: Record<string, string> = {
   'piedras de afilar': 'Canelones',
   'station atlantida': 'Canelones',
   'las brujas': 'Canelones',
+  // 2026-05-12 audit — Kimberly Lezue (parqueada) had city="18 De Mayo",
+  // province=Montevideo on Shopify. "18 de Mayo" is actually a small town
+  // in Canelones (departamento). Without this entry the geo DB returned
+  // null, so the existing GEO CORRECTION couldn't fire, the order shipped
+  // as Montevideo, and DAC silently rejected because the city isn't in
+  // the MVD dropdown.
+  //
+  // Only this one entry — adding speculative city names without
+  // verification risks misrouting other orders. Add more on a per-incident
+  // basis with a comment + production order reference.
+  '18 de mayo': 'Canelones',
 
   // ─────────────────────────────────────────────
   // CERRO LARGO (capital: Melo)

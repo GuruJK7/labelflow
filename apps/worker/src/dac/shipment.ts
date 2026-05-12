@@ -901,6 +901,37 @@ export function isLikelyAptNumber(s: string): boolean {
 }
 
 /**
+ * Build the defensive "Tel cliente …" line for DAC Observaciones.
+ *
+ * Audit 2026-05-12 — operator directive: every shipment that doesn't already
+ * carry an urgent operator note should still print the customer phone (and
+ * recipient name when available) on the label so the courier can call
+ * directly if there's any delivery doubt.
+ *
+ * Returns `null` when:
+ *   - phone is empty / whitespace-only — we don't pollute obs with
+ *     "Tel cliente (sin)" for the >99% of orders that have a phone
+ *   - `suppressBecauseNoNumberNote` is true — that note already includes
+ *     phone + recipient name in a more urgent format
+ *
+ * Output formats:
+ *   phone + name → "Tel cliente +598 99 837 343 (Anyelina Días Lopez)"
+ *   phone only   → "Tel cliente +598 99 837 343"
+ */
+export function buildCustomerContactLine(input: {
+  phone: string | null | undefined;
+  firstName?: string | null;
+  lastName?: string | null;
+  suppressBecauseNoNumberNote?: boolean;
+}): string | null {
+  if (input.suppressBecauseNoNumberNote) return null;
+  const phone = (input.phone ?? '').trim();
+  if (!phone) return null;
+  const name = `${input.firstName ?? ''} ${input.lastName ?? ''}`.trim();
+  return name ? `Tel cliente ${phone} (${name})` : `Tel cliente ${phone}`;
+}
+
+/**
  * Combine an existing extraObs string with a new piece, joining with " | "
  * if both are present. Avoids duplicating content already present.
  */
@@ -2589,6 +2620,26 @@ export async function createShipment(
   // missingStreetNumber handler when AI couldn't recover the number AND the
   // address isn't a pickup-at-DAC-branch.
   if (noNumberOperatorNote) observations.push(noNumberOperatorNote);
+  // 2026-05-12 directive — DEFENSIVE customer phone/name in DAC obs for ALL
+  // shipments. Operator quote: "en el peor caso se deberían poner los datos
+  // igualmente y poner que ante cualquier duda se comuniquen con el número
+  // de teléfono del cliente en observaciones".
+  //
+  // Rationale: even when the address is fine and DAC accepts the form, the
+  // courier sometimes can't find the door (apartment building, wrong door
+  // number, locked gate). Having the customer phone PRINTED on the label
+  // means the courier doesn't have to dig through DAC's system to find it.
+  //
+  // See buildCustomerContactLine() for the exact suppression rules and
+  // output formats — kept as a separate exported helper so the regression
+  // tests can pin them down without standing up the full createShipment flow.
+  const customerContactLine = buildCustomerContactLine({
+    phone: addr.phone,
+    firstName: addr.first_name,
+    lastName: addr.last_name,
+    suppressBecauseNoNumberNote: !!noNumberOperatorNote,
+  });
+  if (customerContactLine) observations.push(customerContactLine);
   // 2026-05-11 v2 — DAC observations field should ONLY contain operator-
   // actionable text (the customer's note + the no-number action note).
   // Earlier today this was injecting AI-correction audit trail too

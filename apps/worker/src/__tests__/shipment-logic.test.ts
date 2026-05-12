@@ -93,6 +93,13 @@ describe('getDepartmentForCity', () => {
     ['Barros Blancos', 'Canelones'],
     ['Paso Carrasco', 'Canelones'],
     ['La Paz', 'Canelones'],
+    // 2026-05-12 — Kimberly Lezue (parqueada) had city="18 De Mayo",
+    // province=Montevideo. "18 de Mayo" is a small Canelones town that
+    // wasn't in the geo DB, so the GEO CORRECTION couldn't fire and DAC
+    // silently rejected. Added to prevent regression.
+    ['18 De Mayo', 'Canelones'],
+    ['18 de mayo', 'Canelones'],
+    ['18 DE MAYO', 'Canelones'],
   ])('Canelones suburb "%s" → Canelones', (city, expected) => {
     expect(getDepartmentForCity(city)).toBe(expected);
   });
