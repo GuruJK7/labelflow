@@ -41,6 +41,42 @@ const AGENT_POLL_INTERVAL_MS = 30_000; // Agent polls less aggressively
 // AGENT_MODE=true → this worker is running on Adrian's Mac, only picks up WAITING_FOR_AGENT jobs
 const AGENT_MODE = process.env.AGENT_MODE === 'true';
 
+// ─── Graceful shutdown state (2026-05-12 incident) ───────────────────────
+//
+// When Render redeploys, the OLD worker receives SIGTERM. Render's rolling
+// deploy means the NEW worker is live before the OLD worker is killed,
+// creating a brief overlap window (~30-60s) where BOTH can claim jobs from
+// the same PENDING queue.
+//
+// Before this fix the OLD worker would:
+//   1. Receive SIGTERM
+//   2. Continue running the poll loop (`while (true)`)
+//   3. Claim a fresh job and start processing (browser, CAPTCHA, DAC form)
+//   4. Get SIGKILLed by Render mid-flow
+//   5. Leave the Job row in RUNNING status forever
+//   6. Leave a DAC processing lease that locks out the new worker for 10 min
+//   7. Customer sees "Ya hay un job en ejecucion. Espera a que termine."
+//
+// The 2026-05-12 incident — User triggered "Procesar Ahora" 9s after a
+// new worker came up. Old worker (still alive) claimed the job, spent 40s
+// in CAPTCHA solve, was killed at 40s mark. Job stayed RUNNING. New worker
+// was healthy but blocked because the dashboard refused to enqueue a new
+// job while one was supposedly running.
+//
+// Fix:
+//   - `isShuttingDown` flag flipped to true on the FIRST SIGTERM/SIGINT.
+//     `pollForJobs` checks it BEFORE claiming and returns immediately if
+//     true, so no new claims happen even though the poll loop is still
+//     spinning waiting for `process.exit()`.
+//   - `currentJobId` tracks the in-flight job. The shutdown handler uses
+//     it to atomically flip RUNNING → FAILED (only if still RUNNING) and
+//     release any DAC processing lease for that tenant.
+//   - The new worker's boot-time reconciliation will see the FAILED row
+//     and the freed lease and pick up retry on the next cron tick.
+let isShuttingDown = false;
+let currentJobId: string | null = null;
+let currentJobTenantId: string | null = null;
+
 /**
  * C-6 (2026-04-21 audit): atomic claim of the oldest PENDING job.
  *
@@ -76,9 +112,21 @@ async function claimPendingJob(): Promise<
 }
 
 async function pollForJobs(): Promise<void> {
+  // Graceful-shutdown guard: when SIGTERM has been received, stop claiming
+  // new jobs. The poll loop's `while (true)` keeps spinning until
+  // process.exit() runs inside the shutdown handler — without this check,
+  // a stray claim during the SIGTERM grace window would create the exact
+  // zombie-job state the 2026-05-12 incident exposed.
+  if (isShuttingDown) return;
+
+  let claimedJobId: string | null = null;
   try {
     const claimed = await claimPendingJob();
     if (!claimed) return;
+
+    claimedJobId = claimed.id;
+    currentJobId = claimed.id;
+    currentJobTenantId = claimed.tenantId;
 
     logger.info(
       { jobId: claimed.id, tenantId: claimed.tenantId, type: claimed.type },
@@ -98,7 +146,35 @@ async function pollForJobs(): Promise<void> {
 
     logger.info({ jobId: claimed.id }, 'Job completed');
   } catch (err) {
-    logger.error({ error: (err as Error).message }, 'Error in poll cycle');
+    logger.error({ jobId: claimedJobId, error: (err as Error).message }, 'Error in poll cycle');
+    // Same pattern as pollForAdUploadJobs / pollForRecoverJobs: when the
+    // processor throws an unhandled exception, mark the Job FAILED so it
+    // doesn't stay stuck in RUNNING forever. The boot-time reconciliation
+    // catches this too, but the per-call cleanup keeps the dashboard
+    // ("Procesar Ahora" button) unblocked instantly instead of waiting
+    // for the next reconcile pass.
+    if (claimedJobId) {
+      await db.job
+        .updateMany({
+          where: { id: claimedJobId, status: 'RUNNING' },
+          data: {
+            status: 'FAILED',
+            finishedAt: new Date(),
+            errorMessage: `Unhandled poll-cycle error: ${(err as Error).message ?? 'unknown'}`.slice(0, 500),
+          },
+        })
+        .catch(() => {});
+    }
+  } finally {
+    // Always clear — the shutdown handler relies on currentJobId being
+    // null when nothing's in flight. Without this finally, a successful
+    // job would leave currentJobId set and a later SIGTERM would try to
+    // FAIL an already-COMPLETED row (the updateMany filter handles that
+    // safely, but clearing is cleaner).
+    if (currentJobId === claimedJobId) {
+      currentJobId = null;
+      currentJobTenantId = null;
+    }
   }
 }
 
@@ -341,16 +417,80 @@ async function main(): Promise<void> {
 
   logger.info('LabelFlow Worker ready and polling for jobs');
 
-  // Graceful shutdown
+  // Graceful shutdown. Render's blue-green deploy gives the OLD worker
+  // ~30 s of SIGTERM grace before SIGKILL. We use that window to:
+  //   1. Flip isShuttingDown=true so the poll loop stops claiming new jobs.
+  //   2. Atomically transition the in-flight Job (if any) RUNNING → FAILED
+  //      so it can be retried by the NEW worker that's already live.
+  //   3. Release the DAC processing lease for that tenant so the new
+  //      worker isn't blocked for 10 min waiting for the lease to expire.
+  //   4. Flush PostHog, close browser, disconnect Prisma, exit.
+  //
+  // Steps 2-3 each have their own try/catch so a DB hiccup during shutdown
+  // can't leave the process hung — we ALWAYS reach process.exit.
   const shutdown = async (signal: string) => {
-    logger.info({ signal }, 'Shutting down worker...');
-    // Flush PostHog buffer first — events captured during the last poll
-    // cycle are still in memory; without this they get dropped on Render
+    // Idempotent — if SIGTERM and SIGINT both fire we only run cleanup once.
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    const inFlightJobId = currentJobId;
+    const inFlightTenantId = currentJobTenantId;
+
+    logger.info(
+      { signal, inFlightJobId, inFlightTenantId },
+      'Shutting down worker — marking in-flight job FAILED + releasing DAC lease...',
+    );
+
+    if (inFlightJobId) {
+      // updateMany with a status filter is atomic: only flips if the row
+      // is STILL in RUNNING state. If the processor managed to finish and
+      // mark it COMPLETED in the race window between SIGTERM and this
+      // code, the conditional update is a no-op.
+      try {
+        await db.job.updateMany({
+          where: { id: inFlightJobId, status: 'RUNNING' },
+          data: {
+            status: 'FAILED',
+            finishedAt: new Date(),
+            errorMessage: `Worker received ${signal} during processing — auto-recovered for retry by next cron tick`,
+          },
+        });
+        logger.info({ jobId: inFlightJobId }, 'Marked in-flight job as FAILED for retry');
+      } catch (e) {
+        logger.error(
+          { jobId: inFlightJobId, error: (e as Error).message },
+          'Failed to mark in-flight job FAILED on shutdown — boot-time reconcile will catch it',
+        );
+      }
+
+      if (inFlightTenantId) {
+        // Release the DAC processing lease for this tenant so the new
+        // worker can claim it on the next cron tick without waiting for
+        // the 10-min lease expiry.
+        try {
+          await db.dacProcessingLease.deleteMany({
+            where: { tenantId: inFlightTenantId },
+          });
+          logger.info(
+            { tenantId: inFlightTenantId },
+            'Released DAC processing lease on shutdown',
+          );
+        } catch (e) {
+          logger.error(
+            { tenantId: inFlightTenantId, error: (e as Error).message },
+            'Failed to release DAC lease on shutdown — will expire naturally in 10 min',
+          );
+        }
+      }
+    }
+
+    // Flush PostHog buffer — events captured during the last poll cycle
+    // are still in memory; without this they get dropped on Render
     // redeploy. flushWorkerAnalytics() is a no-op if PostHog wasn't
     // initialized (env vars unset).
-    await flushWorkerAnalytics();
-    await dacBrowser.close();
-    await db.$disconnect();
+    await flushWorkerAnalytics().catch(() => {});
+    await dacBrowser.close().catch(() => {});
+    await db.$disconnect().catch(() => {});
     process.exit(0);
   };
 
