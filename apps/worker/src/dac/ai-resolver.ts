@@ -1983,6 +1983,17 @@ export async function resolveAddressWithAI(
  * Called by process-orders.job.ts after DAC processing to update the cache
  * feedback. If DAC accepted the resolution, the cache entry is reinforced; if
  * rejected, it is marked as bad so future calls won't reuse it.
+ *
+ * 2026-05-15 — switched from `.update()` to `.updateMany()` because the
+ * caller fires this for EVERY successful shipment, but `AddressResolution`
+ * rows only exist when the AI resolver actually ran (deterministic shortcut
+ * skips the cache table — see resolveAddressIntent earlier in this file).
+ * The previous `.update()` threw "Record to update not found" + a noisy
+ * `prisma:error` line for every deterministic order, which masked real
+ * problems in the worker logs. `.updateMany` silently does nothing when
+ * no row matches — exactly the behavior we want for opportunistic feedback.
+ *
+ * NEVER throws to the caller — feedback is best-effort.
  */
 export async function markAddressResolutionFeedback(
   tenantId: string,
@@ -1992,23 +2003,28 @@ export async function markAddressResolutionFeedback(
   errorMessage?: string,
 ): Promise<void> {
   try {
-    await db.addressResolution.update({
-      where: { tenantId_inputHash: { tenantId, inputHash } },
+    const result = await db.addressResolution.updateMany({
+      where: { tenantId, inputHash },
       data: {
         dacAccepted: accepted,
         dacGuia: guia ?? null,
         dacError: accepted ? null : (errorMessage ?? null),
       },
     });
-    logger.info(
-      { tenantId, inputHash, accepted, guia },
-      'AddressResolution feedback recorded',
-    );
+    if (result.count > 0) {
+      logger.info(
+        { tenantId, inputHash, accepted, guia },
+        'AddressResolution feedback recorded',
+      );
+    }
+    // result.count === 0 is the common case (deterministic resolution, no cache row).
+    // Silent no-op — no log, no error.
   } catch (err) {
-    // Non-fatal — the resolution might not exist if it came from deterministic rules
+    // Should be extremely rare with updateMany (only true DB failures, not
+    // missing rows). Still swallow — feedback is best-effort.
     logger.debug(
       { tenantId, inputHash, error: (err as Error).message },
-      'Failed to record AddressResolution feedback (may not exist)',
+      'AddressResolution feedback updateMany threw (db-level error)',
     );
   }
 }

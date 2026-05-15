@@ -21,6 +21,7 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { db } from '@/lib/db';
 import { findUserByResetToken } from '@/lib/password-reset';
+import { writeAuditLog, extractAuditContext } from '@/lib/audit-log';
 
 export const runtime = 'nodejs';
 
@@ -89,6 +90,20 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
+
+  // Audit — password change is the highest-impact action a user can take.
+  // If they later say "someone changed my password without me", the audit
+  // log + the requestIp on the original token row are the forensic trail.
+  // Fire-and-forget; failure to write must not affect the success response.
+  const ctx = extractAuditContext(req);
+  void writeAuditLog({
+    action: 'user.password.reset.confirmed',
+    userId: validation.userId,
+    entityType: 'PasswordResetToken',
+    entityId: validation.tokenId,
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+  });
 
   return NextResponse.json({ ok: true });
 }

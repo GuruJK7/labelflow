@@ -12,6 +12,7 @@ import {
   REFERRAL_COOKIE_NAME,
 } from './referrals';
 import { trackServer } from './analytics.server';
+import { writeAuditLog } from './audit-log';
 
 const REFEREE_BONUS_CREDITS = 10;
 
@@ -26,16 +27,42 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         try {
           if (!credentials?.email || !credentials?.password) return null;
+          const emailLower = credentials.email.toLowerCase();
 
           const user = await db.user.findUnique({
-            where: { email: credentials.email.toLowerCase() },
+            where: { email: emailLower },
           });
 
-          if (!user || !user.passwordHash) return null;
+          if (!user || !user.passwordHash) {
+            // Failed login — no matching user OR user has no password
+            // (OAuth-only account). Log with `email` in meta (NOT password)
+            // so fraud-detection queries can spot brute-force attempts.
+            // userId is null because we don't trust the input enough to
+            // resolve it. Don't await — login flow already returns null.
+            void writeAuditLog({
+              action: 'user.login.failed',
+              meta: { email: emailLower, reason: !user ? 'no_user' : 'no_password' },
+            });
+            return null;
+          }
 
           const valid = await bcrypt.compare(credentials.password, user.passwordHash);
-          if (!valid) return null;
+          if (!valid) {
+            void writeAuditLog({
+              action: 'user.login.failed',
+              userId: user.id,
+              meta: { email: emailLower, reason: 'bad_password' },
+            });
+            return null;
+          }
 
+          // Success — record so a real user has audit trail of their own
+          // logins (helps detect "is someone else logging into my account").
+          void writeAuditLog({
+            action: 'user.login.success',
+            userId: user.id,
+            meta: { email: emailLower },
+          });
           return { id: user.id, email: user.email, name: user.name };
         } catch {
           return null;

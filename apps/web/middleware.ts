@@ -9,6 +9,9 @@ export async function middleware(request: NextRequest) {
   const publicPaths = [
     '/login',
     '/signup',
+    '/forgot-password',           // 2026-05-15 — password reset flow
+    '/reset-password',            // 2026-05-15 — /reset-password/[token]
+    '/pricing',                   // 2026-05-15 — public pricing page
     '/onboarding',
     '/tutorial', // Public step-by-step guides (Shopify token, etc.) — these
                  // are linked from /onboarding so they MUST be reachable
@@ -18,6 +21,7 @@ export async function middleware(request: NextRequest) {
     '/privacidad',
     '/api/auth',
     '/api/webhooks',
+    '/api/health',                // 2026-05-15 — uptime probe
     '/api/v1/mcp', // MCP uses its own Bearer token auth
     '/api/recover/subscription-webhook', // MercadoPago calls this — no session available
     '/api/referrals/track', // Pre-signup endpoint to set signed referral cookie

@@ -126,6 +126,65 @@ model PasswordResetToken {
   @@index([expiresAt])
 }
 
+/// Audit log of security-relevant user actions (2026-05-15).
+///
+/// Captures who did what, when, from where. Append-only — never updated
+/// or deleted by app code (deletion only happens via retention sweep at
+/// the SQL layer if/when retention policy gets implemented).
+///
+/// Why a single AuditLog table instead of per-feature event tables:
+///   1. Investigations span features ("show me everything Adrian did
+///      yesterday across login + settings + credits") — one table = one
+///      query, no UNION gymnastics.
+///   2. Schema stays simple. We don't want N tables for N feature areas.
+///   3. The `entityType` + `entityId` + `meta` triple is enough to recover
+///      detail when needed; for forensic queries we live with JSON-blob
+///      access patterns in `meta`.
+///
+/// PII posture: `meta` MUST NOT contain raw passwords, tokens, full card
+/// numbers, or DAC credentials. The writer is responsible for redaction.
+/// What IS allowed and useful: email (already in User), order names,
+/// tenant slugs, IP for sessions, user agent, rule IDs, dollar amounts.
+///
+/// Indexes target the 3 most common access patterns:
+///   - "Everything for this user" → @@index([userId, createdAt(Desc)])
+///   - "Everything for this tenant" → @@index([tenantId, createdAt(Desc)])
+///   - "Recent events of a specific action" → @@index([action, createdAt(Desc)])
+///
+/// `userId` is nullable because some events (failed-login attempts) happen
+/// BEFORE we know who the user is — we still want to log them with email
+/// in `meta` for fraud detection. `tenantId` is nullable for the same
+/// reason + because some actions are global admin (cross-tenant).
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  // nullable: pre-auth events (failed login) have no userId
+  tenantId   String?  // nullable: account-level events have no tenant context
+  // Action name. Keep human-readable, stable across deploys, lower-snake.
+  // Examples: 'user.login.success', 'user.login.failed',
+  //   'user.password.reset.requested', 'user.password.reset.confirmed',
+  //   'tenant.shopify.token.updated', 'tenant.dac.credentials.updated',
+  //   'tenant.cron.config.updated', 'tenant.shipping_rule.created',
+  //   'tenant.credits.purchased', 'tenant.credits.refunded',
+  //   'admin.tenant.impersonate', 'gdpr.data.export', 'gdpr.data.delete'.
+  action     String
+  // Optional pointer to the affected entity. e.g. ('Tenant', 'abc123'),
+  // ('Label', 'cmp7g...'), ('ShippingRule', 'rule_42').
+  entityType String?
+  entityId   String?
+  // Source IP from x-forwarded-for. Truncated to 64 chars for safety.
+  ip         String?
+  // First 200 chars of User-Agent. Truncated to avoid PII bloat.
+  userAgent  String?
+  // Structured JSON blob with action-specific details. Never include
+  // secrets (passwords, tokens, credit card numbers).
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+}
+
 model Account {
   id                String  @id @default(cuid())
   userId            String

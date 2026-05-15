@@ -1,3 +1,11 @@
+// 2026-05-15 — Sentry MUST be initialized BEFORE the other imports below
+// because Sentry auto-instruments errors and outgoing requests by monkey-
+// patching globals (fetch, http.request). If any other module captures a
+// reference BEFORE Sentry runs, Sentry never sees those calls. Keep this
+// as the literal first import in the worker entry point.
+import { initSentry, captureWorkerError, flushSentry } from './observability/sentry';
+initSentry();
+
 import { getConfig } from './config';
 import { processOrdersJob } from './jobs/process-orders.job';
 import { processOrdersBulkJob } from './jobs/process-orders-bulk.job';
@@ -489,6 +497,11 @@ async function main(): Promise<void> {
     // redeploy. flushWorkerAnalytics() is a no-op if PostHog wasn't
     // initialized (env vars unset).
     await flushWorkerAnalytics().catch(() => {});
+    // 2026-05-15 — flush Sentry alongside PostHog. Critical for SIGTERM
+    // recovery: if a job was failing right when Render killed us, the
+    // captureException call in the catch block writes to a buffer that
+    // gets dropped on process.exit unless we await the network flush.
+    await flushSentry(2000);
     await dacBrowser.close().catch(() => {});
     await db.$disconnect().catch(() => {});
     process.exit(0);
@@ -496,9 +509,31 @@ async function main(): Promise<void> {
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // 2026-05-15 — last-resort handlers for errors that escape every other
+  // catch. Without these, an uncaught error inside a setInterval or async
+  // boundary kills the process WITHOUT Sentry reporting it. With them,
+  // we get a single Sentry event before the worker dies and Render's
+  // KeepAlive restarts it.
+  process.on('uncaughtException', async (err) => {
+    logger.error({ error: err.message, stack: err.stack }, '[fatal] uncaughtException');
+    captureWorkerError(err, { step: 'uncaughtException' });
+    await flushSentry(2000);
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    logger.error({ error: err.message, stack: err.stack }, '[fatal] unhandledRejection');
+    captureWorkerError(err, { step: 'unhandledRejection' });
+    // Don't exit on unhandled rejections — they may be transient. Sentry
+    // still captures, and the process keeps running. If they pile up,
+    // Render's resource alerts will surface the pattern.
+  });
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   logger.error({ error: (err as Error).message }, 'Fatal worker error');
+  captureWorkerError(err as Error, { step: 'main' });
+  await flushSentry(2000);
   process.exit(1);
 });
