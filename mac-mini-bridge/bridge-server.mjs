@@ -46,8 +46,25 @@ if (!SECRET || SECRET.length < 16) {
 }
 
 // ─── concurrency guard ──────────────────────────────────────────────────────
+//
+// 2026-05-15 audit: raised default from 1 → 3 so multiple tenants can share
+// the bridge without serializing every Claude call. Each `runClaudePrompt` /
+// `runClaudeCorrection` invocation spawns a SEPARATE `claude` child process,
+// so 3 concurrent calls = 3 short-lived processes (each ~40-120 MB RSS,
+// ~3-8 s wall time on haiku). On a Mac Mini M2 16 GB that's comfortable.
+//
+// Above ~5 the gain is marginal: claude CLI itself spends most of its time
+// waiting on the Anthropic stream, so adding more processes doesn't shrink
+// per-call latency, just lets a backlog drain faster. Tune via env var if
+// the operator sees the bridge becoming the bottleneck (look for HTTP 429
+// "busy" responses in the worker logs).
+//
+// The mutex still applies — `inflight` is checked atomically before the
+// counter increments (see handle()). When `inflight >= MAX_INFLIGHT` the
+// bridge returns 429 and the worker's overflow path falls through to
+// the Anthropic API instead, so no tenant ever blocks waiting on the bridge.
 let inflight = 0;
-const MAX_INFLIGHT = 1;
+const MAX_INFLIGHT = Number(process.env.BRIDGE_MAX_INFLIGHT) || 3;
 
 // ─── env whitelist for spawned claude CLI ───────────────────────────────────
 // H-8 (2026-04-21 audit): the bridge runs under a LaunchAgent on the Mac Mini;

@@ -143,11 +143,30 @@ export async function callClaudeJSONViaBridge(
     });
 
     if (!res.ok) {
-      recordBridgeFailure(`http-${res.status}`);
-      logger.warn(
-        { jobId: input.jobId, orderId: input.orderId, status: res.status },
-        'bridge /claude-prompt non-2xx — falling back to API',
-      );
+      // 2026-05-15 — OVERFLOW path: a 429 means the bridge is HEALTHY but
+      // at capacity (MAX_INFLIGHT reached on the Mac Mini). The right
+      // response is "use the API for THIS call, but don't penalize the
+      // bridge". Counting 429 toward consecutiveFailures would falsely
+      // open the circuit during a traffic burst and then send all calls
+      // to the API for 2 min even after the burst clears — exactly the
+      // opposite of what we want.
+      //
+      // Every other non-2xx (500, 502, 503, 401, 404) IS a real bridge
+      // problem and still counts. We never want a misconfigured bridge
+      // to silently keep eating calls; the failure counter forces a fall
+      // through to API + alerts via the open-circuit log line.
+      if (res.status === 429) {
+        logger.info(
+          { jobId: input.jobId, orderId: input.orderId, status: 429 },
+          'bridge busy (overflow) — using API for this call, bridge circuit unchanged',
+        );
+      } else {
+        recordBridgeFailure(`http-${res.status}`);
+        logger.warn(
+          { jobId: input.jobId, orderId: input.orderId, status: res.status },
+          'bridge /claude-prompt non-2xx — falling back to API',
+        );
+      }
       return null;
     }
 

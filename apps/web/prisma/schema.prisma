@@ -47,6 +47,7 @@ model User {
   accounts                 Account[]
   sessions                 Session[]
   emailVerificationTokens  EmailVerificationToken[]
+  passwordResetTokens      PasswordResetToken[]
 }
 
 /// Single-use email verification tokens for the post-signup confirmation
@@ -78,6 +79,46 @@ model EmailVerificationToken {
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Single-use password-reset tokens (2026-05-15). Mirrors the
+/// EmailVerificationToken contract but for the "I forgot my password" flow.
+/// Why a SEPARATE table instead of overloading EmailVerificationToken:
+///   1. The two flows have DIFFERENT TTLs (24 h verify vs 1 h reset — the
+///      shorter window for password-reset is industry-standard and reduces
+///      the attack surface for stolen email inboxes).
+///   2. Mixing them would let a verify token act as a reset token if the
+///      check were ever loosened — better to keep them physically distinct
+///      so the SQL constraint itself enforces the separation.
+///   3. Different rate-limit budgets and audit semantics — keeping schemas
+///      separate makes the difference visible in code review.
+///
+/// Lifecycle:
+///   1. POST /api/auth/password-reset/request: random 32-byte token, store
+///      hash, expiresAt = now + 1 h, email plaintext link to the user.
+///      Prior unused tokens for that user are invalidated to prevent stale
+///      links from working after a fresh request.
+///   2. POST /api/auth/password-reset/confirm: lookup by hash, check
+///      `expiresAt > now` AND `usedAt IS NULL`, update User.passwordHash,
+///      stamp `usedAt`. The token row is kept for audit.
+///   3. Cleanup: cron sweep removes rows where `expiresAt < now() - 90d`.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique  // SHA-256 hex of the plaintext token
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  // SECURITY (2026-05-15): track which IP requested the reset for audit.
+  // Not displayed to the user — only surfaces if an operator investigates
+  // a suspicious reset (e.g. user complains their password changed without
+  // them initiating it). NULL when behind a proxy that strips X-Forwarded-For.
+  requestIp String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

@@ -2,13 +2,18 @@
 
 import { signIn } from 'next-auth/react';
 import { useState, FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Zap, ArrowRight, Loader2, Package, Truck, Mail } from 'lucide-react';
+import { Zap, ArrowRight, Loader2, Package, Truck, Mail, CheckCircle2 } from 'lucide-react';
 import { GoogleSignInButton, OrDivider } from '../_components/GoogleSignInButton';
 
 export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
   const router = useRouter();
+  // ?reset=ok → user just finished the password-reset flow. Show a banner
+  // so they know to log in with the NEW password they just set.
+  const searchParams = useSearchParams();
+  const justReset = searchParams.get('reset') === 'ok';
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -122,6 +127,13 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
             </>
           )}
 
+          {justReset && (
+            <div className="bg-green-500/10 border border-green-500/20 text-green-400 px-4 py-3 rounded-xl text-sm flex items-center gap-2 mb-4">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+              <span>Contraseña actualizada. Iniciá sesión con la nueva.</span>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <div className="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
@@ -147,9 +159,17 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-xs font-medium text-zinc-400 mb-1.5">
-                Password
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label htmlFor="password" className="block text-xs font-medium text-zinc-400">
+                  Password
+                </label>
+                <Link
+                  href="/forgot-password"
+                  className="text-[11px] text-cyan-400 hover:text-cyan-300 transition-colors"
+                >
+                  ¿La olvidaste?
+                </Link>
+              </div>
               <input
                 id="password"
                 type="password"

@@ -216,3 +216,48 @@ El link expira en 24 horas. Si no fuiste vos, podés ignorar este mensaje.
     text,
   };
 }
+
+/**
+ * Renders the "reset your password" template (2026-05-15).
+ *
+ * SECURITY copy:
+ *   - Mentions explicit 1-hour expiry so users don't wait.
+ *   - Mentions "if you didn't request this, ignore" so phishing victims
+ *     have a clear no-op path.
+ *   - Does NOT include the requestIp in the email — IP geolocation is
+ *     useful for the SRE side, noisy/scary for legitimate users.
+ */
+export function renderPasswordResetEmail(opts: { name: string; resetUrl: string }): {
+  subject: string;
+  html: string;
+  text: string;
+} {
+  const { name, resetUrl } = opts;
+  const safeName = (name || 'Hola').slice(0, 80);
+
+  const html = emailShell({
+    title: 'Cambiá tu contraseña de LabelFlow',
+    body: `<p style="margin:0 0 12px;">Hola <strong>${safeName}</strong>,</p>
+<p style="margin:0 0 12px;">Recibimos un pedido para restablecer la contraseña de tu cuenta en LabelFlow. Si fuiste vos, hacé clic en el botón de abajo para elegir una nueva contraseña:</p>
+<p style="margin:0 0 12px;font-size:13px;color:#666;">El link expira en <strong>1 hora</strong>. Si no fuiste vos, podés ignorar este mensaje — tu contraseña actual no cambia hasta que alguien complete el formulario.</p>`,
+    cta: { href: resetUrl, label: 'Elegir nueva contraseña' },
+  });
+
+  const text = `Hola ${safeName},
+
+Recibimos un pedido para restablecer tu contraseña en LabelFlow.
+
+Si fuiste vos, entrá a este link para elegir una nueva contraseña:
+
+${resetUrl}
+
+El link expira en 1 hora. Si no fuiste vos, podés ignorar este mensaje — tu contraseña actual no cambia hasta que alguien complete el formulario.
+
+— LabelFlow / autoenvia.com`;
+
+  return {
+    subject: 'Restablecer contraseña — LabelFlow',
+    html,
+    text,
+  };
+}

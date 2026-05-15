@@ -229,3 +229,67 @@ describe('callClaudeJSONViaBridge — circuit breaker', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(5);
   });
 });
+
+// ── 2026-05-15 — OVERFLOW path (429 is healthy "busy", not a failure) ────────
+//
+// The bridge's MAX_INFLIGHT mutex returns 429 when more concurrent requests
+// arrive than the Mac Mini can spawn at once. That's the bridge working
+// CORRECTLY — the worker just needs to fall through to the API for that one
+// call. Counting 429 as a circuit failure would mean: a brief burst (5
+// concurrent tenants firing in the same second) opens the circuit and then
+// the worker sends EVERYTHING to the API for the next 2 min, defeating the
+// whole point of the bridge.
+describe('callClaudeJSONViaBridge — overflow (429 ≠ circuit failure)', () => {
+  it('returns null on 429 but does NOT count toward the circuit breaker', async () => {
+    setEnvForBridge();
+    // Twenty 429s in a row — way past CIRCUIT_FAILURE_THRESHOLD=5
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: 'busy' }),
+    }) as any;
+
+    for (let i = 0; i < 20; i++) {
+      const result = await callClaudeJSONViaBridge({ system: 's', user: 'u' });
+      expect(result).toBeNull(); // caller falls back to API for THIS call
+    }
+
+    // Circuit should still be closed — verify by making a successful call.
+    // If 429s had counted, after 5 the circuit would be open and the next
+    // fetch wouldn't run, so the spy below would be untouched.
+    const successSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, content: { recovered: true } }),
+    });
+    global.fetch = successSpy as any;
+    const ok = await callClaudeJSONViaBridge({ system: 's', user: 'u' });
+    expect(ok).toEqual({ recovered: true });
+    expect(successSpy).toHaveBeenCalledTimes(1); // bridge attempted, not skipped
+  });
+
+  it('still treats 500 as a real failure (circuit opens after 5)', async () => {
+    setEnvForBridge();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'internal' }),
+    }) as any;
+
+    // 5 500-responses → circuit opens on the 5th
+    for (let i = 0; i < 5; i++) {
+      const result = await callClaudeJSONViaBridge({ system: 's', user: 'u' });
+      expect(result).toBeNull();
+    }
+
+    // 6th call — circuit is open, fetch should NOT be called
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'internal' }),
+    });
+    global.fetch = fetchSpy as any;
+    const result = await callClaudeJSONViaBridge({ system: 's', user: 'u' });
+    expect(result).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
