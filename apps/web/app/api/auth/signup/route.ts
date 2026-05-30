@@ -25,7 +25,30 @@ const signupSchema = z.object({
   referralCode: z.string().nullable().optional(),
 });
 
+// Gate público del signup. LabelFlow opera bajo modelo enterprise: las cuentas
+// se provisionan por el operador después de firmar el acuerdo de servicios.
+// Para habilitar la creación pública (caso excepcional: onboarding asistido
+// vía Render Shell, seed scripts, etc.), exportar ALLOW_PUBLIC_SIGNUP=true.
+// Default = bloqueado para evitar que cualquiera POSTée y consiga una cuenta.
+function isPublicSignupEnabled(): boolean {
+  return (process.env.ALLOW_PUBLIC_SIGNUP ?? '').toLowerCase() === 'true';
+}
+
 export async function POST(req: Request) {
+  // Gate enterprise: si el flag no está prendido devolvemos 403 antes de tocar
+  // la DB o validar el body. Devolvemos un mensaje claro porque este endpoint
+  // ya no se expone desde la UI pública — quien lo llama es el operador o un
+  // script interno que sabe qué flag prender.
+  if (!isPublicSignupEnabled()) {
+    return NextResponse.json(
+      {
+        error:
+          'El registro público está deshabilitado. Las cuentas LabelFlow Enterprise se provisionan por el operador.',
+      },
+      { status: 403 },
+    );
+  }
+
   try {
     const body = await req.json();
     const parsed = signupSchema.safeParse(body);

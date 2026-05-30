@@ -277,6 +277,18 @@ export const authOptions: NextAuthOptions = {
       // via the schema `@default(10)`, so a re-login MUST NOT touch it.
       if (existing && existing._count.tenants > 0) return true;
 
+      // ── Gate enterprise ──
+      // LabelFlow opera bajo modelo enterprise: las cuentas se provisionan
+      // tras firmar el acuerdo de servicios. Si el flag ALLOW_PUBLIC_SIGNUP
+      // no está prendido, bloqueamos la creación automática de un tenant
+      // nuevo desde Google OAuth — el usuario ve la pantalla estándar de
+      // error de NextAuth y queda invitado a contactar por WhatsApp desde
+      // la landing. Login de usuarios YA EXISTENTES sigue funcionando (lo
+      // resolvimos antes del gate con el early-return de arriba).
+      const publicSignupEnabled =
+        (process.env.ALLOW_PUBLIC_SIGNUP ?? '').toLowerCase() === 'true';
+      if (!publicSignupEnabled) return false;
+
       // ── First-time Google OAuth signup ──
       // Mirror /api/auth/signup so OAuth users get the same referral
       // attribution + signed-cookie validation as email/password signups.

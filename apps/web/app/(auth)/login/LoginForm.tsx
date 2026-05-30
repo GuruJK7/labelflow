@@ -199,9 +199,9 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
 
           <div className="mt-8 text-center">
             <p className="text-zinc-500 text-sm">
-              ¿No tenés cuenta?{' '}
+              ¿Sin cuenta todavía?{' '}
               <Link href="/signup" className="text-cyan-400 hover:text-cyan-300 font-medium transition-colors">
-                Registrate gratis · 10 envíos
+                Solicitar acceso
               </Link>
             </p>
           </div>

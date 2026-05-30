@@ -1,313 +1,462 @@
-'use client';
-
 import Link from 'next/link';
-import { TrackedSignupLink } from '@/components/TrackedSignupLink';
 import {
   Zap,
-  Package,
-  Mail,
-  Check,
   ArrowRight,
-  Sparkles,
-  Gift,
-  Send,
-  ShoppingCart,
-  Plus,
-  TrendingDown,
+  Check,
+  Activity,
   ShieldCheck,
   Clock,
-  MessageSquare,
-  Wallet,
   Truck,
-  BadgeCheck,
+  Server,
+  GitBranch,
+  LineChart,
+  Lock,
+  Sparkles,
+  Building2,
+  Workflow,
+  HeadphonesIcon,
+  Cpu,
+  Database,
+  Boxes,
+  Layers,
+  Award,
 } from 'lucide-react';
 
-// Credit-pack catalog. Mirrors lib/credit-packs.ts so the landing stays in sync
-// with what the dashboard sells. If business changes pack pricing, update both.
-const PACKS = [
-  {
-    id: 'pack_10',
-    shipments: 10,
-    pricePerShipmentUyu: 20,
-    totalPriceUyu: 200,
-    tagline: 'Ideal para empezar a probar',
-  },
-  {
-    id: 'pack_50',
-    shipments: 50,
-    pricePerShipmentUyu: 17,
-    totalPriceUyu: 850,
-    tagline: 'Para tiendas que arrancan',
-  },
-  {
-    id: 'pack_100',
-    shipments: 100,
-    pricePerShipmentUyu: 15,
-    totalPriceUyu: 1500,
-    tagline: 'El favorito de los emprendedores',
-    popular: true,
-  },
-  {
-    id: 'pack_250',
-    shipments: 250,
-    pricePerShipmentUyu: 12,
-    totalPriceUyu: 3000,
-    tagline: 'Para negocios en crecimiento',
-  },
-  {
-    id: 'pack_500',
-    shipments: 500,
-    pricePerShipmentUyu: 10,
-    totalPriceUyu: 5000,
-    tagline: 'Para tiendas con alta demanda',
-  },
-  {
-    id: 'pack_1000',
-    shipments: 1000,
-    pricePerShipmentUyu: 7,
-    totalPriceUyu: 7000,
-    tagline: 'Para operaciones establecidas',
-    best: true,
-  },
-] as const;
+export const metadata = {
+  title: 'LabelFlow — Automatización enterprise de envíos para e-commerce',
+  description:
+    'Instalamos, configuramos y operamos la logística de envíos de tu tienda Shopify. Integración con DAC, monitoreo 24/7, dashboard ejecutivo en tiempo real.',
+};
 
-// pack_10 baseline — used as anchor for "Antes $X" strikethrough.
-const REF_PRICE = 20;
+const WHATSAPP_URL =
+  'https://wa.me/59898943949?text=' +
+  encodeURIComponent(
+    'Hola, vi LabelFlow Enterprise y quiero coordinar una llamada para evaluar la implementación en mi operación.',
+  );
 
 export default function LandingPage() {
   return (
     <div className="relative min-h-screen bg-[#0a0a0a] overflow-x-hidden">
-      {/* Decorative ambient orbs */}
+      {/* Ambient orbs */}
       <div aria-hidden className="pointer-events-none fixed inset-0 -z-10">
         <div className="absolute -top-40 left-1/3 w-[600px] h-[600px] bg-cyan-500/[0.08] rounded-full blur-[120px]" />
         <div className="absolute top-[40%] -right-32 w-[500px] h-[500px] bg-emerald-500/[0.05] rounded-full blur-[120px]" />
+        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-cyan-500/[0.04] rounded-full blur-[120px]" />
       </div>
 
       {/* Nav */}
       <nav className="fixed top-0 w-full z-50 bg-[#0a0a0a]/70 backdrop-blur-xl border-b border-white/[0.04]">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2.5">
             <div className="w-8 h-8 bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-lg flex items-center justify-center shadow-lg shadow-cyan-500/20">
               <Zap className="w-4 h-4 text-white" />
             </div>
-            <span className="font-bold text-white text-[15px] tracking-tight">
-              Label<span className="text-cyan-400">Flow</span>
-            </span>
+            <div className="flex items-baseline gap-2">
+              <span className="font-bold text-white text-[15px] tracking-tight">
+                Label<span className="text-cyan-400">Flow</span>
+              </span>
+              <span className="hidden sm:inline text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-medium">
+                Enterprise
+              </span>
+            </div>
           </Link>
           <div className="hidden md:flex items-center gap-8 text-[13px] text-zinc-400">
-            <a href="#como-funciona" className="hover:text-white transition-colors">
-              Cómo funciona
+            <a href="#plataforma" className="hover:text-white transition-colors">
+              Plataforma
             </a>
-            <a href="#precios" className="hover:text-white transition-colors">
-              Precios
+            <a href="#implementacion" className="hover:text-white transition-colors">
+              Implementación
             </a>
-            <a href="#referidos" className="hover:text-white transition-colors">
-              Referidos
+            <a href="#tecnologia" className="hover:text-white transition-colors">
+              Tecnología
             </a>
             <a href="#faq" className="hover:text-white transition-colors">
               FAQ
             </a>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <Link
               href="/login"
-              className="hidden sm:inline text-zinc-400 hover:text-white text-[13px] transition-colors"
+              className="text-zinc-400 hover:text-white text-[13px] transition-colors px-2"
             >
-              Iniciar sesión
+              Portal de clientes
             </Link>
-            <TrackedSignupLink
-              href="/signup"
-              ctaLocation="navbar"
+            <a
+              href={WHATSAPP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
               className="bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-4 py-2 rounded-lg text-[13px] font-semibold transition-all shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 hover:-translate-y-0.5"
             >
-              Crear cuenta
-            </TrackedSignupLink>
+              Solicitar demo
+            </a>
           </div>
         </div>
       </nav>
 
       {/* Hero */}
-      <section className="relative pt-36 pb-16 px-6">
+      <section className="relative pt-36 pb-20 px-6">
         <div className="max-w-5xl mx-auto text-center">
-          {/* Animated reward badge — anchor the gift in real money */}
-          <div className="inline-flex items-center gap-2 bg-gradient-to-r from-cyan-500/15 to-emerald-500/15 border border-cyan-400/30 rounded-full pl-2 pr-4 py-1.5 mb-8 backdrop-blur-sm shadow-lg shadow-cyan-500/10 animate-pulse-slow">
+          <div className="inline-flex items-center gap-2 bg-gradient-to-r from-cyan-500/10 to-emerald-500/10 border border-cyan-400/20 rounded-full pl-2 pr-4 py-1.5 mb-8 backdrop-blur-sm">
             <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-gradient-to-br from-cyan-400 to-emerald-400">
               <Sparkles className="w-3 h-3 text-zinc-950" strokeWidth={3} />
             </span>
-            <span className="text-cyan-100 text-xs font-semibold tracking-wide">
-              <span className="text-emerald-300">10 envíos GRATIS</span> al
-              registrarte ·{' '}
-              <span className="text-zinc-400 line-through">$200 UYU</span>{' '}
-              <span className="text-emerald-300 font-bold">$0</span>
+            <span className="text-cyan-100 text-xs font-medium tracking-wide">
+              Plataforma propietaria · Operación gestionada en Uruguay
             </span>
           </div>
+
           <h1 className="text-5xl md:text-7xl font-bold text-white leading-[1.05] tracking-tight mb-6">
-            Etiquetas de DAC
+            Logística de envíos
             <br />
             <span className="bg-gradient-to-r from-cyan-300 via-cyan-400 to-emerald-300 bg-clip-text text-transparent">
-              automáticas
+              automatizada
             </span>{' '}
-            desde Shopify
+            para e-commerce
           </h1>
           <p className="text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto mb-10 leading-relaxed">
-            Conectá tu tienda y olvidate del trabajo manual. LabelFlow procesa los pedidos pagados,
-            genera la guía DAC y le avisa al cliente — solo.
+            Instalamos, configuramos y operamos la conexión entre tu tienda Shopify y DAC.
+            Cada pedido pago se despacha solo. Vos te enfocás en vender.
           </p>
+
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-            <TrackedSignupLink
-              href="/signup"
-              ctaLocation="hero"
+            <a
+              href={WHATSAPP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
               className="group inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-xl shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:-translate-y-0.5"
             >
-              Comenzá ya · 10 envíos gratis
+              Coordinar una llamada
               <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-            </TrackedSignupLink>
+            </a>
             <a
-              href="#precios"
+              href="#plataforma"
               className="inline-flex items-center gap-2 border border-white/10 text-zinc-200 px-6 py-3.5 rounded-xl text-sm font-semibold hover:bg-white/[0.04] hover:border-white/20 transition-colors"
             >
-              Ver precios
+              Ver la plataforma
             </a>
           </div>
-          <p className="mt-4 text-xs text-zinc-500">
-            Registrate con Google en 1 click ·{' '}
-            <TrackedSignupLink
-              href="/signup"
-              ctaLocation="hero_secondary"
-              className="text-cyan-400 hover:text-cyan-300 transition-colors underline-offset-2 hover:underline"
-            >
-              empezar ahora →
-            </TrackedSignupLink>
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-6 text-xs text-zinc-500">
+
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-8 text-xs text-zinc-500">
             <div className="flex items-center gap-1.5">
               <Check className="w-3.5 h-3.5 text-emerald-400" />
-              Sin tarjeta para empezar
+              Implementación llave en mano
             </div>
             <div className="flex items-center gap-1.5">
               <Check className="w-3.5 h-3.5 text-emerald-400" />
-              Sin suscripción
+              Infraestructura propia
             </div>
             <div className="flex items-center gap-1.5">
               <Check className="w-3.5 h-3.5 text-emerald-400" />
-              Sin caducidad
+              Monitoreo 24/7
             </div>
           </div>
         </div>
       </section>
 
-      {/* Trust strip / mini stats */}
-      <section className="px-6 pb-20">
-        <div className="max-w-5xl mx-auto">
-          <div className="bg-zinc-900/40 border border-white/[0.06] rounded-2xl backdrop-blur-sm p-6 grid grid-cols-2 md:grid-cols-4 gap-6">
-            {[
-              { value: '< 60s', label: 'En conectarse' },
-              { value: '24/7', label: 'Procesando solo' },
-              { value: 'UYU', label: 'Pagás en pesos' },
-              { value: '0', label: 'Suscripciones' },
-            ].map((s) => (
-              <div key={s.label} className="text-center">
-                <p className="text-2xl md:text-3xl font-bold bg-gradient-to-br from-white to-cyan-200 bg-clip-text text-transparent tabular-nums">
-                  {s.value}
-                </p>
-                <p className="text-xs text-zinc-500 mt-1">{s.label}</p>
-              </div>
-            ))}
+      {/* Trust stats — números reales de la operación */}
+      <section className="px-6 pb-24">
+        <div className="max-w-6xl mx-auto">
+          <div className="bg-zinc-900/40 border border-white/[0.06] rounded-2xl backdrop-blur-sm p-8">
+            <p className="text-center text-[10px] uppercase tracking-[0.2em] text-zinc-500 mb-6">
+              Operación en producción
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8">
+              {[
+                { value: '24/7', label: 'Monitoreo activo' },
+                { value: '< 60s', label: 'Pedido → guía generada' },
+                { value: '99.5%', label: 'Uptime infraestructura' },
+                { value: '0', label: 'Intervención manual' },
+              ].map((s) => (
+                <div key={s.label} className="text-center">
+                  <p className="text-3xl md:text-4xl font-bold bg-gradient-to-br from-white to-cyan-200 bg-clip-text text-transparent tabular-nums">
+                    {s.value}
+                  </p>
+                  <p className="text-xs text-zinc-500 mt-1.5">{s.label}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>
 
-      {/* How it works */}
-      <section id="como-funciona" className="py-16 md:py-20 px-6">
+      {/* Plataforma — qué hace */}
+      <section id="plataforma" className="py-16 md:py-24 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-widest mb-3">
-              <Zap className="w-3.5 h-3.5" />
-              Cómo funciona
+            <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-[0.18em] mb-3">
+              <Layers className="w-3.5 h-3.5" />
+              La plataforma
             </div>
-            <h2 className="text-3xl md:text-5xl font-bold text-white tracking-tight">
-              Conectá una vez. <span className="text-zinc-500">Olvidate para siempre.</span>
+            <h2 className="text-3xl md:text-5xl font-bold text-white tracking-tight max-w-3xl mx-auto">
+              Tres capas que reemplazan{' '}
+              <span className="text-zinc-500">a un equipo operativo entero.</span>
             </h2>
           </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {[
               {
-                num: '01',
-                icon: <Truck className="w-6 h-6" />,
-                title: 'Conectá tu tienda',
-                desc: 'Vinculás tu Shopify y tu cuenta DAC en menos de 60 segundos. Sin código.',
+                icon: <Workflow className="w-6 h-6" />,
+                title: 'Captura inteligente',
+                desc:
+                  'Webhooks de Shopify + verificación de pago en MercadoPago. Cada orden paga entra a la cola en menos de 5 segundos.',
+                points: [
+                  'Detección automática de pedidos pagos',
+                  'Validación de inventario y dirección',
+                  'Reintentos automáticos ante fallos',
+                ],
               },
               {
-                num: '02',
-                icon: <ShoppingCart className="w-6 h-6" />,
-                title: 'Tu cliente compra',
-                desc: 'Cuando MercadoPago acredita el pago, LabelFlow detecta el pedido al instante.',
+                icon: <Cpu className="w-6 h-6" />,
+                title: 'Procesamiento autónomo',
+                desc:
+                  'Worker dedicado con automatización de browser supervisada. Crea la guía en DAC, descarga el PDF, notifica al cliente.',
+                points: [
+                  'Resolución de direcciones ambiguas con IA',
+                  'Manejo de errores de DAC con retry policy',
+                  'Auditoría completa de cada transacción',
+                ],
               },
               {
-                num: '03',
-                icon: <BadgeCheck className="w-6 h-6" />,
-                title: 'Etiqueta lista, cliente avisado',
-                desc: 'Generamos la guía DAC y le mandamos un email a tu cliente con el número de seguimiento.',
+                icon: <LineChart className="w-6 h-6" />,
+                title: 'Dashboard ejecutivo',
+                desc:
+                  'Panel propio con métricas en tiempo real. Tasa de éxito, tiempos, costos, alertas. Tu CEO mira un solo lugar.',
+                points: [
+                  'KPIs en tiempo real',
+                  'Reportes exportables',
+                  'Alertas configurables',
+                ],
               },
-            ].map((s) => (
-              <div key={s.num} className="relative group">
-                <div className="bg-zinc-900/40 border border-white/[0.06] hover:border-cyan-500/30 rounded-2xl p-6 backdrop-blur-sm transition-all hover:-translate-y-1 h-full">
-                  <div className="flex items-start justify-between mb-5">
-                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500/20 to-cyan-500/5 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
-                      {s.icon}
-                    </div>
-                    <span className="text-3xl font-bold text-cyan-300 opacity-30 tabular-nums">
-                      {s.num}
-                    </span>
-                  </div>
-                  <h3 className="text-lg font-semibold text-white mb-2">{s.title}</h3>
-                  <p className="text-sm text-zinc-400 leading-relaxed">{s.desc}</p>
+            ].map((c) => (
+              <div
+                key={c.title}
+                className="relative group bg-zinc-900/40 border border-white/[0.06] hover:border-cyan-500/30 rounded-2xl p-6 backdrop-blur-sm transition-all hover:-translate-y-1"
+              >
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500/20 to-cyan-500/5 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-5">
+                  {c.icon}
                 </div>
+                <h3 className="text-lg font-semibold text-white mb-2">{c.title}</h3>
+                <p className="text-sm text-zinc-400 leading-relaxed mb-4">{c.desc}</p>
+                <ul className="space-y-2 pt-4 border-t border-white/[0.05]">
+                  {c.points.map((p) => (
+                    <li
+                      key={p}
+                      className="flex items-start gap-2 text-xs text-zinc-400 leading-relaxed"
+                    >
+                      <Check className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0 mt-0.5" />
+                      {p}
+                    </li>
+                  ))}
+                </ul>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Features grid */}
-      <section className="py-16 md:py-20 px-6">
+      {/* Para quién es */}
+      <section className="py-16 md:py-24 px-6">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
-              Todo lo que necesitás. <span className="text-zinc-500">Nada que no.</span>
+          <div className="text-center mb-14">
+            <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-[0.18em] mb-3">
+              <Building2 className="w-3.5 h-3.5" />
+              Para quién es
+            </div>
+            <h2 className="text-3xl md:text-5xl font-bold text-white tracking-tight">
+              Diseñado para operaciones{' '}
+              <span className="text-zinc-500">que crecen rápido.</span>
             </h2>
           </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {[
+              {
+                heading: 'Tiendas con volumen',
+                body: 'Si despachás más de 100 pedidos al mes y el cuello de botella es la generación manual de guías, te liberamos esas horas.',
+              },
+              {
+                heading: 'Equipos chicos, ambición grande',
+                body: 'Operaciones donde la persona que carga DAC también responde clientes, factura y empaca. Quitamos una tarea entera de la lista.',
+              },
+              {
+                heading: 'Escalas sin sumar gente',
+                body: 'Llegaste al techo de lo que una persona procesa manualmente. Necesitás escalar sin contratar al área operativa.',
+              },
+            ].map((p) => (
+              <div
+                key={p.heading}
+                className="bg-zinc-900/30 border border-white/[0.06] rounded-2xl p-6 backdrop-blur-sm"
+              >
+                <h3 className="text-base font-semibold text-white mb-3">{p.heading}</h3>
+                <p className="text-sm text-zinc-400 leading-relaxed">{p.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Implementación */}
+      <section id="implementacion" className="py-16 md:py-24 px-6">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-16">
+            <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-[0.18em] mb-3">
+              <Award className="w-3.5 h-3.5" />
+              Implementación llave en mano
+            </div>
+            <h2 className="text-3xl md:text-5xl font-bold text-white tracking-tight max-w-3xl mx-auto">
+              Nos encargamos de todo.{' '}
+              <span className="text-zinc-500">Vos firmás y empezás a operar.</span>
+            </h2>
+          </div>
+
+          <div className="relative">
+            <div
+              aria-hidden
+              className="hidden md:block absolute left-1/2 top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-cyan-500/20 to-transparent"
+            />
+            <div className="space-y-6 md:space-y-10">
+              {[
+                {
+                  num: '01',
+                  title: 'Diagnóstico inicial',
+                  duration: 'Día 1',
+                  desc:
+                    'Revisamos tu volumen, tu flujo actual de despachos, los acuerdos con DAC, las particularidades de tu catálogo. Salimos con un plan de implementación firmado.',
+                },
+                {
+                  num: '02',
+                  title: 'Setup técnico',
+                  duration: 'Días 2 a 5',
+                  desc:
+                    'Conectamos Shopify a la plataforma. Integramos tu cuenta DAC. Configuramos MercadoPago, webhooks, dominios, certificados. Te creamos tu cuenta en el dashboard ejecutivo.',
+                },
+                {
+                  num: '03',
+                  title: 'Pruebas con pedidos reales',
+                  duration: 'Días 6 a 8',
+                  desc:
+                    'Corremos en modo supervisado contra una muestra de tus pedidos reales. Validamos tiempos, calidad de guías y notificaciones. Ajustamos.',
+                },
+                {
+                  num: '04',
+                  title: 'Activación y handoff',
+                  duration: 'Día 9',
+                  desc:
+                    'Pasamos a producción. Capacitamos a tu equipo en el dashboard. Quedamos como operadores del servicio con SLA definido.',
+                },
+              ].map((step, i) => (
+                <div
+                  key={step.num}
+                  className={`relative md:grid md:grid-cols-2 md:gap-12 items-center ${
+                    i % 2 === 0 ? '' : 'md:[&>*:first-child]:order-2'
+                  }`}
+                >
+                  <div className="bg-zinc-900/40 border border-white/[0.06] rounded-2xl p-6 backdrop-blur-sm">
+                    <div className="flex items-start gap-4">
+                      <span className="text-3xl font-bold text-cyan-400/40 tabular-nums">
+                        {step.num}
+                      </span>
+                      <div className="flex-1">
+                        <div className="flex items-baseline justify-between gap-3 mb-1.5 flex-wrap">
+                          <h3 className="text-lg font-semibold text-white">{step.title}</h3>
+                          <span className="text-[10px] uppercase tracking-wider text-cyan-400 font-semibold">
+                            {step.duration}
+                          </span>
+                        </div>
+                        <p className="text-sm text-zinc-400 leading-relaxed">{step.desc}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="hidden md:block" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-12 text-center">
+            <p className="text-sm text-zinc-500">
+              Tiempo total promedio:{' '}
+              <span className="text-cyan-400 font-semibold">5 a 10 días hábiles</span> desde
+              la firma a producción.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Tecnología */}
+      <section id="tecnologia" className="py-16 md:py-24 px-6">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-14">
+            <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-[0.18em] mb-3">
+              <Server className="w-3.5 h-3.5" />
+              Tecnología
+            </div>
+            <h2 className="text-3xl md:text-5xl font-bold text-white tracking-tight max-w-3xl mx-auto">
+              Construido sobre stack{' '}
+              <span className="text-zinc-500">de grado empresarial.</span>
+            </h2>
+            <p className="text-zinc-400 max-w-2xl mx-auto mt-4 leading-relaxed">
+              No es una integración improvisada. Es una plataforma propietaria con
+              tolerancia a fallos, auditoría completa y resolución asistida por IA.
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[
               {
-                icon: <Zap className="w-4 h-4" />,
-                title: 'Procesamiento en vivo',
-                desc: 'Cada pedido pago se etiqueta en segundos.',
+                icon: <Boxes className="w-4 h-4" />,
+                title: 'Worker dedicado',
+                desc:
+                  'Procesos paralelos con cola transaccional. Cada pedido se procesa en su contexto aislado.',
               },
               {
-                icon: <Mail className="w-4 h-4" />,
-                title: 'Aviso al cliente',
-                desc: 'Email con la guía DAC y el link de seguimiento.',
+                icon: <Cpu className="w-4 h-4" />,
+                title: 'Resolución por IA',
+                desc:
+                  'Direcciones ambiguas, abreviaciones, errores de tipeo. La plataforma los resuelve antes de tocar DAC.',
               },
               {
-                icon: <Wallet className="w-4 h-4" />,
-                title: 'Sin suscripción',
-                desc: 'Comprás packs en UYU. Pagás solo lo que usás.',
-              },
-              {
-                icon: <Clock className="w-4 h-4" />,
-                title: 'Sin caducidad',
-                desc: 'Los envíos no expiran. Quedan en tu cuenta para siempre.',
-              },
-              {
-                icon: <MessageSquare className="w-4 h-4" />,
-                title: 'Soporte por WhatsApp',
-                desc: 'Hablás con personas, no con un bot.',
+                icon: <Database className="w-4 h-4" />,
+                title: 'Base multi-tenant',
+                desc:
+                  'Tus datos viven aislados de los de otras operaciones. Cifrado en reposo y en tránsito.',
               },
               {
                 icon: <ShieldCheck className="w-4 h-4" />,
-                title: 'Datos protegidos',
-                desc: 'Tus credenciales DAC encriptadas, nunca expuestas.',
+                title: 'Credenciales protegidas',
+                desc:
+                  'Tu API key de Shopify y credenciales DAC quedan cifradas. Nunca expuestas en logs ni en tránsito.',
+              },
+              {
+                icon: <Activity className="w-4 h-4" />,
+                title: 'Auditoría completa',
+                desc:
+                  'Cada transacción queda registrada con timestamps, status, intentos y resultado final.',
+              },
+              {
+                icon: <GitBranch className="w-4 h-4" />,
+                title: 'Reintentos inteligentes',
+                desc:
+                  'Si DAC falla, reintentamos con backoff exponencial. Si la dirección está mal, intentamos correcciones automáticas.',
+              },
+              {
+                icon: <Clock className="w-4 h-4" />,
+                title: 'Procesamiento 24/7',
+                desc:
+                  'Tus pedidos nocturnos se despachan a la madrugada. Nadie depende de horario de oficina.',
+              },
+              {
+                icon: <Lock className="w-4 h-4" />,
+                title: 'Cumplimiento legal',
+                desc:
+                  'Captura de IP, ToS, consentimiento — alineado con la Ley 18.331 (Uruguay) de protección de datos personales.',
+              },
+              {
+                icon: <HeadphonesIcon className="w-4 h-4" />,
+                title: 'Soporte directo',
+                desc:
+                  'Canal de WhatsApp directo con el equipo técnico. Sin tickets ni colas.',
               },
             ].map((f) => (
               <div
@@ -317,7 +466,7 @@ export default function LandingPage() {
                 <div className="w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-4">
                   {f.icon}
                 </div>
-                <h3 className="text-sm font-semibold text-white mb-1">{f.title}</h3>
+                <h3 className="text-sm font-semibold text-white mb-1.5">{f.title}</h3>
                 <p className="text-xs text-zinc-500 leading-relaxed">{f.desc}</p>
               </div>
             ))}
@@ -325,304 +474,104 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Pricing */}
-      <section id="precios" className="py-16 md:py-20 px-6">
-        <div className="max-w-7xl mx-auto">
+      {/* Comparación: a mano vs. con la plataforma */}
+      <section className="py-16 md:py-24 px-6">
+        <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
-            <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-widest mb-3">
-              <Wallet className="w-3.5 h-3.5" />
-              Precios
-            </div>
-            <h2 className="text-3xl md:text-5xl font-bold text-white tracking-tight mb-4">
-              Pagás solo por lo que usás.
+            <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
+              Lo que cambia en tu operación
             </h2>
-            <p className="text-zinc-400 text-base md:text-lg max-w-2xl mx-auto">
-              Sin suscripciones. Sin caducidad. Cuanto más comprás, menos pagás por envío.
+            <p className="text-zinc-400 mt-3">
+              Sobre una base de 500 envíos al mes.
             </p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 pt-4">
-            {PACKS.map((pack) => {
-              const isPopular = 'popular' in pack && pack.popular;
-              const isBest = 'best' in pack && pack.best;
-              const savings =
-                pack.pricePerShipmentUyu < REF_PRICE
-                  ? Math.round(((REF_PRICE - pack.pricePerShipmentUyu) / REF_PRICE) * 100)
-                  : 0;
-              const anchorPrice = pack.shipments * REF_PRICE;
-              return (
-                <div
-                  key={pack.id}
-                  className={`group relative rounded-2xl transition-all duration-300 hover:-translate-y-1 ${
-                    isBest
-                      ? 'shadow-2xl shadow-amber-500/10 hover:shadow-amber-500/20'
-                      : isPopular
-                        ? 'shadow-2xl shadow-cyan-500/10 hover:shadow-cyan-500/20'
-                        : 'hover:shadow-xl hover:shadow-cyan-500/5'
-                  }`}
-                >
-                  {(isBest || isPopular) && (
-                    <div
-                      className={`absolute inset-0 rounded-2xl opacity-60 group-hover:opacity-100 transition-opacity pointer-events-none ${
-                        isBest
-                          ? 'bg-gradient-to-br from-amber-500/40 via-orange-500/20 to-amber-500/40'
-                          : 'bg-gradient-to-br from-cyan-500/40 via-cyan-400/20 to-cyan-500/40'
-                      }`}
-                    />
-                  )}
-                  <div
-                    className={`relative m-[1px] rounded-2xl p-6 h-full flex flex-col ${
-                      isBest || isPopular
-                        ? 'bg-zinc-950/95'
-                        : 'bg-zinc-900/40 border border-white/[0.06] group-hover:border-white/[0.12]'
-                    } backdrop-blur-xl transition-colors`}
-                  >
-                    {isPopular && !isBest && (
-                      <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
-                        <div className="bg-gradient-to-r from-cyan-500 to-cyan-400 text-zinc-950 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg shadow-cyan-500/40 whitespace-nowrap">
-                          Más popular
-                        </div>
-                      </div>
-                    )}
-                    {isBest && (
-                      <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
-                        <div className="bg-gradient-to-r from-amber-500 to-orange-400 text-zinc-950 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg shadow-amber-500/40 whitespace-nowrap">
-                          Mejor precio
-                        </div>
-                      </div>
-                    )}
 
-                    <div className="flex items-start justify-between mb-5 mt-2">
-                      <div
-                        className={`inline-flex items-center justify-center w-11 h-11 rounded-xl border ${
-                          isBest
-                            ? 'bg-gradient-to-br from-amber-500/20 to-orange-500/5 border-amber-500/20'
-                            : isPopular
-                              ? 'bg-gradient-to-br from-cyan-500/20 to-cyan-500/5 border-cyan-500/20'
-                              : 'bg-zinc-800/80 border-white/[0.06]'
-                        }`}
-                      >
-                        <Package
-                          className={`w-5 h-5 ${
-                            isBest
-                              ? 'text-amber-400'
-                              : isPopular
-                                ? 'text-cyan-400'
-                                : 'text-zinc-400'
-                          }`}
-                        />
-                      </div>
-                      {savings > 0 && (
-                        <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-semibold">
-                          <TrendingDown className="w-3 h-3" />-{savings}%
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="mb-5">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-4xl font-bold text-white tabular-nums tracking-tight">
-                          {pack.shipments.toLocaleString('es-UY')}
-                        </span>
-                        <span className="text-sm font-medium text-zinc-400">envíos</span>
-                      </div>
-                      <p className="text-xs text-zinc-500 mt-1.5">{pack.tagline}</p>
-                    </div>
-
-                    <div className="border-y border-white/[0.06] py-4 mb-5">
-                      {anchorPrice > pack.totalPriceUyu && (
-                        <p className="text-[11px] text-zinc-600 line-through mb-1 tabular-nums">
-                          Antes ${anchorPrice.toLocaleString('es-UY')} UYU
-                        </p>
-                      )}
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-zinc-500 text-sm">$</span>
-                        <span className="text-4xl font-bold text-white tabular-nums tracking-tight">
-                          {pack.totalPriceUyu.toLocaleString('es-UY')}
-                        </span>
-                        <span className="text-xs text-zinc-500 font-medium">UYU</span>
-                      </div>
-                      <p className="text-xs text-zinc-400 mt-1.5">
-                        <span
-                          className={`font-semibold ${
-                            isBest ? 'text-amber-400' : 'text-cyan-400'
-                          }`}
-                        >
-                          ${pack.pricePerShipmentUyu}
-                        </span>{' '}
-                        UYU por envío
-                      </p>
-                    </div>
-
-                    <ul className="space-y-2.5 mb-6">
-                      <FeatureLi>Acreditación instantánea</FeatureLi>
-                      <FeatureLi>Sin caducidad ni renovación</FeatureLi>
-                      <FeatureLi>Soporte por WhatsApp</FeatureLi>
-                    </ul>
-
-                    <TrackedSignupLink
-                      href="/signup"
-                      ctaLocation="pricing"
-                      className={`block text-center py-3 rounded-xl text-sm font-semibold transition-all mt-auto ${
-                        isBest
-                          ? 'bg-gradient-to-r from-amber-500 to-orange-400 hover:from-amber-400 hover:to-orange-300 text-zinc-950 shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40'
-                          : isPopular
-                            ? 'bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-400 hover:to-cyan-300 text-zinc-950 shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40'
-                            : 'bg-white/[0.04] hover:bg-white/[0.08] text-white border border-white/[0.08] hover:border-cyan-500/30'
-                      }`}
-                    >
-                      Crear cuenta y comprar
-                    </TrackedSignupLink>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <p className="text-center text-xs text-zinc-500 mt-8">
-            Pago único con MercadoPago en pesos uruguayos. Los envíos se acreditan al instante.
-          </p>
-        </div>
-      </section>
-
-      {/* Referrals */}
-      <section id="referidos" className="py-16 md:py-20 px-6">
-        <div className="max-w-6xl mx-auto">
-          <div className="relative overflow-hidden rounded-3xl">
-            <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-transparent to-emerald-500/10" />
-            <div className="absolute -top-24 -left-24 w-96 h-96 bg-cyan-500/20 rounded-full blur-3xl" />
-            <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-emerald-500/20 rounded-full blur-3xl" />
-            <div className="relative bg-zinc-950/70 backdrop-blur-xl border border-white/[0.06] rounded-3xl p-8 md:p-12">
-              <div className="text-center mb-12">
-                <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-widest mb-3">
-                  <Gift className="w-3.5 h-3.5" />
-                  Programa de referidos
-                </div>
-                <h2 className="text-3xl md:text-5xl font-bold text-white tracking-tight mb-4">
-                  Compartí y{' '}
-                  <span className="bg-gradient-to-r from-cyan-300 to-emerald-300 bg-clip-text text-transparent">
-                    ganá envíos gratis
-                  </span>
-                </h2>
-                <p className="text-zinc-400 text-base md:text-lg max-w-2xl mx-auto">
-                  Por cada amigo que se registre con tu link recibís el{' '}
-                  <span className="text-emerald-300 font-semibold">20%</span> de todo lo que compre
-                  — para siempre.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
-                {[
-                  {
-                    num: 1,
-                    icon: <Send className="w-5 h-5" />,
-                    title: 'Compartí tu link',
-                    desc: 'Mandalo por WhatsApp a otros emprendedores con Shopify.',
-                  },
-                  {
-                    num: 2,
-                    icon: <ShoppingCart className="w-5 h-5" />,
-                    title: 'Tu referido compra',
-                    desc: 'Arranca con 10 envíos gratis y compra packs cuando los necesite.',
-                  },
-                  {
-                    num: 3,
-                    icon: <Plus className="w-5 h-5" />,
-                    title: 'Vos ganás 20%',
-                    desc: 'Cada pack que compre te suma envíos gratis — para siempre.',
-                  },
-                ].map((s) => (
-                  <div
-                    key={s.num}
-                    className="bg-zinc-900/50 border border-white/[0.06] rounded-2xl p-5 backdrop-blur-sm"
-                  >
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-cyan-500/20 to-cyan-500/5 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
-                        {s.icon}
-                      </div>
-                      <span className="text-3xl font-bold text-cyan-300 opacity-30">
-                        0{s.num}
-                      </span>
-                    </div>
-                    <h3 className="text-sm font-semibold text-white mb-1">{s.title}</h3>
-                    <p className="text-xs text-zinc-400 leading-relaxed">{s.desc}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Concrete example for psychological anchor */}
-              <div className="bg-zinc-900/50 border border-emerald-500/20 rounded-2xl p-6 max-w-2xl mx-auto">
-                <div className="flex items-center gap-2 text-xs text-emerald-300 font-medium uppercase tracking-wider mb-2">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Ejemplo
-                </div>
-                <p className="text-zinc-300 text-sm md:text-base leading-relaxed">
-                  Si <span className="font-semibold text-white">5 referidos</span> compran el pack
-                  de 250 envíos, vos ganás{' '}
-                  <span className="font-semibold text-emerald-300">250 envíos gratis</span>. Eso
-                  son <span className="text-emerald-300 font-semibold">$3.000 UYU</span> en envíos
-                  para tu tienda.
-                </p>
-              </div>
-
-              <div className="text-center mt-10">
-                <TrackedSignupLink
-                  href="/signup"
-                  ctaLocation="referrals"
-                  className="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40 hover:-translate-y-0.5"
-                >
-                  Crear cuenta y obtener tu link
-                  <ArrowRight className="w-4 h-4" />
-                </TrackedSignupLink>
-              </div>
+          <div className="bg-zinc-900/40 border border-white/[0.06] rounded-2xl backdrop-blur-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/[0.06] bg-white/[0.02]">
+                    <th className="text-left py-4 px-6 font-medium text-zinc-400 text-xs uppercase tracking-wider">
+                      Variable
+                    </th>
+                    <th className="text-center py-4 px-6 font-medium text-zinc-500 text-xs uppercase tracking-wider">
+                      Operación manual
+                    </th>
+                    <th className="text-center py-4 px-6 font-medium text-cyan-400 text-xs uppercase tracking-wider">
+                      Con LabelFlow
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.04]">
+                  {[
+                    ['Tiempo dedicado por mes', '~25 horas', '0 horas'],
+                    ['Errores de tipeo en guías', 'Frecuentes', 'Eliminados'],
+                    ['Tiempo del pedido al cliente avisado', '4 a 24 horas', 'Menos de 60 segundos'],
+                    ['Operación fuera de horario', 'Imposible', '24/7 automática'],
+                    ['Trazabilidad de cada envío', 'Manual', 'Auditoría completa'],
+                    ['Escalabilidad a más volumen', 'Limitada al equipo', 'Sin techo técnico'],
+                  ].map(([variable, manual, plat]) => (
+                    <tr key={variable} className="hover:bg-white/[0.02] transition-colors">
+                      <td className="py-3.5 px-6 text-zinc-300 font-medium">{variable}</td>
+                      <td className="py-3.5 px-6 text-center text-zinc-500">{manual}</td>
+                      <td className="py-3.5 px-6 text-center text-cyan-300 font-medium">
+                        {plat}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
       </section>
 
       {/* FAQ */}
-      <section id="faq" className="py-16 md:py-20 px-6">
+      <section id="faq" className="py-16 md:py-24 px-6">
         <div className="max-w-3xl mx-auto">
           <div className="text-center mb-12">
-            <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-widest mb-3">
-              <MessageSquare className="w-3.5 h-3.5" />
+            <div className="inline-flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-[0.18em] mb-3">
+              <Truck className="w-3.5 h-3.5" />
               Preguntas frecuentes
             </div>
             <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
-              Lo que todos preguntan
+              Lo que preguntan los equipos serios
             </h2>
           </div>
+
           <div className="space-y-3">
             {[
               {
-                q: '¿Necesito tarjeta de crédito para empezar?',
-                a: 'No. Te registrás y arrancás con 10 envíos gratis. Cuando los uses, comprás un pack con MercadoPago.',
+                q: '¿Qué incluye exactamente la implementación?',
+                a: 'Diagnóstico inicial, conexión técnica de Shopify + DAC + MercadoPago, configuración de webhooks y dominios, creación de tu cuenta en el dashboard, pruebas supervisadas con pedidos reales y handoff documentado. El servicio incluye operación continua del sistema una vez activado.',
               },
               {
-                q: '¿Cómo funciona el pago?',
-                a: 'Comprás packs de envíos en pesos uruguayos con MercadoPago. Pagás una sola vez y los envíos quedan en tu cuenta sin caducar.',
+                q: '¿En cuánto tiempo está operativo?',
+                a: 'Entre 5 y 10 días hábiles desde la firma. El tiempo depende de la complejidad de tu catálogo, los acuerdos comerciales con DAC y la coordinación de pruebas con tu equipo.',
               },
               {
-                q: '¿Tienen suscripción mensual?',
-                a: 'No. Solo pagás cuando comprás un pack. No hay cargos automáticos, cuotas ni cobros recurrentes.',
+                q: '¿Qué pasa si DAC actualiza su sitio?',
+                a: 'Nuestro equipo monitorea cambios en la interfaz de DAC y ajusta la plataforma proactivamente. Tu operación no se interrumpe — para vos es transparente.',
               },
               {
-                q: '¿Qué pasa si no uso todos los envíos?',
-                a: 'Quedan en tu cuenta. No expiran. Los usás cuando los necesites.',
+                q: '¿Cómo manejan picos de tráfico?',
+                a: 'El worker procesa pedidos en paralelo con control de concurrencia. Picos estacionales (Black Friday, fechas patrias) se absorben sin intervención manual ni degradación del servicio.',
               },
               {
-                q: '¿Cómo se acreditan los envíos del programa de referidos?',
-                a: 'Por cada compra que haga tu referido, automáticamente se te suma el 20% en envíos gratis. Sin tope, para siempre.',
+                q: '¿Mantienen confidencialidad sobre los datos de mi tienda?',
+                a: 'Sí. Firmamos NDA antes de la implementación. Tus datos viven aislados, las credenciales se cifran y nunca se comparten con terceros. Cumplimos con la Ley 18.331 de Uruguay.',
               },
               {
-                q: '¿Necesito conocimientos técnicos?',
-                a: 'No. Conectás tu Shopify y tu cuenta DAC en menos de 60 segundos. Sin código, sin instalaciones.',
+                q: '¿Puedo ver el dashboard antes de contratar?',
+                a: 'Sí. En la llamada inicial te mostramos el dashboard en vivo con datos de prueba y te explicamos cada métrica. Es parte del proceso de evaluación.',
               },
               {
-                q: '¿Cómo genera etiquetas si DAC no tiene API pública?',
-                a: 'Usamos automatización web supervisada que se comporta como un operario humano. Si DAC actualiza su sitio, nosotros actualizamos los selectores y todo sigue funcionando.',
+                q: '¿Qué pasa si DAC rechaza una dirección?',
+                a: 'La plataforma reintenta con correcciones automáticas (normalización, autocompletado, sugerencias por IA). Si persiste, queda marcada para revisión manual y se notifica al equipo. Tu cliente nunca recibe una guía rota.',
               },
               {
-                q: '¿Mis clientes reciben aviso?',
-                a: 'Sí. Cada cliente recibe un email con el número de guía DAC y el link de seguimiento al instante.',
+                q: '¿Ofrecen SLAs?',
+                a: 'Sí, los definimos en el contrato según el volumen y la criticidad de tu operación. Cubren tiempo de respuesta a incidencias y disponibilidad de la plataforma.',
               },
             ].map((faq, i) => (
               <details
@@ -631,7 +580,9 @@ export default function LandingPage() {
               >
                 <summary className="cursor-pointer list-none flex items-center justify-between gap-4 p-5">
                   <h3 className="text-sm md:text-base font-semibold text-white">{faq.q}</h3>
-                  <Plus className="w-4 h-4 text-zinc-400 flex-shrink-0 group-open:rotate-45 transition-transform" />
+                  <span className="text-zinc-400 group-open:rotate-45 transition-transform text-xl leading-none">
+                    +
+                  </span>
                 </summary>
                 <p className="text-sm text-zinc-400 leading-relaxed px-5 pb-5">{faq.a}</p>
               </details>
@@ -640,34 +591,34 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Final CTA */}
-      <section className="py-16 md:py-20 px-6">
+      {/* CTA final */}
+      <section className="py-16 md:py-24 px-6">
         <div className="max-w-4xl mx-auto">
           <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-cyan-500/[0.15] via-zinc-900 to-emerald-500/[0.10] border border-cyan-500/20 p-10 md:p-16 text-center">
             <div className="absolute -top-32 -left-32 w-96 h-96 bg-cyan-500/20 rounded-full blur-3xl pointer-events-none" />
             <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-emerald-500/15 rounded-full blur-3xl pointer-events-none" />
             <div className="relative">
               <h2 className="text-3xl md:text-5xl font-bold text-white tracking-tight mb-4">
-                Tu primer envío automático,
-                <br />
-                <span className="bg-gradient-to-r from-cyan-300 to-emerald-300 bg-clip-text text-transparent">
-                  gratis.
-                </span>
+                Hablemos de tu operación.
               </h2>
-              <p className="text-zinc-400 text-base md:text-lg max-w-xl mx-auto mb-8">
-                Creá tu cuenta, conectá Shopify y mirá cómo se procesa solo tu próximo pedido.
+              <p className="text-zinc-400 text-base md:text-lg max-w-xl mx-auto mb-8 leading-relaxed">
+                30 minutos. Te mostramos la plataforma con datos reales, evaluamos tu caso
+                y definimos si tiene sentido avanzar.
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-                <TrackedSignupLink
-                  href="/signup"
-                  ctaLocation="final_cta"
-                  className="group inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-xl shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:-translate-y-0.5"
+                <a
+                  href={WHATSAPP_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-8 py-4 rounded-xl text-sm font-semibold transition-all shadow-xl shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:-translate-y-0.5"
                 >
-                  Empezar con 10 envíos gratis
+                  Coordinar llamada por WhatsApp
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-                </TrackedSignupLink>
+                </a>
               </div>
-              <p className="text-xs text-zinc-500 mt-5">Sin tarjeta. Sin compromisos.</p>
+              <p className="text-xs text-zinc-500 mt-6">
+                Atención directa con el equipo técnico · respuesta en horario hábil.
+              </p>
             </div>
           </div>
         </div>
@@ -681,8 +632,8 @@ export default function LandingPage() {
               <Zap className="w-3.5 h-3.5 text-white" />
             </div>
             <p className="text-zinc-500 text-sm">
-              Label<span className="text-cyan-400 font-semibold">Flow</span> &mdash; Automatización
-              de envíos en Uruguay
+              Label<span className="text-cyan-400 font-semibold">Flow</span> &mdash;
+              Plataforma de logística para e-commerce
             </p>
           </div>
           <div className="flex items-center gap-6">
@@ -698,20 +649,15 @@ export default function LandingPage() {
             >
               Privacidad
             </Link>
+            <Link
+              href="/login"
+              className="text-zinc-600 hover:text-zinc-300 text-sm transition-colors"
+            >
+              Portal de clientes
+            </Link>
           </div>
         </div>
       </footer>
     </div>
-  );
-}
-
-function FeatureLi({ children }: { children: React.ReactNode }) {
-  return (
-    <li className="flex items-start gap-2 text-xs text-zinc-400">
-      <div className="mt-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
-        <Check className="w-2.5 h-2.5 text-emerald-400" strokeWidth={3} />
-      </div>
-      {children}
-    </li>
   );
 }
