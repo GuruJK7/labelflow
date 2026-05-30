@@ -42,14 +42,18 @@ export function Counter({
     decimals ?? (Number.isInteger(value) ? 0 : (value.toString().split('.')[1]?.length ?? 1));
 
   useEffect(() => {
-    setDisplay(0);
-
     const el = ref.current;
     if (!el) return;
 
     const run = () => {
       if (startedRef.current) return;
       startedRef.current = true;
+
+      // Reset to 0 RIGHT BEFORE the animation starts (not on mount). This
+      // keeps the SSR-rendered final value visible until the counter is
+      // actually about to animate — avoids a flicker where above-the-fold
+      // counters showed "99,5" → "0" → animate while hydrating.
+      setDisplay(0);
 
       const start = performance.now();
       const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
