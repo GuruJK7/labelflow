@@ -44,8 +44,11 @@ export async function downloadLabel(
     const labelUrl = `https://www.dac.com.uy/envios/getPegote?CodigoRastreo=${guia}`;
 
     // We need an authenticated session — ensure we're logged in first,
-    // then grab cookies from the browser context
-    await page.goto(DAC_URLS.HISTORY, { waitUntil: 'networkidle' });
+    // then grab cookies from the browser context. domcontentloaded is enough
+    // here: we only need the session cookies (set on the navigation response),
+    // not the historial table. DAC's historial keeps XHR open, so `networkidle`
+    // can hang the full navigation timeout for no benefit.
+    await page.goto(DAC_URLS.HISTORY, { waitUntil: 'domcontentloaded' });
     const cookies = await page.context().cookies();
     const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
 

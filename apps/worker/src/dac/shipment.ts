@@ -3491,10 +3491,11 @@ async function loadMoreHistorialRows(page: Page): Promise<boolean> {
  * second orphan guía, third, etc. ("guía pile-up").
  *
  * The new path:
- *   1. Navigate with `networkidle` (waits for fetch/XHR to settle, not
- *      just initial HTML)
- *   2. Wait an additional 6 s for DAC's server-rendered shipments table
- *      to finish populating
+ *   1. Navigate with `domcontentloaded`, then poll the DOM for the
+ *      server-rendered shipments table. (`networkidle` is unreliable on
+ *      DAC — its historial keeps XHR/polling open so the network never
+ *      settles, making `goto` time out even when the table already rendered.)
+ *   2. Wait (bounded, 20 s) for at least one guía-shaped row to appear
  *   3. Retry the scrape up to 3 times (5 s, 10 s, 15 s backoff) — if
  *      historial was still incomplete on attempt 1, attempt 2 usually
  *      catches it
@@ -3553,13 +3554,34 @@ export async function findRecentGuiaForRecipient(
     }
 
     try {
-      // networkidle waits for fetch/XHR (used by DAC's historial table).
-      // 30 s budget — DAC's historial is sometimes slow under load.
-      await page.goto(DAC_URLS.HISTORY, { waitUntil: 'networkidle', timeout: 30_000 });
-      // Extra grace period on top of networkidle for any server-rendered
-      // delayed content (DAC's historial table has been observed empty
-      // for ~5 s after networkidle fires).
-      await page.waitForTimeout(6_000);
+      // 2026-06-02 — networkidle replaced with domcontentloaded + explicit
+      // row wait. DAC's historial holds long-lived XHR/polling open, so
+      // `networkidle` frequently never fires and `goto` burns the full 30 s
+      // budget then throws (observed in prod: orders #1314 / #1315, attempt-1
+      // "page.goto: Timeout 30000ms exceeded" while DAC was slow). With
+      // domcontentloaded the navigation commits as soon as the HTML parses;
+      // we then poll the DOM for the table the scraper relies on, instead of
+      // waiting on a network that never goes idle.
+      await page.goto(DAC_URLS.HISTORY, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      // Wait (bounded) for at least one guía-shaped row to render. DAC fills
+      // the historial table via a fetch after the initial HTML, so we wait on
+      // the exact DOM signal scrapeHistorialRows() depends on. If it never
+      // appears (empty historial, or still loading) we fall through — the
+      // scrape below reports 0 rows and the attempt loop retries with backoff.
+      try {
+        await page.waitForFunction(
+          () =>
+            Array.from(document.querySelectorAll('tr')).some((tr) =>
+              /\b88\d{10,}\b/.test((tr as HTMLElement).innerText || ''),
+            ),
+          undefined,
+          { timeout: 20_000 },
+        );
+      } catch {
+        // Table still empty after 20 s — non-fatal; let the scrape/retry handle it.
+      }
+      // Small settle for any remaining rows still painting.
+      await page.waitForTimeout(1_500);
     } catch (navErr) {
       slog.warn(
         DAC_STEPS.SUBMIT_EXTRACT_GUIA,
