@@ -5,6 +5,7 @@ import { decryptIfPresent, decryptOrRaw } from '../encryption';
 import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify/client';
 import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify/orders';
+import { resolveOrderPhone } from '../shopify/phone';
 import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify/fulfillment';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
@@ -725,7 +726,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
               shopifyOrderName: order.name,
               customerName,
               customerEmail: order.email,
-              customerPhone: addr.phone,
+              customerPhone: resolveOrderPhone(order) ?? addr.phone,
               deliveryAddress: remMergedAddr,
               city: remSafeCity,
               department: remSafeDept,
@@ -839,7 +840,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             shopifyOrderName: order.name,
             customerName,
             customerEmail: order.email,
-            customerPhone: addr.phone,
+            customerPhone: resolveOrderPhone(order) ?? addr.phone,
             deliveryAddress: mergedAddr,
             city: safeCity,
             department: resolvedDept,

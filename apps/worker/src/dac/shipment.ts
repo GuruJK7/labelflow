@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Page } from 'playwright';
 import { Prisma } from '@prisma/client';
 import { ShopifyOrder } from '../shopify/types';
+import { resolveOrderPhone } from '../shopify/phone';
 import { DacShipmentResult } from './types';
 import { DAC_SELECTORS, DAC_URLS } from './selectors';
 import { ensureLoggedIn } from './auth';
@@ -1512,6 +1513,21 @@ export async function createShipment(
     throw new Error(`Order ${order.name} has no shipping address`);
   }
 
+  // ── CONTACT PHONE ENRICHMENT (audit 2026-05-12) ──
+  //
+  // The DAC label historically read ONLY addr.phone (shipping_address.phone).
+  // Shopify scatters the customer's phone across up to five fields; orders
+  // whose phone lived elsewhere reached DAC with cleanPhone()'s 099000000
+  // placeholder, so the courier had no number to call. resolveOrderPhone()
+  // walks every Shopify phone location (shipping → billing → customer →
+  // order → saved address) and returns the first usable number. We fall back
+  // to addr.phone so behaviour is identical when shipping_address.phone is
+  // the one that's populated. Used everywhere a customer-contact phone is
+  // needed below: the DAC TelD field, the "Tel cliente" observation line, the
+  // no-number operator note, and the AI feasibility/resolver inputs.
+  const contactPhone: string | undefined =
+    resolveOrderPhone(order) ?? addr.phone ?? undefined;
+
   // ── ADDRESS-QUALITY PREPROCESSING (audit 2026-05-06) ──
   //
   // Customer-typed Shopify addresses sometimes have structural issues
@@ -1604,7 +1620,7 @@ export async function createShipment(
           orderName: order.name,
           customerName: recipientName,
           customerEmail: order.email ?? undefined,
-          customerPhone: addr.phone ?? undefined,
+          customerPhone: contactPhone,
           orderNotes: order.note ?? undefined,
           city: addr.city ?? undefined,
           address1: addr.address1,
@@ -1649,7 +1665,7 @@ export async function createShipment(
           // looking up the order. Also include the customer name for
           // operator clarity. Falls back to a generic message when phone
           // is missing (rare but possible).
-          const phoneForNote = (addr.phone ?? '').trim();
+          const phoneForNote = (contactPhone ?? '').trim();
           const recipientForNote = `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim();
           noNumberOperatorNote = phoneForNote
             ? `FALTA DATO EN DIRECCION — CONTACTAR AL CLIENTE ${recipientForNote || ''} TEL ${phoneForNote} PARA CONFIRMAR DATOS COMPLETOS`.replace(/\s+/g, ' ').trim()
@@ -1995,7 +2011,7 @@ export async function createShipment(
 
   const fullName = addressOverride?.recipientName
     ?? (`${rawFirstName} ${effectiveLastName}`.trim() || 'Cliente');
-  const phone = addressOverride?.phone ?? cleanPhone(addr.phone);
+  const phone = addressOverride?.phone ?? cleanPhone(contactPhone);
 
   // BUG FIX 5 (NAME CROSS-ASSIGNMENT): Clear ALL recipient fields BEFORE filling
   // This prevents stale data from previous order leaking into current one
@@ -2117,7 +2133,7 @@ export async function createShipment(
         // let the AI look up prior successful shipments and use phone/landline
         // prefixes + country defense as additional disambiguation signals.
         customerEmail: order.email ?? '',
-        customerPhone: addr.phone ?? '',
+        customerPhone: contactPhone ?? '',
         customerFirstName: addr.first_name ?? '',
         customerLastName: addr.last_name ?? '',
         country: addr.country ?? '',
@@ -2634,7 +2650,7 @@ export async function createShipment(
   // output formats — kept as a separate exported helper so the regression
   // tests can pin them down without standing up the full createShipment flow.
   const customerContactLine = buildCustomerContactLine({
-    phone: addr.phone,
+    phone: contactPhone,
     firstName: addr.first_name,
     lastName: addr.last_name,
     suppressBecauseNoNumberNote: !!noNumberOperatorNote,
@@ -3048,7 +3064,7 @@ export async function createShipment(
             orderName: order.name,
             customerName: fullName,
             customerEmail: order.email ?? undefined,
-            customerPhone: addr.phone ?? undefined,
+            customerPhone: contactPhone,
             orderNotes: order.note ?? undefined,
             city: addr.city ?? undefined,
             address1: addr.address1,
