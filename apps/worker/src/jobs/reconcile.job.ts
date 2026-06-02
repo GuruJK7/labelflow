@@ -7,20 +7,36 @@
  * 2. Stale PendingShipment rows (>10 min in PENDING) → marked ORPHANED and the
  *    linked Label is parked as NEEDS_REVIEW so the operator can match against
  *    DAC historial before anything gets retried. (C-4, 2026-04-21 audit.)
- * 3. Stale RUNNING jobs (stuck > 10 min) → marks as FAILED so they don't block the queue
+ * 3. Stale RUNNING jobs (no sign of life) → marks as FAILED so they don't block
+ *    the queue. "No sign of life" = older than STALE_JOB_THRESHOLD_MS AND no
+ *    live DAC lease AND no RunLog within STALE_JOB_NO_PROGRESS_MS. A healthy
+ *    long run (a full order batch can take ~30 min) is never touched.
  *
  * This replaces a human operator who would check on stuck orders and fix them.
  */
 import { db } from '../db';
 import logger from '../logger';
 import { deductCreditsAndStamp } from '../credits';
+import { isJobStillAlive } from './job-liveness';
 
 // Cadence: a typical order finishes in 20–60 s (YELLOW with AI resolver can go
-// up to ~90 s). 10 min is ~10× the worst case, so anything older than that is
-// almost certainly orphaned by an OOM/SIGTERM/crash. Shortened from 30 min so
-// the queue unblocks faster after an incident.
+// up to ~90 s).
 const RECONCILE_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+// Minimum age before a RUNNING job is even *considered* for the stale sweep.
+// This is NOT "fail at 10 min" — see STALE_JOB_NO_PROGRESS_MS and
+// isJobStillAlive(). A full PROCESS_ORDERS cycle ships up to maxOrdersPerRun
+// orders serially through DAC's slow form (20 × ~90 s ≈ 30 min), so absolute
+// age alone is a terrible "is it stuck?" signal — it used to mislabel healthy
+// long runs as FAILED, corrupting dashboard stats and draining credits early
+// (2026-06-02 audit). Past this floor we additionally require no sign of life.
 const STALE_JOB_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+// A live worker writes a RunLog every few seconds and refreshes its DAC lease
+// every 2 min. If a RUNNING job has gone silent on BOTH for this long, the
+// worker really did die (OOM/SIGTERM/kill -9) and the row must be reconciled.
+// 8 min sits comfortably above the longest quiet stretch of a healthy run (DAC
+// login + orphan-reconcile historial scan) while still recovering real crashes
+// within a couple of reconcile passes.
+const STALE_JOB_NO_PROGRESS_MS = 8 * 60 * 1000; // 8 minutes
 // C-4: PendingShipment rows still in PENDING this long after the Finalizar
 // click are almost certainly orphaned — either the worker crashed between
 // click and extraction, or the extraction bailed on a form rejection path
@@ -57,6 +73,57 @@ const RETRYABLE_ERRORS = [
 function isRetryableError(errorMessage: string | null): boolean {
   if (!errorMessage) return false;
   return RETRYABLE_ERRORS.some(pattern => errorMessage.includes(pattern));
+}
+
+/**
+ * DB-backed liveness probe for the stale-job sweep. Gathers the two signals
+ * isJobStillAlive() needs:
+ *   1. the DAC processing lease for this tenant (if it still points at this
+ *      job and hasn't expired, the worker is actively heartbeating it), and
+ *   2. the timestamp of the job's most recent RunLog.
+ *
+ * Biases to "alive" (returns true) if the probe itself errors — we would much
+ * rather re-check a possibly-dead job on the next pass than wrongly FAIL a
+ * healthy one mid-run.
+ */
+async function jobShowsRecentProgress(job: {
+  id: string;
+  tenantId: string;
+}): Promise<boolean> {
+  try {
+    const now = Date.now();
+
+    const lease = await db.dacProcessingLease.findUnique({
+      where: { tenantId: job.tenantId },
+      select: { jobId: true, expiresAt: true },
+    });
+    const leaseExpiresAt =
+      lease && lease.jobId === job.id ? lease.expiresAt.getTime() : null;
+
+    const lastLog = await db.runLog.findFirst({
+      where: { tenantId: job.tenantId, jobId: job.id },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
+    });
+    const lastRunLogAt = lastLog ? lastLog.createdAt.getTime() : null;
+
+    return isJobStillAlive({
+      now,
+      leaseExpiresAt,
+      lastRunLogAt,
+      noProgressMs: STALE_JOB_NO_PROGRESS_MS,
+    });
+  } catch (probeErr) {
+    logger.warn(
+      {
+        jobId: job.id,
+        tenantId: job.tenantId,
+        error: (probeErr as Error).message,
+      },
+      '[Reconcile] Liveness probe failed — assuming job alive, will re-check next pass',
+    );
+    return true;
+  }
 }
 
 export async function runReconciliation(): Promise<void> {
@@ -234,14 +301,28 @@ export async function runReconciliation(): Promise<void> {
       },
     });
 
+    let reconciledStale = 0;
     for (const job of staleJobs) {
+      // 2026-06-02 audit: do NOT fail a job purely because it has been RUNNING
+      // a while. A real order batch legitimately runs ~30 min. Only reconcile a
+      // job that ALSO shows no sign of life (no live DAC lease AND no recent
+      // RunLog) — otherwise we corrupt the dashboard and drain credits while
+      // the worker is still actively shipping.
+      if (await jobShowsRecentProgress(job)) {
+        logger.info(
+          { jobId: job.id, tenantId: job.tenantId },
+          '[Reconcile] RUNNING job past age floor but still progressing (live lease / recent logs) — leaving alone',
+        );
+        continue;
+      }
+
       try {
         await db.job.update({
           where: { id: job.id },
           data: {
             status: 'FAILED',
             errorMessage:
-              'Auto-reconciled: job was stuck in RUNNING for >10 minutes',
+              'Auto-reconciled: job had no sign of life (no live DAC lease, no recent logs) for >10 min',
             finishedAt: new Date(),
           },
         });
@@ -267,6 +348,7 @@ export async function runReconciliation(): Promise<void> {
         }
 
         fixed += 1;
+        reconciledStale += 1;
       } catch (failErr) {
         logger.error(
           { jobId: job.id, error: (failErr as Error).message },
@@ -277,8 +359,12 @@ export async function runReconciliation(): Promise<void> {
 
     if (staleJobs.length > 0) {
       logger.warn(
-        { count: staleJobs.length },
-        '[Reconcile] Fixed stale RUNNING jobs',
+        {
+          considered: staleJobs.length,
+          reconciled: reconciledStale,
+          stillAlive: staleJobs.length - reconciledStale,
+        },
+        '[Reconcile] Stale RUNNING job sweep complete',
       );
     }
 
