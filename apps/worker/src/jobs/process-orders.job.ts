@@ -1183,6 +1183,16 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           province: addr.province,
           resolvedDepartment: resolvedDeptRawErr,
         });
+        // BLANK-PHONE FIX (audit 2026-06-02): the failure-path upsert used to
+        // omit customerPhone entirely, so every DAC-rejected / NEEDS_REVIEW
+        // order showed "sin número de teléfono" in the dashboard even when the
+        // buyer DID leave a number. That defeats the whole "que el cadete se
+        // comunique con el cliente" directive — the operator/courier needs that
+        // number precisely for the hard addresses that land here. Resolve it the
+        // same way the success path does (walks shipping→billing→customer→order→
+        // saved). Coerce '' to undefined so a Prisma UPDATE never clobbers an
+        // already-stored number with a blank.
+        const failCustomerPhone = resolveOrderPhone(order) ?? (addr.phone || undefined);
         await db.label.upsert({
           where: {
             tenantId_shopifyOrderId: { tenantId, shopifyOrderId: String(order.id) },
@@ -1193,6 +1203,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             shopifyOrderName: order.name,
             customerName,
             customerEmail: order.email,
+            customerPhone: failCustomerPhone,
             deliveryAddress: mergedAddrErr,
             city: safeCityErr,
             department: resolvedDeptErr,
@@ -1203,6 +1214,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           },
           update: {
             jobId,
+            customerPhone: failCustomerPhone,
             status: labelTargetStatus,
             errorMessage: labelErrorMsg,
           },

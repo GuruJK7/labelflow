@@ -59,6 +59,16 @@ export const DAC_SELECTORS = {
   RECIPIENT_DEPARTMENT: 'select[name="K_Estado"]',
   RECIPIENT_CITY: 'select[name="K_Ciudad"]',
   RECIPIENT_BARRIO: 'select[name="K_Barrio"]',
+  /**
+   * Destination AGENCY picker ("Agencia *", REQUIRED) — only relevant when
+   * TipoEntrega=Agencia (pickup at branch). AJAX-populated per K_Estado.
+   * Confirmed via live read-only DOM probe (2026-06-02): e.g. for Montevideo it
+   * lists "Tres Cruces", "Agencia Pocitos", … ; for San José "Ciudad Del Plata".
+   * The worker historically left this empty, so EVERY agency pickup passed the
+   * cart-add but was silently rejected at Finalizar. Option text is
+   * "<Agency Name> (<street address>)" — match on the name before the paren.
+   */
+  RECIPIENT_AGENCY_OFFICE: 'select[name="Oficina"]',
 
   // ========== STEP 4: QUANTITY ==========
   PACKAGE_QUANTITY: 'input[name="Cantidad"]',

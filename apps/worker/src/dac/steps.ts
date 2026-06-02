@@ -47,6 +47,7 @@ export const DAC_STEPS = {
   STEP3_WAIT_CITIES: 'step3:wait-cities-load',
   STEP3_SELECT_CITY: 'step3:select-city',
   STEP3_SELECT_BARRIO: 'step3:select-barrio',
+  STEP3_SELECT_AGENCY: 'step3:select-agency',
   STEP3_SIGUIENTE: 'step3:siguiente-click',
   STEP3_OK: 'step3:ok',
 

@@ -12,7 +12,7 @@ import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
 import { db } from '../db';
 import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT, isAmbiguousCityName, isValidUruguayProvince, correctCityWhenEqualsDepartment, fuzzyMatchCity, splitHyphenatedCityName } from './uruguay-geo';
-import { preprocessShopifyAddress } from './address-cleanup';
+import { preprocessShopifyAddress, isAddressIncomplete } from './address-cleanup';
 import { assessAddressFeasibility } from './ai-feasibility';
 import { validateAddressConsistency } from './ai-address-validator';
 import { inferLastNameFromEmail } from './recipient-name-inference';
@@ -1490,6 +1490,254 @@ export function isPickupAtDacBranch(
   );
 }
 
+/**
+ * AGENCY PICKUP — destination-office resolution (audit 2026-06-02).
+ *
+ * When TipoEntrega=Agencia (the customer collects at a DAC branch), DAC's
+ * new-shipment form shows a REQUIRED <select name="Oficina"> labelled
+ * "Agencia *", AJAX-populated per department (K_Estado). Option text is
+ * "<Agency Name> (<street address>)" — e.g. Montevideo lists
+ * "Tres Cruces ( )", San José lists "Ciudad Del Plata (Pamplona 3603)".
+ *
+ * The worker historically NEVER touched this field, so every agency pickup
+ * passed the cart-add (step 4 "item added") but was SILENTLY rejected at
+ * Finalizar (URL stays /envios/nuevo, empty error box). Confirmed via live
+ * read-only DOM probe on 2026-06-02. This was the root cause of parked orders
+ * #5404 ("DAC Tres Cruces") and #5399 ("DAC Ciudad del Plata").
+ *
+ * extractAgencyPlace pulls the human-written branch name out of the pickup
+ * text, stripping the "retiro/agencia/sucursal/DAC" boilerplate so only the
+ * place survives ("DAC Tres Cruces" -> "tres cruces"). Exported for unit tests.
+ */
+export function extractAgencyPlace(
+  address1: string | null | undefined,
+  address2: string | null | undefined,
+  orderNote: string | null | undefined,
+): string {
+  const strip = (raw: string): string =>
+    raw
+      // pickup verbs
+      .replace(/\b(retiro|retira|retirar|retiran|retiren|retiramos|pickup)\b/gi, ' ')
+      // place-type nouns
+      .replace(/\b(sucursal|agencia|oficina|local|terminal)\b/gi, ' ')
+      // pickup-context filler that is not part of a place name
+      .replace(/\b(paso|pasa|pasar|buscar|favor|gracias)\b/gi, ' ')
+      // brand
+      .replace(/\bdac\b/gi, ' ')
+      // drop parens / punctuation so only letters, numbers and spaces remain
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  for (const raw of [address1, address2, orderNote]) {
+    const s = (raw ?? '').trim();
+    if (!s) continue;
+    const cleaned = strip(s);
+    // require at least one 3+ letter word so we never return stray digits
+    if (/[\p{L}]{3,}/u.test(cleaned)) return cleaned;
+  }
+  return '';
+}
+
+export interface AgencyOption {
+  value: string;
+  text: string;
+}
+
+/**
+ * Deterministically match a human-written branch name against DAC's live
+ * Oficina options. Token-overlap scoring with a HARD ambiguity guard: returns
+ * a match ONLY when one option clearly wins (score >= 2 and no tie). When
+ * nothing wins confidently it returns null, and the caller leaves Oficina empty
+ * (exactly the prior behaviour) rather than misroute the parcel — a human would
+ * not guess. Exported for unit tests. Option.text is the full DAC label
+ * "<Name> (<address>)"; we match only on the name part before the first "(".
+ */
+export function matchAgencyOffice(
+  placeText: string,
+  options: AgencyOption[],
+): AgencyOption | null {
+  const STOP = new Set([
+    'de', 'del', 'la', 'el', 'los', 'las', 'un', 'una', 'y', 'e', 'o',
+    'en', 'por', 'para', 'a', 'al', 'con',
+    'agencia', 'sucursal', 'oficina', 'local', 'retiro', 'retira', 'retirar',
+    'dac', 'pickup',
+  ]);
+  const norm = (s: string): string =>
+    s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const tokenize = (s: string): string[] =>
+    norm(s)
+      .split(' ')
+      .filter((t) => {
+        if (!t) return false;
+        if (STOP.has(t)) return false;
+        if (/\d/.test(t)) return true; // keep numeric tokens (rare in names)
+        return t.length >= 3;
+      });
+
+  const placeTokens = tokenize(placeText);
+  if (placeTokens.length === 0) return null;
+  const pSet = new Set(placeTokens);
+  const pJoin = placeTokens.join(' ');
+
+  let best: AgencyOption | null = null;
+  let bestScore = 0;
+  let bestTokenCount = Infinity;
+  let tied = false;
+
+  for (const opt of options) {
+    // Match only on the agency NAME (text before the first "(" address paren)
+    const namePart = (opt.text || '').split('(')[0];
+    const aTokens = tokenize(namePart);
+    if (aTokens.length === 0) continue;
+    const aSet = new Set(aTokens);
+    const shared = aTokens.filter((t) => pSet.has(t)).length;
+    let score = shared;
+    const aJoin = aTokens.join(' ');
+    if (aJoin === pJoin) {
+      score += 5; // exact name equality (after stopword/diacritic normalize)
+    } else if (aTokens.every((t) => pSet.has(t)) || placeTokens.every((t) => aSet.has(t))) {
+      score += 2; // one is a subset of the other
+    }
+    if (score > bestScore || (score === bestScore && aTokens.length < bestTokenCount)) {
+      best = opt;
+      bestScore = score;
+      bestTokenCount = aTokens.length;
+      tied = false;
+    } else if (
+      score === bestScore &&
+      aTokens.length === bestTokenCount &&
+      best &&
+      opt.value !== best.value
+    ) {
+      tied = true;
+    }
+  }
+
+  return bestScore >= 2 && !tied ? best : null;
+}
+
+/**
+ * AGENCY PICKUP — fill the required Oficina ("Agencia *") select on Step 3.
+ *
+ * Runs only when isRetiroEnAgencia. The department (K_Estado) is already
+ * selected upstream, which AJAX-populates this select. We:
+ *   1. Read the live options (retry up to 6x500ms while AJAX settles).
+ *   2. Resolve the branch from the explicit pickup text, then the city, then
+ *      raw address1 — the first confident match wins.
+ *   3. safeSelect by value, with an evaluate() insurance set + change event
+ *      (Choices.js shadows the native select), then read back to verify.
+ * On no confident match we log and leave Oficina empty (prior behaviour): DAC
+ * will reject and the operator handles it, but we NEVER misroute the parcel.
+ */
+async function selectAgencyOffice(
+  page: Page,
+  addr: NonNullable<ShopifyOrder['shipping_address']>,
+  orderNote: string | null | undefined,
+  slog: StepLogger,
+): Promise<void> {
+  const sel = DAC_SELECTORS.RECIPIENT_AGENCY_OFFICE;
+
+  // 1. Wait for options to populate (AJAX after the K_Estado change upstream).
+  let options: AgencyOption[] = [];
+  for (let attempt = 0; attempt < 6; attempt++) {
+    options = await page
+      .$$eval(`${sel} option`, (opts: any[]) =>
+        opts
+          .map((o: any) => ({
+            value: String(o.value ?? ''),
+            text: (o.textContent ?? '').replace(/\s+/g, ' ').trim(),
+          }))
+          .filter((o) => o.value && o.value !== '' && o.value !== '0'),
+      )
+      .catch(() => [] as AgencyOption[]);
+    if (options.length > 0) break;
+    await page.waitForTimeout(500);
+  }
+
+  if (options.length === 0) {
+    slog.warn(
+      DAC_STEPS.STEP3_SELECT_AGENCY,
+      'Agency (Oficina) select has no options — department may not have populated it; leaving empty (DAC will reject, operator handles)',
+      { selector: sel },
+    );
+    return;
+  }
+
+  // 2. Candidate place texts, highest-confidence source first.
+  const candidates: Array<{ source: string; text: string }> = [];
+  const explicit = extractAgencyPlace(addr.address1, addr.address2, orderNote);
+  if (explicit) candidates.push({ source: 'pickup-text', text: explicit });
+  if (addr.city && addr.city.trim()) candidates.push({ source: 'city', text: addr.city.trim() });
+  if (addr.address1 && addr.address1.trim()) candidates.push({ source: 'address1', text: addr.address1.trim() });
+
+  let chosen: AgencyOption | null = null;
+  let chosenSource = '';
+  for (const cand of candidates) {
+    const m = matchAgencyOffice(cand.text, options);
+    if (m) {
+      chosen = m;
+      chosenSource = cand.source;
+      break;
+    }
+  }
+
+  if (!chosen) {
+    slog.warn(
+      DAC_STEPS.STEP3_SELECT_AGENCY,
+      'No confident agency match — leaving Oficina empty (a human would not guess; DAC bounces to operator)',
+      { tried: candidates.map((c) => c.text), available: options.map((o) => o.text).slice(0, 20) },
+    );
+    return;
+  }
+
+  // 3. Select + insurance + readback verify.
+  const ok = await safeSelect(
+    page,
+    sel,
+    chosen.value,
+    slog,
+    DAC_STEPS.STEP3_SELECT_AGENCY,
+    `Oficina (${chosen.text})`,
+  );
+  await page.waitForTimeout(300);
+  await page
+    .evaluate(
+      (args: { selector: string; value: string }) => {
+        const el = document.querySelector(args.selector) as HTMLSelectElement | null;
+        if (el && el.value !== args.value) {
+          el.value = args.value;
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      },
+      { selector: sel, value: chosen.value },
+    )
+    .catch(() => {});
+  await page.waitForTimeout(200);
+  const confirmed = await page
+    .$eval(sel, (el: any) => String((el as HTMLSelectElement).value ?? ''))
+    .catch(() => '');
+  if (confirmed === chosen.value) {
+    slog.info(
+      DAC_STEPS.STEP3_SELECT_AGENCY,
+      `Agency office selected: "${chosen.text}" (matched via ${chosenSource})`,
+      { value: chosen.value, source: chosenSource },
+    );
+  } else {
+    slog.warn(
+      DAC_STEPS.STEP3_SELECT_AGENCY,
+      `Agency office did not stick (wanted ${chosen.value} "${chosen.text}", got "${confirmed}") — operator may need to confirm`,
+      { wanted: chosen.value, got: confirmed, safeSelectOk: ok },
+    );
+  }
+}
+
 export async function createShipment(
   page: Page,
   order: ShopifyOrder,
@@ -2460,6 +2708,53 @@ export async function createShipment(
     }
   } catch {
     slog.info(DAC_STEPS.STEP3_SELECT_BARRIO, 'Barrio field not available (optional)');
+  }
+
+  // ── FINAL NO-NUMBER GUARD (audit 2026-06-02) ──
+  // Some no-door-number addresses slip past the upstream missingStreetNumber
+  // pre-check. Failure mode (root cause of parked #5380 "Barrio san fernando
+  // calle salsipuede edificio esperanza"): an apartment number ("Apto 02")
+  // lives in the raw address at pre-check time, so isAddressIncomplete sees a
+  // digit and returns false — but mergeAddress later strips the apt into the
+  // observations, leaving DirD with a street name and NO door number. DAC then
+  // SILENTLY rejects at Finalizar (URL stays /envios/nuevo, empty error box).
+  //
+  // We re-check the FINAL DirD string here, after every fullAddress mutation
+  // (merge + override + AI resolver) has settled. If it still has no usable
+  // number — and this is NOT an agency pickup (those need no door number) and
+  // the upstream handler didn't already add the note — append "S/N" and set the
+  // operator-call note so the parcel SHIPS and the courier phones the customer.
+  // This is the same 2026-05-11 ship-with-note directive, enforced at the last
+  // mile so the apt-number false positive can no longer cause a silent reject.
+  if (!isRetiroEnAgencia && !noNumberOperatorNote && isAddressIncomplete(fullAddress)) {
+    if (!/\bs\/n\b|sin\s+n[uú]mero/i.test(fullAddress)) {
+      fullAddress = `${fullAddress.trim()} S/N`;
+      await safeFill(page, 'input[name="DirD"]', fullAddress, slog, DAC_STEPS.STEP3_FILL_ADDRESS, 'DirD (no-number S/N guard)');
+    }
+    const phoneForNote = (contactPhone ?? '').trim();
+    const recipientForNote = `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim();
+    noNumberOperatorNote = phoneForNote
+      ? `FALTA DATO EN DIRECCION — CONTACTAR AL CLIENTE ${recipientForNote || ''} TEL ${phoneForNote} PARA CONFIRMAR DATOS COMPLETOS`.replace(/\s+/g, ' ').trim()
+      : 'FALTA DATO EN DIRECCION — CONTACTAR AL CLIENTE PARA CONFIRMAR DATOS COMPLETOS (sin telefono en la orden)';
+    slog.warn(
+      DAC_STEPS.STEP3_FILL_ADDRESS,
+      'Final DirD still has no door number — appended S/N + operator-call note (last-mile no-number guard, audit 2026-06-02)',
+      { fullAddress, hasPhone: !!phoneForNote, audit: '2026-06-02' },
+    );
+  }
+
+  // ── AGENCY PICKUP — fill the REQUIRED Oficina ("Agencia *") select ──
+  // Only when TipoEntrega=Agencia. The department is already selected above,
+  // which AJAX-populates the Oficina list. Without this, agency pickups passed
+  // the cart-add but were silently rejected at Finalizar (root cause of #5404
+  // "DAC Tres Cruces" and #5399 "DAC Ciudad del Plata"). High-precision match
+  // only — leaves the field empty (prior behaviour) when not confident.
+  if (isRetiroEnAgencia) {
+    try {
+      await selectAgencyOffice(page, addr, order.note, slog);
+    } catch (err) {
+      slog.warn(DAC_STEPS.STEP3_SELECT_AGENCY, `Agency-office selection threw (non-fatal): ${(err as Error).message}`);
+    }
   }
 
   slog.info(DAC_STEPS.STEP3_OK, 'Step 3 recipient data complete', {
