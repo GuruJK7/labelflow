@@ -233,3 +233,35 @@ describe('preprocessShopifyAddress — cross-street incomplete (incidents 2026-0
     expect(r.missingStreetNumber).toBe(true);
   });
 });
+
+describe('preprocessShopifyAddress — balneario "N Metros" avenue + floor description (incident #5388)', () => {
+  it('"Avenida 30 Metros entre E y F" → true ("30" is the avenue name, no door number)', () => {
+    // Production #5388 (Christiam Mateus, Las Toscas). DAC silently rejected
+    // this because there is no real building number — "30" belongs to the
+    // avenue name and "entre E y F" is a cross-street reference.
+    const r = preprocessShopifyAddress('Avenida 30 Metros entre E y F');
+    expect(r.missingStreetNumber).toBe(true);
+  });
+
+  it('"Avenida 30 Metros entre E y F, Cabaña de troncos 2 pisos" → true (full merged form)', () => {
+    // The exact merged address1 the worker built for #5388. Both the "30"
+    // (avenue width) and the "2" (floor count) are stripped, leaving no
+    // digit → flagged incomplete → ship-with-note.
+    const r = preprocessShopifyAddress(
+      'Avenida 30 Metros entre E y F, Cabaña de troncos 2 pisos',
+    );
+    expect(r.missingStreetNumber).toBe(true);
+  });
+
+  it('"Avenida 30 Metros 1234 entre E y F" → false (1234 is a real door number)', () => {
+    // Must NOT false-positive: when a real standalone building number is
+    // present alongside the "N Metros" avenue name, the address is complete.
+    const r = preprocessShopifyAddress('Avenida 30 Metros 1234 entre E y F');
+    expect(r.missingStreetNumber).toBe(false);
+  });
+
+  it('"Calle 18 Metros casi rambla" → true (no door number)', () => {
+    const r = preprocessShopifyAddress('Calle 18 Metros casi rambla');
+    expect(r.missingStreetNumber).toBe(true);
+  });
+});

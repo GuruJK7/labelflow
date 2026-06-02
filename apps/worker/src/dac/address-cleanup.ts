@@ -131,6 +131,9 @@ export function isAddressMissingStreetNumber(
  *   "Batlle Entre 18 De Julio Y Lubkov" → true (only digit is in street name)
  *   "Av 8 de Octubre 1234"           → false  (1234 is a standalone number)
  *   "Av 8 de Octubre"                → true   (8 is part of street name)
+ *   "Avenida 30 Metros entre E y F"  → true   (#5388: "30" names the avenue,
+ *                                              "entre E y F" is a cross-street,
+ *                                              there is no door number)
  *
  * Returns true when isAddressMissingStreetNumber is already true (so
  * callers can use this single function for both cases).
@@ -143,6 +146,18 @@ const STREET_NAME_DIGIT_PATTERNS: RegExp[] = [
   /\b33\s+orientales\b/gi,
   // Standalone "Km <N>" — kilometer markers, not building numbers.
   /\bkm\s*\d+/gi,
+  // "<N> Metros" — balneario avenues named by their width
+  // ("Avenida 30 Metros", "Calle 18 Metros"). The number is part of the
+  // street NAME, not a door number. Production: #5388 "Avenida 30 Metros
+  // entre E y F" (Las Toscas) was silently rejected by DAC because it has
+  // no real building number, yet the bare-digit heuristic saw the "30" and
+  // treated the address as complete — so it never got the ship-with-note
+  // (S/N + operator-call) treatment.
+  /\b\d{1,3}\s+metros\b/gi,
+  // "<N> piso(s)" — floor-count description ("Cabaña de troncos 2 pisos"),
+  // never a door number. Same #5388 incident: the merged address carried a
+  // landmark description whose "2" otherwise survived the strip.
+  /\b\d{1,2}\s+pisos?\b/gi,
 ];
 
 const CROSS_STREET_KEYWORDS = /\b(esquina|entre|casi)\b/i;
