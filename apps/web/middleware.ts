@@ -19,6 +19,11 @@ export async function middleware(request: NextRequest) {
                  // window before signing up).
     '/terminos',
     '/privacidad',
+    '/cliente',                   // 2026-06-02 — tokenized client label portal
+                                  // (/cliente/[token]); access is gated by the
+                                  // token inside the page, not by a session.
+    '/api/public',                // Token-gated public endpoints (client portal
+                                  // PDF download). Auth is the portal token.
     '/api/auth',
     '/api/webhooks',
     '/api/health',                // 2026-05-15 — uptime probe
