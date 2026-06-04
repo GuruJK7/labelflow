@@ -1906,6 +1906,11 @@ export async function createShipment(
   // with no street number per operator directive. Injected into the
   // observations array at the step-4 fill site below.
   let noNumberOperatorNote: string | null = null;
+  // 2026-06-04 — note appended to DAC observations when a Montevideo order's
+  // barrio could not be matched and we applied a central-barrio fallback so the
+  // parcel still ships (bias-to-submit). Set in the barrio-selection block,
+  // injected into the observations array at the step-4 fill site below.
+  let barrioVerifyNote: string | null = null;
 
   if (!addr || !addr.address1) {
     throw new Error(`Order ${order.name} has no shipping address`);
@@ -2811,6 +2816,28 @@ export async function createShipment(
     }
   }
 
+  // MVD bias-to-submit fallback (audit 2026-06-04). For Montevideo, K_Barrio is
+  // REQUIRED — leaving it at "Seleccione..." guarantees a SILENT DAC reject
+  // (empty error box, form otherwise complete: the #1294/#1323 class). When we
+  // could not match the real barrio, select a central barrio that DEFINITELY
+  // exists in DAC's list so the parcel SHIPS, and flag it for operator review.
+  // This is ONLY invoked from the branches that would otherwise leave the barrio
+  // empty, so it can never regress an order that already matched its barrio.
+  const applyMvdBarrioFallback = async (): Promise<boolean> => {
+    if (normalize(resolvedDept) !== 'montevideo') return false;
+    for (const candidate of ['Centro', 'Cordon', 'Ciudad Vieja']) {
+      const v = await findBarrioMatch(page, DAC_SELECTORS.RECIPIENT_BARRIO, candidate);
+      if (v) {
+        await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, v, slog, DAC_STEPS.STEP3_SELECT_BARRIO, `K_Barrio (MVD bias-to-submit: ${candidate})`);
+        barrioVerifyNote = 'VERIFICAR BARRIO MONTEVIDEO - no se pudo determinar automaticamente; asignado por defecto para poder despachar';
+        slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO,
+          `MVD barrio unmatched - applied central-barrio fallback "${candidate}" so the parcel ships (bias-to-submit, audit 2026-06-04)`);
+        return true;
+      }
+    }
+    return false;
+  };
+
   // Barrio selection — use pre-computed intelligent result (ZIP + street + alias)
   const detectedBarrioName = resolvedBarrioHint ?? intelligent.barrio;
   try {
@@ -2833,7 +2860,7 @@ export async function createShipment(
           const partialMatch = barrioOptions.find(b => normalize(b.text).includes(firstWord) && firstWord.length > 4);
           if (partialMatch) {
             await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, partialMatch.value, slog, DAC_STEPS.STEP3_SELECT_BARRIO, `K_Barrio (partial match: ${partialMatch.text})`);
-          } else {
+          } else if (!(await applyMvdBarrioFallback())) {
             // DO NOT pick first option blindly — a human would leave it empty rather than guess wrong
             slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO,
               `Barrio "${detectedBarrioName}" detected but not in dropdown and no partial match — leaving at default (a human would not guess)`,
@@ -2847,7 +2874,7 @@ export async function createShipment(
         if (cityAsBarrio) {
           await safeSelect(page, DAC_SELECTORS.RECIPIENT_BARRIO, cityAsBarrio, slog, DAC_STEPS.STEP3_SELECT_BARRIO, `K_Barrio (city-as-barrio: ${addr.city})`);
           slog.info(DAC_STEPS.STEP3_SELECT_BARRIO, `Used city name "${addr.city}" as barrio match`);
-        } else {
+        } else if (!(await applyMvdBarrioFallback())) {
           // DO NOT select first option — it causes wrong barrio (e.g. "Aguada" for everything)
           slog.warn(DAC_STEPS.STEP3_SELECT_BARRIO,
             `No barrio detected (zip=${addr.zip ?? 'none'}, city=${addr.city ?? 'none'}) — leaving barrio at default`,
@@ -3110,33 +3137,61 @@ export async function createShipment(
   // ===== STEP 4: Package type + Quantity + Submit =====
   slog.info(DAC_STEPS.STEP4_START, 'Filling Step 4: package type and quantity');
 
-  // Set package type via Choices.js (native selectOption doesn't work)
-  // Must click the Choices.js dropdown and select the option visually
-  await page.evaluate(() => {
-    // Set the hidden native select value
-    const sel = document.querySelector('select[name="K_Tipo_Empaque"]') as HTMLSelectElement;
-    if (sel) {
-      sel.value = '1';
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-  });
-  // Also click through Choices.js UI
-  try {
-    const choicesDiv = await page.$('.choices');
-    if (choicesDiv) {
-      await choicesDiv.click();
-      await page.waitForTimeout(500);
-      // Click the "Hasta 2Kg 20x20x20" option
-      const option = page.locator('.choices__item--choice').filter({ hasText: '2Kg' }).first();
-      if (await option.count() > 0) {
-        await option.click();
-        slog.info(DAC_STEPS.STEP4_FILL_PACKAGE, 'Selected Hasta 2Kg 20x20x20 via Choices.js click');
-      } else {
-        slog.info(DAC_STEPS.STEP4_FILL_PACKAGE, 'Set K_Tipo_Empaque=1 via hidden select (Choices.js option not found)');
+  // Set package type. K_Tipo_Empaque is a Choices.js combo whose native
+  // <select> can be reset back to the "Seleccione..." placeholder when
+  // Choices.js re-syncs from its own model after we set the value — the root
+  // cause of the #12628/#12630 SILENT rejects (audit 2026-06-04: empty DAC
+  // error box, form otherwise 100% filled). We set the value, drive the
+  // Choices.js UI, and VERIFY the native select actually committed to a real
+  // (non-placeholder) value, retrying up to 3x.
+  let empaqueSet = false;
+  let empaqueValue = '';
+  let empaqueText = '';
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    // (1) Set the hidden native select value (also covers the no-Choices case).
+    await page.evaluate(() => {
+      const sel = document.querySelector('select[name="K_Tipo_Empaque"]') as HTMLSelectElement | null;
+      if (sel) {
+        sel.value = '1';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
       }
+    });
+    // (2) Drive the Choices.js UI (authoritative path — keeps the widget and the
+    //     native select in sync) when the combo is present.
+    try {
+      const choicesDiv = await page.$('.choices');
+      if (choicesDiv) {
+        await choicesDiv.click();
+        await page.waitForTimeout(400);
+        // Click the "Hasta 2Kg 20x20x20" option
+        const option = page.locator('.choices__item--choice').filter({ hasText: '2Kg' }).first();
+        if (await option.count() > 0) await option.click();
+      }
+    } catch {
+      // fall through to verification below
     }
-  } catch {
-    slog.info(DAC_STEPS.STEP4_FILL_PACKAGE, 'Set K_Tipo_Empaque=1 via hidden select fallback');
+    await page.waitForTimeout(300);
+    // (3) Verify the native select committed to a real value.
+    const state = await page.evaluate(() => {
+      const sel = document.querySelector('select[name="K_Tipo_Empaque"]') as HTMLSelectElement | null;
+      if (!sel) return { present: false, value: '', text: '' };
+      const text = sel.options[sel.selectedIndex]?.textContent?.trim() ?? '';
+      return { present: true, value: sel.value ?? '', text };
+    });
+    empaqueValue = state.value;
+    empaqueText = state.text;
+    if (!state.present) { empaqueSet = false; break; }
+    empaqueSet = !!state.value && state.value !== '0' && !/seleccione/i.test(state.text);
+    if (empaqueSet) break;
+    slog.warn(DAC_STEPS.STEP4_FILL_PACKAGE,
+      `K_Tipo_Empaque still unset after attempt ${attempt}/3 (value="${state.value}", text="${state.text}") — retrying`);
+    await page.waitForTimeout(300);
+  }
+  if (empaqueSet) {
+    slog.info(DAC_STEPS.STEP4_FILL_PACKAGE, `K_Tipo_Empaque committed (value="${empaqueValue}", text="${empaqueText}")`);
+  } else {
+    slog.warn(DAC_STEPS.STEP4_FILL_PACKAGE,
+      `K_Tipo_Empaque could not be committed after 3 attempts (value="${empaqueValue}", text="${empaqueText}") — DAC will likely reject this form`);
   }
 
   // Set quantity = 1
@@ -3170,6 +3225,7 @@ export async function createShipment(
   // missingStreetNumber handler when AI couldn't recover the number AND the
   // address isn't a pickup-at-DAC-branch.
   if (noNumberOperatorNote) observations.push(noNumberOperatorNote);
+  if (barrioVerifyNote) observations.push(barrioVerifyNote);
   // 2026-05-12 directive — DEFENSIVE customer phone/name in DAC obs for ALL
   // shipments. Operator quote: "en el peor caso se deberían poner los datos
   // igualmente y poner que ante cualquier duda se comuniquen con el número
