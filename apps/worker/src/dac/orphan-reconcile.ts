@@ -51,6 +51,30 @@ import type { StepLogger } from '../logger';
 
 const STEP = 'orphan-reconcile';
 
+// 2026-06-04 — Deep-scan + recency gate.
+//
+// Why: the inline rescue (shipment.ts, immediately post-Finalizar) scans 3
+// historial pages with the just-minted guía sitting at the TOP, and recovers
+// ~90% of silent-reject guías. The ~10% it misses land here as ORPHANED. But
+// THIS pass runs 30 min+ later, by which time a high-volume tenant (e.g. TAM)
+// has pushed that guía well past page 3 — so re-running the identical 3-page
+// scan recovers almost nothing (measured: ~2 lifetime recoveries/tenant).
+//
+// Fix: scan DEEPER here. Scanning deeper over OLD rows would normally re-open
+// the same-name-different-shipment poisoning class (#11481 / #11865), so we
+// pair the deeper scan with a RECENCY GATE: a candidate guía is only adopted
+// if DAC stamped its historial row within ±RECENCY_TOLERANCE_DAYS of the
+// order's own submitAttemptedAt (the instant the guía would have been minted).
+// That gate is purely ADDITIVE — layered on top of the existing name +
+// destination checks — so it can only narrow adoption, never widen it.
+//
+// Kill-switch: set ORPHAN_RECONCILE_DEEP_SCAN=0 to fall back to the legacy
+// 3-page, no-recency behaviour without a redeploy.
+const DEEP_SCAN_ENABLED = process.env.ORPHAN_RECONCILE_DEEP_SCAN !== '0';
+const DEEP_SCAN_MAX_PAGES = 8;
+const DEEP_SCAN_MAX_ATTEMPTS = 1; // guía was minted 30min+ ago: depth, not render-race retries
+const RECENCY_TOLERANCE_DAYS = 2; // absorbs UTC↔Montevideo offset + near-midnight submits
+
 export type OrphanReconcileOutcome =
   | { kind: 'recovered'; guia: string }
   | { kind: 'reset-for-retry' }
@@ -206,6 +230,20 @@ export async function reconcileOrphansForTenant(
         slog,
         orderName,
         { city: label.city, department: label.department },
+        // Deep-scan + recency gate (kill-switch ORPHAN_RECONCILE_DEEP_SCAN=0).
+        // The recency window is anchored on THIS orphan's submitAttemptedAt —
+        // the moment DAC would have minted the guía — so we only adopt a guía
+        // dated to the attempt, never an unrelated older same-name shipment.
+        DEEP_SCAN_ENABLED
+          ? {
+              maxPages: DEEP_SCAN_MAX_PAGES,
+              maxAttempts: DEEP_SCAN_MAX_ATTEMPTS,
+              recencyWindow: {
+                expectedDate: orphan.submitAttemptedAt,
+                toleranceDays: RECENCY_TOLERANCE_DAYS,
+              },
+            }
+          : {},
       );
     } catch (rescueErr) {
       summary.errored += 1;

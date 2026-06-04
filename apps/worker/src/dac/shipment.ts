@@ -3949,6 +3949,74 @@ function normalizeNameForMatch(s: string): string {
  *
  * Exported for unit testing — the I/O wrapper below calls this.
  */
+/**
+ * Parse the DD/MM (optionally with HH:MM) that DAC stamps at the END of each
+ * historial row. Real production rows captured in regression fixtures:
+ *   "8821127182837 JENNY PENSOTTI Río Yi ... Solymar Canelones 22/04 20:55"
+ *   "8821166614737 NELLY ... Tacuarembo Tacuarembo 09/05"
+ * DAC uses Uruguay locale → day/month order (DD/MM); the year is NOT shown.
+ *
+ * We take the LAST DD/MM-shaped token in the row because DAC appends the
+ * dispatch date after the address (an address fragment that happens to look
+ * like "26/3" would therefore never shadow the real, trailing date).
+ *
+ * Returns { day, month, hour, minute } (hour/minute default 0 when the time
+ * is absent) or null when there is no DD/MM token or the values are out of
+ * range. Pure — no IO.
+ */
+export function parseHistorialRowDate(
+  rowText: string,
+): { day: number; month: number; hour: number; minute: number } | null {
+  if (!rowText) return null;
+  const matches = [...rowText.matchAll(/\b(\d{1,2})\/(\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?\b/g)];
+  if (matches.length === 0) return null;
+  const m = matches[matches.length - 1]; // DAC appends the date last
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  if (!Number.isInteger(day) || !Number.isInteger(month)) return null;
+  if (day < 1 || day > 31 || month < 1 || month > 12) return null;
+  const hour = m[3] != null ? Number(m[3]) : 0;
+  const minute = m[4] != null ? Number(m[4]) : 0;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return { day, month, hour, minute };
+}
+
+/**
+ * True when the DD/MM stamped on a historial row falls within ±toleranceDays
+ * of `expectedDate` (the instant we clicked Finalizar — i.e. PendingShipment
+ * .submitAttemptedAt, the moment DAC would have minted the guía).
+ *
+ * DAC rows carry no year, so we reconstruct it from expectedDate and also
+ * probe the two adjacent years to survive a Dec/Jan boundary. DAC stamps the
+ * row in America/Montevideo local time (fixed UTC-3 — Uruguay dropped DST in
+ * 2015), so we build the row's instant at that offset; the ±toleranceDays
+ * window comfortably absorbs the offset and near-midnight submits.
+ *
+ * A row with NO parseable date returns FALSE: when a recency window is
+ * supplied we refuse to adopt an undateable row. That keeps the deep-scan
+ * path strictly conservative — it only adopts a guía it can positively date
+ * to the attempt. The inline-rescue path passes NO window and is unaffected.
+ */
+export function isHistorialRowRecent(
+  rowText: string,
+  expectedDate: Date,
+  toleranceDays: number,
+): boolean {
+  const parsed = parseHistorialRowDate(rowText);
+  if (!parsed) return false;
+  const expMs = expectedDate.getTime();
+  if (!Number.isFinite(expMs)) return false;
+  const tolMs = Math.max(0, toleranceDays) * 24 * 60 * 60 * 1000;
+  const MVD_OFFSET_MS = 3 * 60 * 60 * 1000; // Montevideo = UTC-3, no DST since 2015
+  const expYear = new Date(expMs - MVD_OFFSET_MS).getUTCFullYear();
+  for (const year of [expYear - 1, expYear, expYear + 1]) {
+    const rowUtcMs =
+      Date.UTC(year, parsed.month - 1, parsed.day, parsed.hour, parsed.minute) + MVD_OFFSET_MS;
+    if (Math.abs(rowUtcMs - expMs) <= tolMs) return true;
+  }
+  return false;
+}
+
 export function pickMatchingHistorialRow(
   rows: { guia: string; href: string | null; text: string }[],
   recipientName: string,
@@ -4139,6 +4207,33 @@ async function loadMoreHistorialRows(page: Page): Promise<boolean> {
  * row). Never throws — the caller falls back to throwing
  * DacAddressRejectedError with `rescueFailed=true`.
  */
+/**
+ * Optional tuning for findRecentGuiaForRecipient. ALL fields are optional and
+ * default to the historical inline-rescue behaviour, so the in-line caller
+ * (shipment.ts post-Finalizar) stays byte-identical when it passes nothing.
+ *
+ * Only the DELAYED orphan-reconcile path supplies these: by the time it runs
+ * (30 min+ after the silent reject) a freshly-minted guía has been pushed
+ * past the inline 3-page window by newer shipments, so it needs to scan
+ * DEEPER — but deeper scanning over OLD rows would re-open the
+ * same-name-different-shipment poisoning class (#11481 / #11865). The
+ * `recencyWindow` makes the deeper scan safe: it adds a date gate so we only
+ * ever adopt a guía DAC stamped within ±toleranceDays of the attempt.
+ */
+export interface FindRecentGuiaOptions {
+  /** Max historial pages to walk per attempt. Default 3 (inline behaviour). */
+  maxPages?: number;
+  /** Max navigation attempts. Default 3 (inline render-race retries). The
+   *  orphan path passes 1 — the guía was minted 30 min+ ago, so there is no
+   *  render race to retry through, only depth to cover. */
+  maxAttempts?: number;
+  /** When set, a candidate row is only eligible if its DD/MM stamp is within
+   *  ±toleranceDays of expectedDate. Undateable rows become ineligible. This
+   *  is an ADDITIONAL gate layered on top of the existing name + destination
+   *  checks — it can only reject matches, never create new ones. */
+  recencyWindow?: { expectedDate: Date; toleranceDays: number } | null;
+}
+
 export async function findRecentGuiaForRecipient(
   page: Page,
   recipientName: string,
@@ -4151,6 +4246,9 @@ export async function findRecentGuiaForRecipient(
   // just typed/selected on the DAC form. Pass null to disable the check
   // (legacy callers / tests).
   expectedDestination: { city?: string | null; department?: string | null } | null = null,
+  // 2026-06-04 — additive deep-scan + recency gate, used ONLY by
+  // orphan-reconcile. Omitted by the inline caller → identical behaviour.
+  opts: FindRecentGuiaOptions = {},
 ): Promise<{ guia: string; trackingUrl?: string } | null> {
   if (!recipientName || recipientName.trim().length < 3) {
     slog.warn(
@@ -4164,18 +4262,38 @@ export async function findRecentGuiaForRecipient(
   // Cap at 3 attempts, with backoff between attempts. Each attempt does a
   // fresh navigation + multi-page scrape.
   const ATTEMPT_BACKOFF_MS = [0, 5_000, 10_000];
-  const MAX_PAGINATION_PAGES = 3;
+  const DEFAULT_MAX_PAGINATION_PAGES = 3;
+  // Derived from opts; absent opts → historical inline defaults, so the
+  // in-line caller's behaviour is byte-identical.
+  const maxAttempts = Math.min(
+    Math.max(1, opts.maxAttempts ?? ATTEMPT_BACKOFF_MS.length),
+    ATTEMPT_BACKOFF_MS.length,
+  );
+  const maxPages = Math.max(1, opts.maxPages ?? DEFAULT_MAX_PAGINATION_PAGES);
+  const recencyWindow = opts.recencyWindow ?? null;
+  // Recency gate (orphan-reconcile only). When active, a row is eligible for
+  // matching ONLY if DAC stamped it within ±toleranceDays of the attempt.
+  // Layered on top of the name + destination checks inside
+  // pickMatchingHistorialRow — strictly narrowing, never widening.
+  const eligibleRows = (
+    rows: { guia: string; href: string | null; text: string }[],
+  ) =>
+    recencyWindow
+      ? rows.filter((r) =>
+          isHistorialRowRecent(r.text, recencyWindow.expectedDate, recencyWindow.toleranceDays),
+        )
+      : rows;
   let lastRowCount = 0;
   // Tracks whether name-only matches existed but were filtered out by the
   // destination check. We surface this so the operator can investigate
   // (DAC almost certainly minted a misclassified guía — see #11865 incident).
   let sawNameOnlyMatchWithWrongDest = false;
 
-  for (let attempt = 1; attempt <= ATTEMPT_BACKOFF_MS.length; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (ATTEMPT_BACKOFF_MS[attempt - 1] > 0) {
       slog.info(
         DAC_STEPS.SUBMIT_EXTRACT_GUIA,
-        `[rescue] Attempt ${attempt}/${ATTEMPT_BACKOFF_MS.length} — backing off ${ATTEMPT_BACKOFF_MS[attempt - 1]}ms before retry`,
+        `[rescue] Attempt ${attempt}/${maxAttempts} — backing off ${ATTEMPT_BACKOFF_MS[attempt - 1]}ms before retry`,
         { orderName, recipientName },
       );
       await page.waitForTimeout(ATTEMPT_BACKOFF_MS[attempt - 1]);
@@ -4232,9 +4350,9 @@ export async function findRecentGuiaForRecipient(
       continue;
     }
 
-    let firstMatch = pickMatchingHistorialRow(allRows, recipientName, excludeGuias, expectedDestination);
+    let firstMatch = pickMatchingHistorialRow(eligibleRows(allRows), recipientName, excludeGuias, expectedDestination);
     let pageNum = 1;
-    while (!firstMatch && pageNum < MAX_PAGINATION_PAGES) {
+    while (!firstMatch && pageNum < maxPages) {
       const advanced = await loadMoreHistorialRows(page);
       if (!advanced) break;
       pageNum++;
@@ -4248,7 +4366,7 @@ export async function findRecentGuiaForRecipient(
             seen.add(r.guia);
           }
         }
-        firstMatch = pickMatchingHistorialRow(allRows, recipientName, excludeGuias, expectedDestination);
+        firstMatch = pickMatchingHistorialRow(eligibleRows(allRows), recipientName, excludeGuias, expectedDestination);
       } catch (pageErr) {
         slog.warn(
           DAC_STEPS.SUBMIT_EXTRACT_GUIA,
@@ -4272,6 +4390,8 @@ export async function findRecentGuiaForRecipient(
           attempt,
           rowsScanned: allRows.length,
           pagesScanned: pageNum,
+          maxPages,
+          recencyGated: !!recencyWindow,
           expectedCity: expectedDestination?.city ?? null,
           expectedDepartment: expectedDestination?.department ?? null,
         },
@@ -4289,7 +4409,7 @@ export async function findRecentGuiaForRecipient(
     // above returned. So a `nameOnly` hit means the row was filtered out by
     // the destination check specifically.)
     if (expectedDestination) {
-      const nameOnly = pickMatchingHistorialRow(allRows, recipientName, excludeGuias, null);
+      const nameOnly = pickMatchingHistorialRow(eligibleRows(allRows), recipientName, excludeGuias, null);
       if (nameOnly) {
         sawNameOnlyMatchWithWrongDest = true;
         slog.warn(
@@ -4316,8 +4436,8 @@ export async function findRecentGuiaForRecipient(
 
   slog.warn(
     DAC_STEPS.SUBMIT_EXTRACT_GUIA,
-    `[rescue] All ${ATTEMPT_BACKOFF_MS.length} attempts exhausted — no historial row matched recipient "${recipientName}"${sawNameOnlyMatchWithWrongDest ? ' WITH the expected destination (a name-match with wrong dest existed — likely DAC-side misclassification)' : ''} (last scan: ${lastRowCount} rows)`,
-    { orderName, recipientName, totalAttempts: ATTEMPT_BACKOFF_MS.length, lastRowCount, sawNameOnlyMatchWithWrongDest },
+    `[rescue] All ${maxAttempts} attempt(s) exhausted — no historial row matched recipient "${recipientName}"${recencyWindow ? ' within the recency window' : ''}${sawNameOnlyMatchWithWrongDest ? ' WITH the expected destination (a name-match with wrong dest existed — likely DAC-side misclassification)' : ''} (last scan: ${lastRowCount} rows)`,
+    { orderName, recipientName, totalAttempts: maxAttempts, maxPages, recencyGated: !!recencyWindow, lastRowCount, sawNameOnlyMatchWithWrongDest },
   );
   return null;
 }
