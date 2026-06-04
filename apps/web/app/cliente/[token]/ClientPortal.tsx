@@ -3,14 +3,16 @@
 /**
  * Interactive client portal view. Receives already-authorized data as props
  * (the Server Component validated the token and scoped the query). All the
- * interactivity is local: toggle which store(s) to show, search, and group by
- * day. PDF downloads hit the token-gated /api/public/label-pdf endpoint.
+ * interactivity is local: toggle which store(s) to show, search, group by day,
+ * and bulk-print. Single PDF downloads hit /api/public/label-pdf; bulk print or
+ * download merges the chosen labels into one file via /api/public/label-pdf/bulk
+ * so a whole day (or a hand-picked set) prints with a single print dialog.
  *
  * Types come in via `import type` so this client bundle never pulls the
  * server-only lib/client-view module (Prisma + node:crypto).
  */
 
-import { useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Store,
@@ -23,6 +25,11 @@ import {
   Truck,
   Package,
   Inbox,
+  Printer,
+  Loader2,
+  CheckSquare,
+  Square,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { ClientViewStore, ClientViewLabel } from '@/lib/client-view';
@@ -132,6 +139,14 @@ export function ClientPortal({
     () => new Set(stores.map((s) => s.id)),
   );
 
+  // Bulk print/download: the set of label ids the client has picked. Only
+  // labels that actually have a PDF are ever added here.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState<'print' | 'download' | null>(
+    null,
+  );
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
   const colorByStore = useMemo(() => {
     const m = new Map<string, StoreColor>();
     stores.forEach((s, i) => m.set(s.id, STORE_PALETTE[i % STORE_PALETTE.length]));
@@ -176,6 +191,17 @@ export function ClientPortal({
     return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
   }, [filtered]);
 
+  // The currently visible, printable labels — what "select all" and Ctrl+A act on.
+  const selectableVisibleIds = useMemo(
+    () => filtered.filter((l) => l.hasPdf).map((l) => l.id),
+    [filtered],
+  );
+
+  const selectedCount = selectedIds.size;
+  const allVisibleSelected =
+    selectableVisibleIds.length > 0 &&
+    selectableVisibleIds.every((id) => selectedIds.has(id));
+
   function toggleStore(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -189,6 +215,42 @@ export function ClientPortal({
     setSelected(new Set(stores.map((s) => s.id)));
   }
 
+  function toggleLabel(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  /** Toggle a group of ids as a unit: all-on -> clear them, otherwise add all. */
+  function toggleGroup(ids: string[]) {
+    if (ids.length === 0) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      const allOn = ids.every((id) => next.has(id));
+      if (allOn) ids.forEach((id) => next.delete(id));
+      else ids.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
+  function groupState(ids: string[]): 'none' | 'some' | 'all' {
+    if (ids.length === 0) return 'none';
+    const on = ids.filter((id) => selectedIds.has(id)).length;
+    if (on === 0) return 'none';
+    return on === ids.length ? 'all' : 'some';
+  }
+
+  function toggleSelectAllVisible() {
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(selectableVisibleIds));
+  }
+
   function refresh() {
     startTransition(() => router.refresh());
   }
@@ -197,12 +259,121 @@ export function ClientPortal({
     return `/api/public/label-pdf?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`;
   }
 
+  /**
+   * Merge the chosen labels into one PDF and either open it for printing or
+   * download it. For printing we open the tab synchronously (inside the click)
+   * so the browser doesn't treat the post-fetch window.open as a blocked popup.
+   */
+  async function handleBulk(mode: 'print' | 'download', idsArg?: string[]) {
+    const ids = idsArg ?? Array.from(selectedIds);
+    if (ids.length === 0 || bulkLoading) return;
+
+    setBulkError(null);
+    setBulkLoading(mode);
+
+    let printWindow: Window | null = null;
+    if (mode === 'print') printWindow = window.open('', '_blank');
+
+    try {
+      const qs = mode === 'download' ? '?download=true&' : '?';
+      const res = await fetch(
+        `/api/public/label-pdf/bulk${qs}token=${encodeURIComponent(token)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        },
+      );
+
+      if (!res.ok) {
+        printWindow?.close();
+        const msg = await res
+          .json()
+          .then((j) => (j?.error as string | undefined) ?? undefined)
+          .catch(() => undefined);
+        setBulkError(msg ?? 'No se pudieron preparar las etiquetas.');
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
+      if (mode === 'print') {
+        // If the synchronous open was blocked, try once more now.
+        if (!printWindow) printWindow = window.open(url, '_blank');
+        else printWindow.location.href = url;
+
+        if (!printWindow) {
+          setBulkError(
+            'Permití las ventanas emergentes para imprimir, o usá Descargar.',
+          );
+        } else {
+          const triggerPrint = () => {
+            try {
+              printWindow?.focus();
+              printWindow?.print();
+            } catch {
+              /* the client can still print manually from the opened tab */
+            }
+          };
+          printWindow.onload = triggerPrint;
+          // Fallback in case onload doesn't fire for the blob navigation.
+          setTimeout(triggerPrint, 1200);
+        }
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      } else {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'etiquetas.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } catch {
+      printWindow?.close();
+      setBulkError('Error de conexión al preparar las etiquetas.');
+    } finally {
+      setBulkLoading(null);
+    }
+  }
+
+  // Keyboard: Ctrl/Cmd+A selects every visible printable label, Escape clears.
+  // Ignored while typing in the search box so normal text editing still works.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+        if (selectableVisibleIds.length === 0) return;
+        e.preventDefault();
+        setSelectedIds(new Set(selectableVisibleIds));
+      } else if (e.key === 'Escape') {
+        setSelectedIds((prev) => (prev.size ? new Set() : prev));
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectableVisibleIds]);
+
+  // Auto-dismiss the transient bulk error.
+  useEffect(() => {
+    if (!bulkError) return;
+    const t = setTimeout(() => setBulkError(null), 6000);
+    return () => clearTimeout(t);
+  }, [bulkError]);
+
   const allSelected = selected.size === stores.length;
   const notConfigured = stores.length === 0;
 
   return (
     <div className="min-h-screen gradient-mesh text-white">
-      <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
+      <div
+        className={cn(
+          'mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10',
+          selectedCount > 0 && 'pb-28',
+        )}
+      >
         {/* Header */}
         <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -215,7 +386,7 @@ export function ClientPortal({
                   Etiquetas
                 </h1>
                 <p className="text-sm text-white/50">
-                  Portal de seguimiento — solo lectura
+                  Portal de seguimiento — seleccioná e imprimí
                 </p>
               </div>
             </div>
@@ -290,7 +461,7 @@ export function ClientPortal({
               </div>
             </section>
 
-            {/* Search + summary */}
+            {/* Search + summary + select-all */}
             <section className="mb-6 flex flex-wrap items-center justify-between gap-3">
               <div className="relative w-full sm:max-w-xs">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
@@ -301,17 +472,37 @@ export function ClientPortal({
                   className="w-full rounded-lg border border-white/10 bg-white/[0.03] py-2 pl-9 pr-3 text-sm text-white placeholder:text-white/30 focus:border-cyan-400/40 focus:outline-none focus:ring-1 focus:ring-cyan-400/30"
                 />
               </div>
-              <p className="text-sm text-white/40">
-                <span className="font-semibold text-white/70">{filtered.length}</span>{' '}
-                {filtered.length === 1 ? 'etiqueta' : 'etiquetas'}
-                {groups.length > 0 && (
-                  <>
-                    {' · '}
-                    <span className="font-semibold text-white/70">{groups.length}</span>{' '}
-                    {groups.length === 1 ? 'día' : 'días'}
-                  </>
+              <div className="flex items-center gap-3">
+                {selectableVisibleIds.length > 0 && (
+                  <button
+                    onClick={toggleSelectAllVisible}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition',
+                      allVisibleSelected
+                        ? 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20'
+                        : 'border-white/10 bg-white/[0.03] text-white/60 hover:bg-white/[0.06] hover:text-white/80',
+                    )}
+                  >
+                    {allVisibleSelected ? (
+                      <CheckSquare className="h-3.5 w-3.5" />
+                    ) : (
+                      <Square className="h-3.5 w-3.5" />
+                    )}
+                    {allVisibleSelected ? 'Quitar selección' : 'Seleccionar todo'}
+                  </button>
                 )}
-              </p>
+                <p className="text-sm text-white/40">
+                  <span className="font-semibold text-white/70">{filtered.length}</span>{' '}
+                  {filtered.length === 1 ? 'etiqueta' : 'etiquetas'}
+                  {groups.length > 0 && (
+                    <>
+                      {' · '}
+                      <span className="font-semibold text-white/70">{groups.length}</span>{' '}
+                      {groups.length === 1 ? 'día' : 'días'}
+                    </>
+                  )}
+                </p>
+              </div>
             </section>
 
             {/* Day groups */}
@@ -333,6 +524,11 @@ export function ClientPortal({
                   const perStore = new Map<string, number>();
                   for (const l of items)
                     perStore.set(l.storeId, (perStore.get(l.storeId) ?? 0) + 1);
+
+                  const dayPdfIds = items
+                    .filter((l) => l.hasPdf)
+                    .map((l) => l.id);
+                  const dayState = groupState(dayPdfIds);
 
                   return (
                     <section key={dayKey}>
@@ -367,6 +563,45 @@ export function ClientPortal({
                               );
                             })}
                         </div>
+
+                        {/* Day actions: select the whole day + print the whole day */}
+                        {dayPdfIds.length > 0 && (
+                          <div className="ml-auto flex items-center gap-1.5">
+                            <button
+                              onClick={() => toggleGroup(dayPdfIds)}
+                              aria-pressed={dayState === 'all'}
+                              className={cn(
+                                'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition',
+                                dayState === 'none'
+                                  ? 'border-white/10 bg-white/[0.03] text-white/60 hover:bg-white/[0.06] hover:text-white/80'
+                                  : 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20',
+                              )}
+                            >
+                              {dayState === 'all' ? (
+                                <CheckSquare className="h-3.5 w-3.5" />
+                              ) : (
+                                <Square className="h-3.5 w-3.5" />
+                              )}
+                              {dayState === 'none'
+                                ? 'Seleccionar día'
+                                : dayState === 'all'
+                                  ? 'Quitar día'
+                                  : `Día (${dayState === 'some' ? dayPdfIds.filter((id) => selectedIds.has(id)).length : dayPdfIds.length}/${dayPdfIds.length})`}
+                            </button>
+                            <button
+                              onClick={() => handleBulk('print', dayPdfIds)}
+                              disabled={bulkLoading !== null}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500 bg-cyan-600 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {bulkLoading === 'print' ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Printer className="h-3.5 w-3.5" />
+                              )}
+                              Imprimir día
+                            </button>
+                          </div>
+                        )}
                       </div>
 
                       {/* Cards */}
@@ -374,12 +609,20 @@ export function ClientPortal({
                         {items.map((l) => {
                           const color = colorByStore.get(l.storeId)!;
                           const badge = statusBadge(l.status);
+                          const selectable = l.hasPdf;
+                          const isSel = selectedIds.has(l.id);
                           return (
                             <article
                               key={l.id}
+                              onClick={
+                                selectable ? () => toggleLabel(l.id) : undefined
+                              }
                               className={cn(
-                                'relative overflow-hidden rounded-xl border bg-white/[0.03] p-4 transition hover:bg-white/[0.05]',
+                                'relative overflow-hidden rounded-xl border bg-white/[0.03] p-4 transition',
                                 color.cardBorder,
+                                selectable && 'cursor-pointer hover:bg-white/[0.05]',
+                                isSel &&
+                                  'bg-cyan-500/[0.06] ring-2 ring-cyan-400/60',
                               )}
                             >
                               <span
@@ -389,11 +632,34 @@ export function ClientPortal({
                                 )}
                               />
                               <div className="flex items-start justify-between gap-2 pl-1.5">
-                                <div className="flex items-center gap-1.5 font-semibold">
-                                  <Hash className="h-3.5 w-3.5 text-white/30" />
-                                  <span className="truncate">
-                                    {l.orderName ?? 'Sin nº'}
-                                  </span>
+                                <div className="flex min-w-0 items-center gap-2">
+                                  {selectable && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toggleLabel(l.id);
+                                      }}
+                                      aria-pressed={isSel}
+                                      aria-label={
+                                        isSel
+                                          ? 'Quitar de la selección'
+                                          : 'Agregar a la selección'
+                                      }
+                                      className="shrink-0 rounded-md p-0.5 transition hover:bg-white/10"
+                                    >
+                                      {isSel ? (
+                                        <CheckSquare className="h-4 w-4 text-cyan-300" />
+                                      ) : (
+                                        <Square className="h-4 w-4 text-white/30" />
+                                      )}
+                                    </button>
+                                  )}
+                                  <div className="flex min-w-0 items-center gap-1.5 font-semibold">
+                                    <Hash className="h-3.5 w-3.5 shrink-0 text-white/30" />
+                                    <span className="truncate">
+                                      {l.orderName ?? 'Sin nº'}
+                                    </span>
+                                  </div>
                                 </div>
                                 <span
                                   className={cn(
@@ -435,6 +701,7 @@ export function ClientPortal({
                                     href={pdfHref(l.id)}
                                     target="_blank"
                                     rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
                                     className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-500/20"
                                   >
                                     <Download className="h-3.5 w-3.5" />
@@ -455,12 +722,69 @@ export function ClientPortal({
             )}
 
             <footer className="mt-10 border-t border-white/[0.06] pt-4 text-center text-xs text-white/30">
-              Las etiquetas se actualizan automáticamente. Tocá “Actualizar” para
-              ver las más recientes.
+              Tocá una etiqueta para seleccionarla, o usá “Imprimir día”. Las
+              etiquetas se actualizan automáticamente — tocá “Actualizar” para ver
+              las más recientes.
             </footer>
           </>
         )}
       </div>
+
+      {/* Transient error toast for bulk actions */}
+      {bulkError && (
+        <div className="fixed inset-x-0 bottom-24 z-[9999] flex justify-center px-4">
+          <div className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 text-sm text-red-200 shadow-lg backdrop-blur-xl">
+            {bulkError}
+          </div>
+        </div>
+      )}
+
+      {/* Floating bulk action bar */}
+      {selectedCount > 0 && (
+        <div className="fixed inset-x-0 bottom-5 z-[9999] flex justify-center px-4">
+          <div className="flex items-center gap-3 rounded-2xl border border-cyan-500/20 bg-zinc-900/95 px-4 py-3 shadow-2xl shadow-cyan-500/10 backdrop-blur-xl">
+            <div className="flex items-center gap-2 border-r border-white/10 pr-3">
+              <span className="text-sm font-semibold text-white">
+                {selectedCount}
+              </span>
+              <span className="text-xs text-white/50">
+                {selectedCount === 1 ? 'seleccionada' : 'seleccionadas'}
+              </span>
+            </div>
+            <button
+              onClick={clearSelection}
+              title="Limpiar selección"
+              className="rounded-lg p-1.5 text-white/50 transition hover:bg-white/5 hover:text-white/80"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => handleBulk('download')}
+              disabled={bulkLoading !== null}
+              className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] px-4 py-2 text-xs font-medium text-white/80 transition hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {bulkLoading === 'download' ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              Descargar
+            </button>
+            <button
+              onClick={() => handleBulk('print')}
+              disabled={bulkLoading !== null}
+              className="inline-flex items-center gap-2 rounded-xl border border-cyan-500 bg-cyan-600 px-4 py-2 text-xs font-medium text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {bulkLoading === 'print' ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Printer className="h-3.5 w-3.5" />
+              )}
+              Imprimir
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
