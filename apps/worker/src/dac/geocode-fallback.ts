@@ -207,6 +207,18 @@ export interface AddressGeocodeResult {
   locality: string | null;
   /** The raw display_name Nominatim returned — useful for audit/debugging. */
   displayName: string;
+  /**
+   * Precise point coordinates Nominatim resolved for this address (WGS84).
+   * Nominatim always returns these at the top level of each result; we used
+   * to discard them. They power the DAC Step-3 "real coords" experiment
+   * (see shipment.ts — DAC_STEP3_REAL_GEOCODE_TENANTS): instead of injecting
+   * the department CENTROID into DAC's hidden lat/lng fields (which can be
+   * 50-100 km from a real interior address and makes DAC silently refuse to
+   * mint the guía), we inject the address's actual point. Null when Nominatim
+   * omitted them or they failed to parse as finite numbers.
+   */
+  lat: number | null;
+  lon: number | null;
 }
 
 /**
@@ -284,6 +296,9 @@ export async function geocodeAddressToDepartment(
 
     const results = (await response.json()) as Array<{
       display_name: string;
+      // Nominatim returns the resolved point as top-level lat/lon strings.
+      lat?: string;
+      lon?: string;
       address?: {
         state?: string;
         country_code?: string;
@@ -318,13 +333,20 @@ export async function geocodeAddressToDepartment(
         r.address?.suburb ||
         null;
 
+      // Parse the point coordinates. Guard against NaN / Infinity so callers
+      // can trust a non-null lat/lon is a usable finite number.
+      const latNum = r.lat != null ? Number.parseFloat(r.lat) : NaN;
+      const lonNum = r.lon != null ? Number.parseFloat(r.lon) : NaN;
+
       const result: AddressGeocodeResult = {
         department: dept,
         locality,
         displayName: r.display_name,
+        lat: Number.isFinite(latNum) ? latNum : null,
+        lon: Number.isFinite(lonNum) ? lonNum : null,
       };
       logger.info(
-        { query, dept, locality, display: r.display_name },
+        { query, dept, locality, lat: result.lat, lon: result.lon, display: r.display_name },
         '[GeocodeAddr] Resolved',
       );
       addressCache.set(cacheKey, result);
@@ -345,4 +367,111 @@ export async function geocodeAddressToDepartment(
     addressCache.set(cacheKey, null);
     return null;
   }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// DAC Step-3 "real coordinates" decision (experiment — env-gated)
+// ───────────────────────────────────────────────────────────────────────────
+//
+// Context (2026-06-04 investigation): when the worker reaches DAC's Step 3 it
+// UNCONDITIONALLY skips the "Siguiente" button and injects the DEPARTMENT
+// CENTROID into DAC's hidden latitude/longitude fields. DAC's backend uses
+// those coords as the authoritative destination. For Montevideo addresses the
+// centroid is fine (the whole department is one city). For interior addresses
+// the centroid can be 50-100 km from the real address, and the data shows DAC
+// then SILENTLY refuses to mint the guía in ~72% of interior failures (no
+// validation error, no redirect, no guía ever appears in historial). This is
+// the dominant cause of the MVD 97% vs Interior 86% success gap.
+//
+// The experiment: for gated tenants, geocode the REAL address (Nominatim) and
+// inject that precise point instead of the centroid. This is purely additive
+// and OFF by default — with no DAC_STEP3_REAL_GEOCODE_TENANTS env var the
+// decision below always returns { use:false }, so behaviour is byte-identical
+// to today (centroid path). We can turn it on for ONE tenant (TAM) and measure
+// the create-rate from RunLog before any wider rollout.
+
+// Uruguay bounding box (deliberately generous). Rejects a geocode that
+// resolved to a same-named place outside the country.
+const UY_LAT_MIN = -35.5;
+const UY_LAT_MAX = -29.5;
+const UY_LON_MIN = -59.5;
+const UY_LON_MAX = -52.5;
+
+export type Step3CoordsDecision =
+  | { use: false; reason: string }
+  | { use: true; lat: number; lon: number; reason: string };
+
+/**
+ * Single source of truth for the Lever-B tenant gate. Parses the
+ * comma-separated DAC_STEP3_REAL_GEOCODE_TENANTS env value (tolerating spaces
+ * and empty entries) and reports whether `tenantId` is enabled.
+ *
+ * Used in BOTH places that gate the experiment — the caller's early-exit guard
+ * in shipment.ts (which avoids the expensive geocoder network call for
+ * non-gated tenants) and decideStep3Coords below — so the two can never drift
+ * apart. With the env var unset this returns false, preserving the byte-
+ * identical default-OFF behaviour.
+ */
+export function isStep3GeoTenantEnabled(
+  enabledTenantsEnv: string | undefined,
+  tenantId: string,
+): boolean {
+  return (enabledTenantsEnv ?? '')
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .includes(tenantId);
+}
+
+/**
+ * PURE decision (network-free, fully unit-testable): given the env gate, the
+ * department we already committed to on the DAC form (`resolvedDept`), and a
+ * geocode result, decide whether to inject the geocoded point into DAC's
+ * hidden lat/lng fields instead of the department centroid.
+ *
+ * We REFUSE the precise coords (caller falls back to the centroid) when ANY of:
+ *   - the tenant is NOT in DAC_STEP3_REAL_GEOCODE_TENANTS (experiment off)
+ *   - the geocoder returned nothing / no usable finite coords
+ *   - the point is outside Uruguay's bounding box
+ *   - the geocoded department disagrees with `resolvedDept`. This is the
+ *     #11865 misclassification guard: if Nominatim places the address in a
+ *     different department than the one we selected on the form, we do NOT
+ *     trust its point — better the centroid of the department we DID select
+ *     than a point that would route the parcel to the wrong department.
+ */
+export function decideStep3Coords(params: {
+  tenantId: string;
+  enabledTenantsEnv: string | undefined;
+  resolvedDept: string;
+  geo: { department: string; lat: number | null; lon: number | null } | null;
+}): Step3CoordsDecision {
+  const { tenantId, enabledTenantsEnv, resolvedDept, geo } = params;
+
+  if (!isStep3GeoTenantEnabled(enabledTenantsEnv, tenantId)) {
+    return { use: false, reason: 'tenant-not-gated' };
+  }
+  if (!geo) return { use: false, reason: 'geocode-no-result' };
+  if (
+    geo.lat == null ||
+    geo.lon == null ||
+    !Number.isFinite(geo.lat) ||
+    !Number.isFinite(geo.lon)
+  ) {
+    return { use: false, reason: 'geocode-no-coords' };
+  }
+  if (
+    geo.lat < UY_LAT_MIN ||
+    geo.lat > UY_LAT_MAX ||
+    geo.lon < UY_LON_MIN ||
+    geo.lon > UY_LON_MAX
+  ) {
+    return { use: false, reason: `coords-out-of-uy-bounds(${geo.lat},${geo.lon})` };
+  }
+  // Department sanity check — normalize both sides to canonical dept names.
+  const geoDept = normalizeDeptName(geo.department) ?? geo.department;
+  const wantDept = normalizeDeptName(resolvedDept) ?? resolvedDept;
+  if (normalize(geoDept) !== normalize(wantDept)) {
+    return { use: false, reason: `geo-dept-mismatch(${geoDept}!=${wantDept})` };
+  }
+  return { use: true, lat: geo.lat, lon: geo.lon, reason: 'precise-geocode' };
 }

@@ -17,6 +17,11 @@ import { assessAddressFeasibility } from './ai-feasibility';
 import { validateAddressConsistency } from './ai-address-validator';
 import { inferLastNameFromEmail } from './recipient-name-inference';
 import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
+import {
+  geocodeAddressToDepartment,
+  decideStep3Coords,
+  isStep3GeoTenantEnabled,
+} from './geocode-fallback';
 import { handlePaymentFlow, AutoPayConfig, PaymentOutcome } from './payment';
 
 // ---- C-4 (2026-04-21 audit): duplicate-guia defense ----
@@ -160,6 +165,151 @@ async function scrapeDacErrorBox(page: Page): Promise<string> {
     // Page evaluation can fail mid-teardown; never let scraping
     // interrupt the throw path.
     return '';
+  }
+}
+
+/**
+ * Structured diagnostics captured at the exact moment DAC silently rejects a
+ * shipment form (URL stayed on /envios/nuevo, no guía minted).
+ *
+ * WHY: scrapeDacErrorBox only reads the 5 standard error-box selectors — which
+ * are EMPTY on a true silent reject — so today we are blind to the cause of the
+ * single largest failure bucket (2026-06-04 audit: ~56% of failures are valid
+ * Montevideo addresses DAC refuses for an unknown reason; retrying the same
+ * order reproduces the refusal deterministically). This grabs the richer page
+ * state so a single production batch makes that cause diagnosable:
+ *   - coords: the Step-3 lat/lng we forced (prime suspect — for Montevideo the
+ *     SAME downtown centroid is injected for every barrio, so a far-from-centre
+ *     address can carry a coord that contradicts the typed street).
+ *   - selects: every <select>'s selected option (department / barrio / oficina /
+ *     package) — exposes a dropdown that silently reset to its placeholder.
+ *   - invalidFields: anything DAC flagged invalid (aria-invalid / ASP.NET /
+ *     bootstrap validation classes) plus the adjacent validation message.
+ *   - emptyKeyFields: required fields left blank (names only).
+ *   - alerts: any alert / toast / modal text anywhere (broader than the error
+ *     box — catches sweetalert / toastr / validation summaries).
+ *
+ * PII-safe: never records the VALUES of name/phone/email/address inputs — only
+ * whether they are empty and whether DAC flagged them. Selects and coordinates
+ * are not PII and ARE recorded because they are the prime suspects.
+ *
+ * Fail-closed and side-effect-free: any DOM-eval error returns null. This runs
+ * ONLY on the rejection path (finalGuia still PENDING- and URL /envios/nuevo);
+ * the happy path with a real guía never reaches it, so it cannot perturb a
+ * successful shipment.
+ */
+interface DacRejectionDiagnostics {
+  url: string;
+  title: string;
+  coords: { lat: string | null; lng: string | null };
+  selects: Array<{ name: string; selected: string }>;
+  invalidFields: Array<{ name: string; message: string | null }>;
+  emptyKeyFields: string[];
+  alerts: string[];
+  cargaEnviosVisible: boolean | null;
+}
+
+/** Required DAC destination fields we check for silent emptiness (names only). */
+const REJECTION_KEY_FIELDS = [
+  'NombreD',
+  'TelD',
+  'DirD',
+  'latitude',
+  'longitude',
+  'K_Estado',
+  'Oficina',
+  'K_Tipo_Empaque',
+];
+
+async function captureDacRejectionDiagnostics(
+  page: Page,
+): Promise<DacRejectionDiagnostics | null> {
+  try {
+    return await page.evaluate((keyFields: string[]) => {
+      const txt = (el: Element | null): string =>
+        ((el as HTMLElement | null)?.innerText ?? '').replace(/\s+/g, ' ').trim();
+
+      // Injected Step-3 coordinates — prime suspect for coord-vs-zone mismatch.
+      const latEl = document.querySelector('[name="latitude"]') as HTMLInputElement | null;
+      const lngEl = document.querySelector('[name="longitude"]') as HTMLInputElement | null;
+
+      // Every <select>'s selected option text. A silent reset to the
+      // placeholder ("Seleccione…") for department/barrio/oficina shows here.
+      const selects: Array<{ name: string; selected: string }> = [];
+      for (const s of Array.from(document.querySelectorAll('select'))) {
+        const sel = s as HTMLSelectElement;
+        const name = sel.name || sel.id || '';
+        if (!name) continue;
+        const optText = sel.options[sel.selectedIndex]?.text ?? '';
+        selects.push({ name, selected: optText.replace(/\s+/g, ' ').trim().slice(0, 60) });
+      }
+
+      // Fields DAC flagged invalid: aria-invalid or ASP.NET/bootstrap classes.
+      const invalidFields: Array<{ name: string; message: string | null }> = [];
+      const invalidSel = [
+        '[aria-invalid="true"]',
+        '.input-validation-error',
+        '.is-invalid',
+        'input.error',
+        'select.error',
+      ].join(',');
+      const seenInvalid = new Set<string>();
+      for (const f of Array.from(document.querySelectorAll(invalidSel))) {
+        const rawName =
+          (f as HTMLInputElement).name || (f as HTMLElement).id || (f as HTMLElement).className || '';
+        const name = String(rawName).slice(0, 60);
+        if (!name || seenInvalid.has(name)) continue;
+        seenInvalid.add(name);
+        let msg: string | null = null;
+        const vm = document.querySelector(`[data-valmsg-for="${name}"]`);
+        if (vm) msg = txt(vm).slice(0, 120) || null;
+        invalidFields.push({ name, message: msg });
+      }
+
+      // Which required key fields are empty (names only — never the value).
+      const emptyKeyFields: string[] = [];
+      for (const k of keyFields) {
+        const el = document.querySelector(`[name="${k}"]`) as
+          | HTMLInputElement
+          | HTMLSelectElement
+          | null;
+        if (el && String(el.value ?? '').trim() === '') emptyKeyFields.push(k);
+      }
+
+      // Any alert / toast / notification text anywhere (broader than the error
+      // box). Captures sweetalert/toastr/modals/validation summaries.
+      const alertSel = [
+        '[role="alert"]',
+        '.alert',
+        '.toast',
+        '.toastr',
+        '.notification',
+        '.swal2-html-container',
+        '.swal2-title',
+        '.modal.show',
+        '.validation-summary-errors',
+      ].join(',');
+      const alertsRaw: string[] = [];
+      for (const a of Array.from(document.querySelectorAll(alertSel))) {
+        const t = txt(a);
+        if (t) alertsRaw.push(t.slice(0, 200));
+      }
+
+      const fs = document.getElementById('cargaEnvios');
+
+      return {
+        url: location.href,
+        title: document.title,
+        coords: { lat: latEl?.value ?? null, lng: lngEl?.value ?? null },
+        selects,
+        invalidFields,
+        emptyKeyFields,
+        alerts: Array.from(new Set(alertsRaw)).slice(0, 8),
+        cargaEnviosVisible: fs ? !fs.classList.contains('d-none') : null,
+      };
+    }, REJECTION_KEY_FIELDS);
+  } catch {
+    return null;
   }
 }
 
@@ -2800,7 +2950,74 @@ export async function createShipment(
   // The pageHasLogger boolean ensures we surface a clear warning if a future
   // DAC dropdown introduces a new department name we don't know about, instead
   // of silently routing it to Montevideo.
-  const coordResult = await page.evaluate(() => {
+  //
+  // ===== Lever B (experiment, env-gated): real per-address coordinates =====
+  // 2026-06-04 — the centroid injection below is the prime suspect for the
+  // ~72% of interior failures where DAC silently refuses to mint the guía
+  // (centroid can be 50-100 km from the real address). For tenants listed in
+  // DAC_STEP3_REAL_GEOCODE_TENANTS we geocode the ACTUAL address and inject
+  // that precise point instead — but only if Nominatim agrees on the
+  // department (the #11865 misclassification guard) and the point is inside
+  // Uruguay. DEFAULT OFF: with the env var unset, preciseCoords stays null and
+  // the page.evaluate below runs the centroid path exactly as before.
+  let preciseCoords: { lat: number; lon: number } | null = null;
+  const step3GeoTenants = process.env.DAC_STEP3_REAL_GEOCODE_TENANTS;
+  // Early-exit gate (shared helper = single source of truth with
+  // decideStep3Coords). For non-gated tenants this skips the geocoder network
+  // call entirely, so the centroid path below runs exactly as today.
+  if (isStep3GeoTenantEnabled(step3GeoTenants, tenantId)) {
+    try {
+      const geo = await geocodeAddressToDepartment({
+        address1: addr.address1 ?? undefined,
+        address2: addr.address2 ?? undefined,
+        city: resolvedCity || (addr.city ?? undefined),
+        zip: addr.zip ?? undefined,
+      });
+      const decision = decideStep3Coords({
+        tenantId,
+        enabledTenantsEnv: step3GeoTenants,
+        resolvedDept,
+        geo: geo ? { department: geo.department, lat: geo.lat, lon: geo.lon } : null,
+      });
+      if (decision.use) {
+        preciseCoords = { lat: decision.lat, lon: decision.lon };
+        slog.info(
+          DAC_STEPS.STEP3_SIGUIENTE,
+          `[step3-geocode] Using PRECISE address coords (${decision.lat},${decision.lon}) instead of "${resolvedDept}" centroid — experiment DAC_STEP3_REAL_GEOCODE`,
+          {
+            orderName: order.name,
+            resolvedDept,
+            resolvedCity,
+            lat: decision.lat,
+            lon: decision.lon,
+            geoDept: geo?.department ?? null,
+            geoLocality: geo?.locality ?? null,
+            geoDisplayName: geo?.displayName ?? null,
+          },
+        );
+      } else {
+        slog.info(
+          DAC_STEPS.STEP3_SIGUIENTE,
+          `[step3-geocode] Keeping department-centroid coords (reason=${decision.reason})`,
+          {
+            orderName: order.name,
+            resolvedDept,
+            resolvedCity,
+            reason: decision.reason,
+            geoDept: geo?.department ?? null,
+          },
+        );
+      }
+    } catch (geoErr) {
+      slog.warn(
+        DAC_STEPS.STEP3_SIGUIENTE,
+        `[step3-geocode] Geocode threw — keeping centroid coords: ${(geoErr as Error).message}`,
+        { orderName: order.name, resolvedDept },
+      );
+    }
+  }
+
+  const coordResult = await page.evaluate((precise: { lat: number; lon: number } | null) => {
     // Force Step 4 visible
     const fieldset = document.getElementById('cargaEnvios');
     if (fieldset) {
@@ -2811,6 +3028,20 @@ export async function createShipment(
     const lat = document.querySelector('[name="latitude"]') as HTMLInputElement;
     const lng = document.querySelector('[name="longitude"]') as HTMLInputElement;
     if (!lat || !lng) return { reason: 'no-lat-lng-fields', deptText: null, normalized: null, usedFallback: false };
+    // Lever B: if the caller resolved a precise per-address point (gated +
+    // department-sanity-checked in Node), inject it verbatim and skip the
+    // centroid lookup entirely.
+    if (precise) {
+      lat.value = String(precise.lat);
+      lng.value = String(precise.lon);
+      return {
+        reason: 'precise-geocode',
+        deptText: null,
+        normalized: null,
+        usedFallback: false,
+        coords: [String(precise.lat), String(precise.lon)] as [string, string],
+      };
+    }
     // Use department center coordinates (set by outer scope)
     const deptEl = document.querySelector('[name="K_Estado"]') as HTMLSelectElement;
     const deptTextRaw = deptEl?.options[deptEl.selectedIndex]?.text ?? '';
@@ -2853,8 +3084,16 @@ export async function createShipment(
       usedFallback: !exact,
       coords: c,
     };
-  });
-  if (coordResult.usedFallback) {
+  }, preciseCoords);
+  if (coordResult.reason === 'precise-geocode') {
+    // The precise path already logged the "[step3-geocode] Using PRECISE …"
+    // line above; here we just confirm the fieldset was forced visible.
+    slog.info(
+      DAC_STEPS.STEP3_SIGUIENTE,
+      `Forced cargaEnvios visible + set PRECISE lat/lng (${coordResult.coords?.[0]},${coordResult.coords?.[1]})`,
+      coordResult,
+    );
+  } else if (coordResult.usedFallback) {
     slog.warn(
       DAC_STEPS.STEP3_SIGUIENTE,
       `[lat-lng] Department "${coordResult.deptText}" (normalized="${coordResult.normalized}") not in coords map — falling back to Montevideo. THIS WILL MISCLASSIFY THE GUÍA. Add this department to the coords map.`,
@@ -3260,6 +3499,11 @@ export async function createShipment(
     // recipient-matched historial rescue before giving up and poisoning
     // a real guía as "rejected".
     const dacErrorText = await scrapeDacErrorBox(page);
+    // Capture rich page diagnostics NOW — BEFORE the historial rescue below
+    // navigates away from the rejected form. Failure-path only and fail-closed
+    // (returns null on any error); see captureDacRejectionDiagnostics for why
+    // this is the keystone for diagnosing the silent-reject cause.
+    const rejectionDiag = await captureDacRejectionDiagnostics(page);
 
     if (!dacErrorText) {
       slog.warn(
@@ -3303,6 +3547,23 @@ export async function createShipment(
     // guía or unblock the order. Audit 2026-05-06.
     if (finalGuia.startsWith('PENDING-')) {
       const rescueFailed = !dacErrorText;
+
+      // Canonical, queryable diagnostic line. grep '[rejection-diag]' (or query
+      // RunLog meta->'dacRejectionDiag') to pull the structured page state for
+      // EVERY reject — this is what makes the silent-reject cause analysable
+      // across a production batch instead of one screenshot at a time.
+      slog.warn(
+        DAC_STEPS.SUBMIT_WAIT_NAV,
+        `[rejection-diag] DAC ${rescueFailed ? 'SILENT-rejected' : 'rejected'} ${order.name} — page diagnostics captured`,
+        {
+          orderName: order.name,
+          recipientName: fullName,
+          rescueFailed,
+          dacErrorText: dacErrorText || null,
+          screenshot: `after-finalizar-${order.name.replace('#', '')}`,
+          dacRejectionDiag: rejectionDiag,
+        },
+      );
 
       if (!rescueFailed) {
         // Genuine rejection — safe to clear the C-4 guard.
