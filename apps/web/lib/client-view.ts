@@ -156,3 +156,40 @@ export async function getClientViewLabelPdfPath(
   });
   return label?.pdfPath ?? null;
 }
+
+/**
+ * Batch variant for bulk printing. Given a list of label ids, returns only the
+ * ones that both belong to an allow-listed store AND have a stored PDF, as
+ * { id, pdfPath } pairs. Ids outside the allow-list, without a PDF, duplicated,
+ * or simply non-existent are silently dropped — the bulk endpoint never reveals
+ * which ids it rejected. Output preserves the input order so the merged PDF
+ * comes out in the same order the client selected on screen.
+ */
+export async function getClientViewLabelPdfPaths(
+  ids: string[],
+): Promise<{ id: string; pdfPath: string }[]> {
+  const tenantIds = getClientViewTenantIds();
+  if (tenantIds.length === 0 || ids.length === 0) return [];
+
+  const rows = await db.label.findMany({
+    where: {
+      id: { in: ids },
+      tenantId: { in: tenantIds },
+      pdfPath: { not: null },
+    },
+    select: { id: true, pdfPath: true },
+  });
+
+  const byId = new Map(rows.map((r) => [r.id, r.pdfPath as string]));
+  const seen = new Set<string>();
+  const ordered: { id: string; pdfPath: string }[] = [];
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    const pdfPath = byId.get(id);
+    if (pdfPath) {
+      seen.add(id);
+      ordered.push({ id, pdfPath });
+    }
+  }
+  return ordered;
+}
