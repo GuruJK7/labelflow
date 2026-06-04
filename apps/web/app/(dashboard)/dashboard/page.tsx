@@ -16,6 +16,7 @@ import {
   ArrowUpDown,
   Filter,
   RefreshCw,
+  RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { JobFeedPanel } from '@/components/JobFeedPanel';
@@ -57,6 +58,11 @@ export default function DashboardPage() {
   const [error, setError] = useState('');
   const [orderCount, setOrderCount] = useState(1);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  // "Reintentar envios" — re-attempt the N oldest shipments that never got
+  // a real DAC guia (NEEDS_REVIEW / orphaned / pending sin guia).
+  const [retryCount, setRetryCount] = useState(5);
+  const [retrying, setRetrying] = useState(false);
+  const [failedCount, setFailedCount] = useState<number | null>(null);
   const [orderSort, setOrderSort] = useState<'oldest_first' | 'newest_first'>('oldest_first');
   // `allowedProductTypes` is the persisted whitelist. Each entry can be a
   // product title, product_type, or vendor — the worker matches any of them.
@@ -79,9 +85,10 @@ export default function DashboardPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [settingsRes, jobsRes] = await Promise.all([
+      const [settingsRes, jobsRes, retryRes] = await Promise.all([
         fetch('/api/v1/settings'),
         fetch('/api/v1/jobs'),
+        fetch('/api/v1/labels/retry-failed'),
       ]);
       let settingsData: Record<string, unknown> | null = null;
       if (settingsRes.ok) {
@@ -94,6 +101,11 @@ export default function DashboardPage() {
         jobsData = res.data ?? [];
       }
       setJobs(jobsData);
+
+      if (retryRes.ok) {
+        const res = await retryRes.json();
+        setFailedCount((res.data?.count as number) ?? 0);
+      }
 
       // Use real label counts from API (calculated from Label table)
       const labelsToday = (settingsData?.labelsToday as number) ?? 0;
@@ -187,6 +199,31 @@ export default function DashboardPage() {
       setError('Error de conexion');
     }
     setTriggering(false);
+  }
+
+  async function handleRetry() {
+    if (!failedCount || failedCount <= 0) return;
+    const n = Math.min(retryCount, failedCount);
+    if (!confirm(`Reintentar ${n} envio(s) sin completar? Se vuelven a procesar en DAC.`)) return;
+    setRetrying(true);
+    setError('');
+    try {
+      const res = await fetch('/api/v1/labels/retry-failed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: retryCount }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error ?? 'Error al reintentar envios');
+      } else if (json.data?.jobId) {
+        setActiveJobId(json.data.jobId);
+      }
+      await fetchData();
+    } catch {
+      setError('Error de conexion');
+    }
+    setRetrying(false);
   }
 
   const statusConfig: Record<string, { icon: typeof CheckCircle; color: string; bg: string; label: string }> = {
@@ -484,6 +521,60 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Reintentar envios — re-attempt the N oldest shipments that never
+          got a real DAC guia (NEEDS_REVIEW / orphaned / pending sin guia).
+          Hidden when there is nothing to retry. */}
+      {failedCount !== null && failedCount > 0 && (
+        <div className="glass rounded-2xl p-4 mb-6 animate-fade-in delay-150">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                <RotateCcw className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-white">Reintentar envios</p>
+                <p className="text-xs text-zinc-500">
+                  {failedCount} envio{failedCount === 1 ? '' : 's'} sin completar (sin guia). Se vuelven a
+                  procesar en DAC con los ultimos arreglos.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                {[1, 3, 5, 10, 20].map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setRetryCount(n)}
+                    disabled={retrying}
+                    className={cn(
+                      'w-9 h-9 rounded-lg text-xs font-semibold transition-all border',
+                      retryCount === n
+                        ? 'bg-amber-600 border-amber-500 text-white shadow-lg shadow-amber-500/20'
+                        : 'bg-white/[0.03] border-white/[0.06] text-zinc-400 hover:text-white hover:border-white/[0.15]'
+                    )}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={handleRetry}
+                disabled={retrying}
+                className={cn(
+                  'inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all duration-200',
+                  'bg-gradient-to-r from-amber-600 to-amber-500 text-white',
+                  'hover:from-amber-500 hover:to-amber-400 hover:shadow-lg hover:shadow-amber-500/25',
+                  'disabled:opacity-50 disabled:cursor-not-allowed',
+                )}
+              >
+                {retrying ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                Reintentar {retryCount === 1 ? '1 envio' : `${retryCount} envios`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Job Feed Panel — appears when a job is active */}
       <JobFeedPanel
