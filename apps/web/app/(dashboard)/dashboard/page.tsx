@@ -110,11 +110,13 @@ export default function DashboardPage() {
       // Use real label counts from API (calculated from Label table)
       const labelsToday = (settingsData?.labelsToday as number) ?? 0;
 
-      // Calculate success rate only from jobs that actually processed orders
-      const jobsWithOrders = jobsData.filter((j) => j.totalOrders > 0);
-      const totalOrders = jobsWithOrders.reduce((sum, j) => sum + j.totalOrders, 0);
-      const totalSuccess = jobsWithOrders.reduce((sum, j) => sum + j.successCount, 0);
-      const successRate = totalOrders > 0 ? Math.round((totalSuccess / totalOrders) * 100) : 0;
+      // Tasa de exito: calculada en /api/v1/settings desde la tabla Label
+      // (envios con guia / envios resueltos del mes). ANTES se calculaba aca
+      // sumando job.successCount / job.totalOrders, pero job.totalOrders es el
+      // backlog elegible que cada corrida ESCANEA (~136), no lo que despacha
+      // por ventana (~20) — y ese backlog se re-escanea en cada job. Daba ~4%,
+      // un numero sin sentido. Ahora viene del conteo real de labels.
+      const successRate = (settingsData?.successRate as number) ?? 0;
 
       setStats({
         labelsToday,

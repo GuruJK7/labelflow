@@ -107,14 +107,44 @@ export async function GET() {
   const startOfMonth = startOfMonthUy();
   const startOfDay = startOfDayUy();
 
-  const [labelsThisMonthReal, labelsTodayReal] = await Promise.all([
-    db.label.count({
-      where: { tenantId: auth.tenantId, createdAt: { gte: startOfMonth } },
-    }),
-    db.label.count({
-      where: { tenantId: auth.tenantId, createdAt: { gte: startOfDay } },
-    }),
-  ]);
+  const [labelsThisMonthReal, labelsTodayReal, successThisMonth, resolvedThisMonth] =
+    await Promise.all([
+      db.label.count({
+        where: { tenantId: auth.tenantId, createdAt: { gte: startOfMonth } },
+      }),
+      db.label.count({
+        where: { tenantId: auth.tenantId, createdAt: { gte: startOfDay } },
+      }),
+      // Tasa de exito REAL (desde la tabla Label, no desde Job).
+      // "exito" = CREATED|COMPLETED (envio con guia DAC capturada), la misma
+      // convencion que usa el resto de la app (labelsToday/mes, panel admin).
+      db.label.count({
+        where: {
+          tenantId: auth.tenantId,
+          createdAt: { gte: startOfMonth },
+          status: { in: ['CREATED', 'COMPLETED'] },
+        },
+      }),
+      // "resueltos" = todo lo que dejo de estar en vuelo: exitos + FAILED +
+      // NEEDS_REVIEW (orphan / silent-reject). Excluye PENDING (aun se esta
+      // procesando) y SKIPPED (no se intento despachar). Incluir NEEDS_REVIEW
+      // es lo clave: un orphan SIN guia capturada cuenta como fallo, no se
+      // esconde. Asi la tasa nunca puede superar 100% (exitos ⊆ resueltos).
+      db.label.count({
+        where: {
+          tenantId: auth.tenantId,
+          createdAt: { gte: startOfMonth },
+          status: { in: ['CREATED', 'COMPLETED', 'FAILED', 'NEEDS_REVIEW'] },
+        },
+      }),
+    ]);
+
+  // Una decimal. 100% cuando todavia no hay envios resueltos este mes
+  // (evita mostrar 0% en una tienda nueva sin actividad).
+  const successRate =
+    resolvedThisMonth > 0
+      ? Math.round((successThisMonth / resolvedThisMonth) * 1000) / 10
+      : 100;
 
   // Never return encrypted values, return booleans instead
   return apiSuccess({
@@ -142,6 +172,7 @@ export async function GET() {
     currentPeriodEnd: tenant.currentPeriodEnd,
     labelsThisMonth: labelsThisMonthReal,
     labelsToday: labelsTodayReal,
+    successRate,
     labelsTotal: tenant.labelsTotal,
     lastRunAt: tenant.lastRunAt,
     apiKey: tenant.apiKey,
