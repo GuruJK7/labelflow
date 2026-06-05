@@ -647,6 +647,49 @@ export function sanitizeObservationLine(raw: string): string {
     .trim();
 }
 
+/**
+ * Build the optional "SKU" line for the DAC observations field from an order's
+ * line items. Per-tenant opt-in (Tenant.skuInObservations) — a client asked to
+ * have the product SKU printed on the DAC label so the packer can pick by code.
+ *
+ * Format: "SKU: <sku> xN, <sku2> xM"
+ *   - Only line items that carry a non-empty SKU are included.
+ *   - Quantities for the SAME sku string are aggregated (two lines of the same
+ *     variant => one "x3" entry); first-seen order is preserved.
+ *   - Returns null when no line item has a usable SKU, so the caller can omit
+ *     the line entirely (no empty "SKU:" prefix on the label).
+ *
+ * Safety: the returned string is single-line and contains NO pipe character —
+ * any '|'/newline/tab inside a SKU value is collapsed to a space. This matters
+ * because the observations array is later joined with " | " AND each piece is
+ * re-run through sanitizeObservationLine() (which splits on "|"/newline). The
+ * literal "SKU: " prefix also guarantees the piece is never a bare long-numeric
+ * ID, so an all-digit barcode SKU survives the LONG_NUMERIC_ID_RE strip.
+ *
+ * Exported for unit testing without standing up the full createShipment flow.
+ */
+export function buildSkuObservationLine(order: Pick<ShopifyOrder, 'line_items'>): string | null {
+  const items = order?.line_items;
+  if (!Array.isArray(items) || items.length === 0) return null;
+
+  const distinctSkus: string[] = [];
+  const qtyBySku = new Map<string, number>();
+  for (const li of items) {
+    const rawSku = (li?.sku ?? '').toString();
+    const sku = rawSku.replace(/[|\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!sku) continue;
+    const q = Number(li?.quantity);
+    const qty = Number.isFinite(q) && q > 0 ? Math.floor(q) : 1;
+    if (!qtyBySku.has(sku)) distinctSkus.push(sku);
+    qtyBySku.set(sku, (qtyBySku.get(sku) ?? 0) + qty);
+  }
+
+  if (distinctSkus.length === 0) return null;
+
+  const parts = distinctSkus.map((sku) => `${sku} x${qtyBySku.get(sku)}`);
+  return `SKU: ${parts.join(', ')}`;
+}
+
 function normalize(s: string): string {
   return s
     .toLowerCase()
@@ -1898,7 +1941,8 @@ export async function createShipment(
   jobId?: string,
   usedGuias?: Set<string>,
   addressOverride?: AddressOverride,
-  autoPay?: AutoPayConfig
+  autoPay?: AutoPayConfig,
+  opts?: { skuInObservations?: boolean }
 ): Promise<DacShipmentResult> {
   const slog = createStepLogger(jobId ?? 'manual', tenantId);
   const addr = order.shipping_address;
@@ -3276,6 +3320,18 @@ export async function createShipment(
       if (!attr.value) continue;
       if (shouldSkipNoteAttribute(attr.name ?? '', String(attr.value))) continue;
       observations.push(`${attr.name}: ${attr.value}`);
+    }
+  }
+
+  // Per-tenant opt-in (Tenant.skuInObservations): append the product SKU(s).
+  // Added LAST so it never reorders the delivery-critical notes above. The
+  // helper guarantees a single pipe-free line, and the "SKU: " prefix keeps it
+  // through the sanitizer below (see buildSkuObservationLine). Default OFF.
+  if (opts?.skuInObservations) {
+    const skuLine = buildSkuObservationLine(order);
+    if (skuLine) {
+      observations.push(skuLine);
+      slog.info(DAC_STEPS.STEP4_OK, `SKU-in-observations enabled — appending "${skuLine.substring(0, 80)}"`);
     }
   }
 

@@ -29,6 +29,7 @@ interface SettingsData {
   defaultPrinter?: string | null;
   autoPrintEnabled?: boolean;
   orderSortDirection?: string;
+  skuInObservations?: boolean;
   allowedProductTypes?: string[] | null;
   // Cache shape evolved 2026-04-24 from `string` to `{ title, type, vendor }`.
   // Keep both supported here so the page works with old + new tenants until
@@ -58,6 +59,8 @@ export default function SettingsPage() {
   const [scheduleSlots, setScheduleSlots] = useState<ScheduleSlot[]>([{ time: '09:00', maxOrders: 0 }]);
   const [scheduleDays, setScheduleDays] = useState<number[]>([1, 2, 3, 4, 5]); // Mon-Fri
   const [orderSort, setOrderSort] = useState<'oldest_first' | 'newest_first'>('oldest_first');
+  // Per-tenant opt-in: write product SKU(s) into the DAC label "Observaciones" field.
+  const [skuInObservations, setSkuInObservations] = useState(false);
   // Persisted whitelist (entries can be product titles, types, or vendors —
   // worker matches all three case-insensitively).
   const [allowedProductTypes, setAllowedProductTypes] = useState<string[]>([]);
@@ -185,6 +188,7 @@ export default function SettingsPage() {
           setCronSchedule(cron);
           parseCronToSchedule(cron, data.scheduleSlots);
           setOrderSort(data.orderSortDirection ?? 'oldest_first');
+          setSkuInObservations(data.skuInObservations ?? false);
           const stored = (data.allowedProductTypes ?? []) as string[];
           setAllowedProductTypes(stored);
           setConsolidateConsecutiveOrders(data.consolidateConsecutiveOrders ?? false);
@@ -487,10 +491,31 @@ export default function SettingsPage() {
             </p>
           </div>
 
+          {/* SKU en observaciones de la etiqueta DAC (opt-in por tienda) */}
+          <div className="mb-5 pt-5 border-t border-white/[0.06]">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-zinc-800/30 border border-white/[0.04]">
+              <div className="pr-4">
+                <p className="text-sm text-white font-medium">Anadir SKU a observaciones</p>
+                <p className="text-[10px] text-zinc-500 mt-0.5">
+                  {skuInObservations
+                    ? 'El SKU de cada producto se escribe en las observaciones de la etiqueta DAC (ej. "SKU: Plantillas Nube Grandes x2")'
+                    : 'Desactivado — las observaciones de la etiqueta no incluyen el SKU'}
+                </p>
+              </div>
+              <button
+                onClick={() => setSkuInObservations(!skuInObservations)}
+                className={`relative shrink-0 w-11 h-6 rounded-full transition-colors duration-200 ${skuInObservations ? 'bg-cyan-600' : 'bg-zinc-700'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${skuInObservations ? 'translate-x-5' : 'translate-x-0'}`} />
+              </button>
+            </div>
+          </div>
+
           <button
             onClick={() => saveSection('orderProcessing', {
               orderSortDirection: orderSort,
               allowedProductTypes: allowedProductTypes.length > 0 ? allowedProductTypes : null,
+              skuInObservations,
             })}
             disabled={saving === 'orderProcessing'}
             className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"

@@ -36,7 +36,7 @@ export interface ShopifyOrder {
       phone?: string | null;
     } | null;
   } | null;
-  line_items: Array<{ title: string; quantity: number; price: string; product_id: number | null }>;
+  line_items: Array<{ title: string; quantity: number; price: string; product_id: number | null; sku?: string | null }>;
   note: string | null;
   note_attributes: Array<{ name: string; value: string }> | null;
 }

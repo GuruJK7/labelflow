@@ -35,6 +35,7 @@ const updateSchema = z.object({
     maxOrders: z.number().min(0).max(50),
   })).max(10).optional(),
   autoFulfillEnabled: z.boolean().optional(),
+  skuInObservations: z.boolean().optional(),
   fulfillMode: z.enum(['off', 'on', 'always']).optional(),
   consolidateConsecutiveOrders: z.boolean().optional(),
   consolidationWindowMinutes: z.number().min(1).max(1440).optional(),
@@ -81,6 +82,7 @@ export async function GET() {
       lastRunAt: true,
       apiKey: true,
       autoFulfillEnabled: true,
+      skuInObservations: true,
       fulfillMode: true,
       defaultPrinter: true,
       autoPrintEnabled: true,
@@ -164,6 +166,7 @@ export async function GET() {
     maxOrdersPerRun: tenant.maxOrdersPerRun,
     scheduleSlots: tenant.scheduleSlots,
     autoFulfillEnabled: tenant.autoFulfillEnabled,
+    skuInObservations: tenant.skuInObservations,
     fulfillMode: tenant.fulfillMode,
     isActive: tenant.isActive,
     subscriptionStatus: tenant.subscriptionStatus,
@@ -217,6 +220,7 @@ export async function PUT(req: NextRequest) {
   if (input.maxOrdersPerRun !== undefined) data.maxOrdersPerRun = input.maxOrdersPerRun;
   if (input.scheduleSlots !== undefined) data.scheduleSlots = input.scheduleSlots;
   if (input.autoFulfillEnabled !== undefined) data.autoFulfillEnabled = input.autoFulfillEnabled;
+  if (input.skuInObservations !== undefined) data.skuInObservations = input.skuInObservations;
   if (input.fulfillMode !== undefined) {
     data.fulfillMode = input.fulfillMode;
     // Sync legacy boolean field

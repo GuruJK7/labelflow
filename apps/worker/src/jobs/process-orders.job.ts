@@ -798,6 +798,9 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             tenantId,
             jobId,
             usedGuias,
+            undefined, // addressOverride
+            undefined, // autoPay
+            { skuInObservations: tenant.skuInObservations },
           );
 
           // Track this guia so it won't be assigned to another order in this batch
