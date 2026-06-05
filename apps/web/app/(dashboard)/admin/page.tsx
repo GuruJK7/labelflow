@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Users,
   Tags,
@@ -17,7 +17,6 @@ import {
   Gift,
   Clock,
   XCircle,
-  Wallet,
   Receipt,
   Network,
   Briefcase,
@@ -40,6 +39,17 @@ import {
   Legend,
 } from 'recharts';
 import type { AdminMetrics, AdminTenantRow } from '@/app/api/admin/metrics/route';
+import type { AdminTenantOption } from '@/app/api/admin/tenants/route';
+import {
+  KpiTrendCard,
+  StoreFilter,
+  RangeSelector,
+  GeographyPanel,
+  PaymentMixPanel,
+  ValueDistributionPanel,
+  JobTypePanel,
+  StoreComparison,
+} from './_components/admin-extras';
 
 const PLAN_NAMES: Record<string, string> = {
   starter: 'Starter',
@@ -113,29 +123,63 @@ export default function AdminDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  async function load(showRefreshSpinner = false) {
-    if (showRefreshSpinner) setRefreshing(true);
-    try {
-      const res = await fetch('/api/admin/metrics', { cache: 'no-store' });
-      if (!res.ok) {
-        setError(res.status === 404 ? 'No autorizado' : `Error ${res.status}`);
-        return;
-      }
-      const json = await res.json();
-      setMetrics(json.data as AdminMetrics);
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }
+  // ── Filters that drive the metrics query ──
+  const [tenantId, setTenantId] = useState<string | null>(null); // null = all stores
+  const [range, setRange] = useState(30); // 7 | 30 | 90 (days)
+  const [tenants, setTenants] = useState<AdminTenantOption[]>([]); // store dropdown
 
+  const load = useCallback(
+    async (showRefreshSpinner = false) => {
+      if (showRefreshSpinner) setRefreshing(true);
+      try {
+        const params = new URLSearchParams();
+        params.set('range', String(range));
+        if (tenantId) params.set('tenantId', tenantId);
+        const res = await fetch(`/api/admin/metrics?${params.toString()}`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) {
+          setError(res.status === 404 ? 'No autorizado' : `Error ${res.status}`);
+          return;
+        }
+        const json = await res.json();
+        setMetrics(json.data as AdminMetrics);
+        setError(null);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [tenantId, range],
+  );
+
+  // Re-fetch whenever a filter changes (load identity changes), and reset the
+  // 60s auto-refresh so the timer always reflects the current selection.
   useEffect(() => {
     load();
-    const t = setInterval(() => load(false), 60_000); // 1 min auto-refresh
+    const t = setInterval(() => load(false), 60_000);
     return () => clearInterval(t);
+  }, [load]);
+
+  // Populate the store dropdown once. It lists every tenant (not just those
+  // active in the current range window), so it's a separate, unscoped fetch.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/admin/tenants', { cache: 'no-store' });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled) setTenants((json.data?.tenants ?? []) as AdminTenantOption[]);
+      } catch {
+        // Non-fatal: the dropdown just stays empty (still offers "Todas").
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (loading) {
@@ -171,120 +215,201 @@ export default function AdminDashboardPage() {
     topPayers,
     topReferrers,
     anthropicCost,
+    // admin v3 — store filter + range window + trends + new breakdowns
+    scopedTenantName,
+    rangeLabelsTotal,
+    rangeFailedTotal,
+    trends,
+    geographyTop,
+    cityTop,
+    paymentTypeBreakdown,
+    paymentStatusBreakdown,
+    jobTypeBreakdown,
+    valueStats,
+    labelsByTenant,
+    revenueByTenant,
   } = metrics;
 
-  // Prefer real Anthropic spend if the admin key is configured. Falls back
-  // to the local AddressResolution cost (which only covers one feature).
-  const aiMonthUsd =
-    anthropicCost.configured && anthropicCost.fetchedOk
-      ? anthropicCost.totals.totalUsd
-      : totals.aiCostUsdThisMonth;
-  const aiMonthSublabel =
-    anthropicCost.configured && anthropicCost.fetchedOk
-      ? `Anthropic · últimos ${metrics.rangeDays}d`
-      : `${totals.aiCallsThisMonth.toLocaleString('es-UY')} calls (Address Resolver)`;
+  // A store is selected → hide the cross-tenant (global) panels.
+  const scoped = !!metrics.scopedTenantId;
+
+  // Sparkline series for the trend KPI cards (oldest → newest).
+  const labelsSpark = daily.map((d) => d.labels);
+  const revenueSpark = revenueDaily.map((d) => d.uyu);
+  const aiSpark = daily.map((d) => d.aiCostUsd);
 
   return (
     <div>
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Activity className="w-4 h-4 text-cyan-400" />
-            <span className="text-[11px] font-medium text-cyan-400 uppercase tracking-wider">
-              Admin · Visión global
-            </span>
-          </div>
-          <h1 className="text-2xl font-bold text-white">Panel de operador</h1>
-          <p className="text-zinc-500 text-sm mt-1">
-            Métricas agregadas de todas las cuentas. Solo visible para vos.
-          </p>
+      <div className="mb-5">
+        <div className="flex items-center gap-2 mb-1">
+          <Activity className="w-4 h-4 text-cyan-400" />
+          <span className="text-[11px] font-medium text-cyan-400 uppercase tracking-wider">
+            Admin · {scoped ? 'Vista por tienda' : 'Visión global'}
+          </span>
         </div>
+        <h1 className="text-2xl font-bold text-white">Panel de operador</h1>
+        <p className="text-zinc-500 text-sm mt-1">
+          {scoped
+            ? `Métricas de ${scopedTenantName}. Volvé a la vista global cuando quieras.`
+            : 'Métricas agregadas de todas las cuentas. Solo visible para vos.'}
+        </p>
+      </div>
+
+      {/* ─── Control bar: store filter + range + refresh (sticky) ───────── */}
+      {/* Sits just under the TopBar (h-14). Opaque page-colour bg so panels
+          scroll cleanly behind it; z-20 < TopBar z-30. No negative margins
+          (the layout container owns the responsive padding), so nothing in
+          the existing layout shifts. */}
+      <div className="sticky top-14 z-20 mb-6 py-2.5 bg-[#050505] border-b border-white/[0.06] flex flex-wrap items-center gap-2">
+        <StoreFilter tenants={tenants} value={tenantId} onChange={setTenantId} />
+        <RangeSelector value={range} onChange={setRange} />
+        {scoped && (
+          <button
+            onClick={() => setTenantId(null)}
+            title="Volver a la vista global"
+            className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 hover:bg-cyan-500/15 transition-colors text-xs font-medium"
+          >
+            <span className="truncate max-w-[160px]">Viendo: {scopedTenantName}</span>
+            <span className="text-cyan-400 text-sm leading-none">×</span>
+          </button>
+        )}
         <button
           onClick={() => load(true)}
           disabled={refreshing}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.08] text-zinc-300 hover:bg-white/[0.06] transition-colors text-xs font-medium disabled:opacity-50"
+          className="ml-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.08] text-zinc-300 hover:bg-white/[0.06] transition-colors text-xs font-medium disabled:opacity-50"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           Refrescar
         </button>
       </div>
 
-      {/* ─── KPI cards (operations) ─────────────────────────────────────── */}
+      {/* ─── KPI trend cards (current range window vs preceding window) ──── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-        <KpiCard
-          icon={<Users className="w-4 h-4" />}
-          color="text-cyan-400"
-          bg="from-cyan-500/20 to-cyan-500/5"
-          label="Cuentas"
-          value={totals.tenants}
-          sublabel={`${totals.activeTenants} activas · ${totals.paidTenants} pagas`}
-        />
-        <KpiCard
+        <KpiTrendCard
           icon={<Tags className="w-4 h-4" />}
           color="text-emerald-400"
           bg="from-emerald-500/20 to-emerald-500/5"
-          label="Etiquetas hoy"
-          value={totals.labelsToday}
-          sublabel={`${totals.labelsThisMonth.toLocaleString('es-UY')} este mes`}
+          label={`Etiquetas (${metrics.rangeDays}d)`}
+          value={rangeLabelsTotal.toLocaleString('es-UY')}
+          sublabel={`${rangeFailedTotal} fallidas`}
+          deltaPct={trends.labels.deltaPct}
+          goodWhenUp
+          spark={labelsSpark}
+          sparkColor="#10b981"
         />
-        <KpiCard
-          icon={<Brain className="w-4 h-4" />}
-          color="text-violet-400"
-          bg="from-violet-500/20 to-violet-500/5"
-          label="Costo IA"
-          value={`$${aiMonthUsd.toFixed(2)}`}
-          sublabel={aiMonthSublabel}
-        />
-        <KpiCard
+        <KpiTrendCard
           icon={<TrendingUp className="w-4 h-4" />}
-          color="text-amber-400"
-          bg="from-amber-500/20 to-amber-500/5"
-          label="Tasa de éxito"
-          value={`${totals.successRate}%`}
-          sublabel={`${totals.failedThisMonth} fallidas este mes`}
+          color="text-cyan-400"
+          bg="from-cyan-500/20 to-cyan-500/5"
+          label={`Tasa de éxito (${metrics.rangeDays}d)`}
+          value={`${trends.successRate.current}%`}
+          sublabel={`antes ${trends.successRate.previous}%`}
+          deltaPct={trends.successRate.deltaPct}
+          goodWhenUp
         />
-      </div>
-
-      {/* ─── KPI cards (revenue & referrals) ────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <KpiCard
+        <KpiTrendCard
           icon={<DollarSign className="w-4 h-4" />}
           color="text-emerald-400"
           bg="from-emerald-500/20 to-emerald-500/5"
-          label="Ingresos mes"
-          value={fmtUyu(totals.revenueUyuThisMonth)}
-          sublabel={`${fmtUyu(totals.revenueUyuLast30Days)} últimos 30d`}
+          label={`Ingresos (${metrics.rangeDays}d)`}
+          value={fmtUyu(trends.revenueUyu.current)}
+          sublabel={`${totals.paidPurchasesLast30Days} compras`}
+          deltaPct={trends.revenueUyu.deltaPct}
+          goodWhenUp
+          spark={revenueSpark}
+          sparkColor="#10b981"
         />
-        <KpiCard
-          icon={<Wallet className="w-4 h-4" />}
-          color="text-cyan-400"
-          bg="from-cyan-500/20 to-cyan-500/5"
-          label="Ingresos all-time"
-          value={fmtUyu(totals.revenueUyuAllTime)}
-          sublabel={`AOV ${fmtUyu(totals.aovUyuLast30Days)} (30d)`}
-        />
-        <KpiCard
-          icon={<Receipt className="w-4 h-4" />}
+        <KpiTrendCard
+          icon={<Brain className="w-4 h-4" />}
           color="text-violet-400"
           bg="from-violet-500/20 to-violet-500/5"
-          label="Compras 30d"
-          value={totals.paidPurchasesLast30Days}
-          sublabel="packs PAID"
-        />
-        <KpiCard
-          icon={<Gift className="w-4 h-4" />}
-          color="text-amber-400"
-          bg="from-amber-500/20 to-amber-500/5"
-          label="Referidos"
-          value={totals.refereesActiveCount}
-          sublabel={`${totals.referralShipmentsAccruedAllTime} envíos acreditados`}
+          label={`Costo IA (${metrics.rangeDays}d)`}
+          value={`$${trends.aiCostUsd.current.toFixed(2)}`}
+          sublabel="Address Resolver"
+          deltaPct={trends.aiCostUsd.deltaPct}
+          neutralDelta
+          spark={aiSpark}
+          sparkColor="#a855f7"
         />
       </div>
 
+      {/* ─── Context cards: store snapshot when scoped, else global counters ── */}
+      {scoped ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <KpiCard
+            icon={<Tags className="w-4 h-4" />}
+            color="text-cyan-400"
+            bg="from-cyan-500/20 to-cyan-500/5"
+            label="Etiquetas hoy"
+            value={totals.labelsToday}
+            sublabel={`${totals.labelsThisMonth.toLocaleString('es-UY')} este mes`}
+          />
+          <KpiCard
+            icon={<XCircle className="w-4 h-4" />}
+            color="text-red-400"
+            bg="from-red-500/20 to-red-500/5"
+            label={`Fallidas (${metrics.rangeDays}d)`}
+            value={rangeFailedTotal}
+            sublabel={`${totals.failedThisMonth} este mes`}
+          />
+          <KpiCard
+            icon={<DollarSign className="w-4 h-4" />}
+            color="text-emerald-400"
+            bg="from-emerald-500/20 to-emerald-500/5"
+            label="Ingresos mes"
+            value={fmtUyu(totals.revenueUyuThisMonth)}
+            sublabel={`${fmtUyu(totals.revenueUyuAllTime)} all-time`}
+          />
+          <KpiCard
+            icon={<Receipt className="w-4 h-4" />}
+            color="text-violet-400"
+            bg="from-violet-500/20 to-violet-500/5"
+            label="Pedido promedio"
+            value={fmtUyu(valueStats.avgUyu)}
+            sublabel={`mediana ${fmtUyu(valueStats.medianUyu)}`}
+          />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <KpiCard
+            icon={<Users className="w-4 h-4" />}
+            color="text-cyan-400"
+            bg="from-cyan-500/20 to-cyan-500/5"
+            label="Cuentas"
+            value={totals.tenants}
+            sublabel={`${totals.activeTenants} activas · ${totals.paidTenants} pagas`}
+          />
+          <KpiCard
+            icon={<Tags className="w-4 h-4" />}
+            color="text-emerald-400"
+            bg="from-emerald-500/20 to-emerald-500/5"
+            label="Etiquetas hoy"
+            value={totals.labelsToday}
+            sublabel={`${totals.labelsThisMonth.toLocaleString('es-UY')} este mes`}
+          />
+          <KpiCard
+            icon={<DollarSign className="w-4 h-4" />}
+            color="text-emerald-400"
+            bg="from-emerald-500/20 to-emerald-500/5"
+            label="Ingresos mes"
+            value={fmtUyu(totals.revenueUyuThisMonth)}
+            sublabel={`${fmtUyu(totals.revenueUyuAllTime)} all-time`}
+          />
+          <KpiCard
+            icon={<Gift className="w-4 h-4" />}
+            color="text-amber-400"
+            bg="from-amber-500/20 to-amber-500/5"
+            label="Referidos"
+            value={totals.refereesActiveCount}
+            sublabel={`${totals.referralShipmentsAccruedAllTime} envíos acreditados`}
+          />
+        </div>
+      )}
+
       {/* ─── Charts row 1: labels per day + plan distribution ───────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
-        <div className="lg:col-span-2 bg-zinc-900/50 border border-white/[0.06] rounded-xl p-4">
+        <div className={`${scoped ? 'lg:col-span-3' : 'lg:col-span-2'} bg-zinc-900/50 border border-white/[0.06] rounded-xl p-4`}>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-semibold text-white">
               Etiquetas por día (últimos {metrics.rangeDays}d)
@@ -326,38 +451,68 @@ export default function AdminDashboardPage() {
           </div>
         </div>
 
-        <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-4">
-          <h3 className="text-sm font-semibold text-white mb-2">Distribución por plan</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={planDistribution.map((p) => ({
-                    name: PLAN_NAMES[p.plan] ?? p.plan,
-                    value: p.count,
-                  }))}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={50}
-                  outerRadius={85}
-                  paddingAngle={2}
-                  stroke="#0a0a0a"
-                  strokeWidth={2}
-                >
-                  {planDistribution.map((_, i) => (
-                    <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip content={<DarkTooltip />} />
-                <Legend
-                  verticalAlign="bottom"
-                  iconSize={8}
-                  wrapperStyle={{ fontSize: 11, color: '#a1a1aa' }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+        {!scoped && (
+          <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-4">
+            <h3 className="text-sm font-semibold text-white mb-2">Distribución por plan</h3>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={planDistribution.map((p) => ({
+                      name: PLAN_NAMES[p.plan] ?? p.plan,
+                      value: p.count,
+                    }))}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={50}
+                    outerRadius={85}
+                    paddingAngle={2}
+                    stroke="#0a0a0a"
+                    strokeWidth={2}
+                  >
+                    {planDistribution.map((_, i) => (
+                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<DarkTooltip />} />
+                  <Legend
+                    verticalAlign="bottom"
+                    iconSize={8}
+                    wrapperStyle={{ fontSize: 11, color: '#a1a1aa' }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
           </div>
+        )}
+      </div>
+
+      {/* ─── Cross-store comparison (global; hidden when a store is selected) ── */}
+      {!scoped && (
+        <div className="mb-8">
+          <StoreComparison
+            labelsByTenant={labelsByTenant}
+            revenueByTenant={revenueByTenant}
+            onPick={setTenantId}
+          />
         </div>
+      )}
+
+      {/* ─── Geography + payment mix (scoped to the selected store) ──────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+        <GeographyPanel departments={geographyTop} cities={cityTop} />
+        <PaymentMixPanel
+          paymentTypes={paymentTypeBreakdown}
+          paymentStatuses={paymentStatusBreakdown}
+        />
+      </div>
+
+      {/* ─── Order-value distribution + worker job types ────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
+        <div className="lg:col-span-2">
+          <ValueDistributionPanel stats={valueStats} />
+        </div>
+        <JobTypePanel jobTypes={jobTypeBreakdown} />
       </div>
 
       {/* ─── Revenue daily chart ────────────────────────────────────────── */}
@@ -422,7 +577,7 @@ export default function AdminDashboardPage() {
         <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-4">
           <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-3">
             <Activity className="w-3.5 h-3.5 text-cyan-400" />
-            Estados de etiquetas (30d)
+            Estados de etiquetas ({metrics.rangeDays}d)
           </h3>
           {statusBreakdown30d.length === 0 ? (
             <p className="text-xs text-zinc-500">Sin etiquetas en este rango.</p>
@@ -641,7 +796,7 @@ export default function AdminDashboardPage() {
         <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-4">
           <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-3">
             <CreditCard className="w-3.5 h-3.5 text-red-400" />
-            Fallos de pago auto · Plexo (30d)
+            Fallos de pago auto · Plexo ({metrics.rangeDays}d)
           </h3>
           {paymentFailureBreakdown30d.length === 0 ? (
             <p className="text-xs text-zinc-500">
@@ -716,6 +871,9 @@ export default function AdminDashboardPage() {
         )}
       </div>
 
+      {/* ─── Global-only tables (hidden when a store is selected) ────────── */}
+      {!scoped && (
+        <>
       {/* ─── Top payers + Top referrers ─────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
         <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl overflow-hidden">
@@ -886,12 +1044,14 @@ export default function AdminDashboardPage() {
           </div>
         )}
       </div>
+        </>
+      )}
 
       {/* ─── Jobs breakdown ─────────────────────────────────────────────── */}
       <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-4 mb-8">
         <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-3">
           <Briefcase className="w-3.5 h-3.5 text-cyan-400" />
-          Jobs del worker (30d)
+          Jobs del worker ({metrics.rangeDays}d)
         </h3>
         {jobsBreakdown30d.length === 0 ? (
           <p className="text-xs text-zinc-500">Ningún job en este rango.</p>
@@ -921,6 +1081,8 @@ export default function AdminDashboardPage() {
         )}
       </div>
 
+      {!scoped && (
+        <>
       {/* ─── Top tenants ────────────────────────────────────────────────── */}
       <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl mb-8 overflow-hidden">
         <div className="flex items-center gap-2 p-4 border-b border-white/[0.06]">
@@ -945,6 +1107,8 @@ export default function AdminDashboardPage() {
           highlightFailed
         />
       </div>
+        </>
+      )}
 
       <p className="text-[10px] text-zinc-600 text-center">
         Generado {new Date(metrics.generatedAt).toLocaleString('es-UY')} · auto-refresh cada 60s
