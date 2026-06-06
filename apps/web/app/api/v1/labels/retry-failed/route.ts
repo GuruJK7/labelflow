@@ -49,7 +49,22 @@ import { getCreditHolderTenantId } from '@/lib/credit-holder';
 //     bounce again with the same verdict).
 //   - 'remitente': pickup / sender shipment that must be loaded by hand in
 //     DAC. Reprocessing only re-flags it NEEDS_REVIEW.
-const NON_RETRYABLE_ERROR_PATTERNS = ['no se pudo interpretar', 'remitente'];
+//   - 'huérfana' / 'huerfana': ORPHAN class — DAC may have minted a guia we
+//     could not link back (Label.dacGuia stays null even though a guia exists
+//     in DAC), and the worker DELIBERATELY preserves the PendingShipment
+//     "para evitar duplicados" (process-orders.job.ts orphan path). A retry
+//     here deletes that very guard (deleteMany PendingShipment below) and
+//     re-submits the order — risking a SECOND guia and a double charge. These
+//     must be verified/linked by hand or by orphan-reconcile, never blind-
+//     retried. (Note: labels whose guia we DID link are already excluded by
+//     the dacGuia:null filter in selectRetryable; this covers the ones where
+//     the guia exists in DAC but is not yet linked on our side.)
+const NON_RETRYABLE_ERROR_PATTERNS = [
+  'no se pudo interpretar',
+  'remitente',
+  'huérfana',
+  'huerfana',
+];
 
 // Statuses that represent "no llego a despacharse" (never produced a guia).
 const RETRYABLE_STATUSES: LabelStatus[] = [
