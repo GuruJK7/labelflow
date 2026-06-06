@@ -3038,12 +3038,45 @@ export async function createShipment(
   // call entirely, so the centroid path below runs exactly as today.
   if (isStep3GeoTenantEnabled(step3GeoTenants, tenantId)) {
     try {
-      const geo = await geocodeAddressToDepartment({
+      let geo = await geocodeAddressToDepartment({
         address1: addr.address1 ?? undefined,
         address2: addr.address2 ?? undefined,
         city: resolvedCity || (addr.city ?? undefined),
         zip: addr.zip ?? undefined,
       });
+      // P2 — city-centroid fallback (env-gated DAC_STEP3_CITY_FALLBACK, default
+      // OFF). Production data (2026-06): when Lever B keeps the department
+      // centroid it is ~99.6% because of geocode-no-result — Nominatim cannot
+      // resolve the full street address. The CITY almost always resolves, and
+      // its centroid sits a few km from the address (vs 50-100 km for the
+      // department centroid). So on a full-address miss we retry with CITY
+      // ONLY, reusing the SAME geocoder — decideStep3Coords' #11865 dept-match
+      // + UY-bounds guards still apply, so a wrong-department city point is
+      // still rejected and falls back to the centroid (today's behaviour).
+      // Separate flag so it rolls out + is measured independently of Lever B.
+      const cityFallbackCity = resolvedCity || addr.city || undefined;
+      if (
+        (!geo || geo.lat == null || geo.lon == null) &&
+        cityFallbackCity &&
+        isStep3GeoTenantEnabled(process.env.DAC_STEP3_CITY_FALLBACK, tenantId)
+      ) {
+        const cityGeo = await geocodeAddressToDepartment({ city: cityFallbackCity });
+        if (cityGeo && cityGeo.lat != null && cityGeo.lon != null) {
+          geo = cityGeo;
+          slog.info(
+            DAC_STEPS.STEP3_SIGUIENTE,
+            `[step3-geocode] city-centroid fallback for "${cityFallbackCity}" (full address did not geocode)`,
+            {
+              orderName: order.name,
+              resolvedDept,
+              resolvedCity,
+              geoDept: cityGeo.department,
+              lat: cityGeo.lat,
+              lon: cityGeo.lon,
+            },
+          );
+        }
+      }
       const decision = decideStep3Coords({
         tenantId,
         enabledTenantsEnv: step3GeoTenants,
