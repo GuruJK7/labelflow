@@ -47,6 +47,7 @@ interface JobSummary {
   totalOrders: number;
   successCount: number;
   failedCount: number;
+  skippedCount: number;
   createdAt: string;
   durationMs: number | null;
 }
@@ -747,11 +748,12 @@ export default function DashboardPage() {
             <p className="text-zinc-700 text-xs mt-1">Hace click en &quot;Ejecutar ahora&quot; para comenzar</p>
           </div>
         ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-white/[0.04]">
-                  {['Estado', 'Origen', 'Pedidos', 'Exitosos', 'Errores', 'Duracion', 'Fecha'].map((h) => (
+                  {['Estado', 'Origen', 'Escaneados', 'Exitosos', 'Errores', 'Omitidos', 'Duracion', 'Fecha'].map((h) => (
                     <th key={h} className="text-left px-6 py-3 text-[11px] font-medium text-zinc-600 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -778,6 +780,9 @@ export default function DashboardPage() {
                       <td className="px-6 py-3.5 text-sm font-medium">
                         <span className={job.failedCount > 0 ? 'text-red-400' : 'text-zinc-600'}>{job.failedCount}</span>
                       </td>
+                      <td className="px-6 py-3.5 text-sm font-medium">
+                        <span className={job.skippedCount > 0 ? 'text-zinc-400' : 'text-zinc-700'}>{job.skippedCount}</span>
+                      </td>
                       <td className="px-6 py-3.5 text-xs text-zinc-500 font-mono">
                         {job.durationMs ? formatDuration(job.durationMs) : '-'}
                       </td>
@@ -792,6 +797,15 @@ export default function DashboardPage() {
               </tbody>
             </table>
           </div>
+          <div className="px-6 py-3 border-t border-white/[0.04]">
+            <p className="text-[11px] text-zinc-600 leading-relaxed">
+              <span className="text-zinc-400 font-medium">Escaneados</span> = pedidos elegibles revisados en el run = Exitosos + Errores + Omitidos.{' '}
+              <span className="text-emerald-400 font-medium">Exitosos</span>: con guia DAC generada.{' '}
+              <span className="text-red-400 font-medium">Errores</span>: intentados sin guia (incluye los que quedaron para revision manual).{' '}
+              <span className="text-zinc-400 font-medium">Omitidos</span>: no procesados en este run (p. ej. aplazados por saldo insuficiente o pago en origen para carga manual).
+            </p>
+          </div>
+          </>
         )}
       </div>
     </div>
