@@ -59,12 +59,40 @@ import { getCreditHolderTenantId } from '@/lib/credit-holder';
 //     retried. (Note: labels whose guia we DID link are already excluded by
 //     the dacGuia:null filter in selectRetryable; this covers the ones where
 //     the guia exists in DAC but is not yet linked on our side.)
+// Category pattern groups — single source of truth for BOTH the retry filter
+// and the dashboard breakdown, so the count the operator sees can never drift
+// from what the retry action actually touches. A stuck label is classified by
+// the FIRST group its errorMessage matches.
+const ORPHAN_PATTERNS = ['huérfana', 'huerfana']; // guia may exist in DAC — verify, never blind-retry
+const REMITENTE_PATTERNS = ['remitente']; // store pays — load by hand in DAC
+const ADDRESS_PATTERNS = ['no se pudo interpretar']; // AI could not parse address — fix it / bias-to-submit
+
+// Everything in these groups is NOT a safe blind-retry (see per-group note).
 const NON_RETRYABLE_ERROR_PATTERNS = [
-  'no se pudo interpretar',
-  'remitente',
-  'huérfana',
-  'huerfana',
+  ...ADDRESS_PATTERNS,
+  ...REMITENTE_PATTERNS,
+  ...ORPHAN_PATTERNS,
 ];
+
+export type StuckClass = 'retryable' | 'orphan' | 'remitente' | 'needsAddress';
+
+/**
+ * Classify a stuck label (sin guia real) by its errorMessage so the dashboard
+ * can show the TRUE "sin completar" count broken down by the action each needs:
+ *   - retryable    → safe to re-attempt automatically (the button)
+ *   - orphan       → guia may already exist in DAC; verify/link, never blind-retry
+ *   - remitente    → store-pays; load by hand in DAC
+ *   - needsAddress → address unparseable; fix the address (or bias-to-submit)
+ * A null errorMessage is treated as retryable (no blocking reason recorded).
+ */
+function classifyStuck(errorMessage: string | null): StuckClass {
+  if (!errorMessage) return 'retryable';
+  const l = errorMessage.toLowerCase();
+  if (ORPHAN_PATTERNS.some((p) => l.includes(p))) return 'orphan';
+  if (REMITENTE_PATTERNS.some((p) => l.includes(p))) return 'remitente';
+  if (ADDRESS_PATTERNS.some((p) => l.includes(p))) return 'needsAddress';
+  return 'retryable';
+}
 
 // Statuses that represent "no llego a despacharse" (never produced a guia).
 const RETRYABLE_STATUSES: LabelStatus[] = [
@@ -120,8 +148,22 @@ export async function GET() {
   const auth = await getAuthenticatedTenant();
   if (!auth) return apiError('No autorizado', 401);
 
-  const retryable = await selectRetryable(auth.tenantId);
-  return apiSuccess({ count: retryable.length });
+  // Full "stuck = attempted but no real guia" set, broken down by what each
+  // class needs. `count` stays = retryable for back-compat with existing
+  // callers; `total` + the per-class counts let the dashboard show the REAL
+  // number (not just the blind-retryable subset) and route each class.
+  const candidates = await db.label.findMany({
+    where: { tenantId: auth.tenantId, dacGuia: null, status: { in: RETRYABLE_STATUSES } },
+    take: MAX_CANDIDATE_SCAN,
+    select: { errorMessage: true },
+  });
+  const breakdown = { retryable: 0, orphan: 0, remitente: 0, needsAddress: 0 };
+  for (const c of candidates) breakdown[classifyStuck(c.errorMessage)] += 1;
+  return apiSuccess({
+    count: breakdown.retryable,
+    total: candidates.length,
+    ...breakdown,
+  });
 }
 
 export async function POST(req: Request) {

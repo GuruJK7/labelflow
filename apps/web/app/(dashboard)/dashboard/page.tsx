@@ -64,6 +64,15 @@ export default function DashboardPage() {
   const [retryCount, setRetryCount] = useState(5);
   const [retrying, setRetrying] = useState(false);
   const [failedCount, setFailedCount] = useState<number | null>(null);
+  // Full "sin completar" breakdown from /api/v1/labels/retry-failed (real total
+  // + per-class counts). failedCount stays = retryable (drives the retry button).
+  const [stuck, setStuck] = useState<{
+    total: number;
+    retryable: number;
+    orphan: number;
+    remitente: number;
+    needsAddress: number;
+  } | null>(null);
   const [orderSort, setOrderSort] = useState<'oldest_first' | 'newest_first'>('oldest_first');
   // `allowedProductTypes` is the persisted whitelist. Each entry can be a
   // product title, product_type, or vendor — the worker matches any of them.
@@ -105,7 +114,15 @@ export default function DashboardPage() {
 
       if (retryRes.ok) {
         const res = await retryRes.json();
-        setFailedCount((res.data?.count as number) ?? 0);
+        const d = res.data ?? {};
+        setFailedCount((d.count as number) ?? 0);
+        setStuck({
+          total: (d.total as number) ?? (d.count as number) ?? 0,
+          retryable: (d.retryable as number) ?? (d.count as number) ?? 0,
+          orphan: (d.orphan as number) ?? 0,
+          remitente: (d.remitente as number) ?? 0,
+          needsAddress: (d.needsAddress as number) ?? 0,
+        });
       }
 
       // Use real label counts from API (calculated from Label table)
@@ -528,7 +545,7 @@ export default function DashboardPage() {
       {/* Reintentar envios — re-attempt the N oldest shipments that never
           got a real DAC guia (NEEDS_REVIEW / orphaned / pending sin guia).
           Hidden when there is nothing to retry. */}
-      {failedCount !== null && failedCount > 0 && (
+      {stuck !== null && stuck.total > 0 && (
         <div className="glass rounded-2xl p-4 mb-6 animate-fade-in delay-150">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -536,13 +553,24 @@ export default function DashboardPage() {
                 <RotateCcw className="w-4 h-4 text-amber-400" />
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-medium text-white">Reintentar envios</p>
+                <p className="text-sm font-medium text-white">
+                  Recuperar envios — {stuck.total} sin completar
+                </p>
                 <p className="text-xs text-zinc-500">
-                  {failedCount} envio{failedCount === 1 ? '' : 's'} sin completar (sin guia). Se vuelven a
-                  procesar en DAC con los ultimos arreglos.
+                  {[
+                    stuck.retryable > 0
+                      ? `${stuck.retryable} reintentable${stuck.retryable === 1 ? '' : 's'}`
+                      : null,
+                    stuck.orphan > 0 ? `${stuck.orphan} con guia a verificar` : null,
+                    stuck.needsAddress > 0 ? `${stuck.needsAddress} corregir direccion` : null,
+                    stuck.remitente > 0 ? `${stuck.remitente} carga manual (REMITENTE)` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </p>
               </div>
             </div>
+            {(failedCount ?? 0) > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1.5">
                 {[1, 3, 5, 10, 20].map((n) => (
@@ -575,6 +603,7 @@ export default function DashboardPage() {
                 Reintentar {retryCount === 1 ? '1 envio' : `${retryCount} envios`}
               </button>
             </div>
+            )}
           </div>
         </div>
       )}
