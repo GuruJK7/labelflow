@@ -41,6 +41,15 @@ describe('isStep3GeoTenantEnabled — shared gate (single source of truth)', () 
     expect(isStep3GeoTenantEnabled(`  tenant-aaa , ${TAM} , tenant-ccc `, TAM)).toBe(true);
   });
 
+  it('is ON for ANY tenant when the wildcard "*" is present (platform-wide)', () => {
+    expect(isStep3GeoTenantEnabled('*', 'any-unknown-tenant')).toBe(true);
+    expect(isStep3GeoTenantEnabled('*', TAM)).toBe(true);
+  });
+
+  it('treats "*" alongside other entries and spaces as all-on', () => {
+    expect(isStep3GeoTenantEnabled(' tenant-aaa , * ', 'whatever-tenant')).toBe(true);
+  });
+
   it('agrees with decideStep3Coords on the gate (no drift)', () => {
     // The decision must refuse with tenant-not-gated EXACTLY when the helper is off.
     const offEnv = 'tenant-aaa';
@@ -83,6 +92,16 @@ describe('decideStep3Coords — env gate', () => {
     const d = decideStep3Coords({
       tenantId: TAM,
       enabledTenantsEnv: `  tenant-aaa , ${TAM} , tenant-ccc `,
+      resolvedDept: 'Canelones',
+      geo: { department: 'Canelones', ...CANELONES_POINT },
+    });
+    expect(d.use).toBe(true);
+  });
+
+  it('accepts ANY tenant under the "*" wildcard (still subject to geo guards)', () => {
+    const d = decideStep3Coords({
+      tenantId: 'some-other-tenant-not-listed',
+      enabledTenantsEnv: '*',
       resolvedDept: 'Canelones',
       geo: { department: 'Canelones', ...CANELONES_POINT },
     });

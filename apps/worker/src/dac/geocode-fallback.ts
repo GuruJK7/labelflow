@@ -416,11 +416,15 @@ export function isStep3GeoTenantEnabled(
   enabledTenantsEnv: string | undefined,
   tenantId: string,
 ): boolean {
-  return (enabledTenantsEnv ?? '')
+  const entries = (enabledTenantsEnv ?? '')
     .split(',')
     .map((t) => t.trim())
-    .filter(Boolean)
-    .includes(tenantId);
+    .filter(Boolean);
+  // "*" enables Lever B for ALL tenants (platform-wide rollout, future tenants
+  // included). Explicit tenant ids still work — alone, or alongside the
+  // wildcard. With the env var unset/empty this stays false (default-OFF).
+  if (entries.includes('*')) return true;
+  return entries.includes(tenantId);
 }
 
 /**
