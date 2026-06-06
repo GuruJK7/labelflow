@@ -788,6 +788,7 @@ export default function DashboardPage() {
                       </td>
                       <td className="px-6 py-3.5 text-xs text-zinc-500">
                         {new Date(job.createdAt).toLocaleString('es-UY', {
+                          timeZone: 'America/Montevideo',
                           day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
                         })}
                       </td>
