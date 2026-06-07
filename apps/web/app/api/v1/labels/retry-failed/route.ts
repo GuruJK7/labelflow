@@ -97,20 +97,43 @@ function isAgencyPickupAddress(address: string | null): boolean {
  * Classify a stuck label (sin guia real) by what action it needs, so the
  * dashboard shows the TRUE "sin completar" count and the retry touches only
  * the safe set:
- *   - retryable    → safe to re-attempt (no blocker, OR agency-pickup which the
- *                    worker now routes via TipoEntrega=Agencia)
- *   - orphan       → guia may already exist in DAC; verify/link, never retry
+ *   - retryable    → safe to re-attempt (no blocker; agency-pickup routed via
+ *                    TipoEntrega=Agencia; missing-number ships-with-note; OR a
+ *                    DESTINATARIO orphan — an unlinked guia is inert/never ships,
+ *                    so re-shipping is safe, business decision 2026-06-07)
+ *   - orphan       → REMITENTE-only now: DAC may already hold a guia AND the
+ *                    store pre-pays, so a duplicate = double store charge → held
+ *                    for manual verify. (DESTINATARIO orphans are RETRYABLE.)
  *   - remitente    → store-pays; load by hand in DAC
  *   - needsAddress → DEPRECATED as a distinct outcome: missing/uninterpretable
  *                    addresses are now RETRYABLE (see the ADDRESS_PATTERNS branch).
  *                    Kept in the type + breakdown shape for back-compat (now 0).
- * Precedence: orphan and remitente win (never re-run a maybe-guia or a store-pays
- * order); everything else — agency-pickup, missing-number, or no blocker — is
- * retryable. A null errorMessage with a normal address is retryable too.
+ * Precedence: an orphan is checked first — DESTINATARIO orphan → retryable,
+ * REMITENTE orphan → held; then remitente; then agency / missing-number / no
+ * blocker → retryable. A null errorMessage with a normal address is retryable.
  */
-function classifyStuck(errorMessage: string | null, deliveryAddress: string | null): StuckClass {
+function classifyStuck(
+  errorMessage: string | null,
+  deliveryAddress: string | null,
+  paymentType: string | null,
+): StuckClass {
   const l = (errorMessage ?? '').toLowerCase();
-  if (errorMessage && ORPHAN_PATTERNS.some((p) => l.includes(p))) return 'orphan';
+  if (errorMessage && ORPHAN_PATTERNS.some((p) => l.includes(p))) {
+    // Orphan = DAC MAY have minted a guia we could not link. Business decision
+    // (operator, 2026-06-07): an UNLINKED guia is INERT — it never reaches the
+    // client label portal, so the client never prints it and it never ships. A
+    // held orphan is therefore a GUARANTEED lost shipment (the customer never
+    // receives), which is worse than the rare cost of a duplicate guia. The
+    // inline rescue + orphan-reconcile ALREADY scan DAC historial and LINK any
+    // guia they find (-> COMPLETED, already excluded by the dacGuia:null filter);
+    // an order that REMAINS orphan = the rescue searched and found none = very
+    // likely no guia -> safe to re-ship.
+    //   - DESTINATARIO (customer pays on delivery): a duplicate guia costs
+    //     nothing real (~1 DAC credit; the inert orphan never ships) -> RETRYABLE.
+    //   - REMITENTE (store pre-pays): a duplicate could double-charge the store,
+    //     so it stays held ('orphan') for manual verification in DAC.
+    return paymentType === 'REMITENTE' ? 'orphan' : 'retryable';
+  }
   if (errorMessage && REMITENTE_PATTERNS.some((p) => l.includes(p))) return 'remitente';
   if (isAgencyPickupAddress(deliveryAddress)) return 'retryable';
   // 'no se pudo interpretar' (missing / uninterpretable address) is RETRYABLE
@@ -145,6 +168,7 @@ interface RetryableLabel {
   status: LabelStatus;
   errorMessage: string | null;
   deliveryAddress: string | null;
+  paymentType: string | null;
 }
 
 /**
@@ -168,12 +192,13 @@ async function selectRetryable(tenantId: string, limit?: number): Promise<Retrya
       status: true,
       errorMessage: true,
       deliveryAddress: true,
+      paymentType: true,
     },
   });
   const retryable = candidates.filter(
     (l) =>
       !isResolvedExternally(l.errorMessage) &&
-      classifyStuck(l.errorMessage, l.deliveryAddress) === 'retryable',
+      classifyStuck(l.errorMessage, l.deliveryAddress, l.paymentType) === 'retryable',
   );
   return typeof limit === 'number' ? retryable.slice(0, limit) : retryable;
 }
@@ -195,14 +220,14 @@ export async function GET() {
   const candidates = await db.label.findMany({
     where: { tenantId: auth.tenantId, dacGuia: null, status: { in: RETRYABLE_STATUSES } },
     take: MAX_CANDIDATE_SCAN,
-    select: { errorMessage: true, deliveryAddress: true },
+    select: { errorMessage: true, deliveryAddress: true, paymentType: true },
   });
   // Exclude resolved-externally rows in JS (a Prisma NOT-startsWith on a
   // nullable column would also drop null-errorMessage rows, which are valid
   // candidates — e.g. a PENDING with no error recorded).
   const live = candidates.filter((c) => !isResolvedExternally(c.errorMessage));
   const breakdown = { retryable: 0, orphan: 0, remitente: 0, needsAddress: 0 };
-  for (const c of live) breakdown[classifyStuck(c.errorMessage, c.deliveryAddress)] += 1;
+  for (const c of live) breakdown[classifyStuck(c.errorMessage, c.deliveryAddress, c.paymentType)] += 1;
   return apiSuccess({
     count: breakdown.retryable,
     total: live.length,
