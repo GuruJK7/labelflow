@@ -1686,6 +1686,22 @@ export function isPickupAtDacBranch(
 }
 
 /**
+ * True when DAC's K_Tipo_Empaque native <select> holds a REAL (non-placeholder)
+ * package-type value. The Choices.js combo can silently revert this select back
+ * to the "Seleccione..." placeholder after we commit it; when that happens the
+ * cart item is added without a package type and DAC SILENT-rejects at Finalizar
+ * (empty error box). The last-mile empaque guard uses this right before Agregar.
+ * Pure + unit-tested. value "0"/"" or text containing "seleccione" = not set.
+ */
+export function isEmpaqueCommitted(state: {
+  present: boolean;
+  value: string;
+  text: string;
+}): boolean {
+  return state.present && !!state.value && state.value !== '0' && !/seleccione/i.test(state.text);
+}
+
+/**
  * AGENCY PICKUP — destination-office resolution (audit 2026-06-02).
  *
  * When TipoEntrega=Agencia (the customer collects at a DAC branch), DAC's
@@ -3453,6 +3469,69 @@ export async function createShipment(
     }
   } else {
     slog.info(DAC_STEPS.STEP4_OK, 'No observations to fill (extraObs empty, no order notes)');
+  }
+
+  // ===== Last-mile empaque guard (audit 2026-06-07) =====
+  // Root cause of the overnight SILENT rejects: K_Tipo_Empaque can revert to the
+  // "Seleccione..." placeholder (Choices.js re-syncs from its own model) AFTER the
+  // Step-4 commit above but BEFORE Agregar captures the package type into the cart.
+  // Confirmed via prod rejection diagnostics: #1917/#1907/#1913/#1916/#1914/#1743
+  // had K_Tipo_Empaque empty at reject time, and it is INTERMITTENT (the same order
+  // showed full on one attempt and empty on another). Here we re-verify the native
+  // select immediately before Agregar and re-commit it (native value + Choices.js
+  // UI, same proven sequence as Step 4) only if it drifted. Flag-gated
+  // (DAC_EMPAQUE_LASTMILE_GUARD, reuses the generic tenant gate: "*" or id-list),
+  // DEFAULT OFF -> byte-identical until enabled. Idempotent: a no-op verify when
+  // empaque is already set, so it can never break a form that was fine.
+  if (isStep3GeoTenantEnabled(process.env.DAC_EMPAQUE_LASTMILE_GUARD, tenantId)) {
+    const readEmpaque = () =>
+      page.evaluate(() => {
+        const sel = document.querySelector('select[name="K_Tipo_Empaque"]') as HTMLSelectElement | null;
+        if (!sel) return { present: false, value: '', text: '' };
+        const text = sel.options[sel.selectedIndex]?.textContent?.trim() ?? '';
+        return { present: true, value: sel.value ?? '', text };
+      });
+    let empaqueState = await readEmpaque();
+    if (isEmpaqueCommitted(empaqueState)) {
+      slog.info(DAC_STEPS.STEP4_FILL_PACKAGE, `[empaque-guard] K_Tipo_Empaque OK before Agregar (text="${empaqueState.text}")`);
+    } else {
+      slog.warn(
+        DAC_STEPS.STEP4_FILL_PACKAGE,
+        `[empaque-guard] K_Tipo_Empaque drifted before Agregar (value="${empaqueState.value}", text="${empaqueState.text}") — re-committing`,
+      );
+      for (let attempt = 1; attempt <= 2 && !isEmpaqueCommitted(empaqueState); attempt++) {
+        await page.evaluate(() => {
+          const sel = document.querySelector('select[name="K_Tipo_Empaque"]') as HTMLSelectElement | null;
+          if (sel) {
+            sel.value = '1';
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        });
+        try {
+          const choicesDiv = await page.$('.choices');
+          if (choicesDiv) {
+            await choicesDiv.click();
+            await page.waitForTimeout(400);
+            const option = page.locator('.choices__item--choice').filter({ hasText: '2Kg' }).first();
+            if ((await option.count()) > 0) await option.click();
+            // Close the dropdown so an open overlay never sits over the form. The
+            // Agregar click below is a programmatic .btnAdd.click() so it bypasses
+            // overlays anyway, but we keep the DOM clean.
+            await page.keyboard.press('Escape').catch(() => {});
+          }
+        } catch {
+          // best-effort; the re-read below decides success
+        }
+        await page.waitForTimeout(300);
+        empaqueState = await readEmpaque();
+      }
+      slog.info(
+        DAC_STEPS.STEP4_FILL_PACKAGE,
+        isEmpaqueCommitted(empaqueState)
+          ? `[empaque-guard] re-committed K_Tipo_Empaque before Agregar (text="${empaqueState.text}")`
+          : `[empaque-guard] could NOT re-commit K_Tipo_Empaque (value="${empaqueState.value}", text="${empaqueState.text}") — proceeding (same as today)`,
+      );
+    }
   }
 
   // ===== CLICK "Agregar" (adds to cart) =====
