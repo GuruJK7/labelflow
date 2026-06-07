@@ -219,6 +219,19 @@ export interface AddressGeocodeResult {
    */
   lat: number | null;
   lon: number | null;
+  /**
+   * Nominatim `place_rank`: how specific the matched feature is. Building/house
+   * ~30, road ~26-27, suburb/neighbourhood ~20-22, village ~19, town ~18, city
+   * ~16, county/admin ~10-12 (lower = coarser / larger area). A real street-level
+   * hit is >=24; a coarse AREA-centroid fallback (e.g. Nominatim couldn't find the
+   * street and returned the locality/department center) is <24. We used to discard
+   * this and accept ANY point in the right department as "precise" — the root cause
+   * of interior silent-rejects like #5587 (Tacuarembó got -32.17,-55.5, ~50 km off
+   * the real city, logged as "PRECISE"). isCoarseGeocode() reads this. Null if absent.
+   */
+  placeRank: number | null;
+  /** Nominatim `addresstype` (e.g. "house","road","city","administrative"). Audit only. */
+  addressType: string | null;
 }
 
 /**
@@ -299,6 +312,10 @@ export async function geocodeAddressToDepartment(
       // Nominatim returns the resolved point as top-level lat/lon strings.
       lat?: string;
       lon?: string;
+      // place_rank (number) + addresstype (string): how specific the match is.
+      // Used to tell a real street hit from a coarse area-centroid fallback.
+      place_rank?: number;
+      addresstype?: string;
       address?: {
         state?: string;
         country_code?: string;
@@ -344,9 +361,11 @@ export async function geocodeAddressToDepartment(
         displayName: r.display_name,
         lat: Number.isFinite(latNum) ? latNum : null,
         lon: Number.isFinite(lonNum) ? lonNum : null,
+        placeRank: typeof r.place_rank === 'number' && Number.isFinite(r.place_rank) ? r.place_rank : null,
+        addressType: typeof r.addresstype === 'string' && r.addresstype ? r.addresstype : null,
       };
       logger.info(
-        { query, dept, locality, lat: result.lat, lon: result.lon, display: r.display_name },
+        { query, dept, locality, lat: result.lat, lon: result.lon, placeRank: result.placeRank, addressType: result.addressType, display: r.display_name },
         '[GeocodeAddr] Resolved',
       );
       addressCache.set(cacheKey, result);
@@ -425,6 +444,24 @@ export function isStep3GeoTenantEnabled(
   // wildcard. With the env var unset/empty this stays false (default-OFF).
   if (entries.includes('*')) return true;
   return entries.includes(tenantId);
+}
+
+/**
+ * Coarse-geocode detector (PURE, unit-tested). True when a full-address geocode
+ * result is NOT street-level — i.e. Nominatim fell back to an AREA centroid
+ * (city / town / department / administrative boundary) instead of pinning the
+ * actual street. Those points can be 50-100 km from the real address and make
+ * DAC silently reject the guía (root cause of #5587: Tacuarembó got a region
+ * centroid -32.17,-55.5 ~50 km off the city, accepted as "PRECISE").
+ *
+ * Threshold: Nominatim place_rank >= 24 is street/building level (road ~26,
+ * house ~30); < 24 is an area centroid (suburb ~22, town ~18, city ~16,
+ * county/admin ~10-12). When place_rank is ABSENT (null) we return false —
+ * we do not downgrade a result we cannot classify, preserving today's behaviour.
+ */
+export const STREET_LEVEL_PLACE_RANK = 24;
+export function isCoarseGeocode(placeRank: number | null | undefined): boolean {
+  return typeof placeRank === 'number' && Number.isFinite(placeRank) && placeRank < STREET_LEVEL_PLACE_RANK;
 }
 
 /**

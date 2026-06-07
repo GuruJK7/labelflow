@@ -19,6 +19,7 @@ import { inferLastNameFromEmail } from './recipient-name-inference';
 import { resolveAddressWithAI, AIResolverResult } from './ai-resolver';
 import {
   geocodeAddressToDepartment,
+  isCoarseGeocode,
   decideStep3Coords,
   isStep3GeoTenantEnabled,
 } from './geocode-fallback';
@@ -3073,17 +3074,37 @@ export async function createShipment(
       // still rejected and falls back to the centroid (today's behaviour).
       // Separate flag so it rolls out + is measured independently of Lever B.
       const cityFallbackCity = resolvedCity || addr.city || undefined;
+      // Coarse-geocode fallback (env-gated DAC_STEP3_COARSE_FALLBACK, DEFAULT OFF).
+      // Even when the full address DID geocode, Nominatim sometimes returns an
+      // AREA centroid (place_rank below street level) tens of km from the real
+      // address — and decideStep3Coords would accept it (right department, inside
+      // UY) and inject that far-off point, which DAC silently rejects (#5587:
+      // Tacuarembó got -32.17,-55.5, ~50 km off the city, logged as "PRECISE").
+      // When the full-address result is COARSE we treat it like a miss and retry
+      // with CITY ONLY, injecting the real city centroid instead. Reuses the same
+      // city-fallback path + its DAC_STEP3_CITY_FALLBACK gate; decideStep3Coords'
+      // dept-match + UY-bounds guards still apply to the city result. With the new
+      // flag unset this is byte-identical to today (fullAddrCoarse stays false).
+      const fullAddrCoarse =
+        !!geo &&
+        geo.lat != null &&
+        geo.lon != null &&
+        isCoarseGeocode(geo.placeRank) &&
+        isStep3GeoTenantEnabled(process.env.DAC_STEP3_COARSE_FALLBACK, tenantId);
       if (
-        (!geo || geo.lat == null || geo.lon == null) &&
+        (!geo || geo.lat == null || geo.lon == null || fullAddrCoarse) &&
         cityFallbackCity &&
         isStep3GeoTenantEnabled(process.env.DAC_STEP3_CITY_FALLBACK, tenantId)
       ) {
+        const triggerReason = fullAddrCoarse
+          ? `coarse full-address point (${geo?.lat},${geo?.lon}, place_rank=${geo?.placeRank})`
+          : 'full address did not geocode';
         const cityGeo = await geocodeAddressToDepartment({ city: cityFallbackCity });
         if (cityGeo && cityGeo.lat != null && cityGeo.lon != null) {
           geo = cityGeo;
           slog.info(
             DAC_STEPS.STEP3_SIGUIENTE,
-            `[step3-geocode] city-centroid fallback for "${cityFallbackCity}" (full address did not geocode)`,
+            `[step3-geocode] city-centroid fallback for "${cityFallbackCity}" (${triggerReason})`,
             {
               orderName: order.name,
               resolvedDept,
@@ -3091,6 +3112,8 @@ export async function createShipment(
               geoDept: cityGeo.department,
               lat: cityGeo.lat,
               lon: cityGeo.lon,
+              cityPlaceRank: cityGeo.placeRank,
+              trigger: fullAddrCoarse ? 'coarse-full-address' : 'no-result',
             },
           );
         }

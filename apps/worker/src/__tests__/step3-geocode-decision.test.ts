@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { decideStep3Coords, isStep3GeoTenantEnabled } from '../dac/geocode-fallback';
+import {
+  decideStep3Coords,
+  isStep3GeoTenantEnabled,
+  isCoarseGeocode,
+  STREET_LEVEL_PLACE_RANK,
+} from '../dac/geocode-fallback';
 
 /**
  * Unit tests for the DAC Step-3 "real coordinates" decision (Lever B).
@@ -213,5 +218,27 @@ describe('decideStep3Coords — happy path', () => {
       expect(d.lon).toBe(CANELONES_POINT.lon);
       expect(d.reason).toBe('precise-geocode');
     }
+  });
+});
+
+describe('isCoarseGeocode — area-centroid detector (#5587 root cause)', () => {
+  it('treats street/building level (>= STREET_LEVEL_PLACE_RANK) as precise', () => {
+    expect(isCoarseGeocode(30)).toBe(false); // house / building
+    expect(isCoarseGeocode(27)).toBe(false); // road
+    expect(isCoarseGeocode(STREET_LEVEL_PLACE_RANK)).toBe(false); // exactly street level
+  });
+
+  it('treats area centroids (city / town / county / admin) as coarse', () => {
+    expect(isCoarseGeocode(16)).toBe(true); // city
+    expect(isCoarseGeocode(18)).toBe(true); // town
+    expect(isCoarseGeocode(12)).toBe(true); // county/admin — the #5587 region centroid
+    expect(isCoarseGeocode(STREET_LEVEL_PLACE_RANK - 1)).toBe(true); // just below street level
+  });
+
+  it('does NOT downgrade a result it cannot classify (preserves today behaviour)', () => {
+    // Null/undefined/NaN place_rank → not coarse → no city-fallback trigger.
+    expect(isCoarseGeocode(null)).toBe(false);
+    expect(isCoarseGeocode(undefined)).toBe(false);
+    expect(isCoarseGeocode(NaN)).toBe(false);
   });
 });
