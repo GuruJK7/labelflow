@@ -101,17 +101,29 @@ function isAgencyPickupAddress(address: string | null): boolean {
  *                    worker now routes via TipoEntrega=Agencia)
  *   - orphan       → guia may already exist in DAC; verify/link, never retry
  *   - remitente    → store-pays; load by hand in DAC
- *   - needsAddress → address unparseable; fix the address (or bias-to-submit)
- * Precedence: orphan and remitente win over agency (never re-run a maybe-guia or
- * a store-pays order); agency wins over needsAddress (it IS recoverable now).
- * A null errorMessage with a normal address is retryable (no blocker recorded).
+ *   - needsAddress → DEPRECATED as a distinct outcome: missing/uninterpretable
+ *                    addresses are now RETRYABLE (see the ADDRESS_PATTERNS branch).
+ *                    Kept in the type + breakdown shape for back-compat (now 0).
+ * Precedence: orphan and remitente win (never re-run a maybe-guia or a store-pays
+ * order); everything else — agency-pickup, missing-number, or no blocker — is
+ * retryable. A null errorMessage with a normal address is retryable too.
  */
 function classifyStuck(errorMessage: string | null, deliveryAddress: string | null): StuckClass {
   const l = (errorMessage ?? '').toLowerCase();
   if (errorMessage && ORPHAN_PATTERNS.some((p) => l.includes(p))) return 'orphan';
   if (errorMessage && REMITENTE_PATTERNS.some((p) => l.includes(p))) return 'remitente';
   if (isAgencyPickupAddress(deliveryAddress)) return 'retryable';
-  if (errorMessage && ADDRESS_PATTERNS.some((p) => l.includes(p))) return 'needsAddress';
+  // 'no se pudo interpretar' (missing / uninterpretable address) is RETRYABLE
+  // since the 2026-05-11 ship-with-note directive: the worker no longer bounces
+  // these — it ships with "S/N" + an operator-call note (worker shipment.ts
+  // ~L2104). The old 'needsAddress' (excluded) classification predated that and
+  // froze recoverable orders (verified prod: every stuck "no se pudo interpretar"
+  // label is pre-2026-05-11). Re-running them (the retry deletes the Label) also
+  // bypasses the AI-feasibility skip filter, so they flow through ship-with-note.
+  // A genuinely-broken few may silent-reject → orphan (C-4 guarded, no double-
+  // ship) and reclassify as orphan (excluded) next pass. ADDRESS_PATTERNS kept to
+  // document intent (branch returns the same as the default fall-through).
+  if (errorMessage && ADDRESS_PATTERNS.some((p) => l.includes(p))) return 'retryable';
   return 'retryable';
 }
 
