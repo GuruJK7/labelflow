@@ -3,6 +3,11 @@ import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
+import {
+  isResolvedExternally,
+  maybeReconcileStuck,
+  reconcileStuckAgainstShopify,
+} from '@/lib/shopify-reconcile';
 
 /**
  * POST /api/v1/labels/retry-failed   { count: number }
@@ -154,7 +159,9 @@ async function selectRetryable(tenantId: string, limit?: number): Promise<Retrya
     },
   });
   const retryable = candidates.filter(
-    (l) => classifyStuck(l.errorMessage, l.deliveryAddress) === 'retryable',
+    (l) =>
+      !isResolvedExternally(l.errorMessage) &&
+      classifyStuck(l.errorMessage, l.deliveryAddress) === 'retryable',
   );
   return typeof limit === 'number' ? retryable.slice(0, limit) : retryable;
 }
@@ -162,6 +169,12 @@ async function selectRetryable(tenantId: string, limit?: number): Promise<Retrya
 export async function GET() {
   const auth = await getAuthenticatedTenant();
   if (!auth) return apiError('No autorizado', 401);
+
+  // Keep the count honest: flag stuck rows whose Shopify order is already
+  // fulfilled/closed/cancelled (resolved outside our pipeline) so they drop
+  // out. Throttled (max once / 30 min / tenant) so a polling dashboard cannot
+  // hammer Shopify; never throws.
+  await maybeReconcileStuck(auth.tenantId);
 
   // Full "stuck = attempted but no real guia" set, broken down by what each
   // class needs. `count` stays = retryable for back-compat with existing
@@ -172,11 +185,15 @@ export async function GET() {
     take: MAX_CANDIDATE_SCAN,
     select: { errorMessage: true, deliveryAddress: true },
   });
+  // Exclude resolved-externally rows in JS (a Prisma NOT-startsWith on a
+  // nullable column would also drop null-errorMessage rows, which are valid
+  // candidates — e.g. a PENDING with no error recorded).
+  const live = candidates.filter((c) => !isResolvedExternally(c.errorMessage));
   const breakdown = { retryable: 0, orphan: 0, remitente: 0, needsAddress: 0 };
-  for (const c of candidates) breakdown[classifyStuck(c.errorMessage, c.deliveryAddress)] += 1;
+  for (const c of live) breakdown[classifyStuck(c.errorMessage, c.deliveryAddress)] += 1;
   return apiSuccess({
     count: breakdown.retryable,
-    total: candidates.length,
+    total: live.length,
     ...breakdown,
   });
 }
@@ -206,6 +223,14 @@ export async function POST(req: Request) {
   if (!holder) return apiError('Tenant no encontrado', 404);
   if (!holder.isActive || holder.subscriptionStatus !== 'ACTIVE') {
     return apiError('Tu plan no esta activo. Activa una suscripcion para reintentar envios.', 403);
+  }
+
+  // Drop stale rows (order already resolved in Shopify) BEFORE selecting, so a
+  // retry is never wasted on an order that no longer needs shipping.
+  try {
+    await reconcileStuckAgainstShopify(tenantId);
+  } catch {
+    // Non-fatal: fall back to the DB-derived candidate set.
   }
 
   const selected = await selectRetryable(tenantId, count);
@@ -261,7 +286,16 @@ export async function POST(req: Request) {
         tenantId,
         level: 'INFO',
         message: `maxOrdersOverride=${selected.length}`,
-        meta: { maxOrdersPerRun: selected.length, source: 'retry-failed' },
+        // targetShopifyOrderIds pins the worker run to EXACTLY these orders
+        // (B): without it the run just processes "N by tenant sort", so an old
+        // stuck order (e.g. agency pickup under newest_first + a small cap)
+        // would never get a slot. The worker filters its unfulfilled fetch to
+        // this set right after fetching (see process-orders.job.ts).
+        meta: {
+          maxOrdersPerRun: selected.length,
+          source: 'retry-failed',
+          targetShopifyOrderIds: shopifyOrderIds,
+        },
       },
     });
   }

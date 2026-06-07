@@ -156,10 +156,18 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       where: { jobId, message: { contains: 'maxOrdersOverride' } },
       orderBy: { createdAt: 'desc' },
     });
-    const overrideMeta = overrideLog?.meta as { maxOrdersPerRun?: number; testMode?: boolean } | undefined;
+    const overrideMeta = overrideLog?.meta as
+      | { maxOrdersPerRun?: number; testMode?: boolean; targetShopifyOrderIds?: unknown }
+      | undefined;
     const maxOrdersOverride: number | undefined =
       typeof overrideMeta?.maxOrdersPerRun === 'number' ? overrideMeta.maxOrdersPerRun : undefined;
     const testMode = !!overrideMeta?.testMode;
+    // Targeted retry (B): when the dashboard "Reintentar" action unblocks
+    // specific stuck orders, it passes their Shopify order ids so we process
+    // EXACTLY those, not "N by sort". Normalised to a string[] of digit ids.
+    const targetShopifyOrderIds: string[] = Array.isArray(overrideMeta?.targetShopifyOrderIds)
+      ? (overrideMeta!.targetShopifyOrderIds as unknown[]).map((v) => String(v)).filter((v) => /^\d+$/.test(v))
+      : [];
     if (maxOrdersOverride !== undefined) {
       slog.info(
         'config',
@@ -213,6 +221,27 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     let orders = await getUnfulfilledOrders(shopifyClient, orderSortDirection);
 
     slog.info('shopify', `Fetched ${orders.length} unfulfilled orders from Shopify (sort: ${orderSortDirection})`);
+
+    // Targeted retry (B): narrow to exactly the unblocked orders. Intersecting
+    // with the unfulfilled+paid+open fetch is deliberate — it guarantees we
+    // never re-ship an order that got fulfilled in the meantime. Any target not
+    // present is logged, never silently dropped (it was already resolved, or
+    // sits beyond the 250-order fetch window).
+    if (targetShopifyOrderIds.length > 0) {
+      const targetSet = new Set(targetShopifyOrderIds);
+      const beforeTarget = orders.length;
+      const present = orders.filter((o) => targetSet.has(String(o.id)));
+      const missing = targetShopifyOrderIds.filter((id) => !present.some((o) => String(o.id) === id));
+      orders = present;
+      slog.info(
+        'targeted-retry',
+        `Targeted retry: ${present.length}/${targetShopifyOrderIds.length} target order(s) found in the ${beforeTarget} unfulfilled fetched.${
+          missing.length
+            ? ` Not shippable now (already fulfilled/closed, or beyond the 250-order fetch window): ${missing.join(', ')}`
+            : ''
+        }`,
+      );
+    }
 
     // ── 2026-04-22 HOTFIX (double-shipping incident) ──────────────────────
     // The prior "Shopify unfulfilled = source of truth, always reprocess"
