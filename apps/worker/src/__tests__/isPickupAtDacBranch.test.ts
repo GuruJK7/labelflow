@@ -51,6 +51,11 @@ describe('isPickupAtDacBranch', () => {
     expect(isPickupAtDacBranch('Sucursal Dac Pocitos', '', '')).toBe(true);
   });
 
+  it('detects "Agencia DAC <ciudad>" pattern (#11878 Pinamar case)', () => {
+    expect(isPickupAtDacBranch('Agencia DAC Pinamar', '', '')).toBe(true);
+    expect(isPickupAtDacBranch('agencia de dac Salto', '', '')).toBe(true);
+  });
+
   it('detects combined Jenifer Sastre case "DAC Barros blancos( retiro en agencia)"', () => {
     expect(isPickupAtDacBranch('DAC Barros blancos( retiro en agencia)', '', '')).toBe(true);
   });
@@ -79,6 +84,11 @@ describe('isPickupAtDacBranch', () => {
     // pattern requires a non-space char after "dac\s".
     expect(isPickupAtDacBranch('DAC', '', '')).toBe(false);
     expect(isPickupAtDacBranch('DAC ', '', '')).toBe(false);
+  });
+
+  it('does NOT match "agencia" without "dac" (precision — could be a business name)', () => {
+    expect(isPickupAtDacBranch('Agencia de viajes Buquebus', '', '')).toBe(false);
+    expect(isPickupAtDacBranch('Agencia 123', '', '')).toBe(false);
   });
 
   it('does NOT match street names containing "dac" as substring', () => {

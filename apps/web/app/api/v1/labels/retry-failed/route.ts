@@ -67,30 +67,46 @@ const ORPHAN_PATTERNS = ['huérfana', 'huerfana']; // guia may exist in DAC — 
 const REMITENTE_PATTERNS = ['remitente']; // store pays — load by hand in DAC
 const ADDRESS_PATTERNS = ['no se pudo interpretar']; // AI could not parse address — fix it / bias-to-submit
 
-// Everything in these groups is NOT a safe blind-retry (see per-group note).
-const NON_RETRYABLE_ERROR_PATTERNS = [
-  ...ADDRESS_PATTERNS,
-  ...REMITENTE_PATTERNS,
-  ...ORPHAN_PATTERNS,
-];
-
 export type StuckClass = 'retryable' | 'orphan' | 'remitente' | 'needsAddress';
 
+// Agency-pickup ("retiro en sucursal DAC") detection — mirrors the worker's
+// isPickupAtDacBranch (apps/worker/src/dac/shipment.ts). These orders bounced
+// to "no se pudo interpretar" because the address is a branch, not a street;
+// the worker now routes them via TipoEntrega=Agencia, so re-running them IS
+// recoverable and safe (they never minted a guia → the dacGuia:null filter in
+// selectRetryable still holds). Checked against the stored deliveryAddress
+// (the only address field we persist on the Label).
+const AGENCY_ADDRESS_PATTERNS: RegExp[] = [
+  /retiro\s+(en\s+)?(dac|agencia|sucursal|local|oficina)/i,
+  /\bsucursal\s+(de\s+)?dac\b/i,
+  /\bagencia\s+(de\s+)?dac\b/i,
+  /^\s*dac\s+\S/i,
+  /\bpickup\b/i,
+];
+function isAgencyPickupAddress(address: string | null): boolean {
+  if (!address) return false;
+  return AGENCY_ADDRESS_PATTERNS.some((re) => re.test(address));
+}
+
 /**
- * Classify a stuck label (sin guia real) by its errorMessage so the dashboard
- * can show the TRUE "sin completar" count broken down by the action each needs:
- *   - retryable    → safe to re-attempt automatically (the button)
- *   - orphan       → guia may already exist in DAC; verify/link, never blind-retry
+ * Classify a stuck label (sin guia real) by what action it needs, so the
+ * dashboard shows the TRUE "sin completar" count and the retry touches only
+ * the safe set:
+ *   - retryable    → safe to re-attempt (no blocker, OR agency-pickup which the
+ *                    worker now routes via TipoEntrega=Agencia)
+ *   - orphan       → guia may already exist in DAC; verify/link, never retry
  *   - remitente    → store-pays; load by hand in DAC
  *   - needsAddress → address unparseable; fix the address (or bias-to-submit)
- * A null errorMessage is treated as retryable (no blocking reason recorded).
+ * Precedence: orphan and remitente win over agency (never re-run a maybe-guia or
+ * a store-pays order); agency wins over needsAddress (it IS recoverable now).
+ * A null errorMessage with a normal address is retryable (no blocker recorded).
  */
-function classifyStuck(errorMessage: string | null): StuckClass {
-  if (!errorMessage) return 'retryable';
-  const l = errorMessage.toLowerCase();
-  if (ORPHAN_PATTERNS.some((p) => l.includes(p))) return 'orphan';
-  if (REMITENTE_PATTERNS.some((p) => l.includes(p))) return 'remitente';
-  if (ADDRESS_PATTERNS.some((p) => l.includes(p))) return 'needsAddress';
+function classifyStuck(errorMessage: string | null, deliveryAddress: string | null): StuckClass {
+  const l = (errorMessage ?? '').toLowerCase();
+  if (errorMessage && ORPHAN_PATTERNS.some((p) => l.includes(p))) return 'orphan';
+  if (errorMessage && REMITENTE_PATTERNS.some((p) => l.includes(p))) return 'remitente';
+  if (isAgencyPickupAddress(deliveryAddress)) return 'retryable';
+  if (errorMessage && ADDRESS_PATTERNS.some((p) => l.includes(p))) return 'needsAddress';
   return 'retryable';
 }
 
@@ -105,23 +121,19 @@ const RETRYABLE_STATUSES: LabelStatus[] = [
 // bounded even for a tenant with a large backlog.
 const MAX_CANDIDATE_SCAN = 200;
 
-function isRetryable(errorMessage: string | null): boolean {
-  if (!errorMessage) return true;
-  const lower = errorMessage.toLowerCase();
-  return !NON_RETRYABLE_ERROR_PATTERNS.some((p) => lower.includes(p));
-}
-
 interface RetryableLabel {
   id: string;
   shopifyOrderId: string;
   shopifyOrderName: string;
   status: LabelStatus;
   errorMessage: string | null;
+  deliveryAddress: string | null;
 }
 
 /**
- * Selects the oldest not-done labels for a tenant (sin guia real),
- * dropping the non-retryable classes. Optionally slices to `limit`.
+ * Selects the oldest not-done labels for a tenant (sin guia real) whose class
+ * is safely retryable (see classifyStuck — includes agency-pickup, excludes
+ * orphan / remitente / unparseable-address). Optionally slices to `limit`.
  */
 async function selectRetryable(tenantId: string, limit?: number): Promise<RetryableLabel[]> {
   const candidates = await db.label.findMany({
@@ -138,9 +150,12 @@ async function selectRetryable(tenantId: string, limit?: number): Promise<Retrya
       shopifyOrderName: true,
       status: true,
       errorMessage: true,
+      deliveryAddress: true,
     },
   });
-  const retryable = candidates.filter((l) => isRetryable(l.errorMessage));
+  const retryable = candidates.filter(
+    (l) => classifyStuck(l.errorMessage, l.deliveryAddress) === 'retryable',
+  );
   return typeof limit === 'number' ? retryable.slice(0, limit) : retryable;
 }
 
@@ -155,10 +170,10 @@ export async function GET() {
   const candidates = await db.label.findMany({
     where: { tenantId: auth.tenantId, dacGuia: null, status: { in: RETRYABLE_STATUSES } },
     take: MAX_CANDIDATE_SCAN,
-    select: { errorMessage: true },
+    select: { errorMessage: true, deliveryAddress: true },
   });
   const breakdown = { retryable: 0, orphan: 0, remitente: 0, needsAddress: 0 };
-  for (const c of candidates) breakdown[classifyStuck(c.errorMessage)] += 1;
+  for (const c of candidates) breakdown[classifyStuck(c.errorMessage, c.deliveryAddress)] += 1;
   return apiSuccess({
     count: breakdown.retryable,
     total: candidates.length,

@@ -1663,6 +1663,7 @@ export function applyAddressOverride(
  *   - "Retiro" (as the whole address1)
  *   - "DAC Barros Blancos" / "Dac Las Piedras" (address1 starts with "DAC <city>")
  *   - "Sucursal de Dac Buceo" / "Sucursal Dac X"
+ *   - "Agencia DAC Pinamar" / "agencia de dac X"
  *   - "Pickup" anywhere in note
  *
  * Exported so unit tests can pin the recognition surface.
@@ -1678,6 +1679,7 @@ export function isPickupAtDacBranch(
     /retiro\s+(en\s+)?(dac|agencia|sucursal|local|oficina)/i.test(combined) ||
     /^retiro\b/i.test(a1) ||
     /\bsucursal\s+(de\s+)?dac\b/i.test(combined) ||
+    /\bagencia\s+(de\s+)?dac\b/i.test(combined) || // "Agencia DAC Pinamar" (#11878)
     /^\s*dac\s+\S/i.test(a1) || // "DAC Barros Blancos", "Dac Las Piedras"
     /\bpickup\b/i.test(combined)
   );
