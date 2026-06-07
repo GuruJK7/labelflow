@@ -4,6 +4,8 @@ import {
   isStep3GeoTenantEnabled,
   isCoarseGeocode,
   STREET_LEVEL_PLACE_RANK,
+  isSettlementResult,
+  SETTLEMENT_PLACE_RANK,
 } from '../dac/geocode-fallback';
 
 /**
@@ -240,5 +242,26 @@ describe('isCoarseGeocode — area-centroid detector (#5587 root cause)', () => 
     expect(isCoarseGeocode(null)).toBe(false);
     expect(isCoarseGeocode(undefined)).toBe(false);
     expect(isCoarseGeocode(NaN)).toBe(false);
+  });
+});
+
+describe('isSettlementResult — dept-capital city-node picker (#1967/#5587 root cause)', () => {
+  it('true for city / town / village / street / building (place_rank >= 14)', () => {
+    expect(isSettlementResult(16)).toBe(true); // city — e.g. the real Tacuarembó city node
+    expect(isSettlementResult(18)).toBe(true); // town
+    expect(isSettlementResult(26)).toBe(true); // road
+    expect(isSettlementResult(SETTLEMENT_PLACE_RANK)).toBe(true); // exactly settlement level
+  });
+
+  it('false for STATE / COUNTY / region polygons (place_rank <= 12)', () => {
+    expect(isSettlementResult(8)).toBe(false); // state — the dept polygon Nominatim returns FIRST
+    expect(isSettlementResult(10)).toBe(false); // county
+    expect(isSettlementResult(SETTLEMENT_PLACE_RANK - 1)).toBe(false);
+  });
+
+  it('false when place_rank is absent (cannot classify)', () => {
+    expect(isSettlementResult(null)).toBe(false);
+    expect(isSettlementResult(undefined)).toBe(false);
+    expect(isSettlementResult(NaN)).toBe(false);
   });
 });

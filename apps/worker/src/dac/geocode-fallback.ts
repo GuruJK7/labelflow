@@ -268,11 +268,14 @@ const addressCache = new Map<string, AddressGeocodeResult | null>();
  */
 export async function geocodeAddressToDepartment(
   input: AddressQuery,
+  opts?: { preferSettlement?: boolean },
 ): Promise<AddressGeocodeResult | null> {
+  const preferSettlement = opts?.preferSettlement ?? false;
   const query = buildQuery(input);
   if (query.length < 5) return null;
 
-  const cacheKey = normalize(query);
+  // preferSettlement changes which result we pick, so it must vary the cache key.
+  const cacheKey = normalize(query) + (preferSettlement ? '|s' : '');
   if (addressCache.has(cacheKey)) {
     const cached = addressCache.get(cacheKey)!;
     logger.info({ query, cached: !!cached }, '[GeocodeAddr] Cache hit');
@@ -334,8 +337,24 @@ export async function geocodeAddressToDepartment(
       return null;
     }
 
+    // Dept-capital fix (2026-06-07): when preferSettlement is on, sort
+    // settlement-level results (city/town/village/street, place_rank >= 14)
+    // AHEAD of coarser state/county polygons, so the picker below chooses the
+    // real CITY node instead of the DEPARTMENT centroid Nominatim returns first
+    // for the 7 capitals whose name == their department (Tacuarembó, Durazno,
+    // Rocha, Canelones, Florida, Artigas, Treinta y Tres). Array.sort is stable,
+    // so same-class order is preserved and a non-settlement result is still used
+    // as fallback when no settlement-level result exists.
+    const ordered = preferSettlement
+      ? [...results].sort(
+          (a, b) =>
+            (isSettlementResult(b.place_rank ?? null) ? 1 : 0) -
+            (isSettlementResult(a.place_rank ?? null) ? 1 : 0),
+        )
+      : results;
+
     // Pick the first result that is in Uruguay and has a recognizable state.
-    for (const r of results) {
+    for (const r of ordered) {
       if (r.address?.country_code && r.address.country_code.toLowerCase() !== 'uy') continue;
       const state = r.address?.state;
       if (!state) continue;
@@ -462,6 +481,28 @@ export function isStep3GeoTenantEnabled(
 export const STREET_LEVEL_PLACE_RANK = 24;
 export function isCoarseGeocode(placeRank: number | null | undefined): boolean {
   return typeof placeRank === 'number' && Number.isFinite(placeRank) && placeRank < STREET_LEVEL_PLACE_RANK;
+}
+
+/**
+ * Settlement-or-finer detector (PURE, unit-tested). True when a Nominatim
+ * result is at city/town/village/suburb/street/building level (place_rank >= 14)
+ * rather than a STATE / COUNTY / region polygon (place_rank <= 12).
+ *
+ * Root cause it fixes (2026-06-07, real data): for the 7 Uruguay capitals whose
+ * name == their department name (Tacuarembó, Durazno, Rocha, Canelones, Florida,
+ * Artigas, Treinta y Tres), Nominatim returns the DEPARTMENT polygon FIRST
+ * (place_rank 8, its centroid ~50 km from the capital) and the actual CITY node
+ * SECOND. Taking the first result injected that dept centroid into DAC's hidden
+ * lat/lng → DAC silently rejected every interior order in those departments
+ * (confirmed: #1967/#5587 Tacuarembó both got -32.166667,-55.5). The fix sorts
+ * settlement-level results ahead of state/county polygons so we pick the real
+ * city node (which Nominatim DOES return, just not first). Cities that already
+ * resolve correctly (Salto, Maldonado, Mercedes…) are unaffected (their first
+ * result is already a city, rank 16).
+ */
+export const SETTLEMENT_PLACE_RANK = 14;
+export function isSettlementResult(placeRank: number | null | undefined): boolean {
+  return typeof placeRank === 'number' && Number.isFinite(placeRank) && placeRank >= SETTLEMENT_PLACE_RANK;
 }
 
 /**

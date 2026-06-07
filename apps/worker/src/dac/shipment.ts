@@ -3057,12 +3057,22 @@ export async function createShipment(
   // call entirely, so the centroid path below runs exactly as today.
   if (isStep3GeoTenantEnabled(step3GeoTenants, tenantId)) {
     try {
-      let geo = await geocodeAddressToDepartment({
-        address1: addr.address1 ?? undefined,
-        address2: addr.address2 ?? undefined,
-        city: resolvedCity || (addr.city ?? undefined),
-        zip: addr.zip ?? undefined,
-      });
+      // Dept-capital fix (env DAC_GEOCODE_PREFER_CITY, default OFF): make the
+      // geocoder prefer a settlement (city/town/street) result over the state/
+      // department polygon Nominatim returns first for the 7 capitals whose name
+      // == their department (Tacuarembó, Durazno, Rocha, Canelones, Florida,
+      // Artigas, Treinta y Tres). Without it those inject a dept centroid ~50 km
+      // off and DAC silently rejects (confirmed #1967/#5587).
+      const preferCityGeo = isStep3GeoTenantEnabled(process.env.DAC_GEOCODE_PREFER_CITY, tenantId);
+      let geo = await geocodeAddressToDepartment(
+        {
+          address1: addr.address1 ?? undefined,
+          address2: addr.address2 ?? undefined,
+          city: resolvedCity || (addr.city ?? undefined),
+          zip: addr.zip ?? undefined,
+        },
+        { preferSettlement: preferCityGeo },
+      );
       // P2 — city-centroid fallback (env-gated DAC_STEP3_CITY_FALLBACK, default
       // OFF). Production data (2026-06): when Lever B keeps the department
       // centroid it is ~99.6% because of geocode-no-result — Nominatim cannot
@@ -3099,7 +3109,10 @@ export async function createShipment(
         const triggerReason = fullAddrCoarse
           ? `coarse full-address point (${geo?.lat},${geo?.lon}, place_rank=${geo?.placeRank})`
           : 'full address did not geocode';
-        const cityGeo = await geocodeAddressToDepartment({ city: cityFallbackCity });
+        const cityGeo = await geocodeAddressToDepartment(
+          { city: cityFallbackCity },
+          { preferSettlement: preferCityGeo },
+        );
         if (cityGeo && cityGeo.lat != null && cityGeo.lon != null) {
           geo = cityGeo;
           slog.info(
