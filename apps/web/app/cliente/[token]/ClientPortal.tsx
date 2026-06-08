@@ -30,6 +30,9 @@ import {
   CheckSquare,
   Square,
   X,
+  ArrowDownUp,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { ClientViewStore, ClientViewLabel } from '@/lib/client-view';
@@ -123,6 +126,25 @@ function locationLabel(l: ClientViewLabel): string {
   return parts.length > 0 ? parts.join(', ') : 'Sin localidad';
 }
 
+/** Sort keys the client can pick. Default is order number so the cards land in
+ * predictable #-order; the rest let the client re-sort a day at a glance. */
+type SortKey = 'order' | 'time' | 'city' | 'store' | 'status';
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'order', label: 'N° pedido' },
+  { key: 'time', label: 'Hora' },
+  { key: 'city', label: 'Ciudad' },
+  { key: 'store', label: 'Tienda' },
+  { key: 'status', label: 'Estado' },
+];
+
+/** Numeric value of an order name ("#5630" -> 5630) for sorting. Returns NaN
+ * when there is no usable number so the caller can push those to the end. */
+function orderNumber(l: ClientViewLabel): number {
+  const digits = (l.orderName ?? '').replace(/[^0-9]/g, '');
+  return digits ? parseInt(digits, 10) : Number.NaN;
+}
+
 export function ClientPortal({
   token,
   stores,
@@ -135,6 +157,8 @@ export function ClientPortal({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [query, setQuery] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('order');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(stores.map((s) => s.id)),
   );
@@ -158,6 +182,52 @@ export function ClientPortal({
     stores.forEach((s) => m.set(s.id, s.name));
     return m;
   }, [stores]);
+
+  // Comparator for the chosen sort key + direction. Applied WITHIN each day
+  // group so the day structure (and "Imprimir día") stays intact. Labels with
+  // no order number always fall to the end. Ties break by newest-first so the
+  // order is deterministic.
+  const sortComparator = useMemo(() => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return (a: ClientViewLabel, b: ClientViewLabel): number => {
+      let d = 0;
+      switch (sortKey) {
+        case 'order': {
+          const na = orderNumber(a);
+          const nb = orderNumber(b);
+          if (Number.isNaN(na) && Number.isNaN(nb)) d = 0;
+          else if (Number.isNaN(na)) return 1; // a (no number) after b, any dir
+          else if (Number.isNaN(nb)) return -1;
+          else d = na - nb;
+          break;
+        }
+        case 'city':
+          d = locationLabel(a).localeCompare(locationLabel(b), 'es');
+          break;
+        case 'store':
+          d = (nameByStore.get(a.storeId) ?? '').localeCompare(
+            nameByStore.get(b.storeId) ?? '',
+            'es',
+          );
+          break;
+        case 'status':
+          d = statusBadge(a.status).label.localeCompare(
+            statusBadge(b.status).label,
+            'es',
+          );
+          break;
+        case 'time':
+        default:
+          d = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+          break;
+      }
+      d *= dir;
+      if (d === 0) {
+        d = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }
+      return d;
+    };
+  }, [sortKey, sortDir, nameByStore]);
 
   const totalByStore = useMemo(() => {
     const m = new Map<string, number>();
@@ -187,9 +257,11 @@ export function ClientPortal({
       if (arr) arr.push(l);
       else map.set(key, [l]);
     }
+    // Sort the cards WITHIN each day by the chosen key + direction.
+    for (const arr of map.values()) arr.sort(sortComparator);
     // Newest day first (keys are YYYY-MM-DD, lexicographic == chronological).
     return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
-  }, [filtered]);
+  }, [filtered, sortComparator]);
 
   // The currently visible, printable labels — what "select all" and Ctrl+A act on.
   const selectableVisibleIds = useMemo(
@@ -458,6 +530,49 @@ export function ClientPortal({
                     Ver todas
                   </button>
                 )}
+              </div>
+            </section>
+
+            {/* Sort control */}
+            <section className="mb-5">
+              <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-white/40">
+                <ArrowDownUp className="h-3.5 w-3.5" />
+                Ordenar por
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {SORT_OPTIONS.map((opt) => {
+                  const isOn = sortKey === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      onClick={() => setSortKey(opt.key)}
+                      aria-pressed={isOn}
+                      className={cn(
+                        'rounded-full border px-3.5 py-1.5 text-sm font-medium transition',
+                        isOn
+                          ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-50 ring-1 ring-cyan-400/40'
+                          : 'border-white/10 bg-white/[0.02] text-white/40 hover:bg-white/[0.05]',
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+                  title={sortDir === 'asc' ? 'Ascendente' : 'Descendente'}
+                  aria-label={
+                    sortDir === 'asc' ? 'Orden ascendente' : 'Orden descendente'
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.02] px-3 py-1.5 text-sm text-white/60 transition hover:bg-white/[0.05] hover:text-white/80"
+                >
+                  {sortDir === 'asc' ? (
+                    <ArrowUp className="h-3.5 w-3.5" />
+                  ) : (
+                    <ArrowDown className="h-3.5 w-3.5" />
+                  )}
+                  {sortDir === 'asc' ? 'Ascendente' : 'Descendente'}
+                </button>
               </div>
             </section>
 
