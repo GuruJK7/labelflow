@@ -653,19 +653,22 @@ export function sanitizeObservationLine(raw: string): string {
  * line items. Per-tenant opt-in (Tenant.skuInObservations) — a client asked to
  * have the product SKU printed on the DAC label so the packer can pick by code.
  *
- * Format: "SKU: <sku> xN, <sku2> xM"
+ * Format: "<sku> xN, <sku2> xM" (NO "SKU:" prefix — operator request 2026-06-08
+ * so the product line reads cleanly as the very first thing on the label).
  *   - Only line items that carry a non-empty SKU are included.
  *   - Quantities for the SAME sku string are aggregated (two lines of the same
  *     variant => one "x3" entry); first-seen order is preserved.
  *   - Returns null when no line item has a usable SKU, so the caller can omit
- *     the line entirely (no empty "SKU:" prefix on the label).
+ *     the line entirely (no empty line on the label).
  *
  * Safety: the returned string is single-line and contains NO pipe character —
  * any '|'/newline/tab inside a SKU value is collapsed to a space. This matters
  * because the observations array is later joined with " | " AND each piece is
  * re-run through sanitizeObservationLine() (which splits on "|"/newline). The
- * literal "SKU: " prefix also guarantees the piece is never a bare long-numeric
- * ID, so an all-digit barcode SKU survives the LONG_NUMERIC_ID_RE strip.
+ * mandatory " xN" quantity suffix on every part also guarantees the piece is
+ * never a bare long-numeric ID, so an all-digit barcode SKU survives the
+ * LONG_NUMERIC_ID_RE strip even though the old "SKU:" prefix is gone (the suffix
+ * is now load-bearing for that guarantee — see sku-observations.test.ts).
  *
  * Exported for unit testing without standing up the full createShipment flow.
  */
@@ -688,7 +691,7 @@ export function buildSkuObservationLine(order: Pick<ShopifyOrder, 'line_items'>)
   if (distinctSkus.length === 0) return null;
 
   const parts = distinctSkus.map((sku) => `${sku} x${qtyBySku.get(sku)}`);
-  return `SKU: ${parts.join(', ')}`;
+  return parts.join(', ');
 }
 
 function normalize(s: string): string {
@@ -3350,6 +3353,20 @@ export async function createShipment(
   //   - shouldSkipNoteAttribute: name/value metadata + long ID patterns
   //   - sanitizeObservationLine: final belt-and-suspenders pass
   const observations: string[] = [];
+  // 2026-06-08 operator request — when SKU-in-observations is enabled (Kinevia,
+  // Todo a Mano), the product line must be the FIRST thing in Observaciones,
+  // BEFORE the customer phone and every other note, so it is always visible even
+  // if the courier only glances at the top of the field (or DAC truncates it).
+  // No "SKU:" prefix per the same request; the mandatory " xN" suffix on each
+  // part still protects all-digit SKUs from the LONG_NUMERIC_ID_RE strip in the
+  // sanitizer below (see buildSkuObservationLine). Default OFF (per-tenant flag).
+  if (opts?.skuInObservations) {
+    const skuLine = buildSkuObservationLine(order);
+    if (skuLine) {
+      observations.push(skuLine);
+      slog.info(DAC_STEPS.STEP4_OK, `SKU-in-observations enabled — appending "${skuLine.substring(0, 80)}"`);
+    }
+  }
   if (extraObs) observations.push(extraObs);
   // 2026-05-11 directive — inject the "call customer for missing door number"
   // note when an order shipped without a street number. Set upstream by the
@@ -3407,18 +3424,6 @@ export async function createShipment(
       if (!attr.value) continue;
       if (shouldSkipNoteAttribute(attr.name ?? '', String(attr.value))) continue;
       observations.push(`${attr.name}: ${attr.value}`);
-    }
-  }
-
-  // Per-tenant opt-in (Tenant.skuInObservations): append the product SKU(s).
-  // Added LAST so it never reorders the delivery-critical notes above. The
-  // helper guarantees a single pipe-free line, and the "SKU: " prefix keeps it
-  // through the sanitizer below (see buildSkuObservationLine). Default OFF.
-  if (opts?.skuInObservations) {
-    const skuLine = buildSkuObservationLine(order);
-    if (skuLine) {
-      observations.push(skuLine);
-      slog.info(DAC_STEPS.STEP4_OK, `SKU-in-observations enabled — appending "${skuLine.substring(0, 80)}"`);
     }
   }
 

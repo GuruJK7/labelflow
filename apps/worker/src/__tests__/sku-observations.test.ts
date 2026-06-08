@@ -6,14 +6,17 @@
  * opt-in per store (default OFF) and must NOT alter the label for any tenant
  * that leaves it off.
  *
- * Confirmed format (client decision): "SKU: <value> xN", multiple distinct
- * SKUs separated by commas, e.g.
- *   "SKU: Plantillas Nube Grandes x2, Faja Reductora x1".
+ * Confirmed format (operator decision 2026-06-08): "<value> xN", multiple
+ * distinct SKUs separated by commas, with NO "SKU:" prefix and placed as the
+ * FIRST line of Observaciones, e.g.
+ *   "Plantillas Nube Grandes x2, Faja Reductora x1".
  *
  * These tests pin the format AND prove the line survives the existing
  * belt-and-suspenders sanitizer (sanitizeObservationLine) untouched — that is
  * the guarantee that turning the flag on cannot corrupt the observations the
- * DAC courier already relies on.
+ * DAC courier already relies on. With the "SKU:" prefix gone, the mandatory
+ * " xN" quantity suffix is what keeps an all-digit barcode SKU from being
+ * stripped by LONG_NUMERIC_ID_RE (see the barcode test at the bottom).
  */
 import { describe, it, expect } from 'vitest';
 import { buildSkuObservationLine, sanitizeObservationLine } from '../dac/shipment';
@@ -25,10 +28,10 @@ function li(sku: string | null | undefined, quantity: number) {
 }
 
 describe('buildSkuObservationLine — emitted cases', () => {
-  it('single item with SKU → "SKU: <value> xN"', () => {
+  it('single item with SKU → "<value> xN" (no prefix)', () => {
     expect(
       buildSkuObservationLine({ line_items: [li('Plantillas Nube Grandes', 3)] }),
-    ).toBe('SKU: Plantillas Nube Grandes x3');
+    ).toBe('Plantillas Nube Grandes x3');
   });
 
   it('client production example — two distinct SKUs, comma-separated, order preserved', () => {
@@ -36,13 +39,13 @@ describe('buildSkuObservationLine — emitted cases', () => {
       buildSkuObservationLine({
         line_items: [li('Plantillas Nube Grandes', 2), li('Faja Reductora', 1)],
       }),
-    ).toBe('SKU: Plantillas Nube Grandes x2, Faja Reductora x1');
+    ).toBe('Plantillas Nube Grandes x2, Faja Reductora x1');
   });
 
   it('aggregates quantities for the SAME sku across multiple line items', () => {
     expect(
       buildSkuObservationLine({ line_items: [li('ABC', 2), li('ABC', 1)] }),
-    ).toBe('SKU: ABC x3');
+    ).toBe('ABC x3');
   });
 
   it('preserves first-seen order when a duplicate sku appears later', () => {
@@ -50,7 +53,7 @@ describe('buildSkuObservationLine — emitted cases', () => {
       buildSkuObservationLine({
         line_items: [li('A', 1), li('B', 1), li('A', 1)],
       }),
-    ).toBe('SKU: A x2, B x1');
+    ).toBe('A x2, B x1');
   });
 
   it('skips line items WITHOUT a sku but keeps the ones that have it', () => {
@@ -58,13 +61,13 @@ describe('buildSkuObservationLine — emitted cases', () => {
       buildSkuObservationLine({
         line_items: [li('A', 1), li(null, 5), li('', 9), li('B', 2)],
       }),
-    ).toBe('SKU: A x1, B x2');
+    ).toBe('A x1, B x2');
   });
 
   it('trims surrounding whitespace from the sku value', () => {
     expect(
       buildSkuObservationLine({ line_items: [li('  ABC  ', 1)] }),
-    ).toBe('SKU: ABC x1');
+    ).toBe('ABC x1');
   });
 });
 
@@ -88,15 +91,15 @@ describe('buildSkuObservationLine — suppression cases (line omitted)', () => {
 
 describe('buildSkuObservationLine — quantity edge cases default to x1', () => {
   it('zero quantity → x1', () => {
-    expect(buildSkuObservationLine({ line_items: [li('A', 0)] })).toBe('SKU: A x1');
+    expect(buildSkuObservationLine({ line_items: [li('A', 0)] })).toBe('A x1');
   });
 
   it('negative quantity → x1', () => {
-    expect(buildSkuObservationLine({ line_items: [li('A', -4)] })).toBe('SKU: A x1');
+    expect(buildSkuObservationLine({ line_items: [li('A', -4)] })).toBe('A x1');
   });
 
   it('NaN quantity → x1', () => {
-    expect(buildSkuObservationLine({ line_items: [li('A', Number.NaN)] })).toBe('SKU: A x1');
+    expect(buildSkuObservationLine({ line_items: [li('A', Number.NaN)] })).toBe('A x1');
   });
 
   it('missing quantity field → x1', () => {
@@ -104,25 +107,25 @@ describe('buildSkuObservationLine — quantity edge cases default to x1', () => 
       buildSkuObservationLine({
         line_items: [{ title: 'P', price: '0', product_id: null, sku: 'A' } as never],
       }),
-    ).toBe('SKU: A x1');
+    ).toBe('A x1');
   });
 
   it('fractional quantity is floored', () => {
-    expect(buildSkuObservationLine({ line_items: [li('A', 2.9)] })).toBe('SKU: A x2');
+    expect(buildSkuObservationLine({ line_items: [li('A', 2.9)] })).toBe('A x2');
   });
 });
 
 describe('buildSkuObservationLine — separator safety (cannot corrupt observations)', () => {
   it('never emits a pipe — pipes inside a sku are collapsed to a space', () => {
     const out = buildSkuObservationLine({ line_items: [li('A|B', 1)] });
-    expect(out).toBe('SKU: A B x1');
+    expect(out).toBe('A B x1');
     expect(out).not.toContain('|');
   });
 
   it('newlines/tabs inside a sku are collapsed to a single space', () => {
     expect(
       buildSkuObservationLine({ line_items: [li('A\n\tB', 1)] }),
-    ).toBe('SKU: A B x1');
+    ).toBe('A B x1');
   });
 
   it('the produced line SURVIVES sanitizeObservationLine unchanged (text sku)', () => {
@@ -134,11 +137,20 @@ describe('buildSkuObservationLine — separator safety (cannot corrupt observati
     expect(sanitizeObservationLine(line)).toBe(line);
   });
 
-  it('a pure-numeric (barcode) sku SURVIVES the long-numeric-ID strip thanks to the "SKU:" prefix', () => {
+  it('a pure-numeric (barcode) sku SURVIVES the long-numeric-ID strip thanks to the " xN" suffix', () => {
     // A bare "1234567890123" would be stripped by LONG_NUMERIC_ID_RE; with the
-    // "SKU: ... xN" wrapper the whole piece is no longer pure-numeric, so it stays.
+    // mandatory " xN" quantity suffix the whole piece is no longer pure-numeric,
+    // so it stays even now that the old "SKU:" prefix is gone.
     const line = buildSkuObservationLine({ line_items: [li('1234567890123', 2)] })!;
-    expect(line).toBe('SKU: 1234567890123 x2');
+    expect(line).toBe('1234567890123 x2');
     expect(sanitizeObservationLine(line)).toBe(line);
+  });
+
+  it('a single all-digit barcode (no comma) still survives without the prefix', () => {
+    // Hardens the load-bearing-suffix guarantee for the single-item case too.
+    const line = buildSkuObservationLine({ line_items: [li('8821239602381', 1)] })!;
+    expect(line).toBe('8821239602381 x1');
+    expect(sanitizeObservationLine(line)).toBe(line);
+    expect(sanitizeObservationLine(line)).not.toBe('');
   });
 });
