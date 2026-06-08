@@ -3661,6 +3661,17 @@ export async function createShipment(
   // worker re-enters createShipment for the same order, the guard above
   // will see this row and throw DuplicateSubmitError before Finalizar can
   // fire twice.
+  // Pre-Finalizar diagnostic snapshot (audit 2026-06-08): capture the form state
+  // (coords + every select) at the moment of submission — the TRUE values DAC
+  // receives — BEFORE clicking Finalizar. The post-reject snapshot further down
+  // reads the form AFTER DAC rejects, by which point the cart-add has reset some
+  // fields (K_Tipo_Empaque flips back to "Seleccione...", coords/selects can go
+  // blank). That reset artifact previously mis-led the diagnosis (e.g. "empaque
+  // vacio" that was actually fine at submit; #1951 came back all-empty). This is
+  // READ-ONLY (page.evaluate that only reads the DOM) and double-guarded to
+  // return null on any error, so it can never affect the Finalizar submit.
+  const preFinalizarDiag = await captureDacRejectionDiagnostics(page).catch(() => null);
+
   await markSubmitAttempted(tenantId, String(order.id), null);
   slog.info(DAC_STEPS.SUBMIT_WAIT_NAV, 'Looking for Finalizar envio button');
 
@@ -3824,6 +3835,10 @@ export async function createShipment(
           dacErrorText: dacErrorText || null,
           screenshot: `after-finalizar-${order.name.replace('#', '')}`,
           dacRejectionDiag: rejectionDiag,
+          // The TRUE submitted form state (coords + selects) captured BEFORE
+          // Finalizar — immune to the post-reject reset artifact. Compare this
+          // against dacRejectionDiag to see what DAC actually received.
+          preFinalizarDiag,
         },
       );
 
