@@ -11,6 +11,7 @@ import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress, DuplicateSubmitError, DacAddressRejectedError } from '../dac/shipment';
 import { reconcileOrphansForTenant } from '../dac/orphan-reconcile';
+import { finalizeRecoveredGuiaLabels } from '../dac/finalize-recovered-guias';
 import { withTenantDacLock, DacLockHeldError } from '../dac/tenant-lock';
 import {
   buildRemitenteShopifyNote,
@@ -582,6 +583,32 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     // STEP 4: Process each order sequentially with retry
     const config = getConfig();
     const tmpDir = path.join(config.LABELS_TMP_DIR, new Date().toISOString().split('T')[0]);
+
+    // STEP 4.0: Finalize "recovered orphan" labels stuck FAILED with a real guía
+    // but no PDF (see dac/finalize-recovered-guias.ts). Runs on the already
+    // logged-in DAC session right after orphan-reconcile, so a guía recovered in
+    // THIS pass is finalized the same cycle instead of waiting for a re-fetch
+    // that may never reach it. Best-effort + flag-gated
+    // (DAC_FINALIZE_RECOVERED_GUIA, default OFF) so it can never disrupt the main
+    // path. Downloads the EXISTING guía's PDF only — it never re-submits a form,
+    // and once COMPLETED partitionByCompletedLabels blocks any duplicate.
+    try {
+      const fin = await finalizeRecoveredGuiaLabels({
+        page,
+        tenantId,
+        slog,
+        tmpDir,
+        dacUsername,
+        dacPassword,
+        shopifyClient,
+        enabledTenantsEnv: process.env.DAC_FINALIZE_RECOVERED_GUIA,
+      });
+      if (fin.finalized > 0 || fin.failed > 0) {
+        slog.info('finalize-recovered', `Recovered-guía finalize: ${fin.finalized} completed, ${fin.failed} still pending PDF (of ${fin.scanned} scanned).`);
+      }
+    } catch (finErr) {
+      slog.warn('finalize-recovered', `Finalize sweep threw — continuing with main cycle: ${(finErr as Error).message}`);
+    }
 
     // Load ALL existing guias from DB to prevent picking old guias from DAC historial
     const existingGuias = await db.label.findMany({
