@@ -5,6 +5,7 @@ import {
   cleanupExpiredAddressResolutions,
 } from '../dac/ai-resolver';
 import { probeCaptchaBalance } from '../dac/captcha-balance';
+import { parseCombinedCapEnv, decideCombinedCap } from './combined-daily-cap';
 
 /**
  * Converts a UTC Date to a Date-like object in a given IANA timezone.
@@ -292,6 +293,35 @@ export function startScheduler(): void {
           if (matched) {
             slotMaxOrders = matched.maxOrders;
           }
+        }
+
+        // COMBINED DAILY CAP (e.g. Kinevia + Todo a Mano share a 120/day ceiling).
+        // OFF unless DAC_COMBINED_DAILY_CAP + DAC_COMBINED_CAP_TENANTS are set; when
+        // OFF, decideCombinedCap() is a no-op and slotMaxOrders is untouched (the
+        // scheduler keeps its exact current behaviour). When ON for this tenant it
+        // either skips the run (group already hit the cap today) or shrinks
+        // slotMaxOrders to the remaining shared headroom — never to 0, so the
+        // "0 = unlimited" sentinel can't be confused with "ship nothing".
+        const combinedCapCfg = parseCombinedCapEnv(
+          process.env.DAC_COMBINED_DAILY_CAP,
+          process.env.DAC_COMBINED_CAP_TENANTS,
+          tz,
+        );
+        const capDecision = await decideCombinedCap({
+          cfg: combinedCapCfg,
+          tenantId: tenant.id,
+          slotMaxOrders,
+          fallbackMaxOrders: tenant.maxOrdersPerRun,
+        });
+        if (capDecision.applies && capDecision.skip) {
+          logger.info(
+            { tenantId: tenant.id, shippedToday: capDecision.shippedToday, cap: combinedCapCfg?.cap },
+            'Combined daily cap reached for the group — skipping this scheduled run',
+          );
+          continue;
+        }
+        if (capDecision.applies && capDecision.maxOrders !== undefined) {
+          slotMaxOrders = capDecision.maxOrders;
         }
 
         // Create job in DB (worker polling will pick it up)
