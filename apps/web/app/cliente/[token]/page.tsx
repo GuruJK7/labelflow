@@ -13,7 +13,7 @@
 
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
-import { isValidClientToken, loadClientView } from '@/lib/client-view';
+import { resolveClientToken, loadClientView } from '@/lib/client-view';
 import { ClientPortal } from './ClientPortal';
 
 export const dynamic = 'force-dynamic';
@@ -30,11 +30,12 @@ export default async function ClientViewPage({
 }) {
   const { token } = await params;
 
-  if (!isValidClientToken(token)) {
+  const tenantIds = await resolveClientToken(token);
+  if (!tenantIds) {
     notFound();
   }
 
-  const { stores, labels } = await loadClientView();
+  const { stores, labels } = await loadClientView(tenantIds);
 
   return <ClientPortal token={token} stores={stores} labels={labels} />;
 }

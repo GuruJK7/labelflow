@@ -20,7 +20,7 @@ import { PDFDocument } from 'pdf-lib';
 import { z } from 'zod';
 import { apiError } from '@/lib/api-utils';
 import {
-  isValidClientToken,
+  resolveClientToken,
   getClientViewLabelPdfPaths,
 } from '@/lib/client-view';
 
@@ -66,7 +66,8 @@ async function mapPool<T, R>(
 export async function POST(req: NextRequest) {
   try {
     const token = req.nextUrl.searchParams.get('token');
-    if (!isValidClientToken(token)) return apiError('No autorizado', 401);
+    const tenantIds = await resolveClientToken(token);
+    if (!tenantIds) return apiError('No autorizado', 401);
 
     const body = await req.json().catch(() => null);
     const parsed = bulkSchema.safeParse(body);
@@ -74,7 +75,7 @@ export async function POST(req: NextRequest) {
       return apiError('Datos invalidos', 400);
     }
 
-    const targets = await getClientViewLabelPdfPaths(parsed.data.ids);
+    const targets = await getClientViewLabelPdfPaths(parsed.data.ids, tenantIds);
     if (targets.length === 0) {
       return apiError('No se encontraron etiquetas con PDF', 404);
     }

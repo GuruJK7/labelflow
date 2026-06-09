@@ -12,19 +12,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { apiError } from '@/lib/api-utils';
 import {
-  isValidClientToken,
+  resolveClientToken,
   getClientViewLabelPdfPath,
 } from '@/lib/client-view';
 
 export async function GET(req: NextRequest) {
   try {
     const token = req.nextUrl.searchParams.get('token');
-    if (!isValidClientToken(token)) return apiError('No autorizado', 401);
+    const tenantIds = await resolveClientToken(token);
+    if (!tenantIds) return apiError('No autorizado', 401);
 
     const id = req.nextUrl.searchParams.get('id');
     if (!id) return apiError('id requerido', 400);
 
-    const pdfPath = await getClientViewLabelPdfPath(id);
+    const pdfPath = await getClientViewLabelPdfPath(id, tenantIds);
     if (!pdfPath) return apiError('Etiqueta no encontrada', 404);
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

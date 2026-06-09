@@ -58,10 +58,10 @@ export function isClientViewConfigured(): boolean {
 }
 
 /**
- * Constant-time token check. Returns false when the portal is unconfigured so
- * a missing secret never accidentally allows access. Both sides are hashed
- * first, which sidesteps the equal-length requirement of timingSafeEqual and
- * avoids leaking the secret's length through timing.
+ * Constant-time token check for the LEGACY single-token (env) portal. Returns
+ * false when unconfigured so a missing secret never accidentally allows access.
+ * Both sides are hashed first, which sidesteps the equal-length requirement of
+ * timingSafeEqual and avoids leaking the secret's length through timing.
  */
 export function isValidClientToken(candidate: string | undefined | null): boolean {
   const expected = getConfiguredToken();
@@ -70,6 +70,58 @@ export function isValidClientToken(candidate: string | undefined | null): boolea
   const a = createHash('sha256').update(candidate).digest();
   const b = createHash('sha256').update(expected).digest();
   return timingSafeEqual(a, b);
+}
+
+/**
+ * Resolve a portal token to the EXACT set of stores it may expose, or null when
+ * the token matches nothing (the caller then renders the normal 404/401, so
+ * existence never leaks).
+ *
+ * Two sources, checked in order:
+ *   1. The legacy single token (env CLIENT_VIEW_TOKEN -> CLIENT_VIEW_TENANT_IDS),
+ *      compared in constant time. This keeps the existing shared link working
+ *      with zero config change.
+ *   2. Per-link tokens stored in the `client_portal_tokens` table — a
+ *      `(token_hash, tenant_ids)` row, looked up by the sha256 hash of the
+ *      candidate (the plaintext token is never stored, so a DB read can't reveal
+ *      a usable token). This is how additional, store-scoped links are added
+ *      WITHOUT touching env vars: insert one row and the link works.
+ *
+ * Any failure of the DB lookup (table missing, transient error) is treated as
+ * "no match" -> the portal stays fail-closed.
+ */
+export async function resolveClientToken(
+  candidate: string | undefined | null,
+): Promise<string[] | null> {
+  if (!candidate || typeof candidate !== 'string') return null;
+
+  // 1) Legacy env token (constant-time).
+  const expected = getConfiguredToken();
+  if (expected) {
+    const a = createHash('sha256').update(candidate).digest();
+    const b = createHash('sha256').update(expected).digest();
+    if (timingSafeEqual(a, b)) {
+      const ids = getClientViewTenantIds();
+      if (ids.length > 0) return ids;
+    }
+  }
+
+  // 2) Per-link token rows (lookup by sha256 hash — never store the plaintext).
+  try {
+    const hash = createHash('sha256').update(candidate).digest('hex');
+    const rows = await db.$queryRaw<Array<{ tenant_ids: string }>>`
+      SELECT tenant_ids FROM client_portal_tokens WHERE token_hash = ${hash} LIMIT 1
+    `;
+    const raw = rows[0]?.tenant_ids;
+    if (raw) {
+      const ids = raw.split(',').map((s) => s.trim()).filter(Boolean);
+      if (ids.length > 0) return ids;
+    }
+  } catch {
+    // Table not present yet / transient DB error -> fail closed (no access).
+  }
+
+  return null;
 }
 
 /** "vi0zry-r1.myshopify.com" -> "vi0zry-r1" (fallback label when unnamed). */
@@ -84,11 +136,10 @@ function storeLabelFromUrl(url: string | null): string {
  * myshopify subdomain when a store is still the default "Nueva tienda" or
  * has no name, so the two stores are always distinguishable in the selector.
  */
-export async function loadClientView(): Promise<{
+export async function loadClientView(tenantIds: string[]): Promise<{
   stores: ClientViewStore[];
   labels: ClientViewLabel[];
 }> {
-  const tenantIds = getClientViewTenantIds();
   if (tenantIds.length === 0) return { stores: [], labels: [] };
 
   const [tenants, rows] = await Promise.all([
@@ -147,8 +198,8 @@ export async function loadClientView(): Promise<{
  */
 export async function getClientViewLabelPdfPath(
   labelId: string,
+  tenantIds: string[],
 ): Promise<string | null> {
-  const tenantIds = getClientViewTenantIds();
   if (tenantIds.length === 0) return null;
   const label = await db.label.findFirst({
     where: { id: labelId, tenantId: { in: tenantIds } },
@@ -167,8 +218,8 @@ export async function getClientViewLabelPdfPath(
  */
 export async function getClientViewLabelPdfPaths(
   ids: string[],
+  tenantIds: string[],
 ): Promise<{ id: string; pdfPath: string }[]> {
-  const tenantIds = getClientViewTenantIds();
   if (tenantIds.length === 0 || ids.length === 0) return [];
 
   const rows = await db.label.findMany({
