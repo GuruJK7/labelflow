@@ -439,31 +439,10 @@ body {
 }
 .live-pipeline .pstat.cy b { color: var(--cyan); }
 .live-pipeline .pstat.em b { color: var(--emerald); }
-@media (max-width: 640px) {
-  /* Pipeline becomes a clean, compact vertical stack: Shopify → AutoEnvía → DAC */
-  .live-pipeline .flow { flex-direction: column; padding: 22px 16px 20px; gap: 0; }
-  .live-pipeline .node { width: 100%; max-width: 220px; }
-  .live-pipeline .node .ic { width: 58px; height: 58px; margin-bottom: 11px; border-radius: 17px; }
-  .live-pipeline .node .ic svg { width: 25px; height: 25px; }
-  .live-pipeline .node b { font-size: 13px; }
-  .live-pipeline .node small { font-size: 9.5px; }
-  .live-pipeline .track { flex: 0 0 auto; width: 1px; height: 20px; transform: none; margin: 5px 0; }
-  .live-pipeline .track .beam {
-    left: 50%; right: auto; top: 0; bottom: 0; width: 1px; height: 100%;
-    background: linear-gradient(180deg, transparent, var(--hair-strong) 20%, var(--hair-strong) 80%, transparent);
-  }
-  .live-pipeline .comet { display: none; }
-  .live-pipeline .pstat { padding: 14px 8px; }
-  .live-pipeline .pstat b { font-size: 20px; }
-  /* Tighter live-ops cards on phones so more fits per screen */
-  .op-versus .side { min-height: 300px; }
-  .op-versus .feed { padding: 12px 12px; gap: 6px; }
-  .batch-print .pside { min-height: 180px; }
-}
+/* (mobile rules are consolidated at the end of this section) */
 
 /* ── Versus ── */
 .op-versus { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-@media (max-width: 760px) { .op-versus { grid-template-columns: 1fr; } }
 .op-versus .side { padding: 0; overflow: hidden; display: flex; flex-direction: column; min-height: 380px; }
 .op-versus .side .hd { display: flex; align-items: center; gap: 10px; padding: 18px 22px; border-bottom: 1px solid var(--hair); }
 .op-versus .side .hd svg { width: 16px; height: 16px; flex: 0 0 auto; }
@@ -529,7 +508,6 @@ body {
 
 /* ── Batch printing ── */
 .batch-print { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-@media (max-width: 760px) { .batch-print { grid-template-columns: 1fr; } }
 .batch-print .pside { padding: 0; display: flex; flex-direction: column; min-height: 210px; overflow: hidden; }
 .batch-print .pside .hd { display: flex; align-items: center; gap: 10px; padding: 13px 18px; border-bottom: 1px solid var(--hair); }
 .batch-print .pside .hd svg { width: 15px; height: 15px; flex: 0 0 auto; }
@@ -619,9 +597,74 @@ body {
   font-variant-numeric: tabular-nums; color: var(--txt-2);
 }
 .impact-meters .meter.lit b { color: #fafafa; }
-@media (max-width: 640px) {
-  .impact-meters .crow { grid-template-columns: 1fr; gap: 8px; padding: 16px 0; }
-  .impact-meters .meter b { width: auto; }
+
+/* ════ MOBILE — everything side by side & compact (autoenvia demo v4) ════ */
+@media (max-width: 760px) {
+  /* Pipeline stays horizontal, compact */
+  .live-pipeline .flow { padding: 30px 14px 22px; }
+  .live-pipeline .node { width: 84px; }
+  .live-pipeline .node .ic { width: 50px; height: 50px; border-radius: 15px; margin-bottom: 9px; }
+  .live-pipeline .node .ic svg { width: 21px; height: 21px; }
+  .live-pipeline .orbit { inset: -9px; border-radius: 20px; }
+  .live-pipeline .orbit::before { border-radius: 20px; }
+  .live-pipeline .node b { font-size: 11px; }
+  .live-pipeline .node small { font-size: 7.5px; letter-spacing: 0.02em; }
+  .live-pipeline .track { margin: 0 -6px; transform: translateY(-16px); }
+  .live-pipeline .comet { width: 28px; }
+  .live-pipeline .pstat { padding: 14px 6px; }
+  .live-pipeline .pstat b { font-size: 17px; }
+  .live-pipeline .pstat span { font-size: 7.5px; letter-spacing: 0.08em; }
+
+  /* Versus — two mini columns, side by side */
+  .op-versus { gap: 10px; }
+  .op-versus .side { min-height: 285px; }
+  .op-versus .side .hd { padding: 11px 11px; gap: 6px; }
+  .op-versus .side .hd svg { width: 13px; height: 13px; }
+  .op-versus .side .hd b { font-size: 10.5px; }
+  .op-versus .chip { font-size: 8.5px; padding: 3px 7px; letter-spacing: 0; }
+  .op-versus .feed { padding: 9px 8px; gap: 5px; }
+  .op-versus .row { font-size: 8.5px; padding: 6px 8px; gap: 6px; border-radius: 8px; min-width: 0; }
+  .op-versus .row .id { flex: 0 0 auto; }
+  .op-versus .row .dac { display: none; }
+  .op-versus .row .st { font-size: 8px; gap: 4px; flex: 0 0 auto; }
+  .op-versus .side .ft div { padding: 10px 4px; min-width: 0; }
+  .op-versus .side .ft span { font-size: 6.8px; letter-spacing: 0.05em; }
+  .op-versus .side .ft b { font-size: 13px; }
+  .op-versus .nightfall { padding: 0 10px; }
+  .op-versus .nightfall b { font-size: 12px; }
+  .op-versus .nightfall span { font-size: 8.5px; }
+  .op-versus .nightfall svg { width: 20px; height: 20px; }
+
+  /* Impresión en lote — two mini columns, side by side */
+  .batch-print { gap: 10px; }
+  .batch-print .pside { min-height: 232px; }
+  .batch-print .pside .hd { padding: 11px 11px; gap: 6px; }
+  .batch-print .pside .hd svg { width: 13px; height: 13px; }
+  .batch-print .pside .hd b { font-size: 10.5px; }
+  .batch-print .chip { font-size: 8.5px; padding: 3px 7px; }
+  .batch-print .pstage { padding: 14px 8px 8px; gap: 9px; }
+  .batch-print .printer { width: 72px; height: 26px; border-radius: 8px; }
+  .batch-print .printer .led { top: 6px; right: 8px; width: 4px; height: 4px; }
+  .batch-print .printbtn { font-size: 9px; padding: 7px 11px; gap: 5px; border-radius: 8px; }
+  .batch-print .printbtn svg { width: 11px; height: 11px; }
+  .batch-print .holdnote { font-size: 7.5px; }
+  .batch-print .stackzone { width: 116px; height: 72px; }
+  .batch-print .lbl { width: 80px; height: 22px; border-radius: 4px; gap: 5px; padding: 0 6px; }
+  .batch-print .lbl .bars { height: 9px; }
+  .batch-print .lbl .strip { width: 3px; height: 13px; }
+  .batch-print .lbl small { font-size: 5.5px; }
+  .batch-print .pmeter { padding: 9px 4px 5px; gap: 7px; }
+  .batch-print .pmeter b { font-size: 14px; }
+  .batch-print .pmeter b .of { font-size: 9px; }
+  .batch-print .pmeter span { font-size: 7.5px; letter-spacing: 0.08em; }
+  .batch-print .pmeter .done { font-size: 7.5px; width: 100%; justify-content: center; }
+
+  /* Comparativa — label on top, the two bars side by side */
+  .impact-meters { padding: 18px 14px 12px; }
+  .impact-meters .crow { grid-template-columns: 1fr 1fr; gap: 6px 12px; padding: 12px 0; }
+  .impact-meters .crow .lab { grid-column: 1 / -1; font-size: 9px; }
+  .impact-meters .meter { gap: 8px; min-width: 0; }
+  .impact-meters .meter b { width: auto; font-size: 10px; }
 }
 
 /* Reduced motion — kill the live-ops loops, keep everything legible */

@@ -194,7 +194,7 @@ export default function LandingPage() {
               <div className="flex items-center gap-4 sm:gap-5 mb-5 sm:mb-6">
                 <span className="h-px flex-1 bg-white/[0.08]" />
                 <span className="font-mono text-[9px] sm:text-[10.5px] uppercase tracking-[0.14em] sm:tracking-[0.24em] text-zinc-500 whitespace-nowrap">
-                  El mismo día · dos formas de operarlo
+                  El mismo día · dos formas
                 </span>
                 <span className="h-px flex-1 bg-white/[0.08]" />
               </div>
@@ -209,7 +209,7 @@ export default function LandingPage() {
               <div className="flex items-center gap-4 sm:gap-5 mb-5 sm:mb-6">
                 <span className="h-px flex-1 bg-white/[0.08]" />
                 <span className="font-mono text-[9px] sm:text-[10.5px] uppercase tracking-[0.14em] sm:tracking-[0.24em] text-zinc-500 whitespace-nowrap">
-                  Y al imprimir · todas las etiquetas de una
+                  Las etiquetas · todas de una
                 </span>
                 <span className="h-px flex-1 bg-white/[0.08]" />
               </div>

@@ -3,16 +3,17 @@
 import { useEffect, useRef, useState } from 'react';
 
 /**
- * Live "operations console" sections ported from the autoenvia demo.
+ * Live "operations console" sections ported from the autoenvia demo (v4).
  *
  * Client islands that bring the demo's signature motion to the landing while
- * staying performant and accessible:
- *   - LivePipeline    — Shopify → AutoEnvía → DAC flow with comet beams,
- *                       an orbital core and a live "guías hoy" counter.
- *   - OperationVersus — manual vs automated, two live feeds (manual makes
- *                       more mistakes); the manual side falls dark at 18:00.
- *   - BatchPrinting   — printing labels one-by-one (manual, never finishes)
- *                       vs one click → 56 labels → single PDF (AutoEnvía).
+ * staying performant and accessible. On phones every comparison stays side by
+ * side (two compact columns) instead of stacking:
+ *   - LivePipeline    — Shopify → AutoEnvía → DAC flow (orbital core, comets,
+ *                       a live "guías hoy" counter). Horizontal on every size.
+ *   - OperationVersus — manual vs automated, two live feeds (manual makes more
+ *                       mistakes); the manual side falls dark at 18:00.
+ *   - BatchPrinting   — printing labels one-by-one (manual, never finishes) vs
+ *                       one click → 56 labels → a single PDF (AutoEnvía).
  *   - ImpactMeters    — animated comparison bars (speed, errors, printing…).
  *
  * All respect `prefers-reduced-motion` (static end-state, no timers) and only
@@ -23,6 +24,11 @@ const prefersReducedMotion = () =>
   typeof window !== 'undefined' &&
   typeof window.matchMedia === 'function' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const isMobile = () =>
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(max-width: 760px)').matches;
 
 /** Flip `inView` true the first time the element enters the viewport. */
 function useInView<T extends HTMLElement>(threshold = 0.3) {
@@ -153,7 +159,7 @@ export function LivePipeline() {
         </div>
         <div className="pstat">
           <b>0</b>
-          <span>intervención humana</span>
+          <span>intervención</span>
         </div>
       </div>
     </section>
@@ -211,7 +217,8 @@ export function OperationVersus() {
       ok: boolean,
     ) => {
       const id = (orderRef.current += 1);
-      setter((rows) => [...rows, { id, ok, guide: ok ? dacGuide() : '— sin guía' }].slice(-6));
+      const max = isMobile() ? 5 : 6;
+      setter((rows) => [...rows, { id, ok, guide: ok ? dacGuide() : '— sin guía' }].slice(-max));
     };
 
     // Manual side: slow, makes mistakes often, closes at 18:00.
@@ -229,7 +236,7 @@ export function OperationVersus() {
         return;
       }
       if (Math.random() < 0.6) {
-        // ~42% of manual shipments go out wrong.
+        // ~40% of manual shipments go out wrong.
         const ok = Math.random() > 0.42;
         push(setFeedH, ok);
         if (ok) setCntH((c) => c + 1);
@@ -261,7 +268,7 @@ export function OperationVersus() {
             <circle cx="12" cy="8" r="3.5" />
             <path d="M5 20c.8-3.5 3.6-5.5 7-5.5s6.2 2 7 5.5" />
           </svg>
-          <b>Proceso manual</b>
+          <b>Manual</b>
           <span className="chip">{clockH}</span>
         </div>
         <div className="feed">
@@ -271,7 +278,7 @@ export function OperationVersus() {
         </div>
         <div className="ft">
           <div>
-            <span>Procesados</span>
+            <span>Hechos</span>
             <b>{cntH}</b>
           </div>
           <div className="e">
@@ -288,7 +295,7 @@ export function OperationVersus() {
             <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z" />
           </svg>
           <b>Fuera de horario</b>
-          <span>se retoma mañana · 09:00</span>
+          <span>vuelve mañana · 09:00</span>
         </div>
       </div>
 
@@ -298,8 +305,8 @@ export function OperationVersus() {
           <svg viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M13 2 4.5 13.5H11L9.5 22 19 10h-6.5L13 2z" />
           </svg>
-          <b>Con AutoEnvía</b>
-          <span className={`chip c247${on247 ? ' on' : ''}`}>24 / 7</span>
+          <b>AutoEnvía</b>
+          <span className={`chip c247${on247 ? ' on' : ''}`}>24/7</span>
         </div>
         <div className="feed">
           {feedA.map((r) => (
@@ -308,11 +315,11 @@ export function OperationVersus() {
         </div>
         <div className="ft">
           <div>
-            <span>Procesados</span>
+            <span>Hechos</span>
             <b>{cntA}</b>
           </div>
           <div className="e">
-            <span>Errores humanos</span>
+            <span>Errores</span>
             <b>0</b>
           </div>
           <div>
@@ -332,7 +339,7 @@ function Row({ row }: { row: FeedRow }) {
       <span className="dac">{row.guide}</span>
       <span className="st">
         <i />
-        {row.ok ? 'emitida' : 'dirección inválida'}
+        {row.ok ? 'emitida' : 'inválida'}
       </span>
     </div>
   );
@@ -345,10 +352,13 @@ type Label = { id: number; y: number; rot: number; z: number };
 const TOTAL_LABELS = 56;
 const STACK_MAX = 13;
 
+/** Position a label inside the stack — tuned to the actual zone height per
+ *  breakpoint (compact desktop vs even smaller mobile), so labels never spill. */
 function makeLabel(idx: number, neat: boolean): Label {
-  // Stack grows upward then settles; manual labels land slightly crooked.
-  // Tuned to the compact 86px-tall stackzone with 26px labels.
-  const y = 58 - Math.min(idx, 12) * 4;
+  const mobile = isMobile();
+  const zoneH = mobile ? 72 : 86;
+  const lblH = mobile ? 22 : 26;
+  const y = zoneH - lblH - 2 - Math.min(idx, 12) * 4;
   const rot = neat ? 0 : Math.random() * 8 - 4;
   return { id: idx, y, rot, z: idx };
 }
@@ -462,7 +472,7 @@ export function BatchPrinting() {
       <div className="lop-panel pside human">
         <div className="hd">
           <PrinterIcon />
-          <b>Etiquetas una por una</b>
+          <b>Una por una</b>
           <span className="chip">~{mMins} min</span>
         </div>
         <div className="pstage">
@@ -474,7 +484,7 @@ export function BatchPrinting() {
               <LabelEl key={l.id} label={l} />
             ))}
           </div>
-          <span className="holdnote">abrir PDF → imprimir → siguiente…</span>
+          <span className="holdnote">abrir PDF → imprimir → seguir…</span>
         </div>
         <div className="pmeter">
           <b>
@@ -489,7 +499,7 @@ export function BatchPrinting() {
       <div className="lop-panel pside auto">
         <div className="hd">
           <PrinterIcon />
-          <b>Con AutoEnvía</b>
+          <b>AutoEnvía</b>
           <span className="chip clic">1 clic</span>
         </div>
         <div className="pstage">
