@@ -24,7 +24,7 @@ import { ScrollReveal } from './_components/ScrollReveal';
 import { ScrollProgress } from './_components/ScrollProgress';
 import { LivePipeline, OperationVersus, BatchPrinting, ImpactMeters } from './_components/LiveOps';
 import { Counter } from './_components/Counter';
-import { HeroParallax } from './_components/HeroParallax';
+import { HeroChaos } from './_components/HeroChaos';
 import { TimelineFill } from './_components/TimelineFill';
 import type { ReactNode } from 'react';
 
@@ -108,7 +108,7 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero */}
-      <section className="relative pt-32 sm:pt-36 pb-14 sm:pb-16 px-4 sm:px-6 overflow-hidden">
+      <section className="relative min-h-[100svh] flex flex-col items-center justify-center px-4 sm:px-6 pt-28 pb-28 overflow-hidden">
         <div
           aria-hidden
           className="pointer-events-none absolute top-24 left-0 right-0 h-px overflow-hidden"
@@ -116,7 +116,7 @@ export default function LandingPage() {
           <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-cyan-400/40 to-transparent animate-beam" />
         </div>
 
-        <HeroParallax />
+        <HeroChaos />
 
         <div className="relative z-10 max-w-5xl mx-auto text-center">
           <ScrollReveal variant="up" delay={0}>
