@@ -812,6 +812,43 @@ body {
   .scroll-story .guideout { font-size: 7.5px; }
 }
 
+/* ── ROI calculator: "Calculá tu ahorro" ── */
+.roi { padding: 38px 36px 30px; overflow: hidden; }
+.roi .rglow { position: absolute; inset: 0; pointer-events: none; border-radius: 24px; background: radial-gradient(540px 280px at 85% -20%, rgba(34, 211, 238, 0.1), transparent 70%); }
+.roi .roi-top { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; position: relative; }
+.roi .roi-top label { font-family: 'Sora', sans-serif; font-size: 15.5px; font-weight: 700; color: #fafafa; }
+.roi .roi-top output { margin-left: auto; font-family: var(--mono); font-weight: 600; font-size: 26px; color: var(--cyan); font-variant-numeric: tabular-nums; }
+.roi .roi-top output small { font-size: 11px; color: var(--muted); font-weight: 400; letter-spacing: 0.1em; }
+.roi input[type=range] {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 99px;
+  background: linear-gradient(90deg, var(--cyan-deep) var(--fill, 15%), rgba(255, 255, 255, 0.07) var(--fill, 15%));
+  outline: none; margin: 22px 0 8px; position: relative; cursor: pointer;
+}
+.roi input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%;
+  background: linear-gradient(150deg, var(--cyan), var(--emerald));
+  border: 2px solid #06222a; box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.5), 0 0 18px rgba(34, 211, 238, 0.6); cursor: grab;
+}
+.roi input[type=range]::-moz-range-thumb {
+  width: 22px; height: 22px; border-radius: 50%; border: 2px solid #06222a;
+  background: linear-gradient(150deg, var(--cyan), var(--emerald));
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.5), 0 0 18px rgba(34, 211, 238, 0.6); cursor: grab;
+}
+.roi .marks { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
+.roi .roi-out { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 26px; position: relative; }
+.roi .rstat { border: 1px solid var(--hair); border-radius: 16px; padding: 20px 16px; text-align: center; background: rgba(255, 255, 255, 0.018); transition: border-color 0.3s; }
+.roi .rstat b { display: block; font-family: var(--mono); font-weight: 600; font-size: clamp(22px, 3vw, 30px); color: var(--cyan); font-variant-numeric: tabular-nums; line-height: 1; }
+.roi .rstat.warn b { color: var(--red); }
+.roi .rstat span { display: block; margin-top: 9px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); line-height: 1.6; }
+.roi .foot { margin-top: 18px; font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.04em; text-align: center; position: relative; }
+.roi .cta-inline { display: flex; justify-content: center; margin-top: 22px; position: relative; }
+@media (max-width: 640px) {
+  .roi { padding: 24px 18px 22px; }
+  .roi .roi-out { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .roi .rstat:last-child { grid-column: 1 / -1; }
+  .roi .roi-top output { font-size: 20px; }
+}
+
 /* Reduced motion — kill the live-ops loops, keep everything legible */
 @media (prefers-reduced-motion: reduce) {
   .live-pipeline .comet,

@@ -26,6 +26,7 @@ import { LivePipeline, OperationVersus, BatchPrinting, ImpactMeters } from './_c
 import { Counter } from './_components/Counter';
 import { HeroChaos } from './_components/HeroChaos';
 import { ScrollStory } from './_components/ScrollStory';
+import { RoiCalculator } from './_components/RoiCalculator';
 import { TimelineFill } from './_components/TimelineFill';
 import type { ReactNode } from 'react';
 
@@ -257,6 +258,9 @@ export default function LandingPage() {
           </ScrollReveal>
         </div>
       </section>
+
+      {/* ROI — Calculá tu ahorro (slider interactivo) */}
+      <RoiCalculator whatsappUrl={WHATSAPP_URL} />
 
       {/* Plataforma */}
       <section id="plataforma" className="py-16 md:py-24 px-4 sm:px-6">
