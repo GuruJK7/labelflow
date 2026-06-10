@@ -25,6 +25,7 @@ import { ScrollProgress } from './_components/ScrollProgress';
 import { LivePipeline, OperationVersus, BatchPrinting, ImpactMeters } from './_components/LiveOps';
 import { Counter } from './_components/Counter';
 import { HeroChaos } from './_components/HeroChaos';
+import { ScrollStory } from './_components/ScrollStory';
 import { TimelineFill } from './_components/TimelineFill';
 import type { ReactNode } from 'react';
 
@@ -46,7 +47,7 @@ const WHATSAPP_URL =
 
 export default function LandingPage() {
   return (
-    <div className="relative min-h-screen bg-[#050505] overflow-x-hidden text-white">
+    <div className="relative min-h-screen bg-[#050505] overflow-x-clip text-white">
       <ScrollProgress />
 
       {/* Background grid + ambient orbs */}
@@ -211,8 +212,11 @@ export default function LandingPage() {
         </ScrollReveal>
       </section>
 
-      {/* Operación en vivo — pipeline + versus + meters (ported from the demo) */}
-      <section id="operacion" className="px-4 sm:px-6 pb-20 sm:pb-24">
+      {/* Scrollytelling — seguí un pedido: el scroll empuja el pedido por el pipeline */}
+      <ScrollStory />
+
+      {/* Operación en vivo — pipeline + versus + meters */}
+      <section id="live" className="px-4 sm:px-6 pb-20 sm:pb-24">
         <div className="max-w-5xl mx-auto space-y-10 sm:space-y-16">
           <ScrollReveal variant="scale">
             <LivePipeline />
