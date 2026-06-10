@@ -196,7 +196,7 @@ export default function LandingPage() {
         />
         <ScrollReveal>
           <div className="relative max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-7 text-center">
-            <ProofStat prefix="+" value={1000} label="guías emitidas" />
+            <ProofStat prefix="+" value={10000} label="pedidos / mes" />
             <ProofStat value={4} label="marcas operando" />
             <ProofStat
               staticValue={
@@ -206,7 +206,7 @@ export default function LandingPage() {
               }
               label="procesamiento"
             />
-            <ProofStat value={100} suffix="%" label="automático" />
+            <ProofStat value={100} suffix="%" label="eficiencia" />
           </div>
         </ScrollReveal>
       </section>
