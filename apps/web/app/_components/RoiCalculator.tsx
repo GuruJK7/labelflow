@@ -17,7 +17,9 @@ const MIN = 100;
 const MAX = 5000;
 
 export function RoiCalculator({ whatsappUrl }: { whatsappUrl: string }) {
-  const [orders, setOrders] = useState(500);
+  // Default a un volumen representativo (no el 500 del demo) → primera vista más
+  // impactante: 1.300 pedidos = 87 h recuperadas. El slider sigue siendo libre.
+  const [orders, setOrders] = useState(1300);
 
   const hrs = Math.round((orders * 4) / 60);
   const days = (hrs / 8).toFixed(1).replace('.', ',');
