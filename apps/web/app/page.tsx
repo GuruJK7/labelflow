@@ -23,6 +23,10 @@ import {
 import { ScrollReveal } from './_components/ScrollReveal';
 import { ScrollProgress } from './_components/ScrollProgress';
 import { LivePipeline, OperationVersus, BatchPrinting, ImpactMeters } from './_components/LiveOps';
+import { Counter } from './_components/Counter';
+import { HeroParallax } from './_components/HeroParallax';
+import { TimelineFill } from './_components/TimelineFill';
+import type { ReactNode } from 'react';
 
 /** Public brand for the site (autoenvia.com). Internally the platform is LabelFlow;
  *  flip this single constant if the public name ever changes. */
@@ -104,7 +108,7 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero */}
-      <section className="relative pt-32 sm:pt-36 pb-14 sm:pb-16 px-4 sm:px-6">
+      <section className="relative pt-32 sm:pt-36 pb-14 sm:pb-16 px-4 sm:px-6 overflow-hidden">
         <div
           aria-hidden
           className="pointer-events-none absolute top-24 left-0 right-0 h-px overflow-hidden"
@@ -112,7 +116,9 @@ export default function LandingPage() {
           <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-cyan-400/40 to-transparent animate-beam" />
         </div>
 
-        <div className="max-w-5xl mx-auto text-center">
+        <HeroParallax />
+
+        <div className="relative z-10 max-w-5xl mx-auto text-center">
           <ScrollReveal variant="up" delay={0}>
             <div className="inline-flex items-center gap-2.5 rounded-full border border-cyan-400/25 bg-gradient-to-b from-cyan-400/[0.08] to-cyan-400/[0.02] px-4 py-1.5 mb-7 sm:mb-8 backdrop-blur-sm">
               <span className="relative flex h-1.5 w-1.5">
@@ -180,6 +186,29 @@ export default function LandingPage() {
             </div>
           </ScrollReveal>
         </div>
+      </section>
+
+      {/* Social proof — animated counters */}
+      <section className="relative border-y border-white/[0.06] px-4 sm:px-6 py-8 sm:py-9 overflow-hidden">
+        <div
+          aria-hidden
+          className="absolute inset-0 bg-[radial-gradient(600px_200px_at_50%_0%,rgba(34,211,238,0.05),transparent_70%)]"
+        />
+        <ScrollReveal>
+          <div className="relative max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-7 text-center">
+            <ProofStat prefix="+" value={1000} label="guías emitidas" />
+            <ProofStat value={4} label="marcas operando" />
+            <ProofStat
+              staticValue={
+                <>
+                  24<span className="text-cyan-400">/</span>7
+                </>
+              }
+              label="procesamiento"
+            />
+            <ProofStat value={100} suffix="%" label="automático" />
+          </div>
+        </ScrollReveal>
       </section>
 
       {/* Operación en vivo — pipeline + versus + meters (ported from the demo) */}
@@ -363,10 +392,7 @@ export default function LandingPage() {
           </ScrollReveal>
 
           <div className="relative">
-            <div
-              aria-hidden
-              className="hidden md:block absolute left-1/2 top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-cyan-500/20 to-transparent"
-            />
+            <TimelineFill />
             <div className="space-y-6 md:space-y-10">
               {[
                 {
@@ -677,6 +703,35 @@ export default function LandingPage() {
           </div>
         </div>
       </footer>
+    </div>
+  );
+}
+
+function ProofStat({
+  value,
+  prefix,
+  suffix,
+  staticValue,
+  label,
+}: {
+  value?: number;
+  prefix?: string;
+  suffix?: string;
+  staticValue?: ReactNode;
+  label: string;
+}) {
+  return (
+    <div>
+      <p className="font-mono font-semibold text-[clamp(22px,3.4vw,30px)] tracking-tight text-white tabular">
+        {staticValue ?? (
+          <>
+            {prefix && <span className="text-cyan-400">{prefix}</span>}
+            <Counter value={value!} />
+            {suffix && <span className="text-cyan-400">{suffix}</span>}
+          </>
+        )}
+      </p>
+      <p className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-zinc-500 mt-1.5">{label}</p>
     </div>
   );
 }
