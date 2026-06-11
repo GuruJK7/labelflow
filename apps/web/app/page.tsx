@@ -262,6 +262,18 @@ export default function LandingPage() {
                 </span>
                 <span className="h-px flex-1 bg-white/[0.08]" />
               </div>
+              <div className="text-center max-w-2xl mx-auto mb-7 sm:mb-9">
+                <h3 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight">
+                  <span className="text-zinc-500">No es tu equipo.</span> Es cargar los pedidos a
+                  mano.
+                </h3>
+                <p className="text-zinc-400 text-sm sm:text-base mt-3 leading-relaxed">
+                  Por más cuidadoso que sea, a mano se cuela una dirección mal escrita, un pedido
+                  que queda sin guía, y todo va más lento — y solo de 9 a 18. Miralo el mismo día,
+                  en vivo: el lado manual acumula errores; AutoEnvía emite cada guía sola, 24/7,
+                  sin un fallo.
+                </p>
+              </div>
             </ScrollReveal>
             <ScrollReveal>
               <OperationVersus />
@@ -276,6 +288,16 @@ export default function LandingPage() {
                   Las etiquetas · todas de una
                 </span>
                 <span className="h-px flex-1 bg-white/[0.08]" />
+              </div>
+              <div className="text-center max-w-2xl mx-auto mb-7 sm:mb-9">
+                <h3 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight">
+                  ¿Imprimís las etiquetas una por una?{' '}
+                  <span className="text-zinc-500">Es otra hora que se va cada día.</span>
+                </h3>
+                <p className="text-zinc-400 text-sm sm:text-base mt-3 leading-relaxed">
+                  Con AutoEnvía juntás todas las guías del día y salen en un solo PDF, de un clic —
+                  ordenadas y listas para despachar.
+                </p>
               </div>
             </ScrollReveal>
             <ScrollReveal>
