@@ -266,7 +266,8 @@ export default function LandingPage() {
       <section id="plataforma" className="py-16 md:py-24 px-4 sm:px-6">
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
-            <div className="text-center mb-12 sm:mb-16">
+            <div className="relative isolate text-center mb-12 sm:mb-16">
+              <span aria-hidden className="lop-ghost">03</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Layers className="w-3.5 h-3.5" />
                 La plataforma
@@ -344,7 +345,8 @@ export default function LandingPage() {
       <section className="py-16 md:py-24 px-4 sm:px-6">
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
-            <div className="text-center mb-12 sm:mb-14">
+            <div className="relative isolate text-center mb-12 sm:mb-14">
+              <span aria-hidden className="lop-ghost">04</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Building2 className="w-3.5 h-3.5" />
                 Para quién es
@@ -387,7 +389,8 @@ export default function LandingPage() {
       <section id="implementacion" className="py-16 md:py-24 px-4 sm:px-6">
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
-            <div className="text-center mb-12 sm:mb-16">
+            <div className="relative isolate text-center mb-12 sm:mb-16">
+              <span aria-hidden className="lop-ghost">05</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Award className="w-3.5 h-3.5" />
                 Implementación llave en mano
@@ -489,7 +492,8 @@ export default function LandingPage() {
       <section id="tecnologia" className="py-16 md:py-24 px-4 sm:px-6">
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
-            <div className="text-center mb-12 sm:mb-14">
+            <div className="relative isolate text-center mb-12 sm:mb-14">
+              <span aria-hidden className="lop-ghost">06</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Server className="w-3.5 h-3.5" />
                 Tecnología
@@ -581,7 +585,8 @@ export default function LandingPage() {
       <section id="faq" className="py-16 md:py-24 px-4 sm:px-6">
         <div className="max-w-3xl mx-auto">
           <ScrollReveal>
-            <div className="text-center mb-10 sm:mb-12">
+            <div className="relative isolate text-center mb-10 sm:mb-12">
+              <span aria-hidden className="lop-ghost">07</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Truck className="w-3.5 h-3.5" />
                 Preguntas frecuentes

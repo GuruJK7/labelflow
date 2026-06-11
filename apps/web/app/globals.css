@@ -697,6 +697,31 @@ body {
 @media (max-width: 860px) { .hero-chaos .order.hidem { display: none; } }
 @media (max-width: 760px) { .hero-chaos { display: none; } }
 
+/* ── Ghost section numbers — faint watermark behind each section header ── */
+/* Ported 1:1 from the autoenvia v4 demo (.ghost). The header container gets
+   `relative isolate`; this sits at z-index:-1, so it reads behind the eyebrow
+   + title without touching them. */
+.lop-ghost {
+  position: absolute;
+  left: 50%;
+  top: -54px;
+  transform: translateX(-50%);
+  font-family: 'Sora', sans-serif;
+  font-weight: 800;
+  line-height: 1;
+  font-size: clamp(110px, 17vw, 200px);
+  letter-spacing: -0.04em;
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(255, 255, 255, 0.055);
+  z-index: -1;
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .lop-ghost { top: -40px; font-size: clamp(84px, 24vw, 150px); }
+}
+
 /* ── Scrollytelling: "Seguí un pedido" (scroll-pinned) ── */
 .scroll-story { height: 340vh; position: relative; }
 .scroll-story .stick {
