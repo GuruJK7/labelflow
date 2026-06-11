@@ -107,6 +107,7 @@ export default function ControlPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Record<string, 'run' | 'retry'>>({});
   const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkRetrying, setBulkRetrying] = useState(false);
   const [error, setError] = useState('');
 
   const anyRunningRef = useRef(false);
@@ -205,6 +206,28 @@ export default function ControlPage() {
     [lote, postRun, fetchOverview],
   );
 
+  const postRetry = useCallback(
+    async (tenantId: string, count: number, silent = false): Promise<boolean> => {
+      try {
+        const res = await fetch('/api/v1/control/retry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tenantId, count }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          if (!silent) setError(json.error ?? 'No se pudo reintentar');
+          return false;
+        }
+        return true;
+      } catch {
+        if (!silent) setError('Error de conexion');
+        return false;
+      }
+    },
+    [],
+  );
+
   const retryStore = useCallback(
     async (tenantId: string, retryable: number) => {
       if (retryable <= 0) return;
@@ -212,17 +235,7 @@ export default function ControlPage() {
       if (!window.confirm(`Reintentar ${n} envio(s) sin completar de esta tienda? Se reprocesan en DAC.`)) return;
       setError('');
       setBusy((b) => ({ ...b, [tenantId]: 'retry' }));
-      try {
-        const res = await fetch('/api/v1/control/retry', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tenantId, count: n }),
-        });
-        const json = await res.json();
-        if (!res.ok) setError(json.error ?? 'No se pudo reintentar');
-      } catch {
-        setError('Error de conexion');
-      }
+      await postRetry(tenantId, n);
       setBusy((b) => {
         const x = { ...b };
         delete x[tenantId];
@@ -230,8 +243,32 @@ export default function ControlPage() {
       });
       await fetchOverview();
     },
-    [fetchOverview],
+    [postRetry, fetchOverview],
   );
+
+  // Retry ALL retryable orders across every store, one click. Each store retries
+  // up to min(retryable, 50) via the same ownership-checked endpoint; sequential
+  // so the error summary is per-store. Skips stores with nothing retryable. Safe
+  // on running/queued stores (the retry unblocks the labels and the in-flight or
+  // next run picks them up).
+  const retryAll = useCallback(async () => {
+    const targets = (overview?.stores ?? []).filter((s) => s.stuck.retryable > 0);
+    if (targets.length === 0) return;
+    const totalN = targets.reduce((sum, s) => sum + Math.min(s.stuck.retryable, 50), 0);
+    if (!window.confirm(`Reintentar ${totalN} envio(s) sin completar de ${targets.length} tienda(s)? Se reprocesan en DAC.`)) return;
+    setError('');
+    setBulkRetrying(true);
+    const failed: string[] = [];
+    for (const s of targets) {
+      const ok = await postRetry(s.id, Math.min(s.stuck.retryable, 50), true);
+      if (!ok) failed.push(s.name);
+    }
+    setBulkRetrying(false);
+    if (failed.length > 0) {
+      setError(`No se pudo reintentar en ${failed.length} tienda(s): ${failed.join(', ')}`);
+    }
+    await fetchOverview();
+  }, [overview, postRetry, fetchOverview]);
 
   const toggleSelect = (tenantId: string) =>
     setSelected((prev) => {
@@ -279,6 +316,7 @@ export default function ControlPage() {
   }, [stores]);
 
   const selectedCount = selected.size;
+  const totalRetryable = stores.reduce((sum, s) => sum + s.stuck.retryable, 0);
 
   // Until the first overview loads: spinner, or an error+retry block if that
   // first request failed (never the empty "no stores" state on a transient blip).
@@ -367,16 +405,28 @@ export default function ControlPage() {
         >
           <RefreshCw className={cn('w-3.5 h-3.5', loadingPending && 'animate-spin')} /> Actualizar pendientes
         </button>
-        {selectedCount > 0 && (
-          <button
-            onClick={runSelected}
-            disabled={bulkRunning}
-            className="ml-auto inline-flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-semibold bg-cyan-500 text-zinc-950 hover:bg-cyan-400 transition-colors disabled:opacity-50"
-          >
-            {bulkRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ListOrdered className="w-3.5 h-3.5" />}
-            Ejecutar {selectedCount} en orden
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {totalRetryable > 0 && (
+            <button
+              onClick={retryAll}
+              disabled={bulkRetrying || bulkRunning}
+              className="inline-flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-semibold bg-amber-500 text-zinc-950 hover:bg-amber-400 transition-colors disabled:opacity-50"
+            >
+              {bulkRetrying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+              Reintentar todo ({totalRetryable})
+            </button>
+          )}
+          {selectedCount > 0 && (
+            <button
+              onClick={runSelected}
+              disabled={bulkRunning || bulkRetrying}
+              className="inline-flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-semibold bg-cyan-500 text-zinc-950 hover:bg-cyan-400 transition-colors disabled:opacity-50"
+            >
+              {bulkRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ListOrdered className="w-3.5 h-3.5" />}
+              Ejecutar {selectedCount} en orden
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Queue panel */}
@@ -462,7 +512,7 @@ export default function ControlPage() {
               pending={pending[s.id]}
               selected={selected.has(s.id)}
               busy={busy[s.id]}
-              bulkRunning={bulkRunning}
+              bulkBusy={bulkRunning || bulkRetrying}
               loteLabel={batchLabel(lote)}
               onToggleSelect={() => toggleSelect(s.id)}
               onRun={() => runStore(s.id)}
@@ -483,7 +533,7 @@ function StoreCard({
   pending,
   selected,
   busy,
-  bulkRunning,
+  bulkBusy,
   loteLabel,
   onToggleSelect,
   onRun,
@@ -493,14 +543,16 @@ function StoreCard({
   pending: PendingItem | undefined;
   selected: boolean;
   busy: 'run' | 'retry' | undefined;
-  bulkRunning: boolean;
+  bulkBusy: boolean;
   loteLabel: string;
   onToggleSelect: () => void;
   onRun: () => void;
   onRetry: () => void;
 }) {
   const running = store.running;
-  const isRunning = !!running;
+  const isRunning = running?.status === 'RUNNING'; // actively shipping (worker is serial)
+  const isQueued = !!running && !isRunning; // PENDING/WAITING/UPLOADING -> in the queue
+  const hasJob = !!running;
   const processed = running ? running.successCount + running.failedCount + running.skippedCount : 0;
   const total = running?.totalOrders ?? 0;
   const review = store.stuck.orphan + store.stuck.remitente;
@@ -535,12 +587,17 @@ function StoreCard({
             <span className="text-zinc-500">{timeAgo(store.lastRunAt)}</span>
           </div>
         </div>
-        {isRunning && (
+        {isRunning ? (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-semibold text-cyan-300">
             <Loader2 className="w-3 h-3 animate-spin" />
             {total > 0 ? `${processed}/${total}` : 'corriendo'}
           </span>
-        )}
+        ) : isQueued ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold text-zinc-400">
+            <Clock className="w-3 h-3" />
+            en cola
+          </span>
+        ) : null}
       </div>
 
       {/* metrics */}
@@ -567,15 +624,15 @@ function StoreCard({
       <div className="flex items-center gap-2 mt-auto pt-1">
         <button
           onClick={onRun}
-          disabled={!!busy || isRunning || bulkRunning}
+          disabled={!!busy || hasJob || bulkBusy}
           className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold bg-cyan-500 text-zinc-950 hover:bg-cyan-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-1 justify-center"
         >
           {busy === 'run' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-          {isRunning ? 'En curso' : `Ejecutar ${loteLabel}`}
+          {isRunning ? 'En curso' : isQueued ? 'En cola' : `Ejecutar ${loteLabel}`}
         </button>
         <button
           onClick={onRetry}
-          disabled={!!busy || bulkRunning || store.stuck.retryable <= 0}
+          disabled={!!busy || bulkBusy || store.stuck.retryable <= 0}
           title={store.stuck.retryable <= 0 ? 'Nada para reintentar' : `Reintentar ${store.stuck.retryable}`}
           className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium bg-white/[0.03] border border-white/[0.07] text-zinc-300 hover:text-white hover:border-white/[0.15] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
