@@ -30,9 +30,11 @@ import {
   ListOrdered,
   CheckCircle2,
   Clock,
+  FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ShipmentsByStore } from './_components/ShipmentsByStore';
+import { StoreLabelsModal } from './_components/StoreLabelsModal';
 
 interface StoreRow {
   id: string;
@@ -109,6 +111,7 @@ export default function ControlPage() {
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkRetrying, setBulkRetrying] = useState(false);
   const [error, setError] = useState('');
+  const [labelsModal, setLabelsModal] = useState<{ id: string; name: string } | null>(null);
 
   const anyRunningRef = useRef(false);
 
@@ -517,6 +520,7 @@ export default function ControlPage() {
               onToggleSelect={() => toggleSelect(s.id)}
               onRun={() => runStore(s.id)}
               onRetry={() => retryStore(s.id, s.stuck.retryable)}
+              onViewLabels={() => setLabelsModal({ id: s.id, name: s.name })}
             />
           ))}
         </div>
@@ -524,6 +528,14 @@ export default function ControlPage() {
 
       {/* Shipments per store */}
       <ShipmentsByStore />
+
+      {labelsModal && (
+        <StoreLabelsModal
+          tenantId={labelsModal.id}
+          tenantName={labelsModal.name}
+          onClose={() => setLabelsModal(null)}
+        />
+      )}
     </div>
   );
 }
@@ -538,6 +550,7 @@ function StoreCard({
   onToggleSelect,
   onRun,
   onRetry,
+  onViewLabels,
 }: {
   store: StoreRow;
   pending: PendingItem | undefined;
@@ -548,6 +561,7 @@ function StoreCard({
   onToggleSelect: () => void;
   onRun: () => void;
   onRetry: () => void;
+  onViewLabels: () => void;
 }) {
   const running = store.running;
   const isRunning = running?.status === 'RUNNING'; // actively shipping (worker is serial)
@@ -621,7 +635,8 @@ function StoreCard({
       </div>
 
       {/* actions */}
-      <div className="flex items-center gap-2 mt-auto pt-1">
+      <div className="mt-auto flex flex-col gap-2 pt-1">
+        <div className="flex items-center gap-2">
         <button
           onClick={onRun}
           disabled={!!busy || hasJob || bulkBusy}
@@ -638,6 +653,13 @@ function StoreCard({
         >
           {busy === 'retry' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
           {store.stuck.retryable > 0 ? store.stuck.retryable : ''}
+        </button>
+        </div>
+        <button
+          onClick={onViewLabels}
+          className="inline-flex items-center gap-1.5 self-start text-[11px] text-zinc-500 hover:text-cyan-300 transition-colors"
+        >
+          <FileText className="w-3 h-3" /> Ver pedidos ejecutados
         </button>
       </div>
     </div>
