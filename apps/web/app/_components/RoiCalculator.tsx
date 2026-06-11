@@ -31,7 +31,7 @@ export function RoiCalculator({ whatsappUrl }: { whatsappUrl: string }) {
       <div className="max-w-5xl mx-auto">
         <ScrollReveal>
           <div className="relative isolate text-center mb-10 sm:mb-12">
-            <span aria-hidden className="lop-ghost">02</span>
+            <span aria-hidden className="lop-ghost">01</span>
             <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
               <Calculator className="w-3.5 h-3.5" />
               Calculá tu ahorro
