@@ -19,6 +19,8 @@ import {
   Boxes,
   Layers,
   Award,
+  Trophy,
+  User,
 } from 'lucide-react';
 import { ScrollReveal } from './_components/ScrollReveal';
 import { ScrollProgress } from './_components/ScrollProgress';
@@ -44,6 +46,19 @@ const WHATSAPP_URL =
   encodeURIComponent(
     `Hola, vi ${BRAND} y quiero coordinar una llamada para evaluar la implementación en mi operación.`,
   );
+
+/** "Una persona vs AutoEnvía" — comparativa honesta. Los números (~4 min/guía,
+ *  ~16% de error) son las mismas estimaciones de la calculadora de ROI; el resto
+ *  son diferencias estructurales (horario, ausencias, escala, costo). */
+const COMPARISON: { feat: string; human: string; auto: string }[] = [
+  { feat: 'Horario', human: '9 a 18 h', auto: '24/7' },
+  { feat: 'Tiempo por guía', human: '~4 min', auto: 'segundos' },
+  { feat: 'Errores de carga', human: '~16%', auto: '~0%' },
+  { feat: 'Black Friday', human: 'se satura', auto: 'escala sola' },
+  { feat: 'Ausencias y licencias', human: 'se frena', auto: 'siempre activa' },
+  { feat: 'Crecer al doble', human: '+1 empleado', auto: 'mismo sistema' },
+  { feat: 'Costo', human: 'sueldo + cargas', auto: 'una fracción' },
+];
 
 export default function LandingPage() {
   return (
@@ -215,6 +230,25 @@ export default function LandingPage() {
       {/* Operación en vivo — pipeline + versus + meters */}
       <section id="operacion" className="px-4 sm:px-6 pt-16 md:pt-24 pb-20 sm:pb-24">
         <div className="max-w-5xl mx-auto space-y-10 sm:space-y-16">
+          <ScrollReveal>
+            <div className="relative isolate text-center max-w-3xl mx-auto">
+              <span aria-hidden className="lop-ghost">01</span>
+              <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
+                <Trophy className="w-3.5 h-3.5" />
+                El software #1 de DAC en Uruguay
+              </div>
+              <h2 className="font-display text-3xl sm:text-4xl md:text-5xl font-bold text-white tracking-tight">
+                Vos te encargás de vender.{' '}
+                <span className="text-zinc-500">Del resto nos encargamos nosotros.</span>
+              </h2>
+              <p className="text-zinc-400 max-w-2xl mx-auto mt-4 leading-relaxed text-sm sm:text-base">
+                Cada venta de tu Shopify se despacha sola: validada, con guía de DAC emitida y
+                cliente notificado en segundos — sin sumar gente, sin horarios, sin errores de
+                carga.
+              </p>
+            </div>
+          </ScrollReveal>
+
           <ScrollReveal variant="scale">
             <LivePipeline />
           </ScrollReveal>
@@ -252,6 +286,58 @@ export default function LandingPage() {
           <ScrollReveal variant="scale">
             <ImpactMeters />
           </ScrollReveal>
+
+          <div>
+            <ScrollReveal>
+              <div className="flex items-center gap-4 sm:gap-5 mb-5 sm:mb-6">
+                <span className="h-px flex-1 bg-white/[0.08]" />
+                <span className="font-mono text-[9px] sm:text-[10.5px] uppercase tracking-[0.14em] sm:tracking-[0.24em] text-zinc-500 whitespace-nowrap">
+                  Una persona · o AutoEnvía
+                </span>
+                <span className="h-px flex-1 bg-white/[0.08]" />
+              </div>
+            </ScrollReveal>
+            <ScrollReveal variant="scale">
+              <div className="max-w-3xl mx-auto rounded-2xl border border-white/[0.08] bg-zinc-900/30 overflow-hidden backdrop-blur-sm">
+                <div className="grid grid-cols-[1.1fr_1fr_1.05fr]">
+                  <div className="p-2.5 sm:p-4" />
+                  <div className="p-2.5 sm:p-4 text-center border-l border-white/[0.06]">
+                    <span className="inline-flex items-center gap-1.5 text-zinc-400 font-semibold text-[10.5px] sm:text-sm">
+                      <User className="w-3.5 h-3.5 flex-shrink-0" /> Una persona
+                    </span>
+                  </div>
+                  <div className="p-2.5 sm:p-4 text-center border-l border-cyan-400/20 bg-cyan-400/[0.07]">
+                    <span className="inline-flex items-center gap-1.5 text-cyan-300 font-bold text-[10.5px] sm:text-sm">
+                      <Zap className="w-3.5 h-3.5 flex-shrink-0" /> AutoEnvía
+                    </span>
+                  </div>
+                </div>
+                {COMPARISON.map((r) => (
+                  <div
+                    key={r.feat}
+                    className="grid grid-cols-[1.1fr_1fr_1.05fr] border-t border-white/[0.05]"
+                  >
+                    <div className="px-3 py-3 sm:px-4 text-zinc-300 text-[11px] sm:text-sm font-medium flex items-center">
+                      {r.feat}
+                    </div>
+                    <div className="px-2 py-3 sm:px-4 text-center border-l border-white/[0.06] text-zinc-500 text-[11px] sm:text-sm flex items-center justify-center">
+                      {r.human}
+                    </div>
+                    <div className="px-2 py-3 sm:px-4 border-l border-cyan-400/20 bg-cyan-400/[0.05] text-white text-[11px] sm:text-sm font-semibold flex items-center justify-center gap-1.5">
+                      <Check className="w-3 h-3 text-cyan-400 flex-shrink-0 hidden sm:inline" />
+                      {r.auto}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollReveal>
+            <ScrollReveal>
+              <p className="text-center text-zinc-500 text-xs sm:text-sm mt-5 max-w-xl mx-auto leading-relaxed">
+                No reemplazás una persona: liberás a la que ya tenés para que venda, no para que
+                cargue guías. <span className="text-zinc-300">La diferencia se paga sola.</span>
+              </p>
+            </ScrollReveal>
+          </div>
         </div>
       </section>
 
@@ -263,7 +349,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
             <div className="relative isolate text-center mb-12 sm:mb-16">
-              <span aria-hidden className="lop-ghost">02</span>
+              <span aria-hidden className="lop-ghost">03</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Layers className="w-3.5 h-3.5" />
                 La plataforma
@@ -342,7 +428,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
             <div className="relative isolate text-center mb-12 sm:mb-14">
-              <span aria-hidden className="lop-ghost">03</span>
+              <span aria-hidden className="lop-ghost">04</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Building2 className="w-3.5 h-3.5" />
                 Para quién es
@@ -386,7 +472,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
             <div className="relative isolate text-center mb-12 sm:mb-16">
-              <span aria-hidden className="lop-ghost">04</span>
+              <span aria-hidden className="lop-ghost">05</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Award className="w-3.5 h-3.5" />
                 Implementación llave en mano
@@ -494,7 +580,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
             <div className="relative isolate text-center mb-12 sm:mb-14">
-              <span aria-hidden className="lop-ghost">05</span>
+              <span aria-hidden className="lop-ghost">06</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Server className="w-3.5 h-3.5" />
                 Tecnología
@@ -587,7 +673,7 @@ export default function LandingPage() {
         <div className="max-w-3xl mx-auto">
           <ScrollReveal>
             <div className="relative isolate text-center mb-10 sm:mb-12">
-              <span aria-hidden className="lop-ghost">06</span>
+              <span aria-hidden className="lop-ghost">07</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Truck className="w-3.5 h-3.5" />
                 Preguntas frecuentes
