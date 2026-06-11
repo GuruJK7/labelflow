@@ -708,10 +708,12 @@ body {
 @media (max-width: 760px) {
   .hero-chaos .order { font-size: 8.5px; padding: 5px 9px; gap: 6px; border-radius: 9px; }
   .hero-chaos .order i { width: 5px; height: 5px; }
-  .hero-chaos .o1 { top: 5%; left: 3%; right: auto; }
-  .hero-chaos .o4 { top: 5%; right: 3%; left: auto; }
-  .hero-chaos .o2 { top: 34%; left: 2%; right: auto; }
-  .hero-chaos .o5 { top: 42%; right: 2%; left: auto; }
+  /* keep the chips in the two clean bands — below the fixed nav above the badge,
+     and below the trust row above the funnel — so they never sit on the copy */
+  .hero-chaos .o1 { top: 10%; left: 3%; right: auto; }
+  .hero-chaos .o4 { top: 11%; right: 3%; left: auto; }
+  .hero-chaos .o2 { top: 85%; left: 3%; right: auto; }
+  .hero-chaos .o5 { top: 88%; right: 3%; left: auto; }
   .hero-chaos .funnel { bottom: 22px; gap: 7px; }
   .hero-chaos .funnel .ring { width: 40px; height: 40px; border-radius: 12px; }
   .hero-chaos .funnel .ring svg { width: 15px; height: 15px; }
