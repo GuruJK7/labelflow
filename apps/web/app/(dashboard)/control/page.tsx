@@ -36,6 +36,7 @@ import { cn } from '@/lib/cn';
 import { ShipmentsByStore } from './_components/ShipmentsByStore';
 import { RecentShipments } from './_components/RecentShipments';
 import { StoreLabelsModal } from './_components/StoreLabelsModal';
+import { timeAgo } from './_components/labelMeta';
 
 interface StoreRow {
   id: string;
@@ -88,19 +89,6 @@ interface PendingItem {
 
 const BATCH_OPTIONS = [1, 3, 5, 10, 20, 0]; // 0 = Todos
 const batchLabel = (n: number) => (n === 0 ? 'Todos' : String(n));
-
-function timeAgo(dateStr: string | null): string {
-  if (!dateStr) return 'nunca';
-  const diff = Date.now() - new Date(dateStr).getTime();
-  if (diff < 0) return 'ahora';
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return 'hace instantes';
-  if (m < 60) return `hace ${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `hace ${h}h`;
-  const d = Math.floor(h / 24);
-  return `hace ${d}d`;
-}
 
 export default function ControlPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -445,8 +433,11 @@ export default function ControlPage() {
             <span className="text-xs text-zinc-500">{queue.length} en linea</span>
           </div>
           <div className="space-y-2">
-            {queue.map((q) => {
+            {queue.map((q, idx) => {
               const tenantRun = runningByTenant.get(q.tenantId);
+              // 1-based ordinal among QUEUED rows (the running row shows the ▶
+              // glyph, not a number), so the first waiting store reads "1".
+              const queuedOrdinal = queue.slice(0, idx).filter((r) => !r.running).length + 1;
               // Trust the server's per-row RUNNING flag for running state (it is
               // status===RUNNING per job). Use the per-tenant active-job object
               // ONLY for live progress numbers, and only when its jobId matches
@@ -468,7 +459,7 @@ export default function ControlPage() {
                   )}
                 >
                   <span className={cn('text-xs font-mono w-6 text-center', isRunningRow ? 'text-cyan-300' : 'text-zinc-600')}>
-                    {isRunningRow ? '▶' : q.position + 1}
+                    {isRunningRow ? '▶' : queuedOrdinal}
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-white truncate">{q.tenantName}</p>

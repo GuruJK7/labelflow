@@ -125,7 +125,7 @@ export async function GET() {
   }
 
   const stores = tenants.map((t) => {
-    const stuck = stuckByTenant.get(t.id) ?? { total: 0, retryable: 0, orphan: 0, remitente: 0 };
+    const stuck = stuckByTenant.get(t.id) ?? { count: 0, total: 0, retryable: 0, orphan: 0, remitente: 0, needsAddress: 0 };
     const active = activeByTenant.get(t.id) ?? null;
     return {
       id: t.id,

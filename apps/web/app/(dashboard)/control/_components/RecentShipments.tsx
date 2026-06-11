@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ListChecks, Loader2, RefreshCw, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { STATUS_META, STATUS_FILTERS, timeAgo } from './labelMeta';
 
 interface Row {
   id: string;
@@ -25,34 +26,7 @@ interface Row {
   store: string;
 }
 
-const FILTERS: { key: string; label: string }[] = [
-  { key: 'all', label: 'Todos' },
-  { key: 'COMPLETED', label: 'Completados' },
-  { key: 'FAILED', label: 'Fallidos' },
-  { key: 'NEEDS_REVIEW', label: 'Revisar' },
-];
-
 const LIMITS = [40, 100, 200];
-
-const STATUS_META: Record<string, { label: string; cls: string }> = {
-  COMPLETED: { label: 'Completado', cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
-  CREATED: { label: 'Creado', cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
-  FAILED: { label: 'Fallido', cls: 'text-red-300 bg-red-500/10 border-red-500/20' },
-  NEEDS_REVIEW: { label: 'Revisar', cls: 'text-amber-300 bg-amber-500/10 border-amber-500/20' },
-  PENDING: { label: 'Pendiente', cls: 'text-zinc-300 bg-white/[0.04] border-white/10' },
-  SKIPPED: { label: 'Omitido', cls: 'text-zinc-400 bg-white/[0.03] border-white/10' },
-};
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 0) return 'ahora';
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return 'recien';
-  if (m < 60) return `hace ${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `hace ${h}h`;
-  return `hace ${Math.floor(h / 24)}d`;
-}
 
 export function RecentShipments() {
   const [filter, setFilter] = useState('all');
@@ -100,7 +74,7 @@ export function RecentShipments() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex rounded-lg overflow-hidden border border-white/[0.07]">
-            {FILTERS.map((f) => (
+            {STATUS_FILTERS.map((f) => (
               <button
                 key={f.key}
                 onClick={() => setFilter(f.key)}

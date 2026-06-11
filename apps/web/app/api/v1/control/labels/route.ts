@@ -15,6 +15,7 @@ import { NextRequest } from 'next/server';
 import { LabelStatus } from '@prisma/client';
 import { db } from '@/lib/db';
 import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
+import { isResolvedExternally } from '@/lib/shopify-reconcile';
 
 const VALID_STATUSES: LabelStatus[] = [
   LabelStatus.PENDING,
@@ -43,8 +44,12 @@ export async function GET(req: NextRequest) {
   });
   if (!owned) return apiError('Tienda no encontrada', 403);
 
-  const where: { tenantId: string; status?: LabelStatus } = { tenantId };
-  if (statusParam !== 'ALL' && VALID_STATUSES.includes(statusParam as LabelStatus)) {
+  const where: { tenantId: string; status?: LabelStatus | { in: LabelStatus[] } } = { tenantId };
+  if (statusParam === 'COMPLETED') {
+    // "Completados" = dispatched-shipment set (CREATED|COMPLETED), so a
+    // guia-minted-but-PDF-pending (CREATED) label is not hidden.
+    where.status = { in: [LabelStatus.CREATED, LabelStatus.COMPLETED] };
+  } else if (statusParam !== 'ALL' && VALID_STATUSES.includes(statusParam as LabelStatus)) {
     where.status = statusParam as LabelStatus;
   }
 
@@ -60,7 +65,6 @@ export async function GET(req: NextRequest) {
       status: true,
       dacGuia: true,
       errorMessage: true,
-      paymentType: true,
       createdAt: true,
       pdfPath: true,
     },
@@ -74,8 +78,7 @@ export async function GET(req: NextRequest) {
       city: l.city,
       status: l.status,
       dacGuia: l.dacGuia,
-      errorMessage: l.errorMessage,
-      paymentType: l.paymentType,
+      errorMessage: isResolvedExternally(l.errorMessage) ? 'Resuelto fuera del sistema (Shopify)' : l.errorMessage,
       createdAt: l.createdAt.toISOString(),
       hasPdf: !!l.pdfPath,
     })),

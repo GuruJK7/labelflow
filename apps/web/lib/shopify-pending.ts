@@ -57,6 +57,13 @@ export async function getUnfulfilledCount(tenantId: string, force = false): Prom
     return { tenantId, count: null, cached: false, skipped: 'decrypt-failed' };
   }
 
+  // Defense-in-depth: only ever fetch a *.myshopify.com host. The write paths
+  // (settings/onboarding) already enforce this allowlist, but asserting it at
+  // the call site means no future write path can turn this into an SSRF.
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(tenant.shopifyStoreUrl)) {
+    return { tenantId, count: null, cached: false, skipped: 'error' };
+  }
+
   try {
     const params = new URLSearchParams({
       status: 'open',

@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { X, Loader2, FileText, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { STATUS_META, STATUS_FILTERS, timeAgo } from './labelMeta';
 
 interface LabelRow {
   id: string;
@@ -19,36 +20,8 @@ interface LabelRow {
   status: string;
   dacGuia: string | null;
   errorMessage: string | null;
-  paymentType: string;
   createdAt: string;
   hasPdf: boolean;
-}
-
-const FILTERS: { key: string; label: string }[] = [
-  { key: 'all', label: 'Todos' },
-  { key: 'COMPLETED', label: 'Completados' },
-  { key: 'FAILED', label: 'Fallidos' },
-  { key: 'NEEDS_REVIEW', label: 'Revisar' },
-];
-
-const STATUS_META: Record<string, { label: string; cls: string }> = {
-  COMPLETED: { label: 'Completado', cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
-  CREATED: { label: 'Creado', cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
-  FAILED: { label: 'Fallido', cls: 'text-red-300 bg-red-500/10 border-red-500/20' },
-  NEEDS_REVIEW: { label: 'Revisar', cls: 'text-amber-300 bg-amber-500/10 border-amber-500/20' },
-  PENDING: { label: 'Pendiente', cls: 'text-zinc-300 bg-white/[0.04] border-white/10' },
-  SKIPPED: { label: 'Omitido', cls: 'text-zinc-400 bg-white/[0.03] border-white/10' },
-};
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 0) return 'ahora';
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return 'recien';
-  if (m < 60) return `hace ${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `hace ${h}h`;
-  return `hace ${Math.floor(h / 24)}d`;
 }
 
 export function StoreLabelsModal({
@@ -123,7 +96,7 @@ export function StoreLabelsModal({
 
         {/* filters */}
         <div className="flex items-center gap-1.5 px-5 py-3 border-b border-white/[0.06]">
-          {FILTERS.map((f) => (
+          {STATUS_FILTERS.map((f) => (
             <button
               key={f.key}
               onClick={() => setFilter(f.key)}
