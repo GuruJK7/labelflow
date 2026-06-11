@@ -108,7 +108,6 @@ export default function ControlPage() {
   const [busy, setBusy] = useState<Record<string, 'run' | 'retry'>>({});
   const [bulkRunning, setBulkRunning] = useState(false);
   const [error, setError] = useState('');
-  const [firstLoad, setFirstLoad] = useState(true);
 
   const anyRunningRef = useRef(false);
 
@@ -124,8 +123,6 @@ export default function ControlPage() {
       anyRunningRef.current = (json.data as Overview).queue.some((q) => q.running);
     } catch {
       setError('Error de conexion');
-    } finally {
-      setFirstLoad(false);
     }
   }, []);
 
@@ -148,16 +145,20 @@ export default function ControlPage() {
 
   // Overview poll — faster while a run is in flight so progress feels live.
   useEffect(() => {
+    let cancelled = false;
     fetchOverview();
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
       timer = setTimeout(async () => {
         await fetchOverview();
-        tick();
+        if (!cancelled) tick(); // stop re-scheduling after unmount
       }, anyRunningRef.current ? 4000 : 10000);
     };
     tick();
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [fetchOverview]);
 
   // Pending (Shopify) — on mount + a slow 2-min refresh; throttled server-side.
@@ -168,18 +169,23 @@ export default function ControlPage() {
   }, [fetchPending]);
 
   const postRun = useCallback(
-    async (tenantId: string, maxOrders: number): Promise<boolean> => {
-      const res = await fetch('/api/v1/control/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId, maxOrders }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        setError(json.error ?? 'No se pudo ejecutar la tienda');
+    async (tenantId: string, maxOrders: number, silent = false): Promise<boolean> => {
+      try {
+        const res = await fetch('/api/v1/control/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tenantId, maxOrders }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          if (!silent) setError(json.error ?? 'No se pudo ejecutar la tienda');
+          return false;
+        }
+        return true;
+      } catch {
+        if (!silent) setError('Error de conexion');
         return false;
       }
-      return true;
     },
     [],
   );
@@ -238,18 +244,30 @@ export default function ControlPage() {
   // Enqueue the selected stores IN DISPLAY ORDER. The single worker drains
   // PENDING jobs by createdAt, so firing them sequentially = run order.
   const runSelected = useCallback(async () => {
-    const stores = overview?.stores ?? [];
-    const ids = stores.filter((s) => selected.has(s.id)).map((s) => s.id);
-    if (ids.length === 0) return;
+    const all = overview?.stores ?? [];
+    const chosen = all.filter((s) => selected.has(s.id));
+    // Skip stores already running/queued or mid-action — the server would 409.
+    const eligible = chosen.filter((s) => !s.running && !busy[s.id]);
+    if (eligible.length === 0) {
+      setError('Las tiendas seleccionadas ya estan en ejecucion o en cola.');
+      return;
+    }
     setError('');
     setBulkRunning(true);
-    for (const id of ids) {
-      await postRun(id, lote); // sequential -> strict createdAt order
+    const failed: { id: string; name: string }[] = [];
+    for (const s of eligible) {
+      const ok = await postRun(s.id, lote, true); // silent + sequential -> createdAt order
+      if (!ok) failed.push({ id: s.id, name: s.name });
     }
     setBulkRunning(false);
-    setSelected(new Set());
+    if (failed.length > 0) {
+      setError(`No se pudieron encolar ${failed.length} tienda(s): ${failed.map((f) => f.name).join(', ')}`);
+      setSelected(new Set(failed.map((f) => f.id))); // keep only the failures selected
+    } else {
+      setSelected(new Set());
+    }
     await fetchOverview();
-  }, [overview, selected, lote, postRun, fetchOverview]);
+  }, [overview, selected, busy, lote, postRun, fetchOverview]);
 
   const stores = overview?.stores ?? [];
   const queue = overview?.queue ?? [];
@@ -262,8 +280,26 @@ export default function ControlPage() {
 
   const selectedCount = selected.size;
 
-  if (firstLoad && !overview) {
-    return (
+  // Until the first overview loads: spinner, or an error+retry block if that
+  // first request failed (never the empty "no stores" state on a transient blip).
+  if (overview === null) {
+    return error ? (
+      <div className="animate-fade-in mx-auto mt-24 max-w-md">
+        <div className="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-5 rounded-2xl text-sm flex flex-col items-center gap-3 text-center">
+          <AlertTriangle className="w-6 h-6" />
+          <span>{error}</span>
+          <button
+            onClick={() => {
+              setError('');
+              fetchOverview();
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-white/[0.05] border border-white/[0.1] text-zinc-200 hover:text-white"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Reintentar
+          </button>
+        </div>
+      </div>
+    ) : (
       <div className="flex items-center justify-center py-32 text-zinc-500">
         <Loader2 className="w-5 h-5 animate-spin mr-2" /> Cargando tiendas...
       </div>
@@ -356,7 +392,16 @@ export default function ControlPage() {
           </div>
           <div className="space-y-2">
             {queue.map((q) => {
-              const run = runningByTenant.get(q.tenantId);
+              const tenantRun = runningByTenant.get(q.tenantId);
+              // Trust the server's per-row RUNNING flag for running state (it is
+              // status===RUNNING per job). Use the per-tenant active-job object
+              // ONLY for live progress numbers, and only when its jobId matches
+              // this row — otherwise the row still shows running but as
+              // 'Iniciando...'. A queued PENDING job has q.running===false -> 'En
+              // cola'. This avoids both a duplicate progress bar and demoting a
+              // genuinely-running job that isn't the tenant's oldest in-flight one.
+              const isRunningRow = q.running;
+              const run = isRunningRow && tenantRun && tenantRun.jobId === q.jobId ? tenantRun : null;
               const processed = run ? run.successCount + run.failedCount + run.skippedCount : 0;
               const total = run?.totalOrders ?? 0;
               const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
@@ -365,16 +410,16 @@ export default function ControlPage() {
                   key={q.jobId}
                   className={cn(
                     'rounded-xl border px-4 py-3 flex items-center gap-3',
-                    q.running ? 'border-cyan-500/30 bg-cyan-500/[0.06]' : 'border-white/[0.06] bg-white/[0.02]',
+                    isRunningRow ? 'border-cyan-500/30 bg-cyan-500/[0.06]' : 'border-white/[0.06] bg-white/[0.02]',
                   )}
                 >
-                  <span className={cn('text-xs font-mono w-6 text-center', q.running ? 'text-cyan-300' : 'text-zinc-600')}>
-                    {q.running ? '▶' : q.position + 1}
+                  <span className={cn('text-xs font-mono w-6 text-center', isRunningRow ? 'text-cyan-300' : 'text-zinc-600')}>
+                    {isRunningRow ? '▶' : q.position + 1}
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-white truncate">{q.tenantName}</p>
                     <p className="text-[11px] text-zinc-500">
-                      {q.running
+                      {isRunningRow
                         ? total > 0
                           ? `Procesando ${processed}/${total}`
                           : 'Iniciando...'
@@ -383,14 +428,14 @@ export default function ControlPage() {
                       {q.trigger === 'MANUAL' ? 'manual' : q.trigger.toLowerCase()}
                     </p>
                   </div>
-                  {q.running && total > 0 && (
+                  {isRunningRow && total > 0 && (
                     <div className="w-28 hidden sm:block">
                       <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
                         <div className="h-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all" style={{ width: `${pct}%` }} />
                       </div>
                     </div>
                   )}
-                  {q.running ? (
+                  {isRunningRow ? (
                     <Loader2 className="w-4 h-4 text-cyan-300 animate-spin" />
                   ) : (
                     <Clock className="w-4 h-4 text-zinc-600" />
@@ -417,6 +462,7 @@ export default function ControlPage() {
               pending={pending[s.id]}
               selected={selected.has(s.id)}
               busy={busy[s.id]}
+              bulkRunning={bulkRunning}
               loteLabel={batchLabel(lote)}
               onToggleSelect={() => toggleSelect(s.id)}
               onRun={() => runStore(s.id)}
@@ -437,6 +483,7 @@ function StoreCard({
   pending,
   selected,
   busy,
+  bulkRunning,
   loteLabel,
   onToggleSelect,
   onRun,
@@ -446,6 +493,7 @@ function StoreCard({
   pending: PendingItem | undefined;
   selected: boolean;
   busy: 'run' | 'retry' | undefined;
+  bulkRunning: boolean;
   loteLabel: string;
   onToggleSelect: () => void;
   onRun: () => void;
@@ -519,7 +567,7 @@ function StoreCard({
       <div className="flex items-center gap-2 mt-auto pt-1">
         <button
           onClick={onRun}
-          disabled={!!busy || isRunning}
+          disabled={!!busy || isRunning || bulkRunning}
           className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold bg-cyan-500 text-zinc-950 hover:bg-cyan-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-1 justify-center"
         >
           {busy === 'run' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
@@ -527,7 +575,7 @@ function StoreCard({
         </button>
         <button
           onClick={onRetry}
-          disabled={!!busy || store.stuck.retryable <= 0}
+          disabled={!!busy || bulkRunning || store.stuck.retryable <= 0}
           title={store.stuck.retryable <= 0 ? 'Nada para reintentar' : `Reintentar ${store.stuck.retryable}`}
           className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium bg-white/[0.03] border border-white/[0.07] text-zinc-300 hover:text-white hover:border-white/[0.15] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >

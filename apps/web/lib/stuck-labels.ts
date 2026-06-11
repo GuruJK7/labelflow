@@ -161,12 +161,17 @@ export interface StuckBreakdown {
 /**
  * Pure-DB stuck breakdown for ONE tenant — NO Shopify reconcile side effect, so
  * it is safe to call per-tenant in a multi-store loop without fanning out
- * Shopify calls. This is the exact computation the single-store
- * GET /api/v1/labels/retry-failed returns (after its throttled reconcile).
+ * Shopify calls. It is the PRE-reconcile DB count: callers that need the
+ * Shopify-reconciled number (terminal-done orders dropped) must run
+ * maybeReconcileStuck first, as the single-store GET /api/v1/labels/retry-failed
+ * does. The oldest-first ordering + 200 cap match selectRetryable exactly, so
+ * the breakdown is deterministic across polls and aligned with the set the
+ * retry button actually processes.
  */
 export async function getStuckBreakdown(tenantId: string): Promise<StuckBreakdown> {
   const candidates = await db.label.findMany({
     where: { tenantId, dacGuia: null, status: { in: RETRYABLE_STATUSES } },
+    orderBy: { createdAt: 'asc' },
     take: MAX_CANDIDATE_SCAN,
     select: { errorMessage: true, deliveryAddress: true, paymentType: true },
   });

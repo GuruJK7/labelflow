@@ -60,7 +60,11 @@ export async function POST(req: Request) {
     return apiError(`Alcanzaste el limite de ${limit} etiquetas este mes. Upgrade tu plan para continuar.`, 429);
   }
 
-  // One job per store at a time.
+  // Soft gate: one job per store at a time. This is a non-atomic read, so two
+  // near-simultaneous requests could both pass; that is acceptable because the
+  // real anti-double-ship guarantee is the worker's PendingShipment
+  // @@unique([tenantId, shopifyOrderId]) (it throws before a second Finalizar),
+  // NOT this check. Do not treat isJobRunning as authoritative.
   if (await isJobRunning(tenantId)) {
     return apiError('Ya hay un job en ejecucion para esta tienda.', 409);
   }
@@ -79,8 +83,14 @@ export async function POST(req: Request) {
   }
 
   const label = maxOrders === 1 ? '1 pedido' : maxOrders > 0 ? `${maxOrders} pedidos` : 'todos los pedidos';
-  return apiSuccess(
-    { jobId, tenantId, tenantName: owned.name, maxOrders, message: `Job encolado para ${owned.name}: ${label}` },
-    { status: 202 },
-  );
+  // NOTE: apiSuccess serializes its 2nd arg into the BODY as `meta` — it does
+  // NOT set the HTTP status. Return a clean 200 (no bogus meta.status); the
+  // client only checks res.ok and reads .data.
+  return apiSuccess({
+    jobId,
+    tenantId,
+    tenantName: owned.name,
+    maxOrders,
+    message: `Job encolado para ${owned.name}: ${label}`,
+  });
 }

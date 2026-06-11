@@ -12,20 +12,29 @@
  */
 
 import { db } from '@/lib/db';
+import { LabelStatus } from '@prisma/client';
 import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
 import { startOfDayUy } from '@/lib/uy-time';
 
 const ALLOWED_RANGES = [7, 30, 90];
 const DEFAULT_RANGE = 30;
-const DONE_STATUSES = ['CREATED', 'COMPLETED'];
+const DONE_STATUSES: LabelStatus[] = [LabelStatus.CREATED, LabelStatus.COMPLETED];
 const UY_OFFSET_MS = 3 * 60 * 60 * 1000; // UY = UTC-3, fixed.
 const DAY_MS = 24 * 60 * 60 * 1000;
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
-/** 00:00 UY of a YYYY-MM-DD, as the corresponding UTC instant. */
-function uyDayStart(ymd: string): Date {
+/**
+ * 00:00 UY of a YYYY-MM-DD, as the corresponding UTC instant. Returns null if
+ * the components are out of range (e.g. 2026-13-45 or 2026-02-30) so a
+ * malformed date is rejected instead of silently overflowing into a wrong
+ * window — the YMD regex only checks digit counts, not value ranges.
+ */
+function uyDayStart(ymd: string): Date | null {
   const [y, m, d] = ymd.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d) + UY_OFFSET_MS);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  const utc = new Date(Date.UTC(y, m - 1, d));
+  if (utc.getUTCFullYear() !== y || utc.getUTCMonth() !== m - 1 || utc.getUTCDate() !== d) return null;
+  return new Date(utc.getTime() + UY_OFFSET_MS);
 }
 
 export async function GET(req: Request) {
@@ -42,7 +51,9 @@ export async function GET(req: Request) {
 
   if (fromParam && toParam && YMD.test(fromParam) && YMD.test(toParam)) {
     const start = uyDayStart(fromParam);
-    const end = new Date(uyDayStart(toParam).getTime() + DAY_MS); // inclusive `to`
+    const endBase = uyDayStart(toParam);
+    if (!start || !endBase) return apiError('Fecha invalida', 422);
+    const end = new Date(endBase.getTime() + DAY_MS); // inclusive `to`
     if (end.getTime() <= start.getTime()) return apiError('Rango de fechas invalido', 422);
     gte = start;
     lt = end;
@@ -68,7 +79,7 @@ export async function GET(req: Request) {
     by: ['tenantId'],
     where: {
       tenantId: { in: tenantIds },
-      status: { in: DONE_STATUSES as never },
+      status: { in: DONE_STATUSES },
       createdAt: lt ? { gte, lt } : { gte },
     },
     _count: true,

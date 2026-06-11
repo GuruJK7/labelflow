@@ -11,6 +11,7 @@
 import { db } from '@/lib/db';
 import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
 import { getUnfulfilledCount } from '@/lib/shopify-pending';
+import { maybeReconcileStuck } from '@/lib/shopify-reconcile';
 
 export async function GET(req: Request) {
   const auth = await getAuthenticatedUser();
@@ -25,7 +26,15 @@ export async function GET(req: Request) {
     select: { id: true },
   });
 
-  const results = await Promise.all(tenants.map((t) => getUnfulfilledCount(t.id, force)));
+  // Fetch the live backlog counts AND (slow path only) reconcile each store's
+  // stuck labels against Shopify, so the multi-store "sin completar" numbers in
+  // /overview converge to the single-store widget (terminal-done orders drop
+  // out). maybeReconcileStuck is throttled (once/30min/tenant) and never throws;
+  // this endpoint is NOT on the fast poll loop, so it can afford the call.
+  const [results] = await Promise.all([
+    Promise.all(tenants.map((t) => getUnfulfilledCount(t.id, force))),
+    Promise.all(tenants.map((t) => maybeReconcileStuck(t.id))),
+  ]);
 
   return apiSuccess({
     pending: results.map((r) => ({
