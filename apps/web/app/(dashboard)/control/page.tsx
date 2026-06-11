@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ShipmentsByStore } from './_components/ShipmentsByStore';
+import { RecentShipments } from './_components/RecentShipments';
 import { StoreLabelsModal } from './_components/StoreLabelsModal';
 
 interface StoreRow {
@@ -528,6 +529,9 @@ export default function ControlPage() {
 
       {/* Shipments per store */}
       <ShipmentsByStore />
+
+      {/* Global recent shipments feed (all stores) */}
+      <RecentShipments />
 
       {labelsModal && (
         <StoreLabelsModal
