@@ -21,15 +21,13 @@ import {
   Award,
   Trophy,
   User,
-  TrendingUp,
 } from 'lucide-react';
 import { ScrollReveal } from './_components/ScrollReveal';
 import { ScrollProgress } from './_components/ScrollProgress';
 import { LivePipeline, OperationVersus, BatchPrinting, ImpactMeters } from './_components/LiveOps';
 import { Counter } from './_components/Counter';
 import { HeroChaos } from './_components/HeroChaos';
-import { RoiCalculator } from './_components/RoiCalculator';
-import { StressTest } from './_components/StressTest';
+import { Simulators } from './_components/Simulators';
 import { TimelineFill } from './_components/TimelineFill';
 import type { ReactNode } from 'react';
 
@@ -365,39 +363,15 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ROI — Calculá tu ahorro (slider interactivo) */}
-      <RoiCalculator whatsappUrl={WHATSAPP_URL} />
-
-      {/* Prueba de estrés — ¿y cuando el volumen crece? */}
-      <section id="estres" className="py-16 md:py-24 px-4 sm:px-6">
-        <div className="max-w-5xl mx-auto">
-          <ScrollReveal>
-            <div className="relative isolate text-center mb-10 sm:mb-12">
-              <span aria-hidden className="lop-ghost">03</span>
-              <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
-                <TrendingUp className="w-3.5 h-3.5" />
-                Prueba de estrés
-              </div>
-              <h2 className="font-display text-3xl sm:text-4xl md:text-5xl font-bold text-white tracking-tight">
-                ¿Y cuando el volumen <span className="text-zinc-500">crece?</span>
-              </h2>
-              <p className="text-zinc-400 max-w-2xl mx-auto mt-4 leading-relaxed text-sm sm:text-base">
-                Subí el slider a un día de alta demanda y mirá quién aguanta el ritmo.
-              </p>
-            </div>
-          </ScrollReveal>
-          <ScrollReveal variant="scale">
-            <StressTest />
-          </ScrollReveal>
-        </div>
-      </section>
+      {/* Simuladores — ROI + prueba de estrés en una sección con toggle */}
+      <Simulators whatsappUrl={WHATSAPP_URL} />
 
       {/* Plataforma */}
       <section id="plataforma" className="py-16 md:py-24 px-4 sm:px-6">
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
             <div className="relative isolate text-center mb-12 sm:mb-16">
-              <span aria-hidden className="lop-ghost">04</span>
+              <span aria-hidden className="lop-ghost">03</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Layers className="w-3.5 h-3.5" />
                 La plataforma
@@ -476,7 +450,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
             <div className="relative isolate text-center mb-12 sm:mb-14">
-              <span aria-hidden className="lop-ghost">05</span>
+              <span aria-hidden className="lop-ghost">04</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Building2 className="w-3.5 h-3.5" />
                 Para quién es
@@ -520,7 +494,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
             <div className="relative isolate text-center mb-12 sm:mb-16">
-              <span aria-hidden className="lop-ghost">06</span>
+              <span aria-hidden className="lop-ghost">05</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Award className="w-3.5 h-3.5" />
                 Implementación llave en mano
@@ -628,7 +602,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto">
           <ScrollReveal>
             <div className="relative isolate text-center mb-12 sm:mb-14">
-              <span aria-hidden className="lop-ghost">07</span>
+              <span aria-hidden className="lop-ghost">06</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Server className="w-3.5 h-3.5" />
                 Tecnología
@@ -721,7 +695,7 @@ export default function LandingPage() {
         <div className="max-w-3xl mx-auto">
           <ScrollReveal>
             <div className="relative isolate text-center mb-10 sm:mb-12">
-              <span aria-hidden className="lop-ghost">08</span>
+              <span aria-hidden className="lop-ghost">07</span>
               <div className="inline-flex items-center gap-2 text-cyan-400 text-[11px] sm:text-xs font-medium uppercase tracking-[0.18em] mb-3 font-mono">
                 <Truck className="w-3.5 h-3.5" />
                 Preguntas frecuentes
