@@ -400,7 +400,7 @@ export default function LandingPage() {
 
           <div className="relative">
             <TimelineFill />
-            <div className="space-y-6 md:space-y-10">
+            <div className="space-y-6 md:space-y-10 pl-10 md:pl-0">
               {[
                 {
                   num: '01',
@@ -443,6 +443,11 @@ export default function LandingPage() {
                   }`}
                 >
                   <div className="card-lift bg-zinc-900/40 border border-white/[0.06] hover:border-cyan-500/25 rounded-2xl p-5 sm:p-6 backdrop-blur-sm relative">
+                    {/* mobile timeline node (left rail) */}
+                    <div
+                      aria-hidden
+                      className="md:hidden absolute left-[-28px] top-7 w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.7)] ring-4 ring-[#050505]"
+                    />
                     <div
                       aria-hidden
                       className={`hidden md:block absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.7)] ${

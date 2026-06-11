@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, type CSSProperties } from 'react';
+import { useEffect, useRef } from 'react';
 
 /**
  * Hero "chaos → order" scroll effect (ported from the autoenvia v2 demo).
@@ -13,15 +13,17 @@ import { useEffect, useRef, type CSSProperties } from 'react';
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const easeIO = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 
-type Order = { style: CSSProperties; rot: number; text: string; late?: boolean; hidem?: boolean };
+type Order = { cls: string; rot: number; text: string; late?: boolean };
 
+// Positions live in globals.css (.hero-chaos .o1….o6) so desktop & mobile can be
+// tuned independently — on phones they reflow to the 4 corners behind the copy.
 const ORDERS: Order[] = [
-  { style: { top: '21%', left: '8%' }, rot: -6, text: '#5741 · sin procesar' },
-  { style: { top: '58%', left: '5%' }, rot: 4, text: '#5738 · demorado 2 días', late: true, hidem: true },
-  { style: { top: '38%', left: '14%' }, rot: -3, text: '#5743 · dirección dudosa', hidem: true },
-  { style: { top: '26%', right: '7%' }, rot: 5, text: '#5740 · sin guía' },
-  { style: { top: '64%', right: '9%' }, rot: -5, text: '#5736 · cliente reclama', late: true },
-  { style: { top: '46%', right: '14%' }, rot: 3, text: '#5744 · en espera', hidem: true },
+  { cls: 'o1', rot: -6, text: '#5741 · sin procesar' },
+  { cls: 'o2', rot: 4, text: '#5738 · demorado 2 días', late: true },
+  { cls: 'o3', rot: -3, text: '#5743 · dirección dudosa' },
+  { cls: 'o4', rot: 5, text: '#5740 · sin guía' },
+  { cls: 'o5', rot: -5, text: '#5736 · cliente reclama', late: true },
+  { cls: 'o6', rot: 3, text: '#5744 · en espera' },
 ];
 
 export function HeroChaos() {
@@ -101,8 +103,8 @@ export function HeroChaos() {
             key={i}
             ref={collect}
             data-rot={o.rot}
-            className={`order${o.late ? ' late' : ''}${o.hidem ? ' hidem' : ''}`}
-            style={{ ...o.style, transform: `rotate(${o.rot}deg)` }}
+            className={`order ${o.cls}${o.late ? ' late' : ''}`}
+            style={{ transform: `rotate(${o.rot}deg)` }}
           >
             <i />
             {o.text}

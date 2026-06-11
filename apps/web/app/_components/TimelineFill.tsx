@@ -38,7 +38,7 @@ export function TimelineFill() {
     <div
       ref={ref}
       aria-hidden
-      className="hidden md:block absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-px overflow-hidden"
+      className="absolute left-[18px] md:left-1/2 md:-translate-x-1/2 top-0 bottom-0 w-px overflow-hidden"
     >
       <div className="absolute inset-0 bg-white/[0.06]" />
       <div

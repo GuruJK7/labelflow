@@ -680,6 +680,13 @@ body {
 }
 .hero-chaos .order i { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); flex: 0 0 auto; }
 .hero-chaos .order.late i { background: var(--red); }
+/* scattered positions (desktop) */
+.hero-chaos .o1 { top: 21%; left: 8%; }
+.hero-chaos .o2 { top: 58%; left: 5%; }
+.hero-chaos .o3 { top: 38%; left: 14%; }
+.hero-chaos .o4 { top: 26%; right: 7%; }
+.hero-chaos .o5 { top: 64%; right: 9%; }
+.hero-chaos .o6 { top: 46%; right: 14%; }
 .hero-chaos .funnel {
   position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 1;
@@ -694,8 +701,22 @@ body {
 }
 .hero-chaos .funnel .ring svg { width: 18px; height: 18px; }
 .hero-chaos .funnel.hot .ring { box-shadow: 0 0 34px -4px rgba(34, 211, 238, 0.9); transform: scale(1.08); }
-@media (max-width: 860px) { .hero-chaos .order.hidem { display: none; } }
-@media (max-width: 760px) { .hero-chaos { display: none; } }
+/* tablet: drop the inner pair to avoid crowding the copy */
+@media (max-width: 860px) { .hero-chaos .o3, .hero-chaos .o6 { display: none; } }
+/* phones: keep the effect, reflow the 4 survivors to the corners (behind the
+   z-10 copy, so they never hurt legibility) and shrink the funnel */
+@media (max-width: 760px) {
+  .hero-chaos .order { font-size: 8.5px; padding: 5px 9px; gap: 6px; border-radius: 9px; }
+  .hero-chaos .order i { width: 5px; height: 5px; }
+  .hero-chaos .o1 { top: 5%; left: 3%; right: auto; }
+  .hero-chaos .o4 { top: 5%; right: 3%; left: auto; }
+  .hero-chaos .o2 { top: 34%; left: 2%; right: auto; }
+  .hero-chaos .o5 { top: 42%; right: 2%; left: auto; }
+  .hero-chaos .funnel { bottom: 22px; gap: 7px; }
+  .hero-chaos .funnel .ring { width: 40px; height: 40px; border-radius: 12px; }
+  .hero-chaos .funnel .ring svg { width: 15px; height: 15px; }
+  .hero-chaos .funnel span { font-size: 8.5px; letter-spacing: 0.16em; }
+}
 
 /* ── Ghost section numbers — faint watermark behind each section header ── */
 /* Ported 1:1 from the autoenvia v4 demo (.ghost). The header container gets
