@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import {
   LayoutDashboard,
+  LayoutGrid,
   Package,
   Tags,
   Settings,
@@ -51,6 +52,7 @@ const navSections: Array<{
     label: 'Principal',
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { href: '/control', label: 'Control', icon: LayoutGrid },
       { href: '/orders', label: 'Pedidos', icon: Package },
       { href: '/labels', label: 'Etiquetas', icon: Tags },
     ],
