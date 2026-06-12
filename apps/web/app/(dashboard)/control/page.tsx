@@ -31,11 +31,13 @@ import {
   CheckCircle2,
   Clock,
   FileText,
+  Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ShipmentsByStore } from './_components/ShipmentsByStore';
 import { RecentShipments } from './_components/RecentShipments';
 import { StoreLabelsModal } from './_components/StoreLabelsModal';
+import { DeleteStoreModal } from './_components/DeleteStoreModal';
 import { timeAgo } from './_components/labelMeta';
 
 interface StoreRow {
@@ -101,6 +103,8 @@ export default function ControlPage() {
   const [bulkRetrying, setBulkRetrying] = useState(false);
   const [error, setError] = useState('');
   const [labelsModal, setLabelsModal] = useState<{ id: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [notice, setNotice] = useState('');
 
   const anyRunningRef = useRef(false);
 
@@ -301,6 +305,9 @@ export default function ControlPage() {
   const stores = overview?.stores ?? [];
   const queue = overview?.queue ?? [];
   const wallet = overview?.wallet;
+  // Credit-holder = oldest store = stores[0] (overview orders createdAt asc, id
+  // asc). It can't be deleted, so the card hides the trash for it.
+  const holderId = stores[0]?.id;
   const runningByTenant = useMemo(() => {
     const m = new Map<string, StoreRow['running']>();
     for (const s of stores) if (s.running) m.set(s.id, s.running);
@@ -366,6 +373,15 @@ export default function ControlPage() {
         <div className="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-xl text-sm mb-5 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {error}
           <button onClick={() => setError('')} className="ml-auto text-red-300/60 hover:text-red-300 text-xs">
+            cerrar
+          </button>
+        </div>
+      )}
+
+      {notice && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 px-4 py-3 rounded-xl text-sm mb-5 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> {notice}
+          <button onClick={() => setNotice('')} className="ml-auto text-emerald-300/60 hover:text-emerald-300 text-xs">
             cerrar
           </button>
         </div>
@@ -509,10 +525,12 @@ export default function ControlPage() {
               busy={busy[s.id]}
               bulkBusy={bulkRunning || bulkRetrying}
               loteLabel={batchLabel(lote)}
+              canDelete={s.id !== holderId}
               onToggleSelect={() => toggleSelect(s.id)}
               onRun={() => runStore(s.id)}
               onRetry={() => retryStore(s.id, s.stuck.retryable)}
               onViewLabels={() => setLabelsModal({ id: s.id, name: s.name })}
+              onDelete={() => setDeleteTarget({ id: s.id, name: s.name })}
             />
           ))}
         </div>
@@ -531,6 +549,39 @@ export default function ControlPage() {
           onClose={() => setLabelsModal(null)}
         />
       )}
+
+      {deleteTarget && (
+        <DeleteStoreModal
+          key={deleteTarget.id}
+          tenantId={deleteTarget.id}
+          tenantName={deleteTarget.name}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={(name) => {
+            const deletedId = deleteTarget.id;
+            setSelected((prev) => {
+              if (!prev.has(deletedId)) return prev;
+              const next = new Set(prev);
+              next.delete(deletedId);
+              return next;
+            });
+            // Optimistically drop the card/queue rows so the store vanishes
+            // immediately; the next overview poll reconciles authoritatively.
+            setOverview((ov) =>
+              ov
+                ? {
+                    ...ov,
+                    stores: ov.stores.filter((s) => s.id !== deletedId),
+                    queue: ov.queue.filter((q) => q.tenantId !== deletedId),
+                  }
+                : ov,
+            );
+            setDeleteTarget(null);
+            setError('');
+            setNotice(`Tienda "${name}" eliminada.`);
+            fetchOverview();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -542,10 +593,12 @@ function StoreCard({
   busy,
   bulkBusy,
   loteLabel,
+  canDelete,
   onToggleSelect,
   onRun,
   onRetry,
   onViewLabels,
+  onDelete,
 }: {
   store: StoreRow;
   pending: PendingItem | undefined;
@@ -553,10 +606,12 @@ function StoreCard({
   busy: 'run' | 'retry' | undefined;
   bulkBusy: boolean;
   loteLabel: string;
+  canDelete: boolean;
   onToggleSelect: () => void;
   onRun: () => void;
   onRetry: () => void;
   onViewLabels: () => void;
+  onDelete: () => void;
 }) {
   const running = store.running;
   const isRunning = running?.status === 'RUNNING'; // actively shipping (worker is serial)
@@ -650,12 +705,25 @@ function StoreCard({
           {store.stuck.retryable > 0 ? store.stuck.retryable : ''}
         </button>
         </div>
-        <button
-          onClick={onViewLabels}
-          className="inline-flex items-center gap-1.5 self-start text-[11px] text-zinc-500 hover:text-cyan-300 transition-colors"
-        >
-          <FileText className="w-3 h-3" /> Ver pedidos ejecutados
-        </button>
+        <div className="flex items-center justify-between gap-2">
+          <button
+            onClick={onViewLabels}
+            className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500 hover:text-cyan-300 transition-colors"
+          >
+            <FileText className="w-3 h-3" /> Ver pedidos ejecutados
+          </button>
+          {canDelete && (
+            <button
+              onClick={onDelete}
+              disabled={!!busy || bulkBusy || hasJob}
+              title={hasJob ? 'No se puede eliminar con una corrida en curso' : 'Eliminar tienda'}
+              aria-label="Eliminar tienda"
+              className="inline-flex items-center gap-1.5 text-[11px] text-zinc-600 hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <Trash2 className="w-3 h-3" /> Eliminar
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
