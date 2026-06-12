@@ -11,9 +11,9 @@ const nextConfig = {
     const csp = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://sdk.mercadopago.com https://www.mercadopago.com https://*.mercadopago.com",
-      "style-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "img-src 'self' data: blob: https:",
-      "font-src 'self' data:",
+      "font-src 'self' data: https://fonts.gstatic.com",
       "connect-src 'self' https://*.supabase.co https://api.mercadopago.com https://*.mercadopago.com",
       "frame-src 'self' https://www.mercadopago.com https://*.mercadopago.com",
       "frame-ancestors 'none'",
@@ -38,6 +38,13 @@ const nextConfig = {
         ],
       },
     ];
+  },
+  async rewrites() {
+    // Sirve el landing validado (autoenvia.com raíz) como estático 100% fiel,
+    // sin tocar el resto del app (portal /cliente, pagos, dashboard, /login…).
+    return {
+      beforeFiles: [{ source: '/', destination: '/landing.html' }],
+    };
   },
 };
 
