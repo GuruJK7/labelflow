@@ -11,7 +11,7 @@ import { DAC_STEPS } from './steps';
 import { createStepLogger, StepLogger } from '../logger';
 import logger from '../logger';
 import { db } from '../db';
-import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT, isAmbiguousCityName, isValidUruguayProvince, correctCityWhenEqualsDepartment, fuzzyMatchCity, splitHyphenatedCityName } from './uruguay-geo';
+import { getDepartmentForCity, getDepartmentForCityAsync, getBarriosFromZip, getDepartmentFromZip, shouldPinMontevideoFromZip, getBarriosFromStreet, CITY_TO_DEPARTMENT, isAmbiguousCityName, isValidUruguayProvince, correctCityWhenEqualsDepartment, fuzzyMatchCity, splitHyphenatedCityName } from './uruguay-geo';
 import { preprocessShopifyAddress, isAddressIncomplete } from './address-cleanup';
 import { assessAddressFeasibility } from './ai-feasibility';
 import { validateAddressConsistency } from './ai-address-validator';
@@ -2654,6 +2654,29 @@ export async function createShipment(
     slog.info(DAC_STEPS.STEP3_SELECT_DEPT,
       `Using AI resolution directly: dept="${resolvedDept}" city="${resolvedCity}" barrio="${resolvedBarrioHint ?? 'none'}"`
     );
+    // ZIP-authority guard (env DAC_ZIP_PINS_MVD, DEFAULT OFF). A CONFIRMED
+    // Montevideo ZIP (prefix 11) must not be pulled out of Montevideo by a
+    // street named after a department ("Calle San José") or by the customer-
+    // recurrence shortcut reusing a previously-misresolved dept — prod
+    // 2026-06-16: #2348 "SAN Jose 807", zip 11100, routed to "San José". Fires
+    // ONLY when the ZIP says Montevideo and we resolved elsewhere, so it can
+    // never touch a correctly-resolved order. Re-derives the barrio from the
+    // street (the AI barrio was for the wrong dept; null is fine — the MVD
+    // barrio-fallback + barrio dropdown still run downstream). With the flag
+    // unset this block never executes -> byte-identical to today.
+    if (
+      shouldPinMontevideoFromZip(addr.zip, resolvedDept) &&
+      isStep3GeoTenantEnabled(process.env.DAC_ZIP_PINS_MVD, tenantId)
+    ) {
+      const overriddenFrom = resolvedDept;
+      resolvedDept = 'Montevideo';
+      resolvedCity = 'Montevideo';
+      resolvedBarrioHint = detectBarrio(addr.city, addr.address1, addr.address2 ?? '');
+      slog.warn(DAC_STEPS.STEP3_SELECT_DEPT,
+        `[zip-pins-mvd] ZIP "${addr.zip}" = Montevideo overrides resolved dept "${overriddenFrom}" (street-name/recurrence false positive) — re-derived barrio="${resolvedBarrioHint ?? 'none'}"`,
+        { orderName: order.name, zip: addr.zip, overriddenFrom, audit: '2026-06-16' },
+      );
+    }
   } else if (addr.city) {
     const geoDept = await getDepartmentForCityAsync(addr.city);
     if (geoDept) {

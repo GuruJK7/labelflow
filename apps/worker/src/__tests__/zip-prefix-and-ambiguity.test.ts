@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   getDepartmentFromZip,
+  shouldPinMontevideoFromZip,
   isAmbiguousCityName,
   isValidUruguayProvince,
   DEPARTMENT_ZIP_PREFIX,
@@ -204,5 +205,38 @@ describe('Audit 2026-05-05: city-name resolver still works as before for valid c
     expect(getDepartmentForCity('Centro')).toBe('Montevideo');
     expect(getDepartmentForCity('Cerro')).toBe('Montevideo');
     expect(getDepartmentForCity('Bella Vista')).toBe('Montevideo');
+  });
+});
+
+describe('shouldPinMontevideoFromZip — ZIP-11 authority (2026-06-16 street-name misroute)', () => {
+  it('pins Montevideo when ZIP is 11xxx but the dept resolved elsewhere (#2348 regression)', () => {
+    // "SAN Jose 807", city=Montevideo, zip=11100 was routed to "San José"
+    // because the resolver matched the STREET name "San José". ZIP 11 must win.
+    expect(shouldPinMontevideoFromZip('11100', 'San Jose')).toBe(true);
+    expect(shouldPinMontevideoFromZip('11200', 'Canelones')).toBe(true);
+  });
+
+  it('does NOT pin when the order already resolved to Montevideo (no-op, case-insensitive)', () => {
+    expect(shouldPinMontevideoFromZip('11100', 'Montevideo')).toBe(false);
+    expect(shouldPinMontevideoFromZip('11100', 'montevideo')).toBe(false);
+    expect(shouldPinMontevideoFromZip('11100', 'MONTEVIDEO')).toBe(false);
+  });
+
+  it('does NOT pin when the ZIP is a real interior ZIP (never overrides a correct interior order)', () => {
+    // 80100 = San José de Mayo (Libertad) — a genuine San José zip; leave it.
+    expect(shouldPinMontevideoFromZip('80100', 'San Jose')).toBe(false);
+    expect(shouldPinMontevideoFromZip('20000', 'Canelones')).toBe(false);
+  });
+
+  it('does NOT pin when there is no usable ZIP (no signal to act on)', () => {
+    expect(shouldPinMontevideoFromZip(null, 'San Jose')).toBe(false);
+    expect(shouldPinMontevideoFromZip(undefined, 'San Jose')).toBe(false);
+    expect(shouldPinMontevideoFromZip('', 'San Jose')).toBe(false);
+    expect(shouldPinMontevideoFromZip('1', 'San Jose')).toBe(false); // too short to have a prefix
+  });
+
+  it('tolerates a missing resolved dept (treats it as not-Montevideo -> pins)', () => {
+    expect(shouldPinMontevideoFromZip('11500', '')).toBe(true);
+    expect(shouldPinMontevideoFromZip('11500', null as unknown as string)).toBe(true);
   });
 });

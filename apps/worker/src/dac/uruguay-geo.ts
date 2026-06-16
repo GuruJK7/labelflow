@@ -1237,6 +1237,32 @@ export function getDepartmentFromZip(zip: string | null | undefined): string | n
 }
 
 /**
+ * Should a CONFIRMED Montevideo ZIP (prefix 11) override a resolved department
+ * that came out as something else?
+ *
+ * Montevideo has streets named after almost every department ("Calle San José",
+ * "Colonia", "Florida", "Durazno"...), and the address resolver / customer-
+ * recurrence shortcut can latch onto that name and route a Montevideo order to
+ * the WRONG department (prod 2026-06-16: #2348 "SAN Jose 807", zip 11100, sent
+ * to "San José"; the error then propagates via the recurrence shortcut). The ZIP
+ * prefix 11 is the single most reliable signal we have (CONFIRMED universal for
+ * Montevideo proper), so it must win over a street-name / recurrence false
+ * positive. Returns true ONLY when the ZIP says Montevideo and we resolved
+ * elsewhere — i.e. exactly the misroute; it never touches a correctly-resolved
+ * order. Pure + network-free for unit tests; the call site still gates it behind
+ * an env flag.
+ */
+export function shouldPinMontevideoFromZip(
+  zip: string | null | undefined,
+  resolvedDept: string | null | undefined,
+): boolean {
+  return (
+    getDepartmentFromZip(zip) === 'Montevideo' &&
+    (resolvedDept ?? '').trim().toLowerCase() !== 'montevideo'
+  );
+}
+
+/**
  * Get candidate barrios from a Montevideo street address.
  * Checks major avenue/street names in the address text.
  */
