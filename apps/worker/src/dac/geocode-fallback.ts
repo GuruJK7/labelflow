@@ -557,3 +557,37 @@ export function decideStep3Coords(params: {
   }
   return { use: true, lat: geo.lat, lon: geo.lon, reason: 'precise-geocode' };
 }
+
+/**
+ * Should we try a BARRIO-level geocode fallback (before the city fallback)?
+ *
+ * MONTEVIDEO ONLY. For the interior the CITY is the granular unit and the
+ * city-centroid fallback already lands a few km from the address (proven in
+ * prod 2026-06-16: Mercedes, Aguas Dulces, Chuy now mint guías). Montevideo is
+ * different: it is one huge "city", so the city centroid (~-34.906,-56.191) is
+ * generic and DAC silently rejects it for addresses in barrios several km away
+ * — confirmed 2026-06-16, three MVD silent-rejects (#2378 Ciudad Vieja, #5962
+ * Punta Carretas, #2377) all carrying that exact centroid. The barrio is
+ * already resolved on the form (K_Barrio), so on a full-address miss/coarse we
+ * geocode "<barrio>, Montevideo" first — a barrio-level point DAC accepts.
+ *
+ * Pure + network-free so it is unit-testable. The caller still gates it behind
+ * its own env flag (DAC_STEP3_BARRIO_FALLBACK) and runs decideStep3Coords'
+ * dept-match + UY-bounds guards on the result, so a bad barrio point falls
+ * through to the city/department centroid (today's behaviour).
+ */
+export function shouldTryBarrioFallback(params: {
+  /** The full-address geocode missed entirely or came back coarse. */
+  geoMissedOrCoarse: boolean;
+  /** The barrio resolved for this order (K_Barrio), if any. */
+  barrio: string | null | undefined;
+  /** The department resolved for this order. */
+  dept: string | null | undefined;
+}): boolean {
+  return (
+    params.geoMissedOrCoarse &&
+    !!params.barrio &&
+    params.barrio.trim().length > 0 &&
+    /montevideo/i.test(params.dept ?? '')
+  );
+}

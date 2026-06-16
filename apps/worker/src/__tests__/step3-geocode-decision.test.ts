@@ -6,6 +6,7 @@ import {
   STREET_LEVEL_PLACE_RANK,
   isSettlementResult,
   SETTLEMENT_PLACE_RANK,
+  shouldTryBarrioFallback,
 } from '../dac/geocode-fallback';
 
 /**
@@ -263,5 +264,47 @@ describe('isSettlementResult — dept-capital city-node picker (#1967/#5587 root
     expect(isSettlementResult(null)).toBe(false);
     expect(isSettlementResult(undefined)).toBe(false);
     expect(isSettlementResult(NaN)).toBe(false);
+  });
+});
+
+describe('shouldTryBarrioFallback — Montevideo barrio-level fallback (2026-06-16 MVD silent-rejects)', () => {
+  it('fires for Montevideo + a known barrio + a full-address miss/coarse', () => {
+    expect(
+      shouldTryBarrioFallback({ geoMissedOrCoarse: true, barrio: 'Punta Carretas', dept: 'Montevideo' }),
+    ).toBe(true);
+  });
+
+  it('is case-insensitive on the department name', () => {
+    expect(
+      shouldTryBarrioFallback({ geoMissedOrCoarse: true, barrio: 'Ciudad Vieja', dept: 'montevideo' }),
+    ).toBe(true);
+  });
+
+  it('does NOT fire for the interior, even with a barrio + a miss (city-fallback handles those)', () => {
+    // Mercedes/Aguas Dulces/Chuy already mint guías via the city-centroid fallback;
+    // the barrio fallback is Montevideo-only on purpose to keep the blast radius tiny.
+    expect(
+      shouldTryBarrioFallback({ geoMissedOrCoarse: true, barrio: 'Centro', dept: 'Soriano' }),
+    ).toBe(false);
+    expect(
+      shouldTryBarrioFallback({ geoMissedOrCoarse: true, barrio: 'Centro', dept: 'Canelones' }),
+    ).toBe(false);
+  });
+
+  it('does NOT fire when the full address geocoded fine (no miss/coarse)', () => {
+    expect(
+      shouldTryBarrioFallback({ geoMissedOrCoarse: false, barrio: 'Punta Carretas', dept: 'Montevideo' }),
+    ).toBe(false);
+  });
+
+  it('does NOT fire without a barrio (nothing more specific than the city to try)', () => {
+    expect(shouldTryBarrioFallback({ geoMissedOrCoarse: true, barrio: null, dept: 'Montevideo' })).toBe(false);
+    expect(shouldTryBarrioFallback({ geoMissedOrCoarse: true, barrio: undefined, dept: 'Montevideo' })).toBe(false);
+    expect(shouldTryBarrioFallback({ geoMissedOrCoarse: true, barrio: '   ', dept: 'Montevideo' })).toBe(false);
+  });
+
+  it('does NOT fire when the department is missing', () => {
+    expect(shouldTryBarrioFallback({ geoMissedOrCoarse: true, barrio: 'Pocitos', dept: null })).toBe(false);
+    expect(shouldTryBarrioFallback({ geoMissedOrCoarse: true, barrio: 'Pocitos', dept: '' })).toBe(false);
   });
 });

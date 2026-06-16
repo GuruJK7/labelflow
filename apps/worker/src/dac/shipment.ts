@@ -22,6 +22,7 @@ import {
   isCoarseGeocode,
   decideStep3Coords,
   isStep3GeoTenantEnabled,
+  shouldTryBarrioFallback,
 } from './geocode-fallback';
 import { handlePaymentFlow, AutoPayConfig, PaymentOutcome } from './payment';
 
@@ -3104,7 +3105,50 @@ export async function createShipment(
         geo.lon != null &&
         isCoarseGeocode(geo.placeRank) &&
         isStep3GeoTenantEnabled(process.env.DAC_STEP3_COARSE_FALLBACK, tenantId);
+      const geoMissedOrCoarse = !geo || geo.lat == null || geo.lon == null || fullAddrCoarse;
+
+      // P3 — barrio-centroid fallback for MONTEVIDEO (env-gated
+      // DAC_STEP3_BARRIO_FALLBACK, DEFAULT OFF). For MVD the city centroid the
+      // city-fallback would inject (~-34.906,-56.191) is too generic — DAC
+      // silently rejects it for addresses in barrios several km away (prod
+      // 2026-06-16: #2378 Ciudad Vieja, #5962 Punta Carretas, #2377 all carried
+      // that one centroid). The barrio IS already resolved (resolvedBarrioHint /
+      // K_Barrio), so on a full-address miss/coarse we geocode "<barrio>,
+      // Montevideo" FIRST — a barrio-level point DAC accepts. Tried BEFORE the
+      // city fallback (more specific). decideStep3Coords' dept-match + UY-bounds
+      // guards still apply, so a bad barrio point falls through to the
+      // city/department centroid. With the flag unset this never runs
+      // (barrioFallbackUsed stays false) -> byte-identical to today.
+      let barrioFallbackUsed = false;
       if (
+        shouldTryBarrioFallback({ geoMissedOrCoarse, barrio: resolvedBarrioHint, dept: resolvedDept }) &&
+        isStep3GeoTenantEnabled(process.env.DAC_STEP3_BARRIO_FALLBACK, tenantId)
+      ) {
+        const barrioGeo = await geocodeAddressToDepartment(
+          { address1: resolvedBarrioHint ?? undefined, city: 'Montevideo' },
+          { preferSettlement: true },
+        );
+        if (barrioGeo && barrioGeo.lat != null && barrioGeo.lon != null) {
+          geo = barrioGeo;
+          barrioFallbackUsed = true;
+          slog.info(
+            DAC_STEPS.STEP3_SIGUIENTE,
+            `[step3-geocode] barrio-centroid fallback for "${resolvedBarrioHint}, Montevideo"`,
+            {
+              orderName: order.name,
+              resolvedDept,
+              resolvedCity,
+              barrio: resolvedBarrioHint,
+              geoDept: barrioGeo.department,
+              lat: barrioGeo.lat,
+              lon: barrioGeo.lon,
+              barrioPlaceRank: barrioGeo.placeRank,
+            },
+          );
+        }
+      }
+      if (
+        !barrioFallbackUsed &&
         (!geo || geo.lat == null || geo.lon == null || fullAddrCoarse) &&
         cityFallbackCity &&
         isStep3GeoTenantEnabled(process.env.DAC_STEP3_CITY_FALLBACK, tenantId)
