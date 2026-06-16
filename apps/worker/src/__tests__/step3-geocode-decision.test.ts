@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   decideStep3Coords,
   isStep3GeoTenantEnabled,
@@ -7,6 +7,9 @@ import {
   isSettlementResult,
   SETTLEMENT_PLACE_RANK,
   shouldTryBarrioFallback,
+  isNominatimCoolingDown,
+  nominatimCooldownDeadline,
+  _nominatimTesting,
 } from '../dac/geocode-fallback';
 
 /**
@@ -306,5 +309,60 @@ describe('shouldTryBarrioFallback — Montevideo barrio-level fallback (2026-06-
   it('does NOT fire when the department is missing', () => {
     expect(shouldTryBarrioFallback({ geoMissedOrCoarse: true, barrio: 'Pocitos', dept: null })).toBe(false);
     expect(shouldTryBarrioFallback({ geoMissedOrCoarse: true, barrio: 'Pocitos', dept: '' })).toBe(false);
+  });
+});
+
+describe('Nominatim circuit breaker (2026-06-16 429 cache-poisoning fix)', () => {
+  afterEach(() => _nominatimTesting.reset());
+
+  it('nominatimCooldownDeadline adds the cooldown window to now (pure)', () => {
+    expect(nominatimCooldownDeadline(1_000, 5_000)).toBe(6_000);
+    // default window is positive -> the deadline is strictly in the future
+    expect(nominatimCooldownDeadline(1_000)).toBeGreaterThan(1_000);
+  });
+
+  it('is NOT cooling down by default / after reset', () => {
+    _nominatimTesting.reset();
+    expect(isNominatimCoolingDown(Date.now())).toBe(false);
+  });
+
+  it('IS cooling down while the deadline is still in the future (skips Nominatim)', () => {
+    const now = 1_000_000;
+    _nominatimTesting.set(now + 60_000);
+    expect(isNominatimCoolingDown(now)).toBe(true);
+  });
+
+  it('stops cooling down once the deadline has passed (resumes geocoding)', () => {
+    const now = 1_000_000;
+    _nominatimTesting.set(now - 1);
+    expect(isNominatimCoolingDown(now)).toBe(false);
+  });
+
+  it('does NOT open the breaker on a one-off failure (needs a streak of 3)', () => {
+    _nominatimTesting.reset();
+    _nominatimTesting.fail();
+    _nominatimTesting.fail();
+    expect(_nominatimTesting.failures()).toBe(2);
+    expect(isNominatimCoolingDown(Date.now())).toBe(false); // 2 < threshold -> still geocoding
+  });
+
+  it('opens the breaker after 3 CONSECUTIVE failures (a real storm)', () => {
+    _nominatimTesting.reset();
+    _nominatimTesting.fail();
+    _nominatimTesting.fail();
+    _nominatimTesting.fail();
+    expect(isNominatimCoolingDown(Date.now())).toBe(true); // backed off
+    expect(_nominatimTesting.failures()).toBe(0); // streak reset; cooldown now governs
+  });
+
+  it('a success resets the streak, so sporadic failures never trip the breaker', () => {
+    _nominatimTesting.reset();
+    _nominatimTesting.fail();
+    _nominatimTesting.fail();
+    _nominatimTesting.success(); // Nominatim answered in between -> streak cleared
+    _nominatimTesting.fail();
+    _nominatimTesting.fail();
+    expect(_nominatimTesting.failures()).toBe(2);
+    expect(isNominatimCoolingDown(Date.now())).toBe(false);
   });
 });

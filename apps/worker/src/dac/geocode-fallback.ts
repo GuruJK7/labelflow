@@ -16,6 +16,59 @@ const memoryCache = new Map<string, string | null>();
 // Rate limit: Nominatim requires max 1 request per second
 let lastRequestTime = 0;
 
+// ── Nominatim circuit breaker (2026-06-16 prod incident) ────────────────────
+// The public Nominatim instance rate-limits bulk automated geocoding with
+// HTTP 429. Two bugs compounded into a silent-reject storm: (1) a 429 was
+// cached as a PERMANENT null, so the address never re-geocoded even after the
+// limit cleared — it kept injecting the department centroid and DAC silently
+// rejected it; (2) we kept calling 1/s, which only prolonged the block. Fix:
+// NEVER cache a transient failure (429/5xx/network), and on one open a short
+// global cooldown during which we skip Nominatim and fall back to the centroid
+// (today's behaviour) so the public instance recovers. Shared by both geocoders.
+const NOMINATIM_COOLDOWN_MS = 3 * 60 * 1000; // back off 3 min once a failure STREAK is hit
+const NOMINATIM_FAILURE_THRESHOLD = 3; // consecutive transient failures before backing off
+let nominatimCooldownUntil = 0;
+let consecutiveNominatimFailures = 0;
+
+/** True while we are backing off Nominatim after a recent failure streak. Pure read. */
+export function isNominatimCoolingDown(now: number = Date.now()): boolean {
+  return now < nominatimCooldownUntil;
+}
+/** Pure: the cooldown deadline for a failure streak hit at `now`. Exported for tests. */
+export function nominatimCooldownDeadline(now: number, cooldownMs: number = NOMINATIM_COOLDOWN_MS): number {
+  return now + cooldownMs;
+}
+/** Nominatim answered (HTTP ok) — clear the failure streak. */
+function noteNominatimSuccess(): void {
+  consecutiveNominatimFailures = 0;
+}
+/**
+ * A transient Nominatim failure (429 rate-limit, 5xx, or a network exception).
+ * Opens the breaker ONLY after NOMINATIM_FAILURE_THRESHOLD consecutive failures,
+ * so a one-off blip never sacrifices the geocode fix for everyone — only a real
+ * storm trips it. Any success resets the streak.
+ */
+function noteNominatimTransientFailure(): void {
+  consecutiveNominatimFailures += 1;
+  if (consecutiveNominatimFailures >= NOMINATIM_FAILURE_THRESHOLD) {
+    nominatimCooldownUntil = nominatimCooldownDeadline(Date.now());
+    consecutiveNominatimFailures = 0; // the cooldown now governs the back-off
+  }
+}
+/** Count a transient HTTP status (429 rate-limit or 5xx) toward the streak. */
+function noteNominatimHttpError(status: number): void {
+  if (status === 429 || status >= 500) noteNominatimTransientFailure();
+}
+/** Test-only hooks to drive the breaker deterministically. */
+export const _nominatimTesting = {
+  set: (until: number): void => { nominatimCooldownUntil = until; },
+  reset: (): void => { nominatimCooldownUntil = 0; consecutiveNominatimFailures = 0; },
+  get: (): number => nominatimCooldownUntil,
+  fail: (): void => noteNominatimTransientFailure(),
+  success: (): void => noteNominatimSuccess(),
+  failures: (): number => consecutiveNominatimFailures,
+};
+
 function normalize(s: string): string {
   return s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.]/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -98,6 +151,10 @@ export async function geocodeCityToDepartment(cityName: string): Promise<string 
     return cached;
   }
 
+  // Circuit breaker: skip Nominatim while cooling down from a recent 429/5xx/
+  // network error — caller falls back to the centroid (today's behaviour).
+  if (isNominatimCoolingDown()) return null;
+
   // Rate limit: wait if needed
   const now = Date.now();
   const elapsed = now - lastRequestTime;
@@ -119,9 +176,12 @@ export async function geocodeCityToDepartment(cityName: string): Promise<string 
 
     if (!response.ok) {
       logger.warn({ city: cityName, status: response.status }, '[Geocode] Nominatim HTTP error');
-      memoryCache.set(key, null);
+      // Transient: do NOT cache (a permanent null poisons the city forever) and
+      // count it toward the failure streak (429/5xx) so we back off only on a storm.
+      noteNominatimHttpError(response.status);
       return null;
     }
+    noteNominatimSuccess(); // Nominatim responded OK — reset the failure streak
 
     const results = await response.json() as Array<{
       display_name: string;
@@ -174,7 +234,9 @@ export async function geocodeCityToDepartment(cityName: string): Promise<string 
 
   } catch (err) {
     logger.error({ city: cityName, error: (err as Error).message }, '[Geocode] Nominatim request failed');
-    memoryCache.set(key, null);
+    // Network failure is transient: do NOT cache, and back off so we don't
+    // keep timing out against an unreachable Nominatim.
+    noteNominatimTransientFailure();
     return null;
   }
 }
@@ -282,6 +344,11 @@ export async function geocodeAddressToDepartment(
     return cached;
   }
 
+  // Circuit breaker: skip Nominatim while cooling down from a recent 429/5xx/
+  // network error, falling back to the centroid (today's behaviour) so the
+  // public instance recovers instead of staying blocked under our 1/s load.
+  if (isNominatimCoolingDown()) return null;
+
   // Shared rate limiter with geocodeCityToDepartment — Nominatim's public
   // instance requires max 1 req/s across the whole process.
   const now = Date.now();
@@ -306,9 +373,13 @@ export async function geocodeAddressToDepartment(
 
     if (!response.ok) {
       logger.warn({ query, status: response.status }, '[GeocodeAddr] Nominatim HTTP error');
-      addressCache.set(cacheKey, null);
+      // Transient: do NOT cache. A permanent null here used to poison the
+      // address forever -> always dept-centroid -> DAC silent-reject (prod
+      // 2026-06-16). Count it toward the failure streak (429/5xx) -> back off on a storm.
+      noteNominatimHttpError(response.status);
       return null;
     }
+    noteNominatimSuccess(); // Nominatim responded OK — reset the failure streak
 
     const results = (await response.json()) as Array<{
       display_name: string;
@@ -402,7 +473,9 @@ export async function geocodeAddressToDepartment(
       { query, error: (err as Error).message },
       '[GeocodeAddr] Nominatim request failed',
     );
-    addressCache.set(cacheKey, null);
+    // Network failure is transient: do NOT cache (a permanent null poisons the
+    // address forever) and back off so we don't keep timing out.
+    noteNominatimTransientFailure();
     return null;
   }
 }
