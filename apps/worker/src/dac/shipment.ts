@@ -3119,13 +3119,18 @@ export async function createShipment(
       // guards still apply, so a bad barrio point falls through to the
       // city/department centroid. With the flag unset this never runs
       // (barrioFallbackUsed stays false) -> byte-identical to today.
+      // Use detectedBarrioName (= resolvedBarrioHint ?? intelligent.barrio) — the
+      // SAME barrio that gets selected into K_Barrio above. resolvedBarrioHint
+      // alone is null whenever the barrio came from ZIP/street detection rather
+      // than the AI resolver, which would silently skip the fallback for exactly
+      // the MVD orders we are trying to fix.
       let barrioFallbackUsed = false;
       if (
-        shouldTryBarrioFallback({ geoMissedOrCoarse, barrio: resolvedBarrioHint, dept: resolvedDept }) &&
+        shouldTryBarrioFallback({ geoMissedOrCoarse, barrio: detectedBarrioName, dept: resolvedDept }) &&
         isStep3GeoTenantEnabled(process.env.DAC_STEP3_BARRIO_FALLBACK, tenantId)
       ) {
         const barrioGeo = await geocodeAddressToDepartment(
-          { address1: resolvedBarrioHint ?? undefined, city: 'Montevideo' },
+          { address1: detectedBarrioName ?? undefined, city: 'Montevideo' },
           { preferSettlement: true },
         );
         if (barrioGeo && barrioGeo.lat != null && barrioGeo.lon != null) {
@@ -3133,12 +3138,12 @@ export async function createShipment(
           barrioFallbackUsed = true;
           slog.info(
             DAC_STEPS.STEP3_SIGUIENTE,
-            `[step3-geocode] barrio-centroid fallback for "${resolvedBarrioHint}, Montevideo"`,
+            `[step3-geocode] barrio-centroid fallback for "${detectedBarrioName}, Montevideo"`,
             {
               orderName: order.name,
               resolvedDept,
               resolvedCity,
-              barrio: resolvedBarrioHint,
+              barrio: detectedBarrioName,
               geoDept: barrioGeo.department,
               lat: barrioGeo.lat,
               lon: barrioGeo.lon,
