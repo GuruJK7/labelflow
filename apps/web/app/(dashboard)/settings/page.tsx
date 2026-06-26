@@ -14,6 +14,9 @@ interface SettingsData {
   shopifyTokenSet: boolean;
   dacUsername: string;
   dacPasswordSet: boolean;
+  dashboardUrl: string;
+  dashboardTokenSet: boolean;
+  dashboardSourceEnabled: boolean;
   emailHost: string;
   emailPort: number;
   emailUser: string;
@@ -47,6 +50,9 @@ export default function SettingsPage() {
   const [shopifyToken, setShopifyToken] = useState('');
   const [dacUsername, setDacUsername] = useState('');
   const [dacPassword, setDacPassword] = useState('');
+  const [dashboardUrl, setDashboardUrl] = useState('https://autoenvia-dash.vercel.app');
+  const [dashboardToken, setDashboardToken] = useState('');
+  const [dashboardEnabled, setDashboardEnabled] = useState(false);
   const [emailHost, setEmailHost] = useState('smtp.gmail.com');
   const [emailPort, setEmailPort] = useState(587);
   const [emailUser, setEmailUser] = useState('');
@@ -177,6 +183,8 @@ export default function SettingsPage() {
           setSettings(data);
           setShopifyUrl(data.shopifyStoreUrl ?? '');
           setDacUsername(data.dacUsername ?? '');
+          setDashboardUrl(data.dashboardUrl ?? 'https://autoenvia-dash.vercel.app');
+          setDashboardEnabled(data.dashboardSourceEnabled ?? false);
           setEmailHost(data.emailHost ?? 'smtp.gmail.com');
           setEmailPort(data.emailPort ?? 587);
           setEmailUser(data.emailUser ?? '');
@@ -261,6 +269,34 @@ export default function SettingsPage() {
               {saving === 'shopify' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar Shopify
             </button>
             <InlineMessage section="shopify" />
+          </div>
+        </div>
+
+        {/* AutoEnvía Dashboard (fuente de pedidos alternativa a Shopify) */}
+        <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-white">AutoEnvía Dashboard <span className="text-[10px] font-normal text-zinc-500">(en vez de Shopify)</span></h2>
+            {settings?.dashboardTokenSet && settings?.dashboardSourceEnabled && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Conectado</span>}
+          </div>
+          <p className="text-xs text-zinc-500 mb-3">Conectá la tienda por link: pegá la URL y el API token del dashboard (la página de tu cliente). El worker pollea los pedidos confirmados y los carga en DAC con las credenciales de abajo. Funciona en paralelo a Shopify, sin pisarlo.</p>
+          <div className="space-y-3">
+            <div>
+              <label className={labelClass}>URL del dashboard</label>
+              <input value={dashboardUrl} onChange={(e) => setDashboardUrl(e.target.value)} className={inputClass} placeholder="https://autoenvia-dash.vercel.app" />
+            </div>
+            <div>
+              <label className={labelClass}>API token</label>
+              <input type="password" value={dashboardToken} onChange={(e) => setDashboardToken(e.target.value)} className={inputClass} placeholder={settings?.dashboardTokenSet ? '********' : 'ae_xxxxxxxx'} />
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" checked={dashboardEnabled} onChange={(e) => setDashboardEnabled(e.target.checked)} className="w-4 h-4 accent-cyan-500" />
+              <span className="text-xs text-zinc-300">Activar esta fuente (pollear pedidos y cargarlos en DAC)</span>
+            </label>
+            <button onClick={() => saveSection('dashboard', { dashboardUrl, dashboardSourceEnabled: dashboardEnabled, ...(dashboardToken ? { dashboardToken } : {}) })} disabled={saving === 'dashboard'}
+              className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
+              {saving === 'dashboard' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar dashboard
+            </button>
+            <InlineMessage section="dashboard" />
           </div>
         </div>
 
