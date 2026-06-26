@@ -234,6 +234,14 @@ model Tenant {
   dacUsername String?
   dacPassword String? // Encrypted AES-256
 
+  // AutoEnvía Dashboard source (fuente alternativa a Shopify, aditiva).
+  // Cuando dashboardSourceEnabled=true y dashboardUrl/dashboardToken están
+  // seteados, el worker pollea el dashboard y carga en DAC con las MISMAS
+  // creds DAC de arriba. NO afecta el flujo Shopify.
+  dashboardUrl           String?
+  dashboardToken         String? // Encrypted AES-256
+  dashboardSourceEnabled Boolean @default(false)
+
   // Email
   emailHost String?
   emailPort Int?    @default(587)
@@ -448,6 +456,7 @@ enum JobType {
   PROCESS_ORDERS_BULK
   RETRY_FAILED
   TEST_DAC
+  PROCESS_DASHBOARD_ORDERS
 }
 
 enum JobStatus {

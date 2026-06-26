@@ -352,6 +352,60 @@ export function startScheduler(): void {
           logger.info({ tenantId: tenant.id, jobId: dbJob.id, cron: tenant.cronSchedule }, 'Cron job created');
         }
       }
+
+      // ── AutoEnvía Dashboard source (fuente PARALELA, aislada de Shopify) ──
+      // Query separada (la de Shopify de arriba NO se toca). Mismo gating de
+      // créditos (holder.balance>0 + isActive) y cron, pero por
+      // dashboardSourceEnabled. Encola PROCESS_DASHBOARD_ORDERS con guarda
+      // type-scoped (solo bloquea si ya hay un job de ESTA fuente).
+      const dashTenants = await db.tenant.findMany({
+        where: {
+          dashboardSourceEnabled: true,
+          dashboardUrl: { not: null },
+          dashboardToken: { not: null },
+          dacUsername: { not: null },
+          dacPassword: { not: null },
+        },
+        select: { id: true, userId: true, cronSchedule: true, timezone: true },
+      });
+      if (dashTenants.length > 0) {
+        const dashUserIds = Array.from(new Set(dashTenants.map((t) => t.userId)));
+        const dashHolderState = new Map(
+          await Promise.all(
+            dashUserIds.map(async (uid) => {
+              const holder = await db.tenant.findFirst({
+                where: { userId: uid },
+                orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+                select: { shipmentCredits: true, referralBonusCredits: true, isActive: true },
+              });
+              return [
+                uid,
+                { balance: (holder?.shipmentCredits ?? 0) + (holder?.referralBonusCredits ?? 0), isActive: holder?.isActive ?? false },
+              ] as const;
+            }),
+          ),
+        );
+        const dashEligible = dashTenants.filter((t) => {
+          const s = dashHolderState.get(t.userId);
+          return s !== undefined && s.isActive && s.balance > 0;
+        });
+        for (const tenant of dashEligible) {
+          if (!tenant.cronSchedule || tenant.cronSchedule.trim().split(/\s+/).length < 5) continue;
+          const tz = tenant.timezone ?? 'America/Montevideo';
+          if (!cronMatchesNow(tenant.cronSchedule, now, tz)) continue;
+          const existingDashJob = await db.job.findFirst({
+            where: { tenantId: tenant.id, type: 'PROCESS_DASHBOARD_ORDERS', status: { in: ['PENDING', 'RUNNING'] } },
+          });
+          if (existingDashJob) {
+            logger.debug({ tenantId: tenant.id }, 'Dashboard job already running/pending, skipping cron');
+            continue;
+          }
+          const dbJob = await db.job.create({
+            data: { tenantId: tenant.id, trigger: 'CRON', type: 'PROCESS_DASHBOARD_ORDERS', status: 'PENDING' },
+          });
+          logger.info({ tenantId: tenant.id, jobId: dbJob.id, cron: tenant.cronSchedule }, 'Dashboard cron job created');
+        }
+      }
     } catch (err) {
       logger.error({ error: (err as Error).message }, 'Scheduler error');
     }

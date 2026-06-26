@@ -9,6 +9,7 @@ initSentry();
 import { getConfig } from './config';
 import { processOrdersJob } from './jobs/process-orders.job';
 import { processOrdersBulkJob } from './jobs/process-orders-bulk.job';
+import { processDashboardOrdersJob } from './jobs/process-dashboard-orders.job';
 import { testDacJob } from './jobs/test-dac.job';
 import { pollAgentBulkJobs } from './jobs/agent-bulk-upload.job';
 import { startScheduler } from './jobs/scheduler';
@@ -149,6 +150,9 @@ async function pollForJobs(): Promise<void> {
     } else if (claimed.type === 'PROCESS_ORDERS_BULK') {
       logger.info({ jobId: claimed.id }, 'Routing to BULK processor');
       await processOrdersBulkJob(claimed.tenantId, claimed.id);
+    } else if (claimed.type === 'PROCESS_DASHBOARD_ORDERS') {
+      logger.info({ jobId: claimed.id }, 'Routing to DASHBOARD processor');
+      await processDashboardOrdersJob(claimed.tenantId, claimed.id);
     } else {
       await processOrdersJob(claimed.tenantId, claimed.id);
     }

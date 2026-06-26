@@ -12,6 +12,10 @@ const updateSchema = z.object({
   shopifyToken: z.string().min(1).optional(),
   dacUsername: z.string().min(1).optional(),
   dacPassword: z.string().min(1).optional(),
+  // AutoEnvía Dashboard source (fuente alternativa a Shopify)
+  dashboardUrl: z.string().url('URL inválida').optional(),
+  dashboardToken: z.string().min(1).optional(),
+  dashboardSourceEnabled: z.boolean().optional(),
   emailHost: z.string().min(1).optional(),
   emailPort: z.number().min(1).max(65535).optional(),
   emailUser: z.string().min(1).optional(),
@@ -61,6 +65,9 @@ export async function GET() {
       shopifyToken: true,
       dacUsername: true,
       dacPassword: true,
+      dashboardUrl: true,
+      dashboardToken: true,
+      dashboardSourceEnabled: true,
       emailHost: true,
       emailPort: true,
       emailUser: true,
@@ -154,6 +161,9 @@ export async function GET() {
     shopifyTokenSet: !!tenant.shopifyToken,
     dacUsername: decryptOrRaw(tenant.dacUsername),
     dacPasswordSet: !!tenant.dacPassword,
+    dashboardUrl: tenant.dashboardUrl,
+    dashboardTokenSet: !!tenant.dashboardToken,
+    dashboardSourceEnabled: tenant.dashboardSourceEnabled,
     emailHost: tenant.emailHost,
     emailPort: tenant.emailPort,
     emailUser: tenant.emailUser,
@@ -209,6 +219,8 @@ export async function PUT(req: NextRequest) {
 
   // Plain fields
   if (input.shopifyStoreUrl !== undefined) data.shopifyStoreUrl = input.shopifyStoreUrl;
+  if (input.dashboardUrl !== undefined) data.dashboardUrl = input.dashboardUrl;
+  if (input.dashboardSourceEnabled !== undefined) data.dashboardSourceEnabled = input.dashboardSourceEnabled;
   if (input.emailHost !== undefined) data.emailHost = input.emailHost;
   if (input.emailPort !== undefined) data.emailPort = input.emailPort;
   if (input.emailUser !== undefined) data.emailUser = input.emailUser;
@@ -240,6 +252,7 @@ export async function PUT(req: NextRequest) {
 
   // Encrypted fields
   if (input.shopifyToken !== undefined) data.shopifyToken = encryptIfPresent(input.shopifyToken);
+  if (input.dashboardToken !== undefined) data.dashboardToken = encryptIfPresent(input.dashboardToken);
   if (input.dacUsername !== undefined) data.dacUsername = encryptIfPresent(input.dacUsername);
   if (input.dacPassword !== undefined) data.dacPassword = encryptIfPresent(input.dacPassword);
   if (input.emailPass !== undefined) data.emailPass = encryptIfPresent(input.emailPass);
