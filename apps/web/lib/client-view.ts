@@ -58,6 +58,22 @@ export function isClientViewConfigured(): boolean {
 }
 
 /**
+ * Rolling window (in days) of labels the portal renders. We deliberately do NOT
+ * load "the most recent N labels": two busy stores can create >2000 labels in
+ * under a month, so a fixed `take` silently drops the OLDEST days — which made
+ * the on-screen total stick at the cap and the day count come up short, and hid
+ * those days' labels from printing. A date window instead shows EVERY label in
+ * the window, so the totals and day count are always complete, while the read
+ * stays bounded: it rides the @@index([tenantId, createdAt desc]) and the
+ * `take` in loadClientView is only a safety backstop. Override on Render with
+ * CLIENT_VIEW_WINDOW_DAYS (default 90) to widen/narrow the history shown.
+ */
+export function getClientViewWindowDays(): number {
+  const n = Number(process.env.CLIENT_VIEW_WINDOW_DAYS);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 90;
+}
+
+/**
  * Constant-time token check for the LEGACY single-token (env) portal. Returns
  * false when unconfigured so a missing secret never accidentally allows access.
  * Both sides are hashed first, which sidesteps the equal-length requirement of
@@ -142,15 +158,26 @@ export async function loadClientView(tenantIds: string[]): Promise<{
 }> {
   if (tenantIds.length === 0) return { stores: [], labels: [] };
 
+  // Rolling window: show every (downloadable) label created in the last N days,
+  // not a fixed "most recent 2000" — see getClientViewWindowDays() for why.
+  const since = new Date(
+    Date.now() - getClientViewWindowDays() * 24 * 60 * 60 * 1000,
+  );
+
   const [tenants, rows] = await Promise.all([
     db.tenant.findMany({
       where: { id: { in: tenantIds } },
       select: { id: true, name: true, shopifyStoreUrl: true },
     }),
     db.label.findMany({
-      where: { tenantId: { in: tenantIds }, pdfPath: { not: null } },
+      where: {
+        tenantId: { in: tenantIds },
+        pdfPath: { not: null },
+        createdAt: { gte: since },
+      },
       orderBy: { createdAt: 'desc' },
-      take: 2000,
+      // Safety backstop only; the date window above is the real bound.
+      take: 50000,
       select: {
         id: true,
         tenantId: true,
