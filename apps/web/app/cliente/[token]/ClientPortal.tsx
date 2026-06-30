@@ -33,9 +33,14 @@ import {
   ArrowDownUp,
   ArrowUp,
   ArrowDown,
+  Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import type { ClientViewStore, ClientViewLabel } from '@/lib/client-view';
+import type {
+  ClientViewStore,
+  ClientViewLabel,
+  ClientViewCounts,
+} from '@/lib/client-view';
 
 const TZ = 'America/Montevideo';
 
@@ -57,6 +62,8 @@ const timeFmt = new Intl.DateTimeFormat('es-UY', {
   hour: '2-digit',
   minute: '2-digit',
 });
+/** Thousands-grouped integers for the billing counter (es-UY uses "." groups). */
+const nf = new Intl.NumberFormat('es-UY', { maximumFractionDigits: 0 });
 
 /** Distinct accent per store. Class strings are literal so Tailwind keeps them. */
 const STORE_PALETTE = [
@@ -149,10 +156,12 @@ export function ClientPortal({
   token,
   stores,
   labels,
+  counts,
 }: {
   token: string;
   stores: ClientViewStore[];
   labels: ClientViewLabel[];
+  counts: ClientViewCounts;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -531,6 +540,67 @@ export function ClientPortal({
                   </button>
                 )}
               </div>
+            </section>
+
+            {/* Billing counter — permanent shipment count (rows, not PDFs), so it
+                never drops when old PDFs are purged. For invoicing. */}
+            <section className="mb-5">
+              <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-white/40">
+                <Receipt className="h-3.5 w-3.5" />
+                Envíos facturados
+              </div>
+              <div className="flex flex-wrap items-stretch gap-2">
+                {stores.map((s) => {
+                  const color = colorByStore.get(s.id)!;
+                  const c = counts.byStore[s.id] ?? { total: 0, month: 0 };
+                  return (
+                    <div
+                      key={s.id}
+                      className={cn(
+                        'rounded-xl border bg-white/[0.03] px-3.5 py-2.5',
+                        color.cardBorder,
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn('h-2 w-2 rounded-full', color.dot)} />
+                        <span className={cn('text-xs font-medium', color.text)}>
+                          {s.name}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-baseline gap-1.5">
+                        <span className="text-xl font-semibold tabular-nums text-white">
+                          {nf.format(c.total)}
+                        </span>
+                        <span className="text-xs text-white/40">en total</span>
+                      </div>
+                      <div className="text-xs text-white/50">
+                        {nf.format(c.month)} este mes
+                      </div>
+                    </div>
+                  );
+                })}
+                {stores.length > 1 && (
+                  <div className="rounded-xl border border-cyan-400/30 bg-cyan-500/[0.08] px-3.5 py-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <Package className="h-3.5 w-3.5 text-cyan-300" />
+                      <span className="text-xs font-medium text-cyan-200">Total</span>
+                    </div>
+                    <div className="mt-1 flex items-baseline gap-1.5">
+                      <span className="text-xl font-semibold tabular-nums text-white">
+                        {nf.format(counts.total)}
+                      </span>
+                      <span className="text-xs text-white/40">envíos</span>
+                    </div>
+                    <div className="text-xs text-white/50">
+                      {nf.format(counts.month)} este mes
+                    </div>
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 text-xs text-white/30">
+                Envíos con guía DAC emitida. Es un contador permanente: se mantiene
+                aunque se borren los PDF viejos.
+              </p>
             </section>
 
             {/* Sort control */}

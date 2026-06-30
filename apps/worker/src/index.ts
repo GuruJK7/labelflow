@@ -19,6 +19,7 @@ import { processAdUploadJob } from './ads/upload-job';
 import { processAdMonitorJob } from './ads/monitor-job';
 import { processRecoverMessage } from './recover/process-message';
 import { startReconciliationLoop, runReconciliation } from './jobs/reconcile.job';
+import { runPdfRetention, startPdfRetentionLoop } from './jobs/pdf-retention.job';
 import { flushWorkerAnalytics } from './analytics';
 
 // Emit memory usage every 60 s so we can catch leaks / OOM risk in Render
@@ -419,6 +420,13 @@ async function main(): Promise<void> {
 
   // Start reconciliation loop (auto-fixes FAILED labels every 30 min)
   startReconciliationLoop();
+
+  // Purge label PDFs past the retention window on boot, then daily. Only the
+  // stored file is deleted; the Label row (and the billing counter) is kept.
+  runPdfRetention().catch((err) =>
+    logger.error({ error: (err as Error).message }, '[PdfRetention] Boot-time run failed'),
+  );
+  startPdfRetentionLoop();
 
   // Memory telemetry so we can spot leaks / OOM risk in Render logs.
   startMemoryLogging();

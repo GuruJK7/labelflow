@@ -170,3 +170,50 @@ export async function downloadBulkXlsxFromStorage(
   logger.info({ storagePath, sizeBytes: buffer.length }, 'Bulk xlsx downloaded from Supabase Storage');
   return { buffer, error: null };
 }
+
+/**
+ * Deletes label PDFs from Supabase Storage by their storage paths (the value
+ * kept in Label.pdfPath, e.g. "{tenantId}/{YYYY-MM-DD}/{labelId}.pdf").
+ * Used by the PDF retention job. Supabase caps a single remove() at 1000 keys,
+ * so the caller batches well under that.
+ *
+ * Returns `deleted` = how many objects Supabase actually removed (the length of
+ * the response `data`), which can be LESS than `paths.length` when some keys
+ * were already absent (dangling references) — that is NOT an error and we log a
+ * warning for visibility. A non-null `error` means the whole call failed (the
+ * caller then leaves pdfPath set and retries next run). With the service-role
+ * key, per-object permission failures don't occur, so a no-error response means
+ * every requested key is now absent from Storage and its row can be cleared.
+ */
+export async function removeLabelPdfs(
+  paths: string[],
+): Promise<{ deleted: number; error: string | null }> {
+  if (paths.length === 0) return { deleted: 0, error: null };
+  const config = getConfig();
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase.storage
+    .from(config.SUPABASE_STORAGE_BUCKET)
+    .remove(paths);
+
+  if (error) {
+    logger.error(
+      { error: error.message, count: paths.length },
+      'Failed to remove label PDFs from Supabase',
+    );
+    return { deleted: 0, error: error.message };
+  }
+
+  const deleted = data?.length ?? 0;
+  if (deleted < paths.length) {
+    logger.warn(
+      { requested: paths.length, deleted },
+      '[PdfRetention] Some PDFs were already absent in Storage (dangling refs) — clearing rows anyway',
+    );
+  }
+  logger.info(
+    { deleted, requested: paths.length },
+    'Removed expired label PDFs from Supabase Storage',
+  );
+  return { deleted, error: null };
+}
