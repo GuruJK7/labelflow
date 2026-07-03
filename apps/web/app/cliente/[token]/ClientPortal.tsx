@@ -1015,10 +1015,16 @@ export function ClientPortal({
                                   </div>
                                 </div>
                                 <div className="flex shrink-0 items-center gap-1">
+                                  {/* Icon-only so it never squeezes the order
+                                      number ("Impresa" + "Completada" side by
+                                      side truncated it to "#68…"). */}
                                   {printed && (
-                                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300">
+                                    <span
+                                      title="Impresa"
+                                      aria-label="Impresa"
+                                      className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/10 p-1 text-emerald-300"
+                                    >
                                       <CheckCircle2 className="h-3 w-3" />
-                                      Impresa
                                     </span>
                                   )}
                                   <span
