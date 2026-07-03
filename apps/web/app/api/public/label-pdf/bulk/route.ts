@@ -22,6 +22,7 @@ import { apiError } from '@/lib/api-utils';
 import {
   resolveClientToken,
   getClientViewLabelPdfPaths,
+  markClientViewLabelsPrinted,
 } from '@/lib/client-view';
 
 // Merging many networked PDFs can take longer than the 10s Hobby default.
@@ -119,8 +120,12 @@ export async function POST(req: NextRequest) {
 
     let failedCount = 0;
     const merged = await PDFDocument.create();
+    // Labels whose PDF actually made it into the merged document — only these
+    // get stamped as printed (a fetch/merge failure keeps the label pending).
+    const mergedIds: string[] = [];
 
-    for (const result of fetchResults) {
+    for (let i = 0; i < fetchResults.length; i++) {
+      const result = fetchResults[i];
       if (result.status !== 'fulfilled') {
         failedCount++;
         console.error('Portal bulk PDF fetch error:', result.reason);
@@ -132,6 +137,7 @@ export async function POST(req: NextRequest) {
         });
         const pages = await merged.copyPages(source, source.getPageIndices());
         for (const page of pages) merged.addPage(page);
+        mergedIds.push(targets[i].id);
       } catch (err) {
         failedCount++;
         console.error('Portal bulk PDF merge error:', err);
@@ -143,6 +149,14 @@ export async function POST(req: NextRequest) {
     }
 
     const mergedBytes = await merged.save();
+
+    // Stamp printedAt (first time only) on everything that was served, so the
+    // portal shows them as printed. Never blocks the PDF response.
+    try {
+      await markClientViewLabelsPrinted(mergedIds, tenantIds);
+    } catch (err) {
+      console.error('Portal bulk printedAt stamp error:', err);
+    }
 
     const download = req.nextUrl.searchParams.get('download') === 'true';
     const disposition = download

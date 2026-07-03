@@ -501,6 +501,11 @@ model Label {
   errorMessage     String?
   emailSent        Boolean     @default(false)
   emailSentAt      DateTime?
+  // Client-portal print tracking: set the FIRST time the portal serves this
+  // label's PDF (single download or bulk print/download), or toggled manually
+  // from the portal. Null = not printed/downloaded yet. A timestamp (not a
+  // boolean) so the portal can also show WHEN it was printed.
+  printedAt        DateTime?
 
   // M-2 (2026-04-21 audit): reconcile used to count "auto-retry:<orderName>"
   // entries in RunLog with a `contains` substring scan to decide whether a

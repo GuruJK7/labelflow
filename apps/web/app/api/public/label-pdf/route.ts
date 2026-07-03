@@ -14,6 +14,7 @@ import { apiError } from '@/lib/api-utils';
 import {
   resolveClientToken,
   getClientViewLabelPdfPath,
+  markClientViewLabelsPrinted,
 } from '@/lib/client-view';
 
 export async function GET(req: NextRequest) {
@@ -27,6 +28,14 @@ export async function GET(req: NextRequest) {
 
     const pdfPath = await getClientViewLabelPdfPath(id, tenantIds);
     if (!pdfPath) return apiError('Etiqueta no encontrada', 404);
+
+    // Stamp printedAt (first time only) so the portal can show which labels
+    // were already downloaded/printed. Never blocks the download itself.
+    try {
+      await markClientViewLabelsPrinted([id], tenantIds);
+    } catch (err) {
+      console.error('Public PDF printedAt stamp error:', err);
+    }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

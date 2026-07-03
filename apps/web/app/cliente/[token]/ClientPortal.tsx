@@ -34,6 +34,8 @@ import {
   ArrowUp,
   ArrowDown,
   Receipt,
+  CheckCircle2,
+  RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type {
@@ -133,6 +135,9 @@ function locationLabel(l: ClientViewLabel): string {
   return parts.length > 0 ? parts.join(', ') : 'Sin localidad';
 }
 
+/** Printed-state filter: everything, only still-pending, or only printed. */
+type PrintFilter = 'all' | 'pending' | 'printed';
+
 /** Sort keys the client can pick. Default is order number so the cards land in
  * predictable #-order; the rest let the client re-sort a day at a glance. */
 type SortKey = 'order' | 'time' | 'city' | 'store' | 'status';
@@ -179,6 +184,51 @@ export function ClientPortal({
     null,
   );
   const [bulkError, setBulkError] = useState<string | null>(null);
+
+  // Printed-state tracking. The server stamps printedAt whenever it serves a
+  // PDF; this local override gives instant feedback (print/download/manual
+  // toggle) without a refetch. Server truth wins again on refresh.
+  const [printFilter, setPrintFilter] = useState<PrintFilter>('all');
+  const [printedOverride, setPrintedOverride] = useState<
+    Record<string, boolean>
+  >({});
+
+  const isPrinted = useMemo(() => {
+    return (l: ClientViewLabel): boolean =>
+      printedOverride[l.id] ?? l.printedAt !== null;
+  }, [printedOverride]);
+
+  function overridePrinted(ids: string[], printed: boolean) {
+    setPrintedOverride((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[id] = printed;
+      return next;
+    });
+  }
+
+  /** Manual toggle: optimistic flip + persist; reverts to server truth on error. */
+  async function setPrintedManual(ids: string[], printed: boolean) {
+    overridePrinted(ids, printed);
+    try {
+      const res = await fetch(
+        `/api/public/label-printed?token=${encodeURIComponent(token)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids, printed }),
+        },
+      );
+      if (!res.ok) throw new Error(String(res.status));
+    } catch {
+      // Drop the optimistic override so the cards fall back to server truth.
+      setPrintedOverride((prev) => {
+        const next = { ...prev };
+        for (const id of ids) delete next[id];
+        return next;
+      });
+      setBulkError('No se pudo actualizar el estado de impresión.');
+    }
+  }
 
   const colorByStore = useMemo(() => {
     const m = new Map<string, StoreColor>();
@@ -244,7 +294,9 @@ export function ClientPortal({
     return m;
   }, [labels]);
 
-  const filtered = useMemo(() => {
+  // Store + search filters, BEFORE the printed-state filter, so the
+  // pending/printed counters always describe the whole visible set.
+  const filteredBase = useMemo(() => {
     const q = query.trim().toLowerCase();
     return labels.filter((l) => {
       if (!selected.has(l.storeId)) return false;
@@ -257,6 +309,24 @@ export function ClientPortal({
       );
     });
   }, [labels, selected, query]);
+
+  // Pending = printable but never printed; printed = stamped (auto or manual).
+  const printCounts = useMemo(() => {
+    let pending = 0;
+    let printed = 0;
+    for (const l of filteredBase) {
+      if (isPrinted(l)) printed++;
+      else if (l.hasPdf) pending++;
+    }
+    return { pending, printed };
+  }, [filteredBase, isPrinted]);
+
+  const filtered = useMemo(() => {
+    if (printFilter === 'all') return filteredBase;
+    return filteredBase.filter((l) =>
+      printFilter === 'printed' ? isPrinted(l) : l.hasPdf && !isPrinted(l),
+    );
+  }, [filteredBase, printFilter, isPrinted]);
 
   const groups = useMemo(() => {
     const map = new Map<string, ClientViewLabel[]>();
@@ -375,6 +445,9 @@ export function ClientPortal({
         setBulkError(msg ?? 'No se pudieron preparar las etiquetas.');
         return;
       }
+
+      // The server already stamped these as printed; reflect it right away.
+      overridePrinted(ids, true);
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -646,6 +719,83 @@ export function ClientPortal({
               </div>
             </section>
 
+            {/* Printed-state filter: the "what's left to print" control. */}
+            <section className="mb-5">
+              <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-white/40">
+                <Printer className="h-3.5 w-3.5" />
+                Impresión
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => setPrintFilter('all')}
+                  aria-pressed={printFilter === 'all'}
+                  className={cn(
+                    'rounded-full border px-3.5 py-1.5 text-sm font-medium transition',
+                    printFilter === 'all'
+                      ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-50 ring-1 ring-cyan-400/40'
+                      : 'border-white/10 bg-white/[0.02] text-white/40 hover:bg-white/[0.05]',
+                  )}
+                >
+                  Todas
+                </button>
+                <button
+                  onClick={() => setPrintFilter('pending')}
+                  aria-pressed={printFilter === 'pending'}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition',
+                    printFilter === 'pending'
+                      ? 'border-amber-400/60 bg-amber-500/20 text-amber-50 ring-1 ring-amber-400/40'
+                      : 'border-white/10 bg-white/[0.02] text-white/40 hover:bg-white/[0.05]',
+                  )}
+                >
+                  Pendientes
+                  <span
+                    className={cn(
+                      'rounded-full px-1.5 py-0.5 text-xs',
+                      printFilter === 'pending'
+                        ? 'bg-black/20'
+                        : 'bg-white/5 text-white/30',
+                    )}
+                  >
+                    {printCounts.pending}
+                  </span>
+                </button>
+                <button
+                  onClick={() => setPrintFilter('printed')}
+                  aria-pressed={printFilter === 'printed'}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition',
+                    printFilter === 'printed'
+                      ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-50 ring-1 ring-emerald-400/40'
+                      : 'border-white/10 bg-white/[0.02] text-white/40 hover:bg-white/[0.05]',
+                  )}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Impresas
+                  <span
+                    className={cn(
+                      'rounded-full px-1.5 py-0.5 text-xs',
+                      printFilter === 'printed'
+                        ? 'bg-black/20'
+                        : 'bg-white/5 text-white/30',
+                    )}
+                  >
+                    {printCounts.printed}
+                  </span>
+                </button>
+                {printCounts.pending === 0 && printCounts.printed > 0 && (
+                  <span className="inline-flex items-center gap-1.5 text-sm text-emerald-300">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Todo impreso
+                  </span>
+                )}
+              </div>
+              <p className="mt-2 text-xs text-white/30">
+                Las etiquetas se marcan como impresas automáticamente al
+                imprimirlas o descargarlas, desde cualquier dispositivo.
+              </p>
+            </section>
+
             {/* Search + summary + select-all */}
             <section className="mb-6 flex flex-wrap items-center justify-between gap-3">
               <div className="relative w-full sm:max-w-xs">
@@ -714,6 +864,9 @@ export function ClientPortal({
                     .filter((l) => l.hasPdf)
                     .map((l) => l.id);
                   const dayState = groupState(dayPdfIds);
+                  const dayPending = items.filter(
+                    (l) => l.hasPdf && !isPrinted(l),
+                  ).length;
 
                   return (
                     <section key={dayKey}>
@@ -728,6 +881,19 @@ export function ClientPortal({
                         <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs text-white/50">
                           {items.length} {items.length === 1 ? 'etiqueta' : 'etiquetas'}
                         </span>
+                        {dayPdfIds.length > 0 &&
+                          (dayPending > 0 ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-300">
+                              <Printer className="h-3 w-3" />
+                              {dayPending}{' '}
+                              {dayPending === 1 ? 'pendiente' : 'pendientes'}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Día impreso
+                            </span>
+                          ))}
                         {/* Per-store breakdown for this day */}
                         <div className="flex flex-wrap items-center gap-1.5">
                           {stores
@@ -796,6 +962,7 @@ export function ClientPortal({
                           const badge = statusBadge(l.status);
                           const selectable = l.hasPdf;
                           const isSel = selectedIds.has(l.id);
+                          const printed = isPrinted(l);
                           return (
                             <article
                               key={l.id}
@@ -806,6 +973,7 @@ export function ClientPortal({
                                 'relative overflow-hidden rounded-xl border bg-white/[0.03] p-4 transition',
                                 color.cardBorder,
                                 selectable && 'cursor-pointer hover:bg-white/[0.05]',
+                                printed && !isSel && 'opacity-60 hover:opacity-90',
                                 isSel &&
                                   'bg-cyan-500/[0.06] ring-2 ring-cyan-400/60',
                               )}
@@ -846,14 +1014,22 @@ export function ClientPortal({
                                     </span>
                                   </div>
                                 </div>
-                                <span
-                                  className={cn(
-                                    'shrink-0 rounded-full border px-2 py-0.5 text-xs',
-                                    badge.cls,
+                                <div className="flex shrink-0 items-center gap-1">
+                                  {printed && (
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300">
+                                      <CheckCircle2 className="h-3 w-3" />
+                                      Impresa
+                                    </span>
                                   )}
-                                >
-                                  {badge.label}
-                                </span>
+                                  <span
+                                    className={cn(
+                                      'rounded-full border px-2 py-0.5 text-xs',
+                                      badge.cls,
+                                    )}
+                                  >
+                                    {badge.label}
+                                  </span>
+                                </div>
                               </div>
 
                               <div className="mt-2.5 space-y-1.5 pl-1.5 text-sm text-white/60">
@@ -881,20 +1057,53 @@ export function ClientPortal({
                                 <span className="text-xs text-white/35">
                                   {timeFmt.format(new Date(l.createdAt))}
                                 </span>
-                                {l.hasPdf ? (
-                                  <a
-                                    href={pdfHref(l.id)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-500/20"
-                                  >
-                                    <Download className="h-3.5 w-3.5" />
-                                    PDF
-                                  </a>
-                                ) : (
-                                  <span className="text-xs text-white/25">Sin PDF</span>
-                                )}
+                                <div className="flex items-center gap-1.5">
+                                  {l.hasPdf && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPrintedManual([l.id], !printed);
+                                      }}
+                                      title={
+                                        printed
+                                          ? 'Volver a pendiente (ej.: salió mal la impresión)'
+                                          : 'Marcar como impresa sin abrir el PDF'
+                                      }
+                                      className={cn(
+                                        'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition',
+                                        printed
+                                          ? 'border-white/10 bg-white/[0.03] text-white/50 hover:bg-white/[0.08] hover:text-white/80'
+                                          : 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20',
+                                      )}
+                                    >
+                                      {printed ? (
+                                        <RotateCcw className="h-3.5 w-3.5" />
+                                      ) : (
+                                        <CheckCircle2 className="h-3.5 w-3.5" />
+                                      )}
+                                      {printed ? 'Desmarcar' : 'Marcar'}
+                                    </button>
+                                  )}
+                                  {l.hasPdf ? (
+                                    <a
+                                      href={pdfHref(l.id)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        // The server stamps printedAt when it
+                                        // serves this PDF; mirror it locally.
+                                        overridePrinted([l.id], true);
+                                      }}
+                                      className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-500/20"
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                      PDF
+                                    </a>
+                                  ) : (
+                                    <span className="text-xs text-white/25">Sin PDF</span>
+                                  )}
+                                </div>
                               </div>
                             </article>
                           );
@@ -907,9 +1116,10 @@ export function ClientPortal({
             )}
 
             <footer className="mt-10 border-t border-white/[0.06] pt-4 text-center text-xs text-white/30">
-              Tocá una etiqueta para seleccionarla, o usá “Imprimir día”. Las
-              etiquetas se actualizan automáticamente — tocá “Actualizar” para ver
-              las más recientes.
+              Tocá una etiqueta para seleccionarla, o usá “Imprimir día”. Al
+              imprimir o descargar, las etiquetas quedan marcadas como impresas —
+              usá el filtro “Pendientes” para ver lo que falta. Tocá “Actualizar”
+              para ver las más recientes.
             </footer>
           </>
         )}

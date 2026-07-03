@@ -39,6 +39,9 @@ export interface ClientViewLabel {
   status: string;
   createdAt: string; // ISO 8601
   hasPdf: boolean;
+  // When the portal first served this label's PDF (or it was marked manually).
+  // Null = still pending print. ISO 8601.
+  printedAt: string | null;
 }
 
 /**
@@ -222,6 +225,7 @@ export async function loadClientView(tenantIds: string[]): Promise<{
         status: true,
         createdAt: true,
         pdfPath: true,
+        printedAt: true,
       },
     }),
     // Permanent billing counter (all-time): shipments with a DAC guía. Counts
@@ -267,6 +271,7 @@ export async function loadClientView(tenantIds: string[]): Promise<{
     status: r.status,
     createdAt: r.createdAt.toISOString(),
     hasPdf: !!r.pdfPath,
+    printedAt: r.printedAt ? r.printedAt.toISOString() : null,
   }));
 
   const totalMap = new Map(totalByStore.map((g) => [g.tenantId, g._count]));
@@ -300,6 +305,46 @@ export async function getClientViewLabelPdfPath(
     select: { pdfPath: true },
   });
   return label?.pdfPath ?? null;
+}
+
+/**
+ * Auto-mark: stamps printedAt on the given labels the FIRST time their PDF is
+ * served by the portal (single download or bulk print/download). Only fills
+ * null values so the original first-print time is never overwritten, and only
+ * within the caller's tenant allow-list. Best-effort by design: callers must
+ * never fail a PDF response because the stamp failed.
+ */
+export async function markClientViewLabelsPrinted(
+  ids: string[],
+  tenantIds: string[],
+): Promise<void> {
+  if (ids.length === 0 || tenantIds.length === 0) return;
+  await db.label.updateMany({
+    where: {
+      id: { in: ids },
+      tenantId: { in: tenantIds },
+      printedAt: null,
+    },
+    data: { printedAt: new Date() },
+  });
+}
+
+/**
+ * Manual toggle from the portal UI: force the printed state on (stamp now) or
+ * off (clear it, e.g. the printer jammed and the label must show as pending
+ * again). Scoped to the tenant allow-list; returns how many rows changed.
+ */
+export async function setClientViewLabelsPrinted(
+  ids: string[],
+  tenantIds: string[],
+  printed: boolean,
+): Promise<number> {
+  if (ids.length === 0 || tenantIds.length === 0) return 0;
+  const res = await db.label.updateMany({
+    where: { id: { in: ids }, tenantId: { in: tenantIds } },
+    data: { printedAt: printed ? new Date() : null },
+  });
+  return res.count;
 }
 
 /**
