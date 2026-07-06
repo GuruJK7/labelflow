@@ -133,11 +133,17 @@ export async function POST(req: Request) {
   const slug = `ae-${slugify(sellerSlug || ownerEmail.split('@')[0])}`;
 
   try {
-    // 1) User estable por email (único). Cliente self-service: sin passwordHash
-    //    (no loguea en LabelFlow; opera desde AutoEnvía).
+    // 1) User DEDICADO por cliente AutoEnvía (email sintético namespaceado por el
+    //    slug). NO usamos el ownerEmail real: si coincide con un usuario LabelFlow
+    //    existente (p.ej. el operador tiene tiendas Shopify), el tenant ae- quedaría
+    //    bajo ese usuario y su credit-holder sería el tenant MÁS VIEJO (holder trap):
+    //    el scheduler leería isActive/créditos de ese otro tenant y NUNCA encolaría
+    //    el job de esta fuente. Con un usuario dedicado, el tenant ae- es SU PROPIO
+    //    holder → isActive:true + créditos se leen de él. Sin passwordHash (no loguea).
+    const provisionEmail = `${slug}@autoenvia.provision`;
     const user = await db.user.upsert({
-      where: { email: ownerEmail },
-      create: { email: ownerEmail, name: sellerSlug || ownerEmail.split('@')[0] },
+      where: { email: provisionEmail },
+      create: { email: provisionEmail, name: `AutoEnvía · ${sellerSlug || ownerEmail}` },
       update: {},
       select: { id: true },
     });
