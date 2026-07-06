@@ -73,10 +73,15 @@ const MAX_INFLIGHT = Number(process.env.BRIDGE_MAX_INFLIGHT) || 3;
 // via `env: { ...process.env }`. If Claude ever shelled out (Read/Write tools
 // shouldn't, but defense in depth), the bridge secret would have been visible
 // to the child. Whitelist the handful of vars the CLI genuinely needs.
+// SUBSCRIPTION-ONLY (2026-07-06): ANTHROPIC_API_KEY se saca a propósito de la
+// whitelist. Con la key en el env, el `claude` CLI la usa para autenticar (API
+// paga / billing por key) EN VEZ del login de suscripción (Claude Max, $0). Si
+// esa key está vencida da 401 y el bridge devuelve ok:false → el worker cae a la
+// API. Sin la key, el CLI usa SIEMPRE la sesión de suscripción de ~/.claude.
+// Requisito en el Mac mini: `claude` logueado con la suscripción (no API key).
 const CLAUDE_ENV_WHITELIST = new Set([
   'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR',
   'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM',
-  'ANTHROPIC_API_KEY',
   'CLAUDE_BIN', 'CLAUDE_CONFIG_DIR',
 ]);
 function buildClaudeChildEnv() {
