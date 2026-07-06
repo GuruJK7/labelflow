@@ -69,3 +69,50 @@ export async function markDashboardOrdersLoaded(
   );
   return (res.data?.updated as number) ?? 0;
 }
+
+/** Registro ENRIQUECIDO de una etiqueta ya generada en DAC. Formato que consume
+ *  el receptor `/api/v1/orders/loaded` de AutoEnvía (rama `results`): guarda la
+ *  guía + el PDF en el bucket de AutoEnvía para que el cliente imprima desde SU
+ *  dashboard. `order_id` = uuid del dashboard. */
+export interface DashboardLabelResult {
+  order_id: string;
+  status: 'labeled';
+  tracking?: string | null;
+  pdf_base64?: string | null;
+  dac_account_used?: string | null;
+}
+
+// El body con PDFs en base64 puede ser grande; el receptor corre en Vercel
+// (límite de body ~4.5MB). Mandamos en chunks chicos: ~8 PDFs (~70KB c/u en
+// base64) ≈ 0.6MB por POST, bien por debajo del límite.
+const WRITEBACK_CHUNK = 8;
+
+/**
+ * Writeback ENRIQUECIDO: envía guía + PDF (base64) de las órdenes con etiqueta
+ * imprimible, en chunks. Idempotente por `order_id` (el receptor upsertea por
+ * orden). Incluye también `ids` en cada chunk por compat (un receptor viejo que
+ * sólo lea `ids` igual marca cargado). Devuelve cuántas quedaron `labeled`.
+ *
+ * NO reemplaza a markDashboardOrdersLoaded: sólo se usa para las órdenes con PDF
+ * real. Las que no tienen PDF (duplicados, descarga fallida) siguen marcándose
+ * por la vía legacy `{ ids }`, preservando el comportamiento actual sin regresión.
+ */
+export async function pushDashboardLabels(
+  baseUrl: string,
+  token: string,
+  results: DashboardLabelResult[],
+): Promise<number> {
+  if (!results.length) return 0;
+  let labeled = 0;
+  for (let i = 0; i < results.length; i += WRITEBACK_CHUNK) {
+    const chunk = results.slice(i, i + WRITEBACK_CHUNK);
+    const ids = chunk.map((r) => r.order_id);
+    const res = await axios.post(
+      `${trim(baseUrl)}/api/v1/orders/loaded`,
+      { results: chunk, ids },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: TIMEOUT_MS },
+    );
+    labeled += (res.data?.labeled as number) ?? (res.data?.updated as number) ?? 0;
+  }
+  return labeled;
+}

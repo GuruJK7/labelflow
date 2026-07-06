@@ -32,7 +32,7 @@ import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { createStepLogger } from '../logger';
 import logger from '../logger';
 import { sleep } from '../utils';
-import { getConfirmedDashboardOrders, markDashboardOrdersLoaded } from '../dashboard/orders';
+import { getConfirmedDashboardOrders, markDashboardOrdersLoaded, pushDashboardLabels, type DashboardLabelResult } from '../dashboard/orders';
 import { toShopifyOrder, stableNumericId } from '../dashboard/adapter';
 
 const DELAY_BETWEEN_ORDERS_MS = 500;
@@ -69,6 +69,9 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
   let dashboardUrl: string | null = null;
   let dashboardToken: string | null = null;
   const loadedIds: string[] = [];
+  // Órdenes con guía + PDF imprimible → writeback ENRIQUECIDO (guía + PDF) a
+  // AutoEnvía, para que el cliente imprima desde su dashboard. El resto va legacy.
+  const labelResults: DashboardLabelResult[] = [];
 
   const slog = createStepLogger(jobId, tenantId);
   const config = getConfig();
@@ -214,11 +217,13 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
         });
 
         // PDF (best-effort, no bloquea el éxito)
+        let pdfBase64: string | null = null;
         if (result.guia && !result.guia.startsWith('PENDING-')) {
           try {
             const labelLocalPath = await downloadLabel(page, result.guia, tmpDir, dacUsername, dacPassword);
             if (labelLocalPath && fs.existsSync(labelLocalPath)) {
               const pdfBuffer = fs.readFileSync(labelLocalPath);
+              pdfBase64 = pdfBuffer.toString('base64'); // para el writeback enriquecido a AutoEnvía
               const upload = await uploadLabelPdf(tenantId, labelRecord.id, pdfBuffer);
               if (!upload.error) await db.label.update({ where: { id: labelRecord.id }, data: { pdfPath: upload.path, status: 'COMPLETED' } });
               try { fs.unlinkSync(labelLocalPath); } catch { /* best-effort */ }
@@ -228,6 +233,17 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
           }
         }
 
+        // Con guía real + PDF descargado → vía ENRIQUECIDA (con PDF). Sin PDF
+        // (duplicado, descarga fallida) → sólo loadedIds (vía legacy, sin cambios).
+        if (pdfBase64 && result.guia && !result.guia.startsWith('PENDING-')) {
+          labelResults.push({
+            order_id: dashboardId,
+            status: 'labeled',
+            tracking: result.guia,
+            pdf_base64: pdfBase64,
+            dac_account_used: dacUsername,
+          });
+        }
         loadedIds.push(dashboardId);
         successCount++;
         // Checkpoint del successCount por orden (mirror Shopify): si un crash
@@ -256,11 +272,23 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
       if (i < orders.length - 1) await sleep(DELAY_BETWEEN_ORDERS_MS);
     }
 
-    // STEP 6: marcar cargadas en el dashboard (best-effort; el dedup de DAC es el backstop)
+    // STEP 6: marcar cargadas en el dashboard (best-effort; el dedup de DAC es el backstop).
+    //  6a: las que tienen PDF imprimible → writeback ENRIQUECIDO (guía + PDF), para
+    //      que el cliente imprima desde AutoEnvía.
+    //  6b: el resto (duplicados, PDF que no descargó) → writeback LEGACY { ids },
+    //      comportamiento actual sin cambios.
     if (loadedIds.length) {
+      const enrichedIds = new Set(labelResults.map((r) => r.order_id));
+      const legacyIds = loadedIds.filter((id) => !enrichedIds.has(id));
       try {
-        const updated = await markDashboardOrdersLoaded(dashboardUrl, dashboardToken, loadedIds);
-        slog.info('dashboard', `Marcadas como cargadas en el dashboard: ${updated}`);
+        if (labelResults.length) {
+          const labeled = await pushDashboardLabels(dashboardUrl, dashboardToken, labelResults);
+          slog.info('dashboard', `Etiquetas enviadas a AutoEnvía con PDF: ${labeled}`);
+        }
+        if (legacyIds.length) {
+          const updated = await markDashboardOrdersLoaded(dashboardUrl, dashboardToken, legacyIds);
+          slog.info('dashboard', `Marcadas como cargadas (sin PDF): ${updated}`);
+        }
       } catch (markErr) {
         slog.error('dashboard', `No se pudieron marcar cargadas (se reintentará el próximo run; createShipment dedup evita doble-envío): ${(markErr as Error).message}`);
       }
