@@ -140,6 +140,15 @@ export async function fulfillOrderWithTracking(
   guia: string,
   dacTrackingUrl?: string,
   forceAll = false,
+  /**
+   * Reparto propio (2026-08-24): un envio que NO pasa por DAC no puede
+   * anunciarse con un link de rastreo de DAC. Sin estas opciones, el fallback
+   * de abajo arma `DAC_TRACKING_BASE_URL?guia=LF-XXXX` y el cliente recibe por
+   * mail un seguimiento que en DAC no existe. Con `sinUrl` el fulfillment sale
+   * sin campo `url` y con la transportadora que se le indique.
+   * Omitir el parametro deja el comportamiento anterior intacto.
+   */
+  opts?: { company?: string; sinUrl?: boolean },
 ): Promise<void> {
   if (!guia || guia.startsWith('PENDING-')) {
     throw new Error(`Cannot fulfill order ${orderId}: invalid guia "${guia}"`);
@@ -155,8 +164,10 @@ export async function fulfillOrderWithTracking(
   }
 
   const fulfillmentOrderIds = await getFulfillmentOrderIds(client, orderId, forceAll);
-  // Use the real DAC tracking URL if available, otherwise construct fallback
-  const trackingUrl = dacTrackingUrl || `${DAC_TRACKING_BASE_URL}?guia=${encodeURIComponent(guia)}`;
+  // Use the real DAC tracking URL if available, otherwise construct fallback.
+  // `sinUrl` corta el fallback: es para envios que no estan en DAC.
+  const trackingUrl = dacTrackingUrl
+    || (opts?.sinUrl ? undefined : `${DAC_TRACKING_BASE_URL}?guia=${encodeURIComponent(guia)}`);
 
   let data;
   try {
@@ -167,8 +178,8 @@ export async function fulfillOrderWithTracking(
         })),
         tracking_info: {
           number: guia,
-          url: trackingUrl,
-          company: 'Other',
+          ...(trackingUrl ? { url: trackingUrl } : {}),
+          company: opts?.company ?? 'Other',
         },
         notify_customer: true,
       },

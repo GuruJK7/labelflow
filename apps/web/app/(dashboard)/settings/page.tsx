@@ -33,6 +33,8 @@ interface SettingsData {
   autoPrintEnabled?: boolean;
   orderSortDirection?: string;
   skuInObservations?: boolean;
+  selfDeliveryEnabled?: boolean;
+  selfDeliveryDepartments?: string[] | null;
   allowedProductTypes?: string[] | null;
   // Cache shape evolved 2026-04-24 from `string` to `{ title, type, vendor }`.
   // Keep both supported here so the page works with old + new tenants until
@@ -67,6 +69,10 @@ export default function SettingsPage() {
   const [orderSort, setOrderSort] = useState<'oldest_first' | 'newest_first'>('oldest_first');
   // Per-tenant opt-in: write product SKU(s) into the DAC label "Observaciones" field.
   const [skuInObservations, setSkuInObservations] = useState(false);
+  // Reparto propio: departamentos que despacha la propia tienda. Los pedidos
+  // con destino ahi NO se cargan en DAC — LabelFlow emite su propia etiqueta.
+  const [selfDeliveryEnabled, setSelfDeliveryEnabled] = useState(false);
+  const [selfDeliveryDepartments, setSelfDeliveryDepartments] = useState<string[]>(['Maldonado']);
   // Persisted whitelist (entries can be product titles, types, or vendors —
   // worker matches all three case-insensitively).
   const [allowedProductTypes, setAllowedProductTypes] = useState<string[]>([]);
@@ -82,6 +88,16 @@ export default function SettingsPage() {
   // reciben una nota en Shopify para que el operador los cargue a mano en DAC.
   // Las columnas paymentCardBrand / paymentCardLast4 / paymentCardCvc siguen
   // en el schema por si hace falta rollback, pero la UI ya no las toca.
+
+  // Los 19 departamentos, en la MISMA grafia (sin tildes) que usa
+  // apps/worker/src/dac/uruguay-geo.ts. Si aca se escribieran con tilde, el
+  // worker no los reconoceria y el filtro no excluiria nada.
+  const DEPARTAMENTOS = [
+    'Artigas', 'Canelones', 'Cerro Largo', 'Colonia', 'Durazno', 'Flores',
+    'Florida', 'Lavalleja', 'Maldonado', 'Montevideo', 'Paysandu', 'Rio Negro',
+    'Rivera', 'Rocha', 'Salto', 'San Jose', 'Soriano', 'Tacuarembo',
+    'Treinta y Tres',
+  ];
 
   const DAYS = [
     { value: 0, label: 'Dom', short: 'D' },
@@ -197,6 +213,13 @@ export default function SettingsPage() {
           parseCronToSchedule(cron, data.scheduleSlots);
           setOrderSort(data.orderSortDirection ?? 'oldest_first');
           setSkuInObservations(data.skuInObservations ?? false);
+          setSelfDeliveryEnabled(data.selfDeliveryEnabled ?? false);
+          {
+            const deps = (data.selfDeliveryDepartments ?? []) as string[];
+            // Lista vacia en la DB pero el flag prendido seria una config muda:
+            // mostramos Maldonado como punto de partida.
+            setSelfDeliveryDepartments(deps.length > 0 ? deps : ['Maldonado']);
+          }
           const stored = (data.allowedProductTypes ?? []) as string[];
           setAllowedProductTypes(stored);
           setConsolidateConsecutiveOrders(data.consolidateConsecutiveOrders ?? false);
@@ -547,11 +570,73 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          {/* Reparto propio — excluir departamentos de DAC (opt-in por tienda) */}
+          <div className="mb-5 pt-5 border-t border-white/[0.06]">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-zinc-800/30 border border-white/[0.04]">
+              <div className="pr-4">
+                <p className="text-sm text-white font-medium">Reparto propio (no cargar en DAC)</p>
+                <p className="text-[10px] text-zinc-500 mt-0.5">
+                  {selfDeliveryEnabled
+                    ? 'Los pedidos con destino en los departamentos elegidos no se cargan en DAC: LabelFlow les emite su propia etiqueta y no se consume credito de envio'
+                    : 'Desactivado — todos los pedidos se cargan en DAC'}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelfDeliveryEnabled(!selfDeliveryEnabled)}
+                className={`relative shrink-0 w-11 h-6 rounded-full transition-colors duration-200 ${selfDeliveryEnabled ? 'bg-cyan-600' : 'bg-zinc-700'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${selfDeliveryEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+              </button>
+            </div>
+
+            {selfDeliveryEnabled && (
+              <div className="mt-3 p-3 rounded-lg bg-zinc-800/30 border border-white/[0.04]">
+                <p className="text-[11px] text-zinc-400 mb-2">Departamentos que reparte la tienda</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {DEPARTAMENTOS.map((dep) => {
+                    const activo = selfDeliveryDepartments.includes(dep);
+                    return (
+                      <button
+                        key={dep}
+                        onClick={() =>
+                          setSelfDeliveryDepartments(
+                            activo
+                              ? selfDeliveryDepartments.filter((d) => d !== dep)
+                              : [...selfDeliveryDepartments, dep],
+                          )
+                        }
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors border ${
+                          activo
+                            ? 'bg-cyan-600/20 border-cyan-600/40 text-cyan-300'
+                            : 'bg-zinc-800/50 border-white/[0.06] text-zinc-500 hover:text-zinc-300'
+                        }`}
+                      >
+                        {dep}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-zinc-600 mt-2">
+                  {selfDeliveryDepartments.length === 0
+                    ? 'Sin departamentos elegidos — no se excluye ningun pedido de DAC'
+                    : `Los pedidos a ${selfDeliveryDepartments.join(', ')} los despacha la tienda`}
+                </p>
+                <p className="text-[10px] text-zinc-600 mt-1.5">
+                  Si el destino da senales contradictorias (ej. la ciudad dice un departamento y el
+                  codigo postal otro), el pedido se carga en DAC igual: es preferible una guia de mas
+                  que un paquete que nadie despacha.
+                </p>
+              </div>
+            )}
+          </div>
+
           <button
             onClick={() => saveSection('orderProcessing', {
               orderSortDirection: orderSort,
               allowedProductTypes: allowedProductTypes.length > 0 ? allowedProductTypes : null,
               skuInObservations,
+              selfDeliveryEnabled,
+              selfDeliveryDepartments: selfDeliveryDepartments.length > 0 ? selfDeliveryDepartments : null,
             })}
             disabled={saving === 'orderProcessing'}
             className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"

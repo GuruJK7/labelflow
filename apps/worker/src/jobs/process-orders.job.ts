@@ -20,7 +20,10 @@ import {
 } from '../dac/remitente-manual';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
-import { getDepartmentForCity, getDepartmentForCityAsync } from '../dac/uruguay-geo';
+import { getDepartmentForCity, getDepartmentForCityAsync, getDepartmentFromZip } from '../dac/uruguay-geo';
+import { evaluarZonaRepartoPropio } from '../self-delivery/zone';
+import { procesarPedidosRepartoPropio } from '../self-delivery/process';
+import { cerrarRenderer } from '../self-delivery/render';
 import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
 import {
@@ -454,6 +457,80 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       if (productFiltered > 0) {
         slog.info('filter', `Product filter: excluded ${productFiltered} orders (allowed: ${allowedProductTypes.join(', ')})`);
       }
+    }
+
+    // ── Reparto propio (2026-08-24) ─────────────────────────────────────
+    //
+    // Los pedidos cuyo destino cae en un departamento que el tenant reparte por
+    // su cuenta NO se cargan en DAC: se les emite una etiqueta LabelFlow y
+    // siguen su camino. Todo esto queda inerte si selfDeliveryEnabled es false,
+    // que es el default.
+    //
+    // Va DESPUES de los filtros y ANTES del `slice(0, effectiveLimit)` a
+    // proposito: si recortara el lote primero, un dia con muchos pedidos de la
+    // zona propia consumiria todos los cupos y los envios de DAC se quedarian
+    // sin procesar (es el incidente de batch-starvation de 2026-05-11).
+    //
+    // El credito NO se descuenta: representa un envio despachado por DAC, y
+    // aca no hay ninguno.
+    const depsPropios: string[] = Array.isArray(tenant.selfDeliveryDepartments)
+      ? (tenant.selfDeliveryDepartments as unknown[]).map(String).filter(Boolean)
+      : [];
+    if (tenant.selfDeliveryEnabled && depsPropios.length > 0 && orders.length > 0) {
+      const paraDac: typeof orders = [];
+      const paraReparto: Array<{ order: (typeof orders)[number]; veredicto: ReturnType<typeof evaluarZonaRepartoPropio> }> = [];
+
+      for (const order of orders) {
+        const addr = order.shipping_address;
+        if (!addr) { paraDac.push(order); continue; }
+        // Misma resolucion de departamento que usa el resto del job, para que
+        // el veredicto no pueda contradecir a lo que despues se escribe en Label.
+        const porCiudad = (await getDepartmentForCityAsync(addr.city).catch(() => undefined)) ?? null;
+        const porZip = getDepartmentFromZip(addr.zip);
+        const veredicto = evaluarZonaRepartoPropio(addr, depsPropios, porCiudad, porZip);
+        if (veredicto.esRepartoPropio) paraReparto.push({ order, veredicto });
+        else paraDac.push(order);
+      }
+
+      if (paraReparto.length > 0) {
+        slog.info(
+          'reparto-propio',
+          `${paraReparto.length} pedido(s) en zona de reparto propio (${depsPropios.join(', ')}) — no se cargan en DAC, se les emite etiqueta LabelFlow`,
+          { pedidos: paraReparto.slice(0, 10).map((x) => ({ order: x.order.name, motivo: x.veredicto.motivo })) },
+        );
+
+        let fulfillModeRP = tenant.fulfillMode ?? 'on';
+        try {
+          const raw = await db.$queryRaw<{ fulfillMode: string }[]>`SELECT "fulfillMode" FROM "Tenant" WHERE id = ${tenantId}`;
+          if (raw[0]?.fulfillMode) fulfillModeRP = raw[0].fulfillMode;
+        } catch { /* queda el valor del tenant */ }
+
+        try {
+          const res = await procesarPedidosRepartoPropio(paraReparto, {
+            tenantId,
+            jobId,
+            nombreTienda: tenant.storeName ?? tenant.name,
+            shopifyClient,
+            testMode,
+            debeFulfillear: fulfillModeRP !== 'off',
+            forceAll: fulfillModeRP === 'always',
+            log: {
+              info: (paso, msg, meta) => slog.info(paso, msg, meta as never),
+              warn: (paso, msg, meta) => slog.warn(paso, msg, meta as never),
+              error: (paso, msg, meta) => slog.error(paso, msg, meta as never),
+              success: (paso, msg, meta) => slog.success(paso, msg, meta as never),
+            },
+          });
+          slog.info('reparto-propio', `Reparto propio: ${res.procesados} etiqueta(s) emitida(s), ${res.fallidos} fallida(s)`);
+        } catch (errRP) {
+          // Nunca tumbar la corrida de DAC por un problema del reparto propio.
+          slog.error('reparto-propio', `El pipeline de reparto propio falló entero: ${(errRP as Error).message}`);
+        } finally {
+          await cerrarRenderer().catch(() => {});
+        }
+      }
+
+      orders = paraDac;
     }
 
     totalOrders = orders.length;

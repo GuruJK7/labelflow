@@ -40,6 +40,11 @@ const updateSchema = z.object({
   })).max(10).optional(),
   autoFulfillEnabled: z.boolean().optional(),
   skuInObservations: z.boolean().optional(),
+  // Reparto propio: departamentos que el tenant despacha por su cuenta.
+  // Se validan contra la lista real en el worker (uruguay-geo); aca solo se
+  // acota el tamano para que no entre un array arbitrario.
+  selfDeliveryEnabled: z.boolean().optional(),
+  selfDeliveryDepartments: z.array(z.string().min(1).max(40)).max(19).nullable().optional(),
   fulfillMode: z.enum(['off', 'on', 'always']).optional(),
   consolidateConsecutiveOrders: z.boolean().optional(),
   consolidationWindowMinutes: z.number().min(1).max(1440).optional(),
@@ -90,6 +95,8 @@ export async function GET() {
       apiKey: true,
       autoFulfillEnabled: true,
       skuInObservations: true,
+      selfDeliveryEnabled: true,
+      selfDeliveryDepartments: true,
       fulfillMode: true,
       defaultPrinter: true,
       autoPrintEnabled: true,
@@ -177,6 +184,8 @@ export async function GET() {
     scheduleSlots: tenant.scheduleSlots,
     autoFulfillEnabled: tenant.autoFulfillEnabled,
     skuInObservations: tenant.skuInObservations,
+    selfDeliveryEnabled: tenant.selfDeliveryEnabled,
+    selfDeliveryDepartments: tenant.selfDeliveryDepartments,
     fulfillMode: tenant.fulfillMode,
     isActive: tenant.isActive,
     subscriptionStatus: tenant.subscriptionStatus,
@@ -233,6 +242,8 @@ export async function PUT(req: NextRequest) {
   if (input.scheduleSlots !== undefined) data.scheduleSlots = input.scheduleSlots;
   if (input.autoFulfillEnabled !== undefined) data.autoFulfillEnabled = input.autoFulfillEnabled;
   if (input.skuInObservations !== undefined) data.skuInObservations = input.skuInObservations;
+  if (input.selfDeliveryEnabled !== undefined) data.selfDeliveryEnabled = input.selfDeliveryEnabled;
+  if (input.selfDeliveryDepartments !== undefined) data.selfDeliveryDepartments = input.selfDeliveryDepartments;
   if (input.fulfillMode !== undefined) {
     data.fulfillMode = input.fulfillMode;
     // Sync legacy boolean field

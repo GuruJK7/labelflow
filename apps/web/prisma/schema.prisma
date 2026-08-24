@@ -43,11 +43,11 @@ model User {
   // 1:1 users keep working because the auth.ts JWT callback falls back
   // to "first tenant for this userId" when no explicit tenantId is in
   // the token.
-  tenants                  Tenant[]
-  accounts                 Account[]
-  sessions                 Session[]
-  emailVerificationTokens  EmailVerificationToken[]
-  passwordResetTokens      PasswordResetToken[]
+  tenants                 Tenant[]
+  accounts                Account[]
+  sessions                Session[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
 }
 
 /// Single-use email verification tokens for the post-signup confirmation
@@ -75,7 +75,7 @@ model User {
 model EmailVerificationToken {
   id        String    @id @default(cuid())
   userId    String
-  tokenHash String    @unique  // SHA-256 hex of the plaintext token
+  tokenHash String    @unique // SHA-256 hex of the plaintext token
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
@@ -110,7 +110,7 @@ model EmailVerificationToken {
 model PasswordResetToken {
   id        String    @id @default(cuid())
   userId    String
-  tokenHash String    @unique  // SHA-256 hex of the plaintext token
+  tokenHash String    @unique // SHA-256 hex of the plaintext token
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
@@ -157,8 +157,8 @@ model PasswordResetToken {
 /// reason + because some actions are global admin (cross-tenant).
 model AuditLog {
   id         String   @id @default(cuid())
-  userId     String?  // nullable: pre-auth events (failed login) have no userId
-  tenantId   String?  // nullable: account-level events have no tenant context
+  userId     String? // nullable: pre-auth events (failed login) have no userId
+  tenantId   String? // nullable: account-level events have no tenant context
   // Action name. Keep human-readable, stable across deploys, lower-snake.
   // Examples: 'user.login.success', 'user.login.failed',
   //   'user.password.reset.requested', 'user.password.reset.confirmed',
@@ -251,16 +251,16 @@ model Tenant {
   storeName String?
 
   // Config
-  paymentThreshold    Float   @default(4000)
-  paymentRuleEnabled  Boolean @default(false)
-  cronSchedule        String  @default("*/15 * * * *")
-  scheduleSlots       Json?   // [{ time: "09:00", maxOrders: 0 }] — 0 means unlimited
-  timezone            String  @default("America/Montevideo")
-  maxOrdersPerRun     Int     @default(20)
-  isActive            Boolean @default(false)
+  paymentThreshold   Float   @default(4000)
+  paymentRuleEnabled Boolean @default(false)
+  cronSchedule       String  @default("*/15 * * * *")
+  scheduleSlots      Json? // [{ time: "09:00", maxOrders: 0 }] — 0 means unlimited
+  timezone           String  @default("America/Montevideo")
+  maxOrdersPerRun    Int     @default(20)
+  isActive           Boolean @default(false)
 
   // Order processing
-  orderSortDirection  String  @default("oldest_first")
+  orderSortDirection  String @default("oldest_first")
   allowedProductTypes Json?
   productTypeCache    Json?
 
@@ -336,13 +336,13 @@ model Tenant {
   //   primero este pool al despachar; sólo cuando llega a 0 toca shipmentCredits.
   //   Esto preserva el saldo pago del usuario y permite mostrar "+10 envíos
   //   bonus" en la UI sin contaminar la métrica de créditos comprados.
-  referralCode          String? @unique
+  referralCode          String?  @unique
   referredByCode        String?
   referredById          String?
-  referrer              Tenant? @relation("TenantReferrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referrer              Tenant?  @relation("TenantReferrals", fields: [referredById], references: [id], onDelete: SetNull)
   referrals             Tenant[] @relation("TenantReferrals")
-  referralCreditsEarned Int     @default(0)
-  referralBonusCredits  Int     @default(0)
+  referralCreditsEarned Int      @default(0)
+  referralBonusCredits  Int      @default(0)
 
   // Fulfillment
   autoFulfillEnabled Boolean @default(true) // Mark orders as "Preparado" in Shopify after DAC shipment
@@ -350,11 +350,11 @@ model Tenant {
 
   // DAC label observations: append product SKU(s) to the "Observaciones" field
   // Per-tenant opt-in (default OFF). Format: "SKU: <value> xN, <value2> xM".
-  skuInObservations  Boolean @default(false)
+  skuInObservations Boolean @default(false)
 
   // Consecutive order consolidation
   consolidateConsecutiveOrders Boolean @default(false) // When same customer places 2+ orders in window, 2nd+ = REMITENTE
-  consolidationWindowMinutes   Int     @default(30)    // Window in minutes to look back for same-customer orders
+  consolidationWindowMinutes   Int     @default(30) // Window in minutes to look back for same-customer orders
 
   // Auto payment on DAC (Plexo gateway) for REMITENTE shipments
   // When enabled, worker drives the Plexo "saved-card + CVC" flow after clicking
@@ -366,15 +366,31 @@ model Tenant {
   paymentCardLast4   String? // e.g. "3294" — used to find the right saved-card radio
   paymentCardCvc     String? // AES-256-GCM encrypted
 
+  // ── REPARTO PROPIO (self-delivery) ──
+  //
+  // Departamentos que el tenant reparte por su cuenta. Un pedido cuyo destino
+  // cae ahi NO se carga en DAC: no se crea guia, no se gasta credito y no se
+  // toca el navegador de DAC. En su lugar LabelFlow emite su propia etiqueta
+  // (ver apps/worker/src/self-delivery/).
+  //
+  // selfDeliveryEnabled es el interruptor y esta OFF por defecto a proposito:
+  // desplegar esto no cambia el comportamiento de ningun tenant existente.
+  //
+  // selfDeliveryDepartments guarda los departamentos en la grafia canonica de
+  // uruguay-geo (sin tildes), ej ["Maldonado"]. Null o lista vacia => no se
+  // excluye nada aunque el flag este en true (fail-safe hacia DAC).
+  selfDeliveryEnabled     Boolean @default(false)
+  selfDeliveryDepartments Json?
+
   // Printing
   defaultPrinter   String?
   autoPrintEnabled Boolean @default(false)
 
   // AI Address Resolver — fallback for ambiguous deterministic resolutions
-  aiResolverEnabled    Boolean @default(true)  // on by default; opt-out per tenant
-  aiResolverDailyLimit Int     @default(100)   // max AI calls per day
-  aiResolverDailyUsed  Int     @default(0)     // reset daily at midnight UY
-  aiResolverLastReset  DateTime?               // last time daily counter was reset
+  aiResolverEnabled    Boolean   @default(true) // on by default; opt-out per tenant
+  aiResolverDailyLimit Int       @default(100) // max AI calls per day
+  aiResolverDailyUsed  Int       @default(0) // reset daily at midnight UY
+  aiResolverLastReset  DateTime? // last time daily counter was reset
 
   user    User     @relation(fields: [userId], references: [id])
   jobs    Job[]
@@ -397,10 +413,10 @@ model Tenant {
   dacSession DacSession?
 
   // Credit-pack billing
-  creditPurchases       CreditPurchase[]
+  creditPurchases      CreditPurchase[]
   // Referrals: this tenant as referrer (received credits) / as referee (paid)
-  referralAccrualsRecv  ReferralCreditAccrual[] @relation("ReferralAccrualReferrer")
-  referralAccrualsPaid  ReferralCreditAccrual[] @relation("ReferralAccrualReferee")
+  referralAccrualsRecv ReferralCreditAccrual[] @relation("ReferralAccrualReferrer")
+  referralAccrualsPaid ReferralCreditAccrual[] @relation("ReferralAccrualReferee")
 
   @@index([userId])
   @@index([slug])
@@ -480,19 +496,19 @@ enum JobTrigger {
 // --- LABELS ---
 
 model Label {
-  id               String      @id @default(cuid())
-  tenantId         String
-  jobId            String?
-  shopifyOrderId   String
-  shopifyOrderName String
-  customerName     String
-  customerEmail    String?
-  customerPhone    String?
-  deliveryAddress  String
-  city             String
-  department       String
-  totalUyu         Float
-  paymentType      PaymentType
+  id                   String      @id @default(cuid())
+  tenantId             String
+  jobId                String?
+  shopifyOrderId       String
+  shopifyOrderName     String
+  customerName         String
+  customerEmail        String?
+  customerPhone        String?
+  deliveryAddress      String
+  city                 String
+  department           String
+  totalUyu             Float
+  paymentType          PaymentType
   // Auto-payment outcome on the DAC/Plexo side. Relevant only when
   // paymentType = REMITENTE AND tenant.paymentAutoEnabled = true.
   // Values:
@@ -500,21 +516,21 @@ model Label {
   //   "paid"             — Plexo confirmed charge + redirect back to DAC ok
   //   "pending_manual"   — needs human to complete payment (3DS, timeout, etc.)
   //   "failed_rejected"  — Plexo explicitly rejected (bad CVC, no funds, etc.)
-  paymentStatus        String?   @default("not_required")
-  paymentFailureReason String?   // "3ds_required" | "card_rejected" | "timeout" | "saved_card_not_found" | "selector_failure"
+  paymentStatus        String?     @default("not_required")
+  paymentFailureReason String? // "3ds_required" | "card_rejected" | "timeout" | "saved_card_not_found" | "selector_failure"
   paymentAttemptedAt   DateTime?
-  dacGuia          String?     @unique
-  pdfPath          String?
-  pdfUrl           String?
-  status           LabelStatus @default(PENDING)
-  errorMessage     String?
-  emailSent        Boolean     @default(false)
-  emailSentAt      DateTime?
+  dacGuia              String?     @unique
+  pdfPath              String?
+  pdfUrl               String?
+  status               LabelStatus @default(PENDING)
+  errorMessage         String?
+  emailSent            Boolean     @default(false)
+  emailSentAt          DateTime?
   // Client-portal print tracking: set the FIRST time the portal serves this
   // label's PDF (single download or bulk print/download), or toggled manually
   // from the portal. Null = not printed/downloaded yet. A timestamp (not a
   // boolean) so the portal can also show WHEN it was printed.
-  printedAt        DateTime?
+  printedAt            DateTime?
 
   // M-2 (2026-04-21 audit): reconcile used to count "auto-retry:<orderName>"
   // entries in RunLog with a `contains` substring scan to decide whether a
@@ -528,10 +544,10 @@ model Label {
   // 0 — worst case they get MAX_AUTO_RETRIES extra attempts the first
   // time reconcile sees them after the migration, which is an acceptable
   // one-time blip.
-  autoRetryCount   Int         @default(0)
+  autoRetryCount Int @default(0)
 
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
   job    Job?   @relation(fields: [jobId], references: [id])
@@ -940,7 +956,7 @@ model AddressResolution {
   resolvedBarrio          String? // null if not Montevideo or not detectable
   resolvedCity            String
   resolvedDepartment      String
-  resolvedDeliveryAddress String  // clean street + number, no extras
+  resolvedDeliveryAddress String // clean street + number, no extras
   resolvedObs             String  @default("") // apto, piso, references, etc.
 
   // Metadata
@@ -948,12 +964,12 @@ model AddressResolution {
   confidence  ResolutionConfidence
   aiModel     String? // e.g. "claude-haiku-4-5-20251001"
   aiReasoning String? // AI's own explanation for audit
-  aiCostUsd   Float?  // cost of this single call
+  aiCostUsd   Float? // cost of this single call
 
   // Feedback from DAC processing (updated post-label)
   dacAccepted Boolean? // null=pending, true=worked, false=rejected
-  dacGuia     String?  // guia if successful
-  dacError    String?  // error if rejected
+  dacGuia     String? // guia if successful
+  dacError    String? // error if rejected
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -998,11 +1014,11 @@ model AddressResolution {
 // nothing."
 model WebhookReceipt {
   id         String   @id @default(cuid())
-  source     String   // 'shopify' | 'mercadopago' | 'whatsapp' | 'stripe' — scope the (topic, id) namespace
-  topic      String   // e.g. 'orders/paid' or 'checkouts/update'
-  webhookId  String   // X-Shopify-Webhook-Id (or equivalent for other sources)
-  shopDomain String?  // 'acme.myshopify.com' — helpful for debugging, not part of the unique key
-  tenantId   String?  // nullable: webhook may arrive for an unknown tenant
+  source     String // 'shopify' | 'mercadopago' | 'whatsapp' | 'stripe' — scope the (topic, id) namespace
+  topic      String // e.g. 'orders/paid' or 'checkouts/update'
+  webhookId  String // X-Shopify-Webhook-Id (or equivalent for other sources)
+  shopDomain String? // 'acme.myshopify.com' — helpful for debugging, not part of the unique key
+  tenantId   String? // nullable: webhook may arrive for an unknown tenant
   receivedAt DateTime @default(now())
 
   @@unique([source, topic, webhookId]) // the idempotency key
@@ -1029,7 +1045,7 @@ model WebhookReceipt {
 model DacSession {
   id               String   @id @default(cuid())
   tenantId         String   @unique
-  cookiesEncrypted String   // AES-256-GCM ciphertext of JSON.stringify(cookies[])
+  cookiesEncrypted String // AES-256-GCM ciphertext of JSON.stringify(cookies[])
   savedAt          DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -1063,13 +1079,13 @@ model PendingShipment {
   id                String                @id @default(cuid())
   tenantId          String
   shopifyOrderId    String
-  labelId           String?               // set once the Label row is known
+  labelId           String? // set once the Label row is known
   idempotencyKey    String                @unique // sha256(tenantId + shopifyOrderId)
   submitAttemptedAt DateTime              @default(now())
   resolvedAt        DateTime?
-  resolvedGuia      String?               // set when status=RESOLVED
+  resolvedGuia      String? // set when status=RESOLVED
   status            PendingShipmentStatus @default(PENDING)
-  errorNote         String?               // operator note on how it was fulfilled
+  errorNote         String? // operator note on how it was fulfilled
 
   @@unique([tenantId, shopifyOrderId])
   @@index([status, submitAttemptedAt])
@@ -1077,9 +1093,9 @@ model PendingShipment {
 }
 
 enum PendingShipmentStatus {
-  PENDING   // Finalizar clicked, guía extraction still in-flight or failed
-  RESOLVED  // extraction succeeded; resolvedGuia is the real DAC guía
-  ORPHANED  // stayed PENDING past threshold — operator must reconcile manually
+  PENDING // Finalizar clicked, guía extraction still in-flight or failed
+  RESOLVED // extraction succeeded; resolvedGuia is the real DAC guía
+  ORPHANED // stayed PENDING past threshold — operator must reconcile manually
 }
 
 // --- CLASSIFIER METRICS (observability) ---
@@ -1100,7 +1116,7 @@ enum PendingShipmentStatus {
 model ClassifierMetric {
   id        String   @id @default(cuid())
   tenantId  String
-  dayYmd    String   // UY-local YYYY-MM-DD
+  dayYmd    String // UY-local YYYY-MM-DD
   green     Int      @default(0)
   yellow    Int      @default(0)
   red       Int      @default(0)
@@ -1145,13 +1161,13 @@ model ClassifierMetric {
 //     expired-takeover path.
 model DacProcessingLease {
   tenantId   String   @id
-  holderId   String   // "hostname#pid#random8" — identifies the worker instance
-  jobId      String?  // the Job this lease was acquired for (audit trail)
+  holderId   String // "hostname#pid#random8" — identifies the worker instance
+  jobId      String? // the Job this lease was acquired for (audit trail)
   acquiredAt DateTime @default(now())
   expiresAt  DateTime // bumped by the heartbeat timer every HEARTBEAT_MS
 
-  @@index([expiresAt])      // sweeper / takeover queries scan by expiry
-  @@index([holderId])       // ops queries: "what does worker X hold right now?"
+  @@index([expiresAt]) // sweeper / takeover queries scan by expiry
+  @@index([holderId]) // ops queries: "what does worker X hold right now?"
 }
 
 // --- GDPR COMPLIANCE (Shopify mandatory privacy webhooks) ---
@@ -1174,18 +1190,18 @@ model DacProcessingLease {
 // payload is the raw JSON body Shopify sent — keep it as-is for audit even
 // if the shape changes later.
 model GdprRequest {
-  id           String            @id @default(cuid())
-  topic        GdprRequestTopic
-  shopDomain   String
-  tenantId     String?           // nullable — shop/redact can arrive AFTER uninstall
-  customerId   String?           // present on customers/* events
-  customerEmail String?          // present on customers/* events, useful for ops
-  payload      Json              // the raw webhook body — source of truth for audit
-  webhookId    String?           // X-Shopify-Webhook-Id — cross-ref with WebhookReceipt
-  status       GdprRequestStatus @default(PENDING)
-  receivedAt   DateTime          @default(now())
-  fulfilledAt  DateTime?         // when we finished the data export / deletion
-  notes        String?           // operator notes on how it was fulfilled
+  id            String            @id @default(cuid())
+  topic         GdprRequestTopic
+  shopDomain    String
+  tenantId      String? // nullable — shop/redact can arrive AFTER uninstall
+  customerId    String? // present on customers/* events
+  customerEmail String? // present on customers/* events, useful for ops
+  payload       Json // the raw webhook body — source of truth for audit
+  webhookId     String? // X-Shopify-Webhook-Id — cross-ref with WebhookReceipt
+  status        GdprRequestStatus @default(PENDING)
+  receivedAt    DateTime          @default(now())
+  fulfilledAt   DateTime? // when we finished the data export / deletion
+  notes         String? // operator notes on how it was fulfilled
 
   @@index([status, receivedAt])
   @@index([tenantId, receivedAt(sort: Desc)])
@@ -1199,9 +1215,9 @@ enum GdprRequestTopic {
 }
 
 enum GdprRequestStatus {
-  PENDING      // received — waiting for operator / sweep to fulfill
-  FULFILLED    // data exported / deleted
-  FAILED       // fulfillment errored; see `notes`
+  PENDING // received — waiting for operator / sweep to fulfill
+  FULFILLED // data exported / deleted
+  FAILED // fulfillment errored; see `notes`
 }
 
 // --- SHIPPING RULES ---
@@ -1218,15 +1234,15 @@ enum GdprRequestStatus {
 // `config` is JSON because each `ruleType` has its own schema; validation lives
 // in apps/web/lib/shipping-rules.ts and apps/worker/src/rules/shipping.ts.
 model ShippingRule {
-  id        String   @id @default(cuid())
+  id        String           @id @default(cuid())
   tenantId  String
-  name      String                           // human label, shown in dashboard
+  name      String // human label, shown in dashboard
   ruleType  ShippingRuleType
-  config    Json                             // rule-specific params (see types in code)
-  priority  Int      @default(100)           // lower = evaluated earlier
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  config    Json // rule-specific params (see types in code)
+  priority  Int              @default(100) // lower = evaluated earlier
+  isActive  Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -1235,11 +1251,11 @@ model ShippingRule {
 }
 
 enum ShippingRuleType {
-  THRESHOLD_TOTAL      // if order total (UYU) > minTotalUyu → REMITENTE
-  CONSECUTIVE_ORDERS   // if same customer ordered within windowMinutes → REMITENTE
-  NTH_SHIPMENT_FREE    // every Nth shipment to same customer → REMITENTE
-  CUSTOMER_TAG         // if Shopify order/customer has tag → REMITENTE
-  ITEM_COUNT           // if order has more than minItems line items → REMITENTE
+  THRESHOLD_TOTAL // if order total (UYU) > minTotalUyu → REMITENTE
+  CONSECUTIVE_ORDERS // if same customer ordered within windowMinutes → REMITENTE
+  NTH_SHIPMENT_FREE // every Nth shipment to same customer → REMITENTE
+  CUSTOMER_TAG // if Shopify order/customer has tag → REMITENTE
+  ITEM_COUNT // if order has more than minItems line items → REMITENTE
 }
 
 // --- CREDIT PACKS (pay-as-you-go) ---
@@ -1263,14 +1279,14 @@ enum ShippingRuleType {
 model CreditPurchase {
   id                  String               @id @default(cuid())
   tenantId            String
-  packId              String                                  // 'pack_10' | ... | 'pack_1000'
-  shipments           Int                                     // 10 / 50 / 100 / 250 / 500 / 1000
-  pricePerShipmentUyu Float                                   // 20 / 17 / 15 / 12 / 10 / 7
-  totalPriceUyu       Float                                   // shipments * pricePer
+  packId              String // 'pack_10' | ... | 'pack_1000'
+  shipments           Int // 10 / 50 / 100 / 250 / 500 / 1000
+  pricePerShipmentUyu Float // 20 / 17 / 15 / 12 / 10 / 7
+  totalPriceUyu       Float // shipments * pricePer
   status              CreditPurchaseStatus @default(PENDING)
-  mpPreferenceId      String?              @unique            // creado al iniciar checkout
-  mpPaymentId         String?              @unique            // dado por webhook payment.approved
-  mpExternalRef       String               @unique            // `pkg|<purchaseId>` — match key del webhook
+  mpPreferenceId      String?              @unique // creado al iniciar checkout
+  mpPaymentId         String?              @unique // dado por webhook payment.approved
+  mpExternalRef       String               @unique // `pkg|<purchaseId>` — match key del webhook
   paidAt              DateTime?
   refundedAt          DateTime?
   createdAt           DateTime             @default(now())
@@ -1284,10 +1300,10 @@ model CreditPurchase {
 }
 
 enum CreditPurchaseStatus {
-  PENDING        // checkout creado, esperando confirmación de pago
-  PAID           // MP confirmó: créditos acreditados al tenant
-  FAILED         // MP rechazó el pago
-  REFUNDED       // chargeback / reembolso manual
+  PENDING // checkout creado, esperando confirmación de pago
+  PAID // MP confirmó: créditos acreditados al tenant
+  FAILED // MP rechazó el pago
+  REFUNDED // chargeback / reembolso manual
 }
 
 // ReferralCreditAccrual: acreditación de 20% al referidor cuando un
@@ -1295,14 +1311,14 @@ enum CreditPurchaseStatus {
 // previene doble-acreditación si el webhook MP se procesa dos veces.
 model ReferralCreditAccrual {
   id               String   @id @default(cuid())
-  referrerTenantId String                                 // recibe créditos gratis
-  refereeTenantId  String                                 // hizo la compra
-  sourcePurchaseId String   @unique                       // 1 acreditación por compra
-  shipmentsAccrued Int                                    // floor(0.2 * shipments comprados)
+  referrerTenantId String // recibe créditos gratis
+  refereeTenantId  String // hizo la compra
+  sourcePurchaseId String   @unique // 1 acreditación por compra
+  shipmentsAccrued Int // floor(0.2 * shipments comprados)
   createdAt        DateTime @default(now())
 
   referrer       Tenant         @relation("ReferralAccrualReferrer", fields: [referrerTenantId], references: [id], onDelete: Cascade)
-  referee        Tenant         @relation("ReferralAccrualReferee",  fields: [refereeTenantId],  references: [id], onDelete: Cascade)
+  referee        Tenant         @relation("ReferralAccrualReferee", fields: [refereeTenantId], references: [id], onDelete: Cascade)
   sourcePurchase CreditPurchase @relation(fields: [sourcePurchaseId], references: [id], onDelete: Cascade)
 
   @@index([referrerTenantId, createdAt(sort: Desc)])
