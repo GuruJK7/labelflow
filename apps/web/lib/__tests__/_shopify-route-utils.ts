@@ -66,6 +66,23 @@ export function fakeTenantFindFirst(rows: FakeTenantRow[]) {
   };
 }
 
+/**
+ * `tenant.updateMany` de mentira con el MISMO evaluador de `where` que
+ * `fakeTenantFindFirst`: aplica `data` a las filas que coinciden y devuelve
+ * `{ count }`. Muta las filas para que el test pueda mirar qué quedó tocado y
+ * qué no.
+ */
+export function fakeTenantUpdateMany(rows: FakeTenantRow[]) {
+  return async (args: {
+    where: Record<string, unknown>;
+    data: Partial<FakeTenantRow>;
+  }): Promise<{ count: number }> => {
+    const tocadas = rows.filter((r) => coincide(r, args.where));
+    for (const r of tocadas) Object.assign(r, args.data);
+    return { count: tocadas.length };
+  };
+}
+
 function coincide(r: FakeTenantRow, where: Record<string, unknown>): boolean {
   for (const [k, v] of Object.entries(where)) {
     switch (k) {

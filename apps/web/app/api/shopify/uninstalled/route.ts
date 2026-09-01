@@ -60,8 +60,14 @@ export async function POST(req: NextRequest) {
   // ni reconectar por OAuth ni comprar otro pack. Peor en multi-tienda, donde el
   // saldo vive en el tenant más viejo: desinstalar en una tienda apagaba todas.
   // Lo encontró la revisión adversarial del 2026-09-01.
+  //
+  // Insensible a mayúsculas (D18): una fila guardada por el camino manual
+  // como `MiTienda.myshopify.com` no se encontraba con el dominio en
+  // minúsculas que manda Shopify, y el token quedaba vivo después de la
+  // desinstalación. Hasta que se aplique el UPDATE … lower() de la migración,
+  // esta es la única forma de que la limpieza le pegue a esas filas.
   await db.tenant.updateMany({
-    where: { shopifyStoreUrl: shopFromBody },
+    where: { shopifyStoreUrl: { equals: shopFromBody, mode: 'insensitive' } },
     data: { shopifyToken: null },
   });
 
