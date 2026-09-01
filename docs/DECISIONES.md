@@ -38,3 +38,24 @@ que ya está construido y verificado, gana lo verificado y se explica.
 
 ## D10 · `app/uninstalled` no toca `isActive`
 - `isActive` es el flag de facturación que lee el scheduler; apagarlo cortaba todas las fuentes del cliente y nada lo revertía. Se limpia sólo el token.
+
+## D11 · Identidad en el App Store: `shop.email` NO es identidad; una cuenta existente RECLAMA la tienda logueada
+- **Antes (PR #3 v1):** `provisionFromShopify` hacía upsert de User por el email de contacto de la tienda. Si ese email ya era cliente, la tienda se le colgaba sola. Ese email lo edita el comerciante y Shopify no lo verifica: cualquiera podía meter una tienda ajena en la cuenta de un cliente, o la tienda del comerciante quedaba bajo la cuenta de la agencia que le administra el admin.
+- **Decidido:** tienda nueva + email sin cuenta → se crea User + Tenant (`created`). Tienda nueva + email CON cuenta → no se escribe nada (`claim`): el token viaja cifrado (misma primitiva AES-256-GCM que `shopifyToken`) en la cookie `shopify_pending_install` (httpOnly, 600 s, path `/api/shopify`) y el dueño la reclama en `GET /api/shopify/claim` con sesión, dentro de una transacción que re-verifica que la tienda siga libre. Tienda ya vinculada al User de ese email → `existing` (refresca token). Vinculada a otro → `conflict`.
+- **Por qué cookie y no tabla:** D9 — nada de migraciones a prod en este turno. La cookie cifrada+autenticada da lo mismo con TTL gratis y sin token suelto en la base.
+- **Revertir:** si algún día se agrega tabla `PendingShopifyInstall`, `sealPendingInstall/openPendingInstall` se reemplazan por insert/select; el resto del flujo no cambia.
+
+## D12 · El mail de "elegí tu contraseña" sale SÓLO en `created`; `/entry` no reinicia OAuth si la tienda ya está conectada
+- **Antes:** el callback mandaba `issueAndSendPasswordResetEmail` en `created` y en `existing`, y como Shopify carga la App URL en cada apertura desde el admin, cada apertura borraba los tokens de reset vigentes y mandaba otro mail (saltando el rate limit de 5/h del endpoint).
+- **Decidido:** mail sólo con `alta.kind === 'created'`. En `/entry`, si existe Tenant con `shopifyStoreUrl == shop` y `shopifyToken` no nulo → `/login?shopify=open` sin pasar por `authorize`. Una tienda desinstalada (token en null por `app/uninstalled`) sí vuelve a instalar.
+- **Etiqueta:** que Shopify pegue a la App URL en cada apertura es conocimiento estable de la plataforma, no reconfirmado hoy en shopify.dev. Si fuera falso, D12 sigue siendo correcto (reinstalar tampoco debe mandar un reset).
+
+## D13 · Orden de la rama dashboard, higiene de cookies y destinos públicos
+- **Rama B (dashboard):** sesión → propiedad → `shop_mismatch` → `already_linked` **antes** del canje del `code` (como en main). Un `code` canjeado emite un token offline vivo; nada que pueda fallar por permisos corre después del canje. La rama A canjea primero porque sin token no se puede preguntar de quién es la tienda.
+- **Cookies:** `/install` borra `FLOW_COOKIE`; `/entry` borra `TENANT_COOKIE`; el callback rechaza `FLOW=appstore` + `TENANT` a la vez con `bad_flow`. Sin esto, un "Instalar" del App Store abandonado secuestraba el "Conectar" del dashboard dentro de los 10 minutos.
+- **Destinos:** en flujo App Store todo (éxito, `fail()`, `missing_scopes`) aterriza en `/login?shopify=<motivo>`; nunca en `/settings` (rebota sin sesión y pierde el motivo). El email nunca va en la query. Los textos viven en `lib/shopify-messages.ts` (compartido por `/settings` y `/login`). `LoginForm` honra `?next=`/`?callbackUrl=` sólo si es ruta relativa (`safeRelativePath`): sin eso, `/login` sería un open redirect.
+
+## D14 · Tenant aprovisionado desde Shopify: `apiKey` aleatoria, `referralCode`, `tosAcceptedAt` en null, slug con hash
+- `apiKey = randomBytes(32).hex` y `referralCode` como en signup, vía `lib/tenant-provision.ts` (helper compartido; signup lo usa también). `cuid()` no es criptográficamente aleatorio y `apiKey` es credencial de la API pública.
+- `tosAcceptedAt` queda **null**: el comerciante autorizó la app en Shopify, no aceptó nuestros términos. Verificado por grep que ningún gate lo lee (sólo se setea en signup, `/api/v1/tenants`, `dac-tenant` y auth Google). La aceptación en el primer login está en PENDIENTES.md.
+- Slug: handle ≤ 40 → `shop-<handle>`; > 40 → `shop-` + 31 primeros + `-` + sha256(handle)[0:8]. Antes se truncaba a 40 y dos tiendas con el mismo prefijo colisionaban en `shop_taken`. `existingByShop` y el insert van en la misma transacción; `P2002` → `conflict`.
