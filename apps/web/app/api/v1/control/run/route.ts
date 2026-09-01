@@ -16,6 +16,7 @@ import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
 import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { getPlanLimit } from '@/lib/mercadopago';
+import { checkRunGate } from '@/lib/can-run';
 
 export async function POST(req: Request) {
   const auth = await getAuthenticatedUser();
@@ -46,12 +47,18 @@ export async function POST(req: Request) {
   const holderId = await getCreditHolderTenantId(tenantId);
   const holder = await db.tenant.findUnique({
     where: { id: holderId },
-    select: { isActive: true, subscriptionStatus: true, stripePriceId: true },
+    select: {
+      isActive: true,
+      subscriptionStatus: true,
+      stripePriceId: true,
+      shipmentCredits: true,
+      referralBonusCredits: true,
+    },
   });
   if (!holder) return apiError('Tenant no encontrado', 404);
-  if (!holder.isActive || holder.subscriptionStatus !== 'ACTIVE') {
-    return apiError('Tu plan no esta activo. Activa una suscripcion para procesar pedidos.', 403);
-  }
+  // Mismo criterio que el scheduler del worker (isActive + saldo). Ver lib/can-run.ts.
+  const gate = checkRunGate(holder);
+  if (!gate.ok) return apiError(gate.message, gate.status);
 
   // Plan label limit — counted against the originating store's month, same as
   // POST /api/v1/jobs.

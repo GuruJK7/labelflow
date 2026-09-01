@@ -3,6 +3,7 @@ import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getPlanLimit } from '@/lib/mercadopago';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
+import { checkRunGate } from '@/lib/can-run';
 
 export async function POST(req: Request) {
   const auth = await getAuthenticatedTenant();
@@ -33,6 +34,8 @@ export async function POST(req: Request) {
         isActive: true,
         subscriptionStatus: true,
         stripePriceId: true,
+        shipmentCredits: true,
+        referralBonusCredits: true,
       },
     }),
     db.tenant.findUnique({
@@ -43,9 +46,10 @@ export async function POST(req: Request) {
 
   if (!holder || !originating) return apiError('Tenant no encontrado', 404);
 
-  if (!holder.isActive || holder.subscriptionStatus !== 'ACTIVE') {
-    return apiError('Tu plan no esta activo. Activa una suscripcion para procesar pedidos.', 403);
-  }
+  // Mismo criterio que el scheduler del worker (isActive + saldo), para que
+  // el botón manual no pueda volver a divergir del cron. Ver lib/can-run.ts.
+  const gate = checkRunGate(holder);
+  if (!gate.ok) return apiError(gate.message, gate.status);
 
   // Tenant alias for the rest of the function — combines holder flags
   // with originating per-store metrics so existing reads keep working.
