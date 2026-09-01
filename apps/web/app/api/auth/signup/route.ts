@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
 import { db } from '@/lib/db';
 import {
-  generateReferralCode,
   isValidReferralCodeShape,
   readReferralCookieValue,
   REFERRAL_COOKIE_NAME,
 } from '@/lib/referrals';
+import { nuevoTenantBase } from '@/lib/tenant-provision';
 import { issueAndSendVerificationEmail, resolveAppOrigin } from '@/lib/verify-email';
 import { trackServer } from '@/lib/analytics.server';
 
@@ -116,15 +115,10 @@ export async function POST(req: Request) {
       email.split('@')[0].replace(/[^a-z0-9]/gi, '-').toLowerCase() +
       '-' +
       Date.now().toString(36);
-    let myReferralCode: string | null = null;
-    for (let attempt = 0; attempt < 5 && !myReferralCode; attempt++) {
-      const candidate = generateReferralCode(baseSlug);
-      const collision = await db.tenant.findUnique({
-        where: { referralCode: candidate },
-        select: { id: true },
-      });
-      if (!collision) myReferralCode = candidate;
-    }
+    // apiKey aleatoria + referralCode libre. Mismo helper que usa el alta
+    // desde el Shopify App Store, para que ningún camino de alta quede con
+    // una apiKey adivinable (cuid) o sin código de referido.
+    const base = await nuevoTenantBase(db, baseSlug);
 
     // Bono de referido para el referee: si entró con un código válido (cookie
     // firmada, no body), arranca con 10 envíos GRATIS extra en un pool
@@ -151,10 +145,10 @@ export async function POST(req: Request) {
             {
               name,
               slug: baseSlug,
-              apiKey: crypto.randomBytes(32).toString('hex'),
+              apiKey: base.apiKey,
               signupIp,
               tosAcceptedAt: new Date(),
-              referralCode: myReferralCode,
+              referralCode: base.referralCode,
               referredByCode,
               referredById,
               // shipmentCredits arranca en 10 por el @default del schema
