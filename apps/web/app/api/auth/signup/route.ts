@@ -11,6 +11,7 @@ import {
 import { nuevoTenantBase } from '@/lib/tenant-provision';
 import { issueAndSendVerificationEmail, resolveAppOrigin } from '@/lib/verify-email';
 import { trackServer } from '@/lib/analytics.server';
+import { rateLimitBucketForIp } from '@/lib/rate-limit-ip';
 
 export const runtime = 'nodejs';
 
@@ -44,25 +45,50 @@ function isPublicSignupEnabled(): boolean {
   return (process.env.ALLOW_PUBLIC_SIGNUP ?? '').toLowerCase() === 'true';
 }
 
-// Rate limit por IP (D24). Mismo mecanismo que password-reset/request y
-// verify-email/send: contador en Redis (Upstash, compartido entre instancias
-// de Vercel) con INCR + EXPIRE. Fail-open: sin REDIS_URL o con Redis caído
-// no se limita nada — preferimos un alta de más a bloquear a un cliente real.
-// NO es en memoria: el contador es el mismo para todas las lambdas.
+// Rate limit por IP + tope global (D24, D25). Mismo mecanismo que
+// password-reset/request y verify-email/send: contador en Redis (Upstash,
+// compartido entre instancias de Vercel) con INCR + EXPIRE. Fail-open: sin
+// REDIS_URL o con Redis caído no se limita nada — preferimos un alta de más a
+// bloquear a un cliente real — pero se loguea, para que un Redis ausente en
+// prod no deje el alta sin límite en silencio. NO es en memoria: el contador
+// es el mismo para todas las lambdas.
 const RATE_LIMIT_TTL = 60 * 60; // 1 h
 const RATE_LIMIT_MAX = 5; // 5 altas por IP por hora: una familia/oficina entera cabe
+// Tope global (D25): es el kill-switch barato contra un script que rota IPs.
+// Acota el peor caso a ~40/h ≈ 1.000 altas/día pase lo que pase con las IPs
+// (cada alta = User + Tenant + 10 créditos + un mail por Resend). Sólo se
+// incrementa cuando la IP pasó su propio límite, así una sola IP bloqueada
+// no puede agotar el tope de todos.
+const RATE_LIMIT_GLOBAL_MAX = 40;
 
-async function checkSignupRateLimit(ip: string): Promise<boolean> {
+type RateLimitVerdict = 'ok' | 'ip' | 'global';
+
+async function checkSignupRateLimit(ip: string): Promise<RateLimitVerdict> {
   const redis = getRedis();
-  if (!redis) return true;
+  if (!redis) {
+    console.warn('[signup] rate limit fail-open: sin REDIS_URL, el alta no se limita');
+    return 'ok';
+  }
 
-  const key = `signup:rl:ip:${ip}`;
+  const ipKey = `signup:rl:ip:${rateLimitBucketForIp(ip)}`;
+  const globalKey = 'signup:rl:global';
   try {
-    const results = await redis.pipeline().incr(key).expire(key, RATE_LIMIT_TTL).exec();
-    const count = (results?.[0]?.[1] as number) ?? 1;
-    return count <= RATE_LIMIT_MAX;
-  } catch {
-    return true;
+    const perIp = await redis.pipeline().incr(ipKey).expire(ipKey, RATE_LIMIT_TTL).exec();
+    const ipCount = (perIp?.[0]?.[1] as number) ?? 1;
+    if (ipCount > RATE_LIMIT_MAX) return 'ip';
+
+    const global = await redis
+      .pipeline()
+      .incr(globalKey)
+      .expire(globalKey, RATE_LIMIT_TTL)
+      .exec();
+    const globalCount = (global?.[0]?.[1] as number) ?? 1;
+    return globalCount > RATE_LIMIT_GLOBAL_MAX ? 'global' : 'ok';
+  } catch (err) {
+    console.warn('[signup] rate limit fail-open: Redis no respondió', {
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return 'ok';
   }
 }
 
@@ -129,10 +155,19 @@ export async function POST(req: Request) {
     // Capture IP for legal compliance (Ley 18.331) + rate limit.
     const signupIp = getRequestIp(req);
 
-    const allowed = await checkSignupRateLimit(signupIp);
-    if (!allowed) {
+    const verdict = await checkSignupRateLimit(signupIp);
+    if (verdict === 'ip') {
       return NextResponse.json(
         { error: 'Demasiados intentos desde esta red. Esperá una hora e intentá de nuevo.' },
+        { status: 429 },
+      );
+    }
+    if (verdict === 'global') {
+      return NextResponse.json(
+        {
+          error:
+            'Estamos recibiendo muchas altas en este momento. Esperá un rato e intentá de nuevo, o escribinos por WhatsApp.',
+        },
         { status: 429 },
       );
     }

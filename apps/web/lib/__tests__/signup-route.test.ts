@@ -168,29 +168,85 @@ describe('POST /api/auth/signup', () => {
     expect(res.status).toBe(409);
   });
 
-  it('rate limit por IP: el sexto intento en la hora → 429', async () => {
-    const exec = vi.fn();
-    const pipeline = { incr: vi.fn().mockReturnThis(), expire: vi.fn().mockReturnThis(), exec };
-    mocks.getRedis.mockReturnValue({ pipeline: () => pipeline });
-
-    exec.mockResolvedValueOnce([[null, 5], [null, 1]]);
-    expect((await post(BODY_OK, { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' })).status).toBe(201);
-
-    exec.mockResolvedValueOnce([[null, 6], [null, 1]]);
-    const res = await post(BODY_OK, { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' });
-    expect(res.status).toBe(429);
-    expect(pipeline.incr).toHaveBeenLastCalledWith('signup:rl:ip:203.0.113.9');
-    expect(mocks.userCreate).toHaveBeenCalledTimes(1);
-  });
-
-  it('rate limit fail-open: sin Redis o con Redis roto no se bloquea a nadie', async () => {
+  /**
+   * Redis falso para el rate limit (D24/D25): un contador por clave, como
+   * INCR de verdad. `exec` devuelve la forma de ioredis `[[err, valor], ...]`.
+   */
+  function redisFalso(inicial: Record<string, number> = {}) {
+    const counts: Record<string, number> = { ...inicial };
+    let pendiente = '';
     const pipeline = {
-      incr: vi.fn().mockReturnThis(),
-      expire: vi.fn().mockReturnThis(),
-      exec: vi.fn().mockRejectedValue(new Error('ECONNRESET')),
+      incr: vi.fn((key: string) => {
+        pendiente = key;
+        return pipeline;
+      }),
+      expire: vi.fn(() => pipeline),
+      exec: vi.fn(async () => {
+        counts[pendiente] = (counts[pendiente] ?? 0) + 1;
+        return [[null, counts[pendiente]], [null, 1]];
+      }),
     };
     mocks.getRedis.mockReturnValue({ pipeline: () => pipeline });
-    expect((await post(BODY_OK)).status).toBe(201);
+    return { counts, pipeline };
+  }
+
+  it('rate limit por IP: el sexto intento en la hora → 429', async () => {
+    const { counts, pipeline } = redisFalso({ 'signup:rl:ip:203.0.113.9': 4 });
+
+    expect((await post(BODY_OK, { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' })).status).toBe(201);
+    const res = await post(BODY_OK, { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' });
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toMatch(/desde esta red/);
+    expect(pipeline.incr).toHaveBeenCalledWith('signup:rl:ip:203.0.113.9');
+    expect(mocks.userCreate).toHaveBeenCalledTimes(1);
+    // La IP bloqueada NO consume el tope global: sólo el alta que pasó.
+    expect(counts['signup:rl:global']).toBe(1);
+  });
+
+  it('IPv6: todo el /64 comparte el contador (D25)', async () => {
+    const { pipeline } = redisFalso({ 'signup:rl:ip:2001:db8:85a3:1::/64': 5 });
+    const res = await post(BODY_OK, { 'x-forwarded-for': '2001:db8:85a3:1:aaaa:bbbb:cccc:dddd' });
+    expect(res.status).toBe(429);
+    expect(pipeline.incr).toHaveBeenCalledWith('signup:rl:ip:2001:db8:85a3:1::/64');
+    expect(mocks.userCreate).not.toHaveBeenCalled();
+  });
+
+  it('tope global: con 40 altas en la hora, la 41 → 429 aunque venga de una IP nueva (D25)', async () => {
+    redisFalso({ 'signup:rl:global': 40 });
+    const res = await post(BODY_OK, { 'x-forwarded-for': '198.51.100.77' });
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toMatch(/muchas altas/);
+    expect(mocks.userCreate).not.toHaveBeenCalled();
+    expect(mocks.issueAndSend).not.toHaveBeenCalled();
+  });
+
+  it('tope global: la 40 todavía pasa', async () => {
+    redisFalso({ 'signup:rl:global': 39 });
+    expect((await post(BODY_OK, { 'x-forwarded-for': '198.51.100.78' })).status).toBe(201);
+  });
+
+  it('rate limit fail-open: sin Redis o con Redis roto no se bloquea a nadie, pero se loguea', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const pipeline = {
+        incr: vi.fn().mockReturnThis(),
+        expire: vi.fn().mockReturnThis(),
+        exec: vi.fn().mockRejectedValue(new Error('ECONNRESET')),
+      };
+      mocks.getRedis.mockReturnValue({ pipeline: () => pipeline });
+      expect((await post(BODY_OK)).status).toBe(201);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('fail-open'),
+        expect.objectContaining({ message: 'ECONNRESET' }),
+      );
+
+      warn.mockClear();
+      mocks.getRedis.mockReturnValue(null);
+      expect((await post(BODY_OK)).status).toBe(201);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('sin REDIS_URL'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('el mail que no sale no rompe el alta: 201 igual y no se marca como enviado', async () => {
