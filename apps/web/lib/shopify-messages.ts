@@ -59,6 +59,13 @@ export const SHOPIFY_LOGIN_MESSAGES: Record<string, ShopifyMessage> = {
     ok: true,
     text: 'Tu tienda ya está conectada a AutoEnvía. Iniciá sesión para ver tus pedidos.',
   },
+  // Único error con texto propio: el comerciante SÍ tiene dónde reintentar
+  // (la cuenta dueña de la tienda), y el genérico lo mandaría a reinstalar
+  // desde Shopify en loop.
+  already_linked: {
+    ok: false,
+    text: 'Esta tienda ya está vinculada a una cuenta. Iniciá sesión con esa cuenta y usá Reconectar en Configuración.',
+  },
 };
 
 export const SHOPIFY_LOGIN_GENERIC_ERROR: ShopifyMessage = {

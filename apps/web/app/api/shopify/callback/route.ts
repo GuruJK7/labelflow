@@ -186,10 +186,11 @@ export async function GET(req: NextRequest) {
     if (alta.kind === 'claim') {
       // Ya hay cuenta con ese email: no le colgamos nada. El token viaja
       // cifrado en una cookie corta y el dueño lo reclama logueado (D11).
-      const destino = new URL('/login', origin);
-      destino.searchParams.set('shopify', 'claim');
-      destino.searchParams.set('next', '/api/shopify/claim');
-      const r = limpiar(NextResponse.redirect(destino));
+      // Se va DIRECTO a /claim, no al login: si el comerciante ya tiene
+      // sesión (caso común: instala desde el mismo navegador donde usa
+      // AutoEnvía) reclama en el acto. Sin sesión, /claim es el que manda a
+      // /login?shopify=claim&next=/api/shopify/claim conservando la cookie.
+      const r = limpiar(NextResponse.redirect(new URL('/api/shopify/claim', origin)));
       r.cookies.set(PENDING_INSTALL_COOKIE, sealPendingInstall({ shop, token: accessToken }), {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',

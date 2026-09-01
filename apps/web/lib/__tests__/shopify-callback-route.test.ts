@@ -143,6 +143,37 @@ describe('callback — rama B (dashboard): los permisos van ANTES del canje (H3)
   });
 });
 
+describe('callback — anti-CSRF: la cookie STATE tiene que coincidir con el param', () => {
+  it('rama dashboard: STATE distinto → bad_state, sin canjear ni mirar la sesión', async () => {
+    mocks.getAuthenticatedUser.mockResolvedValue({ userId: 'u1' });
+    const res = await GET(
+      makeRequest('/api/shopify/callback', signedQuery(), { ...dashboardCookies, [STATE_COOKIE]: 'otro-state' }),
+    );
+    const loc = location(res);
+    expect(loc.pathname).toBe('/settings');
+    expect(loc.searchParams.get('shopify')).toBe('bad_state');
+    expect(exchangeCalls()).toBe(0);
+    expect(mocks.getAuthenticatedUser).not.toHaveBeenCalled();
+    expect(mocks.tenantUpdate).not.toHaveBeenCalled();
+    expect(cookieDeleted(res, STATE_COOKIE)).toBe(true);
+  });
+
+  it('rama App Store: STATE distinto → /login?shopify=bad_state, sin canjear ni aprovisionar', async () => {
+    const res = await GET(
+      makeRequest('/api/shopify/callback', signedQuery(), { ...appStoreCookies, [STATE_COOKIE]: 'otro-state' }),
+    );
+    const loc = location(res);
+    expect(loc.pathname).toBe('/login');
+    expect(loc.searchParams.get('shopify')).toBe('bad_state');
+    expect(exchangeCalls()).toBe(0);
+    expect(mocks.fetchShopInfo).not.toHaveBeenCalled();
+    expect(mocks.provisionFromShopify).not.toHaveBeenCalled();
+    expect(res.cookies.get(PENDING_INSTALL_COOKIE)).toBeUndefined();
+    expect(cookieDeleted(res, STATE_COOKIE)).toBe(true);
+    expect(cookieDeleted(res, FLOW_COOKIE)).toBe(true);
+  });
+});
+
 describe('callback — coherencia de cookies (H4)', () => {
   it('FLOW=appstore y TENANT a la vez → bad_flow, sin canjear ni aprovisionar', async () => {
     const res = await GET(
@@ -231,14 +262,15 @@ describe('callback — rama A (App Store): destinos públicos, sin email en la q
     expect(mocks.registerShopifyWebhooks).not.toHaveBeenCalled();
   });
 
-  it("'claim' → cookie cifrada de instalación pendiente y /login?shopify=claim&next=/api/shopify/claim (H1)", async () => {
+  it("'claim' → cookie cifrada de instalación pendiente y DIRECTO a /api/shopify/claim (H1)", async () => {
     mocks.provisionFromShopify.mockResolvedValue({ kind: 'claim', email: 'dueno@acme.com' });
     const res = await GET(makeRequest('/api/shopify/callback', signedQuery(), appStoreCookies));
     const loc = location(res);
-    expect(loc.pathname).toBe('/login');
-    expect(loc.searchParams.get('shopify')).toBe('claim');
-    expect(loc.searchParams.get('next')).toBe('/api/shopify/claim');
-    expect(loc.searchParams.has('email')).toBe(false);
+    // Directo a /claim: si hay sesión reclama en el acto; si no, /claim es el
+    // que manda a /login?shopify=claim&next=/api/shopify/claim (test en
+    // shopify-claim-route). Acá no se pasa por el login a ciegas.
+    expect(loc.pathname).toBe('/api/shopify/claim');
+    expect(loc.search).toBe('');
 
     // Nada se escribió ni se mandó todavía: eso pasa recién en /claim.
     expect(mocks.issueAndSendPasswordResetEmail).not.toHaveBeenCalled();
