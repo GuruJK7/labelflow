@@ -235,8 +235,19 @@ export async function PUT(req: NextRequest) {
   // /api/shopify/install: sin él, dos cuentas podían apuntar a la misma
   // tienda cargando el token a mano, y el worker despachaba cada pedido dos
   // veces. Insensible a mayúsculas por los dominios viejos guardados así (D18).
+  //
+  // Sólo cuando el dominio CAMBIA. "Guardar token" manda siempre el dominio
+  // que cargó del GET, y hay tenants que comparten tienda a propósito (el
+  // worker lo contempla con `sharedTenantIds`; incidente Aura 2026-05-08):
+  // chequear también cuando no se tocó el dominio les cerraba la única forma
+  // de rotar el token, porque /install y /callback ya les dan already_linked (D21).
   if (input.shopifyStoreUrl !== undefined) {
-    const tomada = await db.tenant.findFirst({
+    const actual = await db.tenant.findUnique({
+      where: { id: auth.tenantId },
+      select: { shopifyStoreUrl: true },
+    });
+    const sinCambio = actual?.shopifyStoreUrl?.toLowerCase() === input.shopifyStoreUrl;
+    const tomada = sinCambio ? null : await db.tenant.findFirst({
       where: {
         shopifyStoreUrl: { equals: input.shopifyStoreUrl, mode: 'insensitive' },
         id: { not: auth.tenantId },
