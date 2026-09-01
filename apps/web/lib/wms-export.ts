@@ -49,6 +49,11 @@
  * Van en una lista aparte, con el mismo shape, para que el operador las cargue
  * a mano o las ignore — nunca mezcladas con la tanda importable.
  *
+ * Desde el 2026-09-01 la ruta intenta ANTES un read-through backfill contra
+ * Shopify (lib/wms-items-backfill.ts), así que `sin_items` dejó de significar
+ * "vieja" y pasó a significar "ni snapshot ni Shopify pudieron completarla".
+ * Este archivo sigue siendo puro: la lista se arma igual, con lo que le llega.
+ *
  * ── Zonas ────────────────────────────────────────────────────────────────────
  * `zona` parte la tanda en la pila que reparte LabelFlow (hoy: Maldonado) y la
  * que se va por DAC. El discriminador es el de lib/departamentos.ts (unión de
@@ -242,8 +247,17 @@ export function ordenarPila(rows: WmsExportLabelRow[]): WmsExportLabelRow[] {
   });
 }
 
-/** ¿Esta fila entra en la zona pedida? `todas` no filtra nada. */
-export function filtrarZona(rows: WmsExportLabelRow[], zona: WmsExportZona): WmsExportLabelRow[] {
+/**
+ * ¿Esta fila entra en la zona pedida? `todas` no filtra nada.
+ *
+ * Genérico para no perder las columnas extra que el caller traiga (la ruta
+ * arrastra `shopifyOrderId` para el backfill de ítems): sólo mira `dacGuia` y
+ * `department`, que es lo que necesita esRepartoPropio().
+ */
+export function filtrarZona<T extends Pick<WmsExportLabelRow, 'dacGuia' | 'department'>>(
+  rows: T[],
+  zona: WmsExportZona,
+): T[] {
   if (zona === 'todas') return rows;
   const quiero = zona === 'maldonado';
   return rows.filter((r) => esRepartoPropio(r) === quiero);

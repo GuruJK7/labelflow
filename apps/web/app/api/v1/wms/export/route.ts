@@ -27,6 +27,13 @@
  * se va por DAC) o `todas` (default). El discriminador es el mismo que agrupa
  * las etiquetas en el portal del cliente — ver lib/departamentos.ts.
  *
+ * ── Ítems: read-through backfill ─────────────────────────────────────────────
+ * Las Labels sin filas en LabelItem (todas las anteriores al 2026-09-01 19:19)
+ * se completan contra la Admin API de Shopify EN ESTE MISMO request y quedan
+ * persistidas — ver lib/wms-items-backfill.ts. El primer export después del
+ * deploy paga ese costo una vez; los siguientes salen del snapshot. Si Shopify
+ * no responde, esas etiquetas caen a `sin_items` como antes: nunca un 500.
+ *
  * Estados incluidos: CREATED y COMPLETED. Son los que tienen envío real emitido
  * (CREATED = guía de DAC ya emitida; COMPLETED = además con PDF subido). Las
  * PENDING todavía no tienen guía, y FAILED/SKIPPED/NEEDS_REVIEW no se despachan.
@@ -36,13 +43,28 @@ import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import {
   buildWmsExportPayload,
+  filtrarZona,
   parseZona,
   uyDayRange,
   uyToday,
   type WmsExportLabelRow,
 } from '@/lib/wms-export';
+import { applyBackfilledItems, backfillMissingItems } from '@/lib/wms-items-backfill';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * El PRIMER export después del deploy paga el read-through backfill de todas
+ * las etiquetas históricas del día (1 request a Shopify por cada 250 + los
+ * writes). Con el default de Vercel eso puede cortarse por timeout justo en el
+ * request que más importa. 60s es el mismo techo que ya usan
+ * /api/v1/tenants/[tenantId] y /api/public/label-pdf/bulk. Los exports
+ * siguientes vuelven a ser una sola consulta.
+ */
+export const maxDuration = 60;
+
+/** Lo que selecciona la consulta: el shape del export + la clave de Shopify. */
+type ExportRow = WmsExportLabelRow & { shopifyOrderId: string };
 
 /**
  * Resuelve el tenant: primero la API key del header, después la sesión.
@@ -85,7 +107,9 @@ export async function GET(req: NextRequest) {
 
   const tenant = await db.tenant.findUnique({
     where: { id: tenantId },
-    select: { name: true },
+    // shopifyStoreUrl/shopifyToken son para el read-through backfill de ítems
+    // (lib/wms-items-backfill.ts). El token viaja cifrado y se descifra ahí.
+    select: { name: true, shopifyStoreUrl: true, shopifyToken: true },
   });
   if (!tenant) return apiError('Tenant no encontrado', 404);
 
@@ -108,6 +132,8 @@ export async function GET(req: NextRequest) {
     ],
     select: {
       id: true,
+      // Necesario para el backfill: es la clave contra la Admin API de Shopify.
+      shopifyOrderId: true,
       shopifyOrderName: true,
       dacGuia: true,
       customerName: true,
@@ -126,7 +152,24 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  const payload = buildWmsExportPayload(labels as WmsExportLabelRow[], {
+  // ── Read-through backfill ───────────────────────────────────────────────
+  // Las Labels anteriores al deploy del snapshot de ítems (2026-09-01 19:19) no
+  // tienen filas en LabelItem y salían TODAS por `sin_items`, con lo que DEPO
+  // importaba cero. Antes de armar el payload se completan desde Shopify y se
+  // persisten, así el export se auto-cura y el costo se paga una sola vez.
+  //
+  // Se backfillea sólo lo que entra en la zona pedida: `?zona=maldonado` no
+  // tiene por qué pagar los requests de la pila que se va por DAC.
+  //
+  // Nunca tira: si Shopify falla, `recuperados` viene vacío y esas etiquetas
+  // caen a `sin_items` exactamente como antes de este cambio.
+  const rows = labels as ExportRow[];
+  const backfill = await backfillMissingItems(filtrarZona(rows, zona), {
+    shopifyStoreUrl: tenant.shopifyStoreUrl,
+    shopifyToken: tenant.shopifyToken,
+  });
+
+  const payload = buildWmsExportPayload(applyBackfilledItems(rows, backfill.items), {
     fecha: dateParam,
     cliente: tenant.name,
     zona,
@@ -141,5 +184,14 @@ export async function GET(req: NextRequest) {
     con_items: payload.pedidos.length,
     sin_items: payload.sin_items.length,
     reparto_propio: payload.pedidos.filter((p) => p.reparto_propio).length,
+    // Observabilidad del backfill: `recuperadas` > 0 en el primer export
+    // después del deploy y ~0 de ahí en más. Si `recuperadas` se mantiene alto
+    // export tras export, la persistencia no está entrando (mirar persistidas).
+    backfill: {
+      intentadas: backfill.intentadas,
+      recuperadas: backfill.recuperadas,
+      persistidas: backfill.persistidas,
+      ...(backfill.skipped ? { skipped: backfill.skipped } : {}),
+    },
   });
 }
