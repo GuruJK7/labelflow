@@ -8,6 +8,11 @@ import { startOfDayUy, startOfMonthUy } from '@/lib/uy-time';
 const updateSchema = z.object({
   shopifyStoreUrl: z.string()
     .regex(/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/, 'Must be a valid Shopify domain (e.g. your-store.myshopify.com)')
+    // Se guarda en minúsculas: el flujo del App Store (/entry, /claim, el
+    // webhook) busca por dominio y Shopify siempre lo manda en minúsculas.
+    // Un 'MiTienda.myshopify.com' guardado tal cual era una tienda que el
+    // App Store no encontraba y volvía a aprovisionar (D18).
+    .transform((s) => s.toLowerCase())
     .optional(),
   shopifyToken: z.string().min(1).optional(),
   dacUsername: z.string().min(1).optional(),
@@ -225,6 +230,23 @@ export async function PUT(req: NextRequest) {
 
   const data: Record<string, unknown> = {};
   const input = parsed.data;
+
+  // Un dominio de Shopify pertenece a UN tenant. Mismo chequeo que hace
+  // /api/shopify/install: sin él, dos cuentas podían apuntar a la misma
+  // tienda cargando el token a mano, y el worker despachaba cada pedido dos
+  // veces. Insensible a mayúsculas por los dominios viejos guardados así (D18).
+  if (input.shopifyStoreUrl !== undefined) {
+    const tomada = await db.tenant.findFirst({
+      where: {
+        shopifyStoreUrl: { equals: input.shopifyStoreUrl, mode: 'insensitive' },
+        id: { not: auth.tenantId },
+      },
+      select: { id: true },
+    });
+    if (tomada) {
+      return apiError('Esa tienda ya está conectada a otra cuenta. Escribinos y lo resolvemos.', 409);
+    }
+  }
 
   // Plain fields
   if (input.shopifyStoreUrl !== undefined) data.shopifyStoreUrl = input.shopifyStoreUrl;

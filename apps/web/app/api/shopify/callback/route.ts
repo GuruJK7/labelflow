@@ -131,14 +131,20 @@ export async function GET(req: NextRequest) {
     // tienda B y aprieta "Reconectar" deja al tenant A apuntando a B: el
     // cliente A deja de despachar y los pedidos de B salen con las credenciales
     // DAC y el saldo de A, en silencio y con la UI diciendo "Tienda conectada".
-    if (tenantDashboard.shopifyStoreUrl && tenantDashboard.shopifyStoreUrl !== shop) {
+    // Se compara en minúsculas: un dominio guardado a mano como
+    // 'MiTienda.myshopify.com' es la MISMA tienda que 'mitienda…' (D18), y
+    // Reconectar es justamente el camino de migración para esos tenants.
+    if (
+      tenantDashboard.shopifyStoreUrl &&
+      tenantDashboard.shopifyStoreUrl.toLowerCase() !== shop
+    ) {
       return fail('shop_mismatch');
     }
 
     // 8. Se repite el chequeo de "ya vinculada" que hizo /install: entre uno y
     // otro pasaron hasta 10 minutos y otro tenant pudo haber tomado el dominio.
     const tomadaPorOtro = await db.tenant.findFirst({
-      where: { shopifyStoreUrl: shop, id: { not: tenantDashboard.id } },
+      where: { shopifyStoreUrl: { equals: shop, mode: 'insensitive' }, id: { not: tenantDashboard.id } },
       select: { id: true },
     });
     if (tomadaPorOtro) return fail('already_linked');

@@ -27,7 +27,10 @@ const bodySchema = z.object({
     .regex(
       /^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/,
       'Debe ser un dominio Shopify válido (ej: tu-tienda.myshopify.com)',
-    ),
+    )
+    // En minúsculas, como lo manda Shopify: el flujo del App Store busca por
+    // dominio y un dominio con mayúsculas no se encontraba (D18).
+    .transform((s) => s.toLowerCase()),
   shopifyToken: z.string().min(10).max(512),
 });
 

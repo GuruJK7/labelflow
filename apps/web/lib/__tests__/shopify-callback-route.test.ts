@@ -121,6 +121,26 @@ describe('callback — rama B (dashboard): los permisos van ANTES del canje (H3)
     const res = await GET(makeRequest('/api/shopify/callback', signedQuery(), dashboardCookies));
     expect(location(res).searchParams.get('shopify')).toBe('already_linked');
     expect(exchangeCalls()).toBe(0);
+    // El chequeo de "tomada por otro" no distingue mayúsculas (D18).
+    expect(mocks.tenantFindFirst.mock.calls[1][0].where).toEqual({
+      shopifyStoreUrl: { equals: SHOP, mode: 'insensitive' },
+      id: { not: 'tenant-1' },
+    });
+  });
+
+  it('Reconectar un tenant guardado como "Acme.myshopify.com" con acme.myshopify.com NO es shop_mismatch (D18)', async () => {
+    mocks.getAuthenticatedUser.mockResolvedValue({ userId: 'u1' });
+    mocks.tenantFindFirst
+      .mockResolvedValueOnce({ id: 'tenant-1', shopifyStoreUrl: 'Acme.myshopify.com' })
+      .mockResolvedValueOnce(null);
+    const res = await GET(makeRequest('/api/shopify/callback', signedQuery(), dashboardCookies));
+    // Reconectar es el camino de migración de los tokens manuales (D16): si
+    // el dominio viejo con mayúsculas se tomara como "otra tienda", esos
+    // clientes no podrían migrar nunca.
+    expect(location(res).searchParams.get('shopify')).toBe('connected');
+    expect(exchangeCalls()).toBe(1);
+    // Y al guardar, el dominio queda normalizado en minúsculas.
+    expect(mocks.tenantUpdate.mock.calls[0][0].data.shopifyStoreUrl).toBe(SHOP);
   });
 
   it('camino feliz: canjea, guarda el token cifrado en el tenant elegido y va a /settings', async () => {

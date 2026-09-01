@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
   // chequeo, dos cuentas podrían apuntar a la misma tienda de Shopify y el
   // worker despacharía los mismos pedidos dos veces.
   const yaConectada = await db.tenant.findFirst({
-    where: { shopifyStoreUrl: shop, id: { not: auth.tenantId } },
+    where: { shopifyStoreUrl: { equals: shop, mode: 'insensitive' }, id: { not: auth.tenantId } },
     select: { id: true },
   });
   if (yaConectada) {

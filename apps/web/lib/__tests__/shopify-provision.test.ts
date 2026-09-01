@@ -18,6 +18,7 @@ vi.mock('@/lib/db', () => ({ db }));
 
 import { tenantSlugForShop, provisionFromShopify } from '../shopify-provision';
 import { decrypt } from '../encryption';
+import { fakeTenantFindFirst } from './_shopify-route-utils';
 
 /**
  * El slug es la clave de idempotencia del alta desde el App Store: reinstalar
@@ -120,6 +121,22 @@ describe('provisionFromShopify', () => {
     expect(upd.where).toEqual({ id: 't1' });
     expect(Object.keys(upd.data)).toEqual(['shopifyToken']);
     expect(decrypt(upd.data.shopifyToken)).toBe('shpat_nuevo');
+    expect(tx.user.create).not.toHaveBeenCalled();
+  });
+
+  it("la fila guardada como 'Mi-Tienda.myshopify.com' (token manual) se encuentra con el dominio en minúsculas → 'existing' (D18)", async () => {
+    tx.user.findUnique.mockResolvedValue({ id: 'u1' });
+    tx.tenant.findFirst.mockImplementation(
+      fakeTenantFindFirst([{ id: 't1', shopifyStoreUrl: 'Mi-Tienda.myshopify.com', userId: 'u1' }]),
+    );
+
+    const out = await provisionFromShopify(info, 'shpat_nuevo');
+    // Sin la búsqueda insensible esto daba 'claim' (o 'created' si el email
+    // no tenía cuenta): un segundo tenant para la misma tienda.
+    expect(out).toEqual({ kind: 'existing', userId: 'u1', tenantId: 't1', email: info.email });
+    expect(tx.tenant.findFirst.mock.calls[0][0].where).toEqual({
+      shopifyStoreUrl: { equals: 'mi-tienda.myshopify.com', mode: 'insensitive' },
+    });
     expect(tx.user.create).not.toHaveBeenCalled();
   });
 

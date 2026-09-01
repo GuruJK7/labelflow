@@ -44,9 +44,11 @@ export async function POST(req: NextRequest) {
   // de 15 minutos sin error, sin log y sin reintento de Shopify.
   // Es el mismo criterio que `lib/can-run.ts` y que el scheduler del worker;
   // los tres tienen que decir lo mismo o vuelven a divergir.
+  // Insensible a mayúsculas: Shopify manda el dominio en minúsculas y un
+  // tenant cargado a mano puede tenerlo con mayúsculas (D18).
   const tenant = await db.tenant.findFirst({
     where: {
-      shopifyStoreUrl: shopDomain,
+      shopifyStoreUrl: { equals: shopDomain, mode: 'insensitive' },
       isActive: true,
     },
     select: { id: true },

@@ -79,8 +79,12 @@ export async function GET(req: NextRequest) {
   if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) return fail('stale');
 
   // 3. ¿Ya está conectada? Entonces esto es una apertura, no una instalación.
+  // Insensible a mayúsculas: el camino manual guardó dominios como
+  // 'MiTienda.myshopify.com' durante meses, y `shop` viene normalizado en
+  // minúsculas. Compararlos exactos era no encontrar al cliente viejo y
+  // aprovisionarle una segunda cuenta (D18).
   const yaConectada = await db.tenant.findFirst({
-    where: { shopifyStoreUrl: shop, shopifyToken: { not: null } },
+    where: { shopifyStoreUrl: { equals: shop, mode: 'insensitive' }, shopifyToken: { not: null } },
     select: { id: true },
   });
   if (yaConectada) {

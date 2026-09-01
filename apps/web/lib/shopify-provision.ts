@@ -100,8 +100,9 @@ export type ProvisionOutcome =
  *
  * Todo corre dentro de UNA transacción, incluido el chequeo de "¿la tienda ya
  * es de alguien?": dos callbacks simultáneos para el mismo shop no pueden
- * pasar los dos, y si igual chocan en el índice único (P2002) se devuelve
- * 'conflict' en vez de un 500 que Shopify muestra como "instalación fallida".
+ * pasar los dos, y si igual chocan en el índice único del SLUG (P2002; el
+ * dominio no tiene índice único todavía, ver D18) se devuelve 'conflict' en
+ * vez de un 500 que Shopify muestra como "instalación fallida".
  *
  * NO activa el tenant (`isActive` queda como está): el comerciante todavía
  * tiene que cargar sus credenciales de DAC para que el worker pueda despachar.
@@ -125,8 +126,10 @@ export async function provisionFromShopify(
         select: { id: true },
       });
 
+      // Insensible a mayúsculas: los tenants cargados a mano pueden tener el
+      // dominio con mayúsculas y `info.domain` viene normalizado (D18).
       const existingByShop = await tx.tenant.findFirst({
-        where: { shopifyStoreUrl: info.domain },
+        where: { shopifyStoreUrl: { equals: info.domain, mode: 'insensitive' } },
         select: { id: true, userId: true },
       });
 

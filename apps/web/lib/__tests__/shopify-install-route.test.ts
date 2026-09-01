@@ -10,7 +10,7 @@ vi.mock('@/lib/db', () => ({ db: { tenant: { findFirst: mocks.tenantFindFirst } 
 
 import { GET } from '@/app/api/shopify/install/route';
 import { STATE_COOKIE, TENANT_COOKIE, FLOW_COOKIE, FLOW_APPSTORE } from '../shopify-oauth';
-import { makeRequest, location, cookieDeleted } from './_shopify-route-utils';
+import { makeRequest, location, cookieDeleted, fakeTenantFindFirst } from './_shopify-route-utils';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -28,6 +28,23 @@ describe('/api/shopify/install', () => {
     expect(res.cookies.get(STATE_COOKIE)?.value).toBe(loc.searchParams.get('state'));
     expect(res.cookies.get(TENANT_COOKIE)?.value).toBe('tenant-1');
     expect(cookieDeleted(res, FLOW_COOKIE)).toBe(true);
+  });
+
+  it('busca la tienda sin distinguir mayúsculas y excluyendo al propio tenant', async () => {
+    await GET(makeRequest('/api/shopify/install', { shop: 'acme.myshopify.com' }));
+    expect(mocks.tenantFindFirst.mock.calls[0][0].where).toEqual({
+      shopifyStoreUrl: { equals: 'acme.myshopify.com', mode: 'insensitive' },
+      id: { not: 'tenant-1' },
+    });
+  });
+
+  it('otro tenant la tiene guardada como "Acme.myshopify.com": already_linked (D18)', async () => {
+    mocks.tenantFindFirst.mockImplementation(
+      fakeTenantFindFirst([{ id: 'tenant-ajeno', shopifyStoreUrl: 'Acme.myshopify.com' }]),
+    );
+    const res = await GET(makeRequest('/api/shopify/install', { shop: 'acme.myshopify.com' }));
+    expect(location(res).pathname).toBe('/settings');
+    expect(location(res).searchParams.get('shopify')).toBe('already_linked');
   });
 
   it('sin sesión: al login con next relativo', async () => {
