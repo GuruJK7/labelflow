@@ -31,6 +31,7 @@ import { downloadOrdersJsonFromStorage } from '../storage/upload';
 import { uploadLabelPdf } from '../storage/upload';
 import { createStepLogger } from '../logger';
 import logger from '../logger';
+import { shadowRecordShipment } from '../billing/shadow';
 import { sleep } from '../utils';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
@@ -392,6 +393,8 @@ export async function agentBulkUploadJob(job: {
             errorMessage: null,
           },
         });
+        // Ledger en sombra (WALLET_SHADOW=1). Ignora PENDING-; nunca lanza.
+        await shadowRecordShipment({ tenantId: job.tenantId, dacGuia: result.guia, labelId, jobId: job.id });
 
         // Download PDF (skip if PENDING guia). pdfUploaded is read by the
         // billing guard before successCount++. Two attempts to absorb
