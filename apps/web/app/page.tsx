@@ -109,16 +109,22 @@ export default function LandingPage() {
               href="/login"
               className="hidden md:inline text-zinc-400 hover:text-white text-[13px] transition-colors px-2"
             >
-              Portal de clientes
+              Iniciar sesión
             </Link>
             <a
               href={WHATSAPP_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-3 sm:px-4 py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold transition-all shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/50 hover:-translate-y-0.5"
+              className="hidden sm:inline border border-white/10 text-zinc-200 hover:bg-white/[0.04] hover:border-white/20 px-3 sm:px-4 py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold transition-colors"
             >
               Solicitar demo
             </a>
+            <Link
+              href="/signup"
+              className="bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-3 sm:px-4 py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold transition-all shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/50 hover:-translate-y-0.5"
+            >
+              Crear cuenta gratis
+            </Link>
           </div>
         </div>
       </nav>
@@ -167,22 +173,28 @@ export default function LandingPage() {
 
           <ScrollReveal variant="up" delay={300}>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <Link
+                href="/signup"
+                className="group inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-xl shadow-cyan-500/30 hover:shadow-cyan-500/60 hover:-translate-y-0.5 glow-cyan w-full sm:w-auto justify-center"
+              >
+                Crear cuenta gratis
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              </Link>
               <a
                 href={WHATSAPP_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-xl shadow-cyan-500/30 hover:shadow-cyan-500/60 hover:-translate-y-0.5 glow-cyan w-full sm:w-auto justify-center"
-              >
-                Coordinar una llamada
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-              </a>
-              <a
-                href="#operacion"
                 className="inline-flex items-center gap-2 border border-white/10 text-zinc-200 px-6 py-3.5 rounded-xl text-sm font-semibold hover:bg-white/[0.04] hover:border-white/20 transition-colors w-full sm:w-auto justify-center"
               >
-                Ver la operación en vivo
+                Solicitar demo
               </a>
             </div>
+            <a
+              href="#operacion"
+              className="inline-block mt-5 text-[13px] text-zinc-500 hover:text-zinc-300 transition-colors underline underline-offset-4 decoration-zinc-700"
+            >
+              Ver la operación en vivo
+            </a>
           </ScrollReveal>
 
           <ScrollReveal variant="up" delay={400}>
@@ -790,6 +802,12 @@ export default function LandingPage() {
                     Coordinar llamada por WhatsApp
                     <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                   </a>
+                  <Link
+                    href="/signup"
+                    className="inline-flex items-center gap-2 border border-white/10 text-zinc-200 px-6 py-3.5 sm:py-4 rounded-xl text-sm font-semibold hover:bg-white/[0.04] hover:border-white/20 transition-colors w-full sm:w-auto justify-center"
+                  >
+                    Crear cuenta gratis
+                  </Link>
                 </div>
                 <p className="text-[11px] sm:text-xs text-zinc-500 mt-5 sm:mt-6">
                   Atención directa con el equipo técnico · respuesta en horario hábil.

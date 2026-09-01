@@ -241,7 +241,7 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
             <p className="text-zinc-500 text-sm">
               ¿Sin cuenta todavía?{' '}
               <Link href="/signup" className="text-cyan-400 hover:text-cyan-300 font-medium transition-colors">
-                Solicitar acceso
+                Crear cuenta gratis
               </Link>
             </p>
           </div>
