@@ -17,13 +17,22 @@ export function makeRequest(
   cookies: Record<string, string> = {},
   origin = 'https://autoenvia.com',
   method: 'GET' | 'POST' = 'GET',
+  /** `form`: cuerpo application/x-www-form-urlencoded, como lo manda un <form method="post">. */
+  extra: { headers?: Record<string, string>; form?: Record<string, string> } = {},
 ): NextRequest {
   const url = new URL(path, origin);
   for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
   const cookie = Object.entries(cookies)
     .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
     .join('; ');
-  return new NextRequest(url, { method, headers: cookie ? { cookie } : {} });
+  const headers: Record<string, string> = { ...(extra.headers ?? {}) };
+  if (cookie) headers.cookie = cookie;
+  let body: string | undefined;
+  if (extra.form) {
+    body = new URLSearchParams(extra.form).toString();
+    headers['content-type'] = 'application/x-www-form-urlencoded';
+  }
+  return new NextRequest(url, { method, headers, body });
 }
 
 export function location(res: NextResponse): URL {

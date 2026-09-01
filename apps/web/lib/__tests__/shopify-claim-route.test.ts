@@ -47,8 +47,18 @@ function pendingCookie(nowMs = Date.now()) {
 
 const get = (cookies: Record<string, string> = {}) =>
   GET(makeRequest('/api/shopify/claim', {}, cookies));
-const post = (cookies: Record<string, string> = {}) =>
-  POST(makeRequest('/api/shopify/claim', {}, cookies, 'https://autoenvia.com', 'POST'));
+type PostOpts = { form?: Record<string, string> | null; headers?: Record<string, string> };
+/**
+ * Por defecto manda el formulario que sirve el GET: `shop` = la tienda de la
+ * cookie. `form: null` = POST sin cuerpo.
+ */
+const post = (cookies: Record<string, string> = {}, opts: PostOpts = {}) =>
+  POST(
+    makeRequest('/api/shopify/claim', {}, cookies, 'https://autoenvia.com', 'POST', {
+      headers: opts.headers,
+      form: opts.form === null ? undefined : (opts.form ?? { shop: SHOP }),
+    }),
+  );
 
 /** La cookie pendiente tiene que salir borrada, con el mismo path con que se creó. */
 function pendingDeleted(res: Awaited<ReturnType<typeof GET>>): boolean {
@@ -110,6 +120,8 @@ describe('GET /api/shopify/claim — pregunta, no escribe (D19)', () => {
     expect(html).toContain(SHOP);
     expect(html).toContain('dueno@acme.com');
     expect(html).toContain('<form method="post" action="/api/shopify/claim">');
+    // El formulario nombra la tienda que muestra: el POST la exige igual a la cookie.
+    expect(html).toContain(`<input type="hidden" name="shop" value="${SHOP}">`);
     expect(html).toContain('Vincular');
     // "Entrar con otra cuenta" → signout de NextAuth y de vuelta al login con next.
     expect(html).toContain(
@@ -163,6 +175,26 @@ describe('POST /api/shopify/claim — escribe, y redirige siempre con 303 (Post/
   it('cookie que no descifra: claim_invalid y se borra', async () => {
     const res = await post({ [PENDING_INSTALL_COOKIE]: 'basura' });
     expect(res.status).toBe(303);
+    expect(location(res).searchParams.get('shopify')).toBe('claim_invalid');
+    expect(pendingDeleted(res)).toBe(true);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it('el formulario nombra OTRA tienda que la cookie (cookie sellada con B, form shop=A): claim_invalid, sin create', async () => {
+    const cookieB = {
+      [PENDING_INSTALL_COOKIE]: sealPendingInstall({ shop: 'b-store.myshopify.com', token: 'shpat_b' }),
+    };
+    const res = await post(cookieB, { form: { shop: SHOP } });
+    expect(res.status).toBe(303);
+    expect(location(res).searchParams.get('shopify')).toBe('claim_invalid');
+    expect(pendingDeleted(res)).toBe(true);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.tx.tenant.create).not.toHaveBeenCalled();
+    expect(mocks.registerShopifyWebhooks).not.toHaveBeenCalled();
+  });
+
+  it('POST sin formulario (sin `shop`): claim_invalid, sin create', async () => {
+    const res = await post(pendingCookie(), { form: null });
     expect(location(res).searchParams.get('shopify')).toBe('claim_invalid');
     expect(pendingDeleted(res)).toBe(true);
     expect(mocks.transaction).not.toHaveBeenCalled();

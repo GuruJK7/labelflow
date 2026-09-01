@@ -50,6 +50,11 @@ export const dynamic = 'force-dynamic';
  *      caso en que no se borra, porque borrarla haría imposible completar el
  *      flujo (el login vuelve acá).
  *   2. Cookie presente, que descifre, con forma válida y con menos de 10 min.
+ *   2b. Que el formulario nombre la MISMA tienda que la cookie: el GET puso en
+ *      un `<input type="hidden" name="shop">` exactamente lo que mostró. Ata
+ *      el clic a lo que la persona leyó: si la cookie cambió entre el GET y el
+ *      POST (otra instalación en otra pestaña dentro de los 10 minutos), el
+ *      POST no vincula una tienda que nadie confirmó.
  *   3. Dentro de UNA transacción: la tienda sigue sin dueño → se crea el tenant
  *      'shop-<handle>' bajo el usuario de la SESIÓN (no el del email de la
  *      tienda: la sesión es la identidad verificada, el email no). Si la tienda
@@ -144,6 +149,10 @@ export async function POST(req: NextRequest) {
   const abierto = await abrirReclamo(req, 303);
   if (!abierto.ok) return abierto.res;
   const { user, shop, token } = abierto;
+
+  // 2b. La tienda del formulario tiene que ser la de la cookie (ver cabecera).
+  if ((await tiendaDelFormulario(req)) !== shop) return fail('claim_invalid');
+
   const handle = shop.split('.')[0];
   const slug = tenantSlugForShop(shop);
 
@@ -240,6 +249,16 @@ export async function POST(req: NextRequest) {
   return borrarPendiente(NextResponse.redirect(destino, 303));
 }
 
+/** El `shop` del formulario, o null si no hay cuerpo, no es un form, o no trae `shop`. */
+async function tiendaDelFormulario(req: NextRequest): Promise<string | null> {
+  try {
+    const v = (await req.formData()).get('shop');
+    return typeof v === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 function mensajeSeguro(err: unknown): string {
   if (err instanceof Prisma.PrismaClientKnownRequestError) return err.message;
   const msg = String((err as { message?: unknown })?.message ?? '');
@@ -251,7 +270,8 @@ function mensajeSeguro(err: unknown): string {
  * sola pregunta y un botón, y tiene que servirse desde un route handler que
  * no participa del layout de la app. Todo lo que viene de datos pasa por
  * escapeHtml: el dominio ya fue validado por normalizeShopDomain, el email
- * es lo que haya en la tabla User.
+ * es lo que haya en la tabla User. El hidden `shop` lleva la misma tienda que
+ * el título: el POST exige que coincida con la cookie (2b en la cabecera).
  */
 function confirmPage(shop: string, email: string | null): string {
   const tienda = escapeHtml(shop);
@@ -282,6 +302,7 @@ function confirmPage(shop: string, email: string | null): string {
   <h1>¿Vincular <code>${tienda}</code> a la cuenta ${cuenta}?</h1>
   <p>La tienda queda como tienda nueva dentro de esta cuenta. Si no es la tuya, entrá con la correcta antes de vincular.</p>
   <form method="post" action="/api/shopify/claim">
+    <input type="hidden" name="shop" value="${tienda}">
     <button type="submit">Vincular</button>
   </form>
   <a href="${salir}">Entrar con otra cuenta</a>
