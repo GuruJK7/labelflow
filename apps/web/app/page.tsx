@@ -21,6 +21,7 @@ import {
   Award,
   Trophy,
   User,
+  MessageCircle,
 } from 'lucide-react';
 import { ScrollReveal } from './_components/ScrollReveal';
 import { ScrollProgress } from './_components/ScrollProgress';
@@ -115,9 +116,12 @@ export default function LandingPage() {
               href={WHATSAPP_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden sm:inline border border-white/10 text-zinc-200 hover:bg-white/[0.04] hover:border-white/20 px-3 sm:px-4 py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold transition-colors"
+              aria-label="Solicitar demo por WhatsApp"
+              className="inline-flex items-center justify-center border border-white/10 text-zinc-200 hover:bg-white/[0.04] hover:border-white/20 px-2.5 sm:px-4 py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold transition-colors"
             >
-              Solicitar demo
+              {/* En móvil el texto no entra al lado de "Crear cuenta gratis": queda el icono. */}
+              <MessageCircle className="w-4 h-4 sm:hidden" aria-hidden="true" />
+              <span className="hidden sm:inline">Solicitar demo</span>
             </a>
             <Link
               href="/signup"
@@ -838,7 +842,7 @@ export default function LandingPage() {
               Privacidad
             </Link>
             <Link href="/login" className="text-zinc-600 hover:text-zinc-300 transition-colors">
-              Portal de clientes
+              Iniciar sesión
             </Link>
           </div>
         </div>

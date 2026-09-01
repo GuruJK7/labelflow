@@ -50,7 +50,7 @@ export async function PUT(req: NextRequest) {
   const body = await req.json();
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
-    return apiError(parsed.error.errors[0]?.message ?? 'Datos invalidos', 400);
+    return apiError(parsed.error.errors[0]?.message ?? 'Datos inválidos', 400);
   }
 
   // Ensure config exists

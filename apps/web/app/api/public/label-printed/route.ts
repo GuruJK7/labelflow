@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => null);
     const parsed = printedSchema.safeParse(body);
-    if (!parsed.success) return apiError('Datos invalidos', 400);
+    if (!parsed.success) return apiError('Datos inválidos', 400);
 
     const updated = await setClientViewLabelsPrinted(
       parsed.data.ids,
