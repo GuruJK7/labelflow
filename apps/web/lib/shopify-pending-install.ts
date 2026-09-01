@@ -15,7 +15,16 @@ import { normalizeShopDomain, PENDING_INSTALL_TTL_SECONDS } from '@/lib/shopify-
  * ENCRYPTION_KEY): el GCM autentica, así que una cookie editada a mano no
  * descifra y se rechaza. El `iat` va adentro del cifrado, no en claro, para
  * que tampoco se pueda estirar la vida útil desde afuera.
+ *
+ * SEPARACIÓN DE DOMINIO: el texto plano lleva el prefijo `pending-install:v1:`
+ * y `openPendingInstall` lo exige. Misma clave y misma primitiva que otros
+ * secretos de la base significa que, sin esto, cualquier ciphertext nuestro
+ * (un `shopifyToken`, una `dacPassword`) sería "una cookie pendiente" que
+ * descifra bien y sólo falla por la forma del JSON — y la forma es un chequeo
+ * mucho más débil que "esto se cifró PARA ser esta cookie". El `v1` deja
+ * cambiar el formato sin aceptar cookies viejas.
  */
+export const PENDING_INSTALL_PREFIX = 'pending-install:v1:';
 export interface PendingInstall {
   shop: string;
   token: string;
@@ -29,7 +38,7 @@ export function sealPendingInstall(input: { shop: string; token: string }, nowMs
     token: input.token,
     iat: Math.floor(nowMs / 1000),
   };
-  return encrypt(JSON.stringify(payload));
+  return encrypt(PENDING_INSTALL_PREFIX + JSON.stringify(payload));
 }
 
 /**
@@ -46,7 +55,11 @@ export function openPendingInstall(
   if (!value) return null;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(decrypt(value));
+    const plain = decrypt(value);
+    // Descifra pero no es de este dominio: un token u otro secreto cifrado
+    // con la misma clave. Afuera, igual que basura.
+    if (!plain.startsWith(PENDING_INSTALL_PREFIX)) return null;
+    parsed = JSON.parse(plain.slice(PENDING_INSTALL_PREFIX.length));
   } catch {
     return null;
   }
