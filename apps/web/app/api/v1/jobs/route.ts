@@ -3,6 +3,7 @@ import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getPlanLimit } from '@/lib/mercadopago';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
+import { checkRunGate, checkPlanLimit } from '@/lib/can-run';
 
 export async function POST(req: Request) {
   const auth = await getAuthenticatedTenant();
@@ -33,6 +34,8 @@ export async function POST(req: Request) {
         isActive: true,
         subscriptionStatus: true,
         stripePriceId: true,
+        shipmentCredits: true,
+        referralBonusCredits: true,
       },
     }),
     db.tenant.findUnique({
@@ -43,9 +46,10 @@ export async function POST(req: Request) {
 
   if (!holder || !originating) return apiError('Tenant no encontrado', 404);
 
-  if (!holder.isActive || holder.subscriptionStatus !== 'ACTIVE') {
-    return apiError('Tu plan no esta activo. Activa una suscripcion para procesar pedidos.', 403);
-  }
+  // Mismo criterio que el scheduler del worker (isActive + saldo), para que
+  // el botón manual no pueda volver a divergir del cron. Ver lib/can-run.ts.
+  const gate = checkRunGate(holder);
+  if (!gate.ok) return apiError(gate.message, gate.status);
 
   // Tenant alias for the rest of the function — combines holder flags
   // with originating per-store metrics so existing reads keep working.
@@ -56,14 +60,10 @@ export async function POST(req: Request) {
     labelsThisMonth: originating.labelsThisMonth,
   };
 
-  // Check plan limit
-  const limit = getPlanLimit(tenant.stripePriceId);
-  if (tenant.labelsThisMonth >= limit) {
-    return apiError(
-      `Alcanzaste el limite de ${limit} etiquetas este mes. Upgrade tu plan para continuar.`,
-      429
-    );
-  }
+  // Tope por plan legacy. Los clientes de packs no tienen plan: su tope es el
+  // saldo, ya verificado arriba. Ver lib/can-run.ts.
+  const planGate = checkPlanLimit(tenant, getPlanLimit);
+  if (!planGate.ok) return apiError(planGate.message, planGate.status);
 
   // Check no running job
   const running = await isJobRunning(auth.tenantId);
