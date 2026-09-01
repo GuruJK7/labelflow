@@ -48,6 +48,10 @@ model User {
   sessions                Session[]
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
+  // Wallet unificado (2026-09-01): UN saldo por USER, no por tenant. Los
+  // tenants de un user ya comparten saldo vía credit-holder; el wallet lo
+  // hace explícito. Relación virtual: no agrega columna a User.
+  wallet                  Wallet?
 }
 
 /// Single-use email verification tokens for the post-signup confirmation
@@ -1323,4 +1327,99 @@ model ReferralCreditAccrual {
 
   @@index([referrerTenantId, createdAt(sort: Desc)])
   @@index([refereeTenantId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WALLET UNIFICADO — ledger por envío (fase 1: MODO SOMBRA, 2026-09-01)
+//
+// Ver docs/WALLET.md y apps/worker/src/billing/{tiers,settle,funds,ledger}.ts.
+//
+// Qué es: un saldo en PLATA (milésimos de UYU, bigint) por USER, alimentado
+// por un libro append-only de asientos (WalletEntry). Reemplaza al contador
+// Tenant.shipmentCredits, que no es idempotente (doble cobro en catch +
+// reconcile, cobro cero cuando el Job cierra antes de cobrar, guías
+// recuperadas que nunca se cobran).
+//
+// Qué NO es todavía: autoritativo. Mientras Wallet.authoritative = false el
+// worker escribe asientos en sombra (WalletEntry.shadow = true) y NO toca
+// balanceMilli; Tenant.shipmentCredits sigue mandando. El cutover se hace por
+// USER, con despacho pausado, y no es parte de esta fase.
+//
+// Hecho facturable = guía DAC real persistida en Label.dacGuia. La clave de
+// idempotencia lleva tenantId porque cada cliente usa SU cuenta DAC y DAC
+// numera por cuenta: dos clientes pueden recibir la misma guía.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Wallet {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  // Saldo disponible. Sólo lo mueve el ledger cuando authoritative = true.
+  balanceMilli  BigInt @default(0)
+  // Plata realmente ingresada (neta de reembolsos/contracargos). Habilita
+  // el gasto en AutoBoost; el saldo regalado no. Ver funds.ts.
+  paidInMilli   BigInt @default(0)
+  // Acumulado gastado en AutoBoost. Sólo sube.
+  smmSpentMilli BigInt @default(0)
+
+  // false = sombra: los asientos se escriben, el saldo no se mueve, y
+  // Tenant.shipmentCredits sigue siendo la verdad. true = este wallet cobra.
+  authoritative Boolean   @default(false)
+  cutoverAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User          @relation(fields: [userId], references: [id])
+  entries WalletEntry[]
+}
+
+model WalletEntry {
+  id       String  @id @default(cuid())
+  walletId String
+  // Tenant que originó el asiento (envío, reintegro). Null en movimientos
+  // del wallet en sí (compra, ajuste). Sin FK a propósito: el libro contable
+  // tiene que sobrevivir a que se borre el tenant o la etiqueta.
+  tenantId String?
+
+  // Milésimos de UYU. Negativo = cargo, positivo = crédito.
+  // Los asientos 'shipment' y 'refund' llevan delta 0: son el HECHO; la
+  // plata la mueve el asiento 'settlement' que recalcula el período entero
+  // (ver settle.ts). Así el invariante por período sale por construcción:
+  //   sum(delta WHERE reason IN (shipment, settlement, refund)) == -periodTotal(n)
+  deltaMilli BigInt
+
+  // shipment | settlement | purchase | refund | chargeback | grant | smm | adjust
+  reason String
+
+  // Clave de idempotencia. Formatos (settle.ts):
+  //   ship:v1:<tenantId>:<guia>      · refund:v1:<tenantId>:<guia>
+  //   settle:v1:<walletId>:<YYYY-MM>:<seq>
+  idemKey String @unique
+
+  dacGuia String?
+  labelId String?
+  jobId   String?
+  // Período contable YYYY-MM en hora Uruguay (UTC-3, sin DST). Lo llevan
+  // todos los asientos que participan de la liquidación.
+  periodYm String?
+  // Precio efectivo por envío al momento de liquidar (para recibos).
+  unitPriceMilli BigInt?
+
+  // true = escrito mientras el wallet NO era autoritativo. Permite separar
+  // la historia en sombra de la real al leer el ledger.
+  shadow Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id])
+
+  // UNIQUE parcial (tenantId, dacGuia) WHERE reason = 'shipment': Prisma no
+  // expresa índices parciales; vive sólo en la migración SQL
+  // (apps/web/prisma/migrations/20260901180000_wallet_ledger/migration.sql).
+  // El idemKey ya lo garantiza por construcción; el índice parcial es el
+  // cinturón además de los tiradores.
+  @@index([walletId, periodYm])
+  @@index([walletId, createdAt(sort: Desc)])
+  @@index([tenantId, dacGuia])
 }
