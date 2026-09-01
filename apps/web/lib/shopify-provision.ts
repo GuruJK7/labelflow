@@ -101,7 +101,7 @@ export type ProvisionOutcome =
  * Todo corre dentro de UNA transacción, incluido el chequeo de "¿la tienda ya
  * es de alguien?": dos callbacks simultáneos para el mismo shop no pueden
  * pasar los dos, y si igual chocan en el índice único del SLUG (P2002; el
- * dominio no tiene índice único todavía, ver D18) se devuelve 'conflict' en
+ * dominio no tiene índice único todavía, ver D18 y D22) se devuelve 'conflict' en
  * vez de un 500 que Shopify muestra como "instalación fallida".
  *
  * NO activa el tenant (`isActive` queda como está): el comerciante todavía

@@ -175,10 +175,12 @@ export async function POST(req: NextRequest) {
   // 3. Crear el tenant bajo el usuario de la sesión, si la tienda sigue libre.
   //
   // La base NO tiene índice único sobre shopifyStoreUrl (está escrito en
-  // prisma/migrations/…_tenant_shop_domain_lower, sin aplicar: D18). La
-  // protección real contra dos reclamos a la vez es este findFirst dentro de
-  // la transacción más el slug determinista 'shop-<handle>', que sí es
-  // @unique: el segundo insert choca en el slug con P2002.
+  // prisma/migrations/…_tenant_shop_domain_unique, sin aplicar y pendiente
+  // de una decisión: D22, main soporta a propósito que dos tenants compartan
+  // tienda). La protección real contra dos reclamos a la vez es este
+  // findFirst dentro de la transacción más el slug determinista
+  // 'shop-<handle>', que sí es @unique: el segundo insert choca en el slug
+  // con P2002.
   let resultado:
     | { kind: 'created'; tenantId: string }
     | { kind: 'conflict' }
