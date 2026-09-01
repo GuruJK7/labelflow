@@ -60,7 +60,26 @@ que ya está construido y verificado, gana lo verificado y se explica.
 - `tosAcceptedAt` queda **null**: el comerciante autorizó la app en Shopify, no aceptó nuestros términos. Verificado por grep que ningún gate lo lee (sólo se setea en signup, `/api/v1/tenants`, `dac-tenant` y auth Google). La aceptación en el primer login está en PENDIENTES.md.
 - Slug: handle ≤ 40 → `shop-<handle>`; > 40 → `shop-` + 31 primeros + `-` + sha256(handle)[0:8]. Antes se truncaba a 40 y dos tiendas con el mismo prefijo colisionaban en `shop_taken`. `existingByShop` y el insert van en la misma transacción; `P2002` → `conflict`.
 
-<!-- D15 está tomado en la rama feat/wallet-ledger (cutover del ledger): acá se salta para no chocar en el merge. -->
+## D15 · El cutover a `authoritative=true` se hace SÓLO el día 1 del mes (hora Uruguay)
+- **Problema:** `readPeriod` suma `shipment + settlement + refund` del período sin
+  mirar `shadow`. Si un user se flipea a mitad de mes con 40 envíos ya asentados en
+  sombra (y cobrados en créditos por el contador), el envío 41 se liquida contra
+  `n = 41` y el único delta que toca `balanceMilli` es el marginal: el descuento por
+  volumen lo "ganaron" envíos que se pagaron por otro sistema. No es un bug del
+  ledger — el invariante cierra igual — pero es una decisión de precio implícita y
+  el balance del mes de cutover queda ilegible.
+- **Decidido:** el flip `Wallet.authoritative=true` + `cutoverAt` se hace el **día 1
+  del mes calendario en `America/Montevideo`** (UTC-3 fijo, `periodOf`), antes del
+  primer envío de ese mes, con el despacho de todos los tenants del user pausado.
+  Así el período del cutover arranca en `n = 0` y todo su neto es real.
+- **Descartado:** emitir un `adjust` que deje el mes con `neto = -periodTotal(n_sombra)`
+  al flipear. Funciona, pero mete un asiento sintético que el reconciliador tiene que
+  saber distinguir para siempre. Regla de calendario > asiento especial.
+- **Consecuencia operativa:** si un cutover se pierde el día 1, se espera al mes
+  siguiente. No se flipea el 2.
+- **Revertir:** si algún día hace falta cortar a mitad de mes, la alternativa
+  descartada (el `adjust`) es la que hay que implementar y documentar; no
+  alcanza con flipear el flag.
 
 ## D16 · `/entry` no distingue token OAuth de token manual: el cortocircuito se queda, la migración es por Reconectar
 - **Hallazgo (re-revisión de seguridad, bajo):** `/api/shopify/entry` corta el OAuth si el tenant ya tiene `shopifyToken` (D12), también cuando ese token lo pegó a mano un cliente viejo desde su custom app. Para ese cliente, "Instalar" desde el App Store termina en `/login?shopify=open` y Shopify nunca registra la instalación pública.
