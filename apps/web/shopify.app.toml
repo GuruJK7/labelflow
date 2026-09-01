@@ -1,0 +1,82 @@
+# Configuración declarativa de la app de Shopify de AutoEnvía.
+#
+# Este archivo ES la app: en vez de completar quince campos a mano en el panel,
+# la CLI de Shopify lee esto y lo aplica. Vos te autenticás una vez y corrés
+# dos comandos; el resto ya está escrito acá.
+#
+#   npx shopify app config link      # elegís organización y creás la app
+#   npx shopify app deploy           # sube esta configuración
+#
+# `client_id` es el de la app real ya creada (org LabelFlow SAS, app 417965080577).
+# secreto (viaja en la URL de autorización). El Client SECRET no va nunca en
+# este archivo: ese va como variable de entorno en Vercel.
+#
+# ── DISTRIBUCIÓN ─────────────────────────────────────────────────────────────
+# El tipo de distribución NO se elige acá, se elige en el panel al crear la app,
+# y NO SE PUEDE CAMBIAR DESPUÉS. Las dos opciones y qué implican:
+#
+#   custom  → se instala en UNA tienda (o varias de la misma organización Plus,
+#             o tiendas de desarrollo). Sin revisión de Shopify. Sirve hoy mismo
+#             para las marcas que ya operamos: un link de instalación por tienda.
+#   public  → la instala cualquier tienda. REQUIERE aprobación de Shopify. Es la
+#             única que habilita el self-serve real.
+#
+# Las seis apps que ya existen en la organización Quanam son todas custom, por
+# eso ninguna sirve para el botón universal y hay que crear una nueva.
+
+client_id = "a4231e6cc6a41a79e1b01aebf3dd38b5"
+name = "AutoEnvía"
+handle = "autoenvia"
+application_url = "https://autoenvia.com"
+
+# No es una app embebida: el comerciante vive en NUESTRO dashboard, va a Shopify
+# sólo a autorizar y vuelve. No renderizamos nada dentro del admin de Shopify.
+# (Si algún día se busca listarla en el App Store, Shopify empuja fuerte hacia
+# embedded=true; es una conversación de diseño, no un cambio de una línea.)
+embedded = false
+
+[access_scopes]
+# Los mismos diez de REQUIRED_SCOPES en apps/web/lib/shopify-oauth.ts.
+# Si cambian allá, cambian acá: hay un test que falla si se desincronizan.
+#
+#   read_orders / write_orders            → leer pedidos pagos, escribir notas y tags
+#   read_fulfillments / write_fulfillments → marcar el pedido como enviado
+#   read_products / write_products         → resolver SKU y tipo de producto
+#   *_fulfillment_orders                   → API moderna de fulfillment; sin estos,
+#                                            marcar como enviado falla en tiendas nuevas
+scopes = "read_orders,write_orders,read_fulfillments,write_fulfillments,read_products,write_products,read_assigned_fulfillment_orders,write_assigned_fulfillment_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders"
+
+# Token offline: el worker despacha a las 3 de la mañana sin nadie logueado.
+# Un token online expira con la sesión del comerciante y rompería el cron.
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [
+  "https://autoenvia.com/api/shopify/callback",
+]
+
+[webhooks]
+api_version = "2026-07"
+
+  # Pedido pago → encolar al instante en vez de esperar al cron de 15 minutos.
+  [[webhooks.subscriptions]]
+  topics = ["orders/paid"]
+  uri = "/api/webhooks/shopify"
+
+  # Desinstalación → limpiar el token. Sin esto queda un token muerto y el cron
+  # encolando trabajos que nunca van a servir.
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled"]
+  uri = "/api/shopify/uninstalled"
+
+  # Obligatorios para cualquier app pública. Ya están implementados.
+  [webhooks.privacy_compliance]
+  customer_data_request_url = "https://autoenvia.com/api/webhooks/shopify/gdpr"
+  customer_deletion_url = "https://autoenvia.com/api/webhooks/shopify/gdpr"
+  shop_deletion_url = "https://autoenvia.com/api/webhooks/shopify/gdpr"
+
+[pos]
+embedded = false
+
+[build]
+include_config_on_deploy = true

@@ -3,6 +3,7 @@ import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { enqueueProcessOrdersBulk, isJobRunning } from '@/lib/queue';
 import { getPlanLimit } from '@/lib/mercadopago';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
+import { checkRunGate, checkPlanLimit } from '@/lib/can-run';
 
 /**
  * POST /api/v1/jobs/bulk-agent
@@ -28,6 +29,8 @@ export async function POST(_req: Request) {
       select: {
         isActive: true,
         subscriptionStatus: true,
+        shipmentCredits: true,
+        referralBonusCredits: true,
         stripePriceId: true,
       },
     }),
@@ -44,10 +47,14 @@ export async function POST(_req: Request) {
 
   if (!holder || !originating) return apiError('Tenant no encontrado', 404);
 
-  if (!holder.isActive || holder.subscriptionStatus !== 'ACTIVE') {
+  // Mismo criterio que el cron y que los otros dos disparos manuales.
+  // Ver lib/can-run.ts — antes esta ruta quedaba con el gate viejo y le decía
+  // "plan no activo" al mismo cliente al que el botón de al lado ya lo dejaba pasar.
+  const runGate = checkRunGate(holder);
+  if (!runGate.ok) {
     return apiError(
-      'Tu plan no está activo. Activá una suscripción para procesar pedidos.',
-      403,
+      runGate.message,
+      runGate.status,
     );
   }
 
@@ -69,14 +76,8 @@ export async function POST(_req: Request) {
     return apiError('Configurá tus credenciales DAC en Configuración antes de usar bulk.', 400);
   }
 
-  // Check plan limit
-  const limit = getPlanLimit(tenant.stripePriceId);
-  if (tenant.labelsThisMonth >= limit) {
-    return apiError(
-      `Alcanzaste el limite de ${limit} etiquetas este mes. Upgrade tu plan para continuar.`,
-      429,
-    );
-  }
+  const planGate = checkPlanLimit(tenant, getPlanLimit);
+  if (!planGate.ok) return apiError(planGate.message, planGate.status);
 
   // Check no running job (including agent-handoff states)
   const running = await isJobRunning(auth.tenantId);

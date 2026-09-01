@@ -9,6 +9,61 @@ interface ScheduleSlot {
   maxOrders: number; // 0 = all
 }
 
+/**
+ * Resultado del ida y vuelta de OAuth con Shopify. El callback vuelve a
+ * /settings?shopify=<motivo>, y acá se traduce a algo que el comerciante pueda
+ * accionar. Cada motivo dice qué pasó Y qué hacer — un "error" a secas en un
+ * flujo de conexión termina siempre en un mensaje de WhatsApp.
+ */
+const SHOPIFY_OAUTH_MESSAGES: Record<string, { ok: boolean; text: string }> = {
+  connected: { ok: true, text: 'Tienda conectada. Ya podemos leer tus pedidos y marcarlos como enviados.' },
+  bad_shop: { ok: false, text: 'Ese no parece un dominio de Shopify. Tiene que terminar en .myshopify.com.' },
+  already_linked: { ok: false, text: 'Esa tienda ya está conectada a otra cuenta. Escribinos y lo resolvemos.' },
+  missing_scopes: { ok: false, text: 'Faltaron permisos al autorizar. Volvé a conectar y aceptá todos.' },
+  bad_hmac: { ok: false, text: 'No pudimos validar la respuesta de Shopify. Probá de nuevo desde el botón.' },
+  bad_state: { ok: false, text: 'La conexión expiró o se abrió en otra pestaña. Probá de nuevo.' },
+  stale: { ok: false, text: 'La conexión tardó demasiado. Probá de nuevo.' },
+  no_session: { ok: false, text: 'Se cerró tu sesión en el medio. Ingresá otra vez y reintentá.' },
+  not_owner: { ok: false, text: 'Esa tienda no es tuya. Cambiá de tienda arriba y reintentá.' },
+  shop_mismatch: { ok: false, text: 'Este espacio ya está conectado a otra tienda. Para sumar una nueva, creála desde el selector de tiendas y conectala desde ahí.' },
+  exchange_failed: { ok: false, text: 'Shopify rechazó la conexión. Probá de nuevo en unos minutos.' },
+  no_code: { ok: false, text: 'Shopify no devolvió la autorización. Probá de nuevo.' },
+  misconfigured: { ok: false, text: 'La conexión con Shopify no está configurada todavía. Avisanos.' },
+};
+
+function ShopifyOAuthStatus() {
+  const [estado, setEstado] = useState<{ ok: boolean; text: string } | null>(null);
+  const [scopes, setScopes] = useState<string | null>(null);
+
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const motivo = p.get('shopify');
+    if (!motivo) return;
+    setEstado(SHOPIFY_OAUTH_MESSAGES[motivo] ?? { ok: false, text: `No pudimos conectar (${motivo}).` });
+    setScopes(p.get('scopes'));
+    if (p.get('webhooks')) {
+      setEstado({
+        ok: true,
+        text: 'Tienda conectada, pero no pudimos activar el aviso instantáneo de pedidos nuevos. Van a entrar igual, con hasta 15 minutos de demora.',
+      });
+    }
+    // Limpiar la URL para que un F5 no repita el mensaje.
+    window.history.replaceState({}, '', window.location.pathname);
+  }, []);
+
+  if (!estado) return null;
+  return (
+    <div className={`rounded-lg border px-3 py-2 text-[11px] leading-relaxed ${
+      estado.ok
+        ? 'border-emerald-500/30 bg-emerald-500/[0.07] text-emerald-300'
+        : 'border-amber-500/30 bg-amber-500/[0.07] text-amber-300'
+    }`}>
+      {estado.text}
+      {scopes && <div className="mt-1 font-mono text-[10px] opacity-80">Faltan: {scopes}</div>}
+    </div>
+  );
+}
+
 interface SettingsData {
   shopifyStoreUrl: string;
   shopifyTokenSet: boolean;
@@ -279,19 +334,48 @@ export default function SettingsPage() {
             {settings?.shopifyTokenSet && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Conectado</span>}
           </div>
           <div className="space-y-3">
+            <ShopifyOAuthStatus />
+
             <div>
-              <label className={labelClass}>Store URL</label>
+              <label className={labelClass}>Tu tienda</label>
               <input value={shopifyUrl} onChange={(e) => setShopifyUrl(e.target.value)} className={inputClass} placeholder="mitienda.myshopify.com" />
             </div>
-            <div>
-              <label className={labelClass}>Access Token</label>
-              <input type="password" value={shopifyToken} onChange={(e) => setShopifyToken(e.target.value)} className={inputClass} placeholder={settings?.shopifyTokenSet ? '********' : 'shpat_xxx'} />
-            </div>
-            <button onClick={() => saveSection('shopify', { shopifyStoreUrl: shopifyUrl, ...(shopifyToken ? { shopifyToken } : {}) })} disabled={saving === 'shopify'}
-              className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
-              {saving === 'shopify' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar Shopify
+
+            <button
+              onClick={() => {
+                const shop = shopifyUrl.trim();
+                if (!shop) return;
+                window.location.href = `/api/shopify/install?shop=${encodeURIComponent(shop)}`;
+              }}
+              disabled={!shopifyUrl.trim()}
+              className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              <CheckCircle className="w-3 h-3" />
+              {settings?.shopifyTokenSet ? 'Reconectar con Shopify' : 'Conectar con Shopify'}
             </button>
-            <InlineMessage section="shopify" />
+            <p className="text-[11px] text-zinc-500 leading-relaxed">
+              Te lleva a Shopify para que autorices los permisos. Volvés conectado — no hace falta
+              crear ninguna app ni copiar tokens.
+            </p>
+
+            <details className="pt-2 border-t border-white/[0.06]">
+              <summary className="text-[11px] text-zinc-500 cursor-pointer hover:text-zinc-400">
+                Conectar a mano con un token (método viejo)
+              </summary>
+              <div className="space-y-3 pt-3">
+                <p className="text-[11px] text-zinc-500">
+                  Sólo si ya tenías una app privada creada. Para tiendas nuevas usá el botón de arriba.
+                </p>
+                <div>
+                  <label className={labelClass}>Access Token</label>
+                  <input type="password" value={shopifyToken} onChange={(e) => setShopifyToken(e.target.value)} className={inputClass} placeholder={settings?.shopifyTokenSet ? '********' : 'shpat_xxx'} />
+                </div>
+                <button onClick={() => saveSection('shopify', { shopifyStoreUrl: shopifyUrl, ...(shopifyToken ? { shopifyToken } : {}) })} disabled={saving === 'shopify'}
+                  className="inline-flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
+                  {saving === 'shopify' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar token
+                </button>
+                <InlineMessage section="shopify" />
+              </div>
+            </details>
           </div>
         </div>
 

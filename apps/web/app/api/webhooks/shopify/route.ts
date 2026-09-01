@@ -36,11 +36,18 @@ export async function POST(req: NextRequest) {
   // Tenant lookup happens AFTER HMAC passes — untrusted shopDomain header is
   // now safe to use as a DB filter since we've proven Shopify (with our app
   // secret) actually signed this payload.
+  // El filtro NO pide `subscriptionStatus: 'ACTIVE'`.
+  //
+  // Ese campo sólo lo escribe el flujo legacy de suscripción de MercadoPago, así
+  // que exigirlo dejaba afuera a todo cliente de packs: conectaba su tienda, veía
+  // "Tienda conectada", y el despacho instantáneo no ocurría nunca — caía al cron
+  // de 15 minutos sin error, sin log y sin reintento de Shopify.
+  // Es el mismo criterio que `lib/can-run.ts` y que el scheduler del worker;
+  // los tres tienen que decir lo mismo o vuelven a divergir.
   const tenant = await db.tenant.findFirst({
     where: {
       shopifyStoreUrl: shopDomain,
       isActive: true,
-      subscriptionStatus: 'ACTIVE',
     },
     select: { id: true },
   });
