@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar, Printer, FlaskConical, Play } from 'lucide-react';
 import { PrinterSetup } from '@/components/printing/PrinterSetup';
-import { SHOPIFY_OAUTH_MESSAGES } from '@/lib/shopify-messages';
+import { SHOPIFY_OAUTH_MESSAGES, shopHandleFromParam, connectedNewStoreMessage } from '@/lib/shopify-messages';
 
 interface ScheduleSlot {
   time: string;   // "HH:MM"
@@ -21,14 +21,22 @@ function ShopifyOAuthStatus() {
     const p = new URLSearchParams(window.location.search);
     const motivo = p.get('shopify');
     if (!motivo) return;
-    setEstado(SHOPIFY_OAUTH_MESSAGES[motivo] ?? { ok: false, text: `No pudimos conectar (${motivo}).` });
-    setScopes(p.get('scopes'));
-    if (p.get('webhooks')) {
+    const webhooksWarning = !!p.get('webhooks');
+    // `shop` lo pone /api/shopify/claim: la tienda reclamada NO es la activa,
+    // el banner tiene que nombrarla. Sólo se acepta un handle con forma
+    // válida: lo que no pase queda fuera, nunca se muestra texto de la URL.
+    const handle = motivo === 'connected' ? shopHandleFromParam(p.get('shop')) : null;
+    if (handle) {
+      setEstado(connectedNewStoreMessage(handle, webhooksWarning));
+    } else if (webhooksWarning) {
       setEstado({
         ok: true,
         text: 'Tienda conectada, pero no pudimos activar el aviso instantáneo de pedidos nuevos. Van a entrar igual, con hasta 15 minutos de demora.',
       });
+    } else {
+      setEstado(SHOPIFY_OAUTH_MESSAGES[motivo] ?? { ok: false, text: `No pudimos conectar (${motivo}).` });
     }
+    setScopes(p.get('scopes'));
     // Limpiar la URL para que un F5 no repita el mensaje.
     window.history.replaceState({}, '', window.location.pathname);
   }, []);

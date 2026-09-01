@@ -19,8 +19,10 @@ export const dynamic = 'force-dynamic';
  * /callback (rama App Store) encontró que el email de contacto de la tienda ya
  * tiene cuenta. En vez de colgarle la tienda a esa cuenta sin preguntar, dejó
  * el token cifrado en la cookie `shopify_pending_install` (10 minutos, path
- * /api/shopify) y mandó al comerciante a /login?next=/api/shopify/claim. Al
- * loguearse, LoginForm lo trae acá.
+ * /api/shopify) y mandó al comerciante directo acá. Si ya tenía sesión, se
+ * reclama en el acto; si no, ESTA ruta lo manda a
+ * /login?shopify=claim&next=/api/shopify/claim y LoginForm lo trae de vuelta.
+ * (El middleware no toca /api/shopify/*: ni público ni protegido.)
  *
  * LO QUE SE EXIGE, EN ORDEN
  * -------------------------
@@ -31,7 +33,8 @@ export const dynamic = 'force-dynamic';
  *   3. Dentro de UNA transacción: la tienda sigue sin dueño → se crea el tenant
  *      'shop-<handle>' bajo el usuario de la SESIÓN (no el del email de la
  *      tienda: la sesión es la identidad verificada, el email no).
- *   4. Webhooks (best-effort) y a /settings.
+ *   4. Webhooks (best-effort) y a /settings?shopify=connected&shop=<handle>.
+ *      El handle va porque el tenant reclamado no queda activo (ver abajo).
  *
  * La cookie se borra SIEMPRE al terminar, con éxito o con error: un token que
  * ya se usó, o que no se va a usar, no tiene por qué seguir viajando.
@@ -89,13 +92,22 @@ export async function GET(req: NextRequest) {
           shopifyToken: encrypt(token),
           apiKey: base.apiKey,
           referralCode: base.referralCode,
+          // El bonus de bienvenida es por USUARIO, no por tienda (mismo
+          // criterio que POST /api/v1/tenants): el user de la sesión ya lo
+          // recibió con su primer tenant. Sin esto, reclamar N tiendas
+          // regalaría 10 envíos por cada una (default del schema).
+          shipmentCredits: 0,
         },
         select: { id: true },
       });
       return { kind: 'created', tenantId: tenant.id } as const;
     });
   } catch (err) {
-    if ((err as { code?: string }).code === 'P2002') return fail('already_linked');
+    const e = err as { code?: string; message?: string };
+    if (e.code === 'P2002') return fail('already_linked');
+    // Sin esto un claim_failed es invisible en los logs. Va el mínimo para
+    // diagnosticar; NUNCA el token ni la cookie.
+    console.error('[shopify/claim]', { shop, userId: user.userId, code: e.code, message: e.message });
     return fail('claim_failed');
   }
   if (resultado.kind === 'conflict') return fail('already_linked');
@@ -110,7 +122,13 @@ export async function GET(req: NextRequest) {
     webhookWarning = '&webhooks=failed';
   }
 
-  return borrarPendiente(
-    NextResponse.redirect(new URL(`/settings?shopify=connected${webhookWarning}`, origin)),
-  );
+  // El tenant reclamado NO queda activo: el tenant activo vive en el JWT y
+  // sólo cambia desde el TenantSwitcher (POST /tenants/switch + update de
+  // sesión, client-side). Un redirect no puede hacer eso. Así que /settings
+  // se abre sobre el tenant anterior y el banner tiene que decir de qué
+  // tienda habla: va el handle en la query y Settings lo valida antes de
+  // mostrarlo.
+  const destino = new URL(`/settings?shopify=connected${webhookWarning}`, origin);
+  destino.searchParams.set('shop', shop.split('.')[0]);
+  return borrarPendiente(NextResponse.redirect(destino));
 }

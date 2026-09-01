@@ -102,6 +102,60 @@ describe('/api/shopify/claim', () => {
     expect(pendingDeleted(res)).toBe(true);
   });
 
+  it('otro error de la base: claim_failed, y se loguea shop/userId/code SIN el token ni la cookie', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      mocks.tx.tenant.create.mockRejectedValue(Object.assign(new Error('se cayó'), { code: 'P1001' }));
+      const cookie = pendingCookie();
+      const res = await GET(makeRequest('/api/shopify/claim', {}, cookie));
+      expect(location(res).searchParams.get('shopify')).toBe('claim_failed');
+      expect(pendingDeleted(res)).toBe(true);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [tag, ctx] = spy.mock.calls[0];
+      expect(tag).toBe('[shopify/claim]');
+      expect(ctx).toEqual({ shop: SHOP, userId: 'u-sesion', code: 'P1001', message: 'se cayó' });
+      const volcado = JSON.stringify(spy.mock.calls[0]);
+      expect(volcado).not.toContain('shpat_pend');
+      expect(volcado).not.toContain(cookie[PENDING_INSTALL_COOKIE]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('dos reclamos seguidos con la misma cookie: el segundo da already_linked y NO vuelve a crear', async () => {
+    const cookie = pendingCookie();
+    const primera = await GET(makeRequest('/api/shopify/claim', {}, cookie));
+    expect(location(primera).searchParams.get('shopify')).toBe('connected');
+    expect(mocks.tx.tenant.create).toHaveBeenCalledTimes(1);
+
+    // La cookie se borró en la respuesta, pero un navegador viejo (o una
+    // pestaña abierta antes) puede volver a presentarla: la tienda ya tiene
+    // dueño y la transacción lo ve.
+    mocks.tx.tenant.findFirst.mockResolvedValue({ id: 't-nuevo' });
+    const segunda = await GET(makeRequest('/api/shopify/claim', {}, cookie));
+    expect(location(segunda).searchParams.get('shopify')).toBe('already_linked');
+    expect(mocks.tx.tenant.create).toHaveBeenCalledTimes(1);
+    expect(mocks.registerShopifyWebhooks).toHaveBeenCalledTimes(1);
+    expect(pendingDeleted(segunda)).toBe(true);
+  });
+
+  it('el user B con una cookie sellada en la instalación de A (ya reclamada por A): already_linked, sin create', async () => {
+    const cookie = pendingCookie();
+    await GET(makeRequest('/api/shopify/claim', {}, cookie));
+    expect(mocks.tx.tenant.create).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.tenant.create.mock.calls[0][0].data.userId).toBe('u-sesion');
+
+    // B se loguea en su cuenta y presenta la misma cookie. La tienda ya es de
+    // A: B no se la lleva ni se le crea nada.
+    mocks.getAuthenticatedUser.mockResolvedValue({ userId: 'u-otro' });
+    mocks.tx.tenant.findFirst.mockResolvedValue({ id: 't-nuevo' });
+    const res = await GET(makeRequest('/api/shopify/claim', {}, cookie));
+    expect(location(res).searchParams.get('shopify')).toBe('already_linked');
+    expect(mocks.tx.tenant.create).toHaveBeenCalledTimes(1);
+    expect(pendingDeleted(res)).toBe(true);
+  });
+
   it('camino feliz: crea el tenant bajo el user de la SESIÓN, registra webhooks, borra la cookie', async () => {
     const res = await GET(makeRequest('/api/shopify/claim', {}, pendingCookie()));
     const loc = location(res);
@@ -118,6 +172,14 @@ describe('/api/shopify/claim', () => {
     expect(data.apiKey).toMatch(/^[0-9a-f]{64}$/);
     expect(data.referralCode).toMatch(/^[A-Z0-9]{2,8}-[A-Z0-9]{4,8}$/);
     expect(data.tosAcceptedAt).toBeUndefined();
+    // El bonus de bienvenida es por usuario, no por tienda: sin este 0
+    // explícito el schema regala 10 envíos por cada tienda reclamada.
+    expect(data.shipmentCredits).toBe(0);
+
+    // El tenant reclamado no queda activo: el banner de /settings tiene que
+    // poder nombrar la tienda. Va el handle, nunca el token ni el email.
+    expect(loc.searchParams.get('shop')).toBe('acme');
+    expect(loc.search).not.toContain('shpat');
 
     expect(mocks.registerShopifyWebhooks).toHaveBeenCalledWith(SHOP, 'shpat_pend', 'https://autoenvia.com');
     expect(pendingDeleted(res)).toBe(true);

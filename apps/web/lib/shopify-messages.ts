@@ -77,3 +77,37 @@ export function shopifyLoginMessage(motivo: string | null | undefined): ShopifyM
   if (!motivo) return null;
   return SHOPIFY_LOGIN_MESSAGES[motivo] ?? SHOPIFY_LOGIN_GENERIC_ERROR;
 }
+
+/**
+ * Handle de tienda que /api/shopify/claim pone en `/settings?shop=<handle>`.
+ *
+ * Se valida ANTES de renderizarlo porque viene de la URL, o sea de cualquiera:
+ * sin esto, el banner verde de "tienda conectada" mostraría el texto que el
+ * link traiga ("tienda X quedó conectada: llamá al 099..."). Misma forma que
+ * exige `normalizeShopDomain` para el handle (`[a-z0-9][a-z0-9-]*`, sin guión
+ * final); no se importa desde `shopify-oauth` porque ese módulo carga `crypto`
+ * de Node y esto corre en el cliente.
+ */
+export function shopHandleFromParam(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim().toLowerCase();
+  if (!s || s.length > 100) return null;
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(s) || s.endsWith('-')) return null;
+  return s;
+}
+
+const WEBHOOKS_WARNING_TAIL =
+  'No pudimos activar el aviso instantáneo de pedidos nuevos: van a entrar igual, con hasta 15 minutos de demora.';
+
+/**
+ * Banner de /settings tras reclamar una tienda desde el App Store. El tenant
+ * reclamado NO queda activo (el activo vive en el JWT y sólo lo cambia el
+ * TenantSwitcher desde el cliente), así que hay que decir de cuál se habla.
+ */
+export function connectedNewStoreMessage(handle: string, webhooksWarning: boolean): ShopifyMessage {
+  const base = `La tienda ${handle} quedó conectada como tienda nueva: elegila en el selector para cargar sus credenciales de DAC.`;
+  return {
+    ok: true,
+    text: webhooksWarning ? `${base} ${WEBHOOKS_WARNING_TAIL}` : base,
+  };
+}
