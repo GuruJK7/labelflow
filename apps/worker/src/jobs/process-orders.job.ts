@@ -20,6 +20,7 @@ import {
 } from '../dac/remitente-manual';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
+import { persistLabelItems } from './label-items';
 import { getDepartmentForCity, getDepartmentForCityAsync, getDepartmentFromZip } from '../dac/uruguay-geo';
 import { evaluarZonaRepartoPropio } from '../self-delivery/zone';
 import { procesarPedidosRepartoPropio } from '../self-delivery/process';
@@ -1007,6 +1008,11 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           guia: result.guia,
           paymentStatus: resolvedPaymentStatus,
         });
+
+        // c.2) Snapshot de los ítems del pedido (para el export al WMS).
+        // Best-effort y a prueba de balas: la guía de DAC ya está emitida acá,
+        // nada de lo que pase abajo puede tirar el envío. Ver label-items.ts.
+        await persistLabelItems(labelRecord.id, order, slog);
 
         // 2026-04-22 — removed the auto-pay post-success "pago DAC PENDIENTE"
         // note. REMITENTE orders never reach this point anymore (they are

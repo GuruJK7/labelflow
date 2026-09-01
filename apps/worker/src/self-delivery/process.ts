@@ -5,6 +5,7 @@ import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingS
 import { markOrderProcessed, addOrderNote } from '../shopify/orders';
 import { uploadLabelPdf } from '../storage/upload';
 import { buildSafeLabelGeoFields } from '../jobs/label-safe-fields';
+import { persistLabelItems } from '../jobs/label-items';
 import { mergeAddress } from '../dac/shipment';
 import { codigoSeguimiento } from './tracking';
 import { renderEtiquetaPdf } from './render';
@@ -126,6 +127,11 @@ export async function procesarPedidosRepartoPropio(
           department: safeDepartment,
         },
       });
+
+      // ── 1.5. Snapshot de ítems del pedido para el export al WMS.
+      // Best-effort (nunca tira): el reparto propio también entra a la tanda
+      // del día, y el packer necesita saber qué va adentro de la caja.
+      await persistLabelItems(label.id, order, ctx.log);
 
       // ── 2. Etiqueta PDF.
       const pdf = await renderEtiquetaPdf({

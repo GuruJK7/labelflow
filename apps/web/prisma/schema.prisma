@@ -549,12 +549,48 @@ model Label {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id])
-  job    Job?   @relation(fields: [jobId], references: [id])
+  tenant Tenant      @relation(fields: [tenantId], references: [id])
+  job    Job?        @relation(fields: [jobId], references: [id])
+  items  LabelItem[]
 
   @@unique([tenantId, shopifyOrderId])
   @@index([tenantId, createdAt(sort: Desc)])
   @@index([dacGuia])
+}
+
+// Snapshot de los ítems del pedido en el momento en que se generó la etiqueta.
+//
+// Por qué existe (2026-09-01): hasta ahora los SKUs del pedido sólo vivían en
+// memoria durante el ciclo del worker — se usaban para armar la línea de
+// observaciones de DAC (buildSkuObservationLine) y se perdían. El WMS (DEPO)
+// necesita saber QUÉ productos van en cada envío del día para el picking y el
+// packing, y esa información ya no se puede recuperar del pedido de Shopify
+// una vez que pasó el ciclo (el pedido puede editarse, y la fuente dashboard
+// no es consultable retroactivamente).
+//
+// Es un SNAPSHOT, no una vista: se escribe una fila por line_item tal cual
+// venía el pedido (sin agrupar ni sumar). El consumidor (RPC importar_tanda de
+// DEPO) ya suma los ítems repetidos del mismo sku.
+//
+// `sku` es opcional a propósito: Shopify permite productos sin SKU y la fuente
+// dashboard hoy no lo manda (ver el hallazgo de dashboard/adapter.ts). El
+// export cae a `title` cuando no hay sku, que es lo que DEPO resuelve contra
+// sus aliases por tienda.
+//
+// Los labels HISTÓRICOS no tienen filas acá: el export los devuelve en una
+// lista aparte ("sin_items") en vez de mandarlos vacíos al WMS.
+model LabelItem {
+  id       String  @id @default(cuid())
+  labelId  String
+  sku      String?
+  title    String
+  quantity Int     @default(1)
+
+  createdAt DateTime @default(now())
+
+  label Label @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@index([labelId])
 }
 
 enum LabelStatus {

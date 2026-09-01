@@ -32,6 +32,7 @@ import { getUnfulfilledOrders } from '../shopify/orders';
 import { uploadOrdersJsonToStorage } from '../storage/upload';
 import { createStepLogger } from '../logger';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
+import { persistLabelItems } from './label-items';
 import { classifyOrders, type ClassifiedOrder } from '../rules/order-classifier';
 import { recordClassifierMetric } from '../rules/classifier-metrics';
 import { determinePaymentType } from '../rules/payment';
@@ -317,6 +318,12 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
             errorMessage: null,
           },
         });
+        // Snapshot de ítems para el export al WMS. Se hace acá (pre-creación
+        // PENDING) porque es el único punto de este flujo donde el pedido de
+        // Shopify está en memoria: el agente después sólo hace UPDATE de la
+        // Label con la guía, sin volver a ver los line_items. Best-effort.
+        await persistLabelItems(upserted.id, order, slog);
+
         payloadEntries.push({
           order,
           classification: cls,

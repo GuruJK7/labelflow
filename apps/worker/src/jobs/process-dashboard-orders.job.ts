@@ -29,6 +29,7 @@ import { withTenantDacLock, DacLockHeldError } from '../dac/tenant-lock';
 import { downloadLabel } from '../dac/label';
 import { uploadLabelPdf } from '../storage/upload';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
+import { persistLabelItems } from './label-items';
 import { createStepLogger } from '../logger';
 import logger from '../logger';
 import { sleep } from '../utils';
@@ -215,6 +216,12 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
           },
           update: { jobId, dacGuia: result.guia, status: 'CREATED', errorMessage: null, autoRetryCount: 0 },
         });
+
+        // Snapshot de ítems para el export al WMS (best-effort, nunca tira).
+        // OJO: en esta fuente los ítems llegan HOY sin sku — el adapter mapea
+        // sólo `title` (ver dashboard/adapter.ts, line_items) — así que el
+        // snapshot queda con sku=null y el export cae al título.
+        await persistLabelItems(labelRecord.id, order, slog);
 
         // PDF (best-effort, no bloquea el éxito)
         let pdfBase64: string | null = null;
