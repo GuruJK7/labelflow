@@ -180,6 +180,21 @@ describe('POST /api/shopify/claim — escribe, y redirige siempre con 303 (Post/
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
+  it('Origin de otro sitio con cookies válidas: claim_invalid antes de mirar sesión o base', async () => {
+    const res = await post(pendingCookie(), { headers: { origin: 'https://evil.example' } });
+    expect(res.status).toBe(303);
+    expect(location(res).searchParams.get('shopify')).toBe('claim_invalid');
+    expect(pendingDeleted(res)).toBe(true);
+    expect(mocks.getAuthenticatedUser).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it('Origin propio: sigue el camino normal', async () => {
+    const res = await post(pendingCookie(), { headers: { origin: 'https://autoenvia.com' } });
+    expect(location(res).searchParams.get('shopify')).toBe('connected');
+    expect(mocks.tx.tenant.create).toHaveBeenCalledTimes(1);
+  });
+
   it('el formulario nombra OTRA tienda que la cookie (cookie sellada con B, form shop=A): claim_invalid, sin create', async () => {
     const cookieB = {
       [PENDING_INSTALL_COOKIE]: sealPendingInstall({ shop: 'b-store.myshopify.com', token: 'shpat_b' }),

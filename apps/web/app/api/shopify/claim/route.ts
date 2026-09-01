@@ -42,10 +42,17 @@ export const dynamic = 'force-dynamic';
  * llega sin cookie y termina en claim_expired sin tocar la base. La cookie de
  * sesión de NextAuth es lax también: ese mismo POST llega sin sesión. El
  * único POST que trae las dos cookies es el del formulario que servimos en
- * el GET, desde nuestro origen.
+ * el GET, desde nuestro origen. Igual se chequea `Origin` cuando viene (paso
+ * 0 abajo): cuesta una línea y no depende de que ningún navegador respete
+ * `lax` bien.
  *
  * LO QUE EXIGE EL POST, EN ORDEN
  * ------------------------------
+ *   0. Si el navegador manda `Origin`, que sea el nuestro. Es la segunda
+ *      cerradura contra CSRF (la primera es la cookie lax, arriba) y va antes
+ *      de leer sesión o cookie: si el formulario salió de otro sitio no hay
+ *      nada que mirar. Sin header se sigue: clientes viejos y algunos modos
+ *      privados no lo mandan, y la cookie lax sola ya alcanza.
  *   1. Sesión. Sin sesión se vuelve al login CON la cookie intacta: es el único
  *      caso en que no se borra, porque borrarla haría imposible completar el
  *      flujo (el login vuelve acá).
@@ -145,6 +152,10 @@ export async function POST(req: NextRequest) {
   const origin = req.nextUrl.origin;
   const fail = (motivo: string) =>
     borrarPendiente(NextResponse.redirect(new URL(`/settings?shopify=${motivo}`, origin), 303));
+
+  // 0. Origin, antes de tocar nada (ver cabecera).
+  const from = req.headers.get('origin');
+  if (from !== null && from !== origin) return fail('claim_invalid');
 
   const abierto = await abrirReclamo(req, 303);
   if (!abierto.ok) return abierto.res;
