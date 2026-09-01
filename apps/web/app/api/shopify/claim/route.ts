@@ -58,6 +58,9 @@ export const dynamic = 'force-dynamic';
  *   4. Webhooks (best-effort) y a /settings?shopify=connected&shop=<handle>.
  *      El handle va porque el tenant reclamado no queda activo (ver abajo).
  *
+ * Todo redirect que sale del POST (login, claim_*, already_*, connected) va
+ * con 303, no con el 307 por defecto: ver `RedirectStatus`.
+ *
  * La cookie se borra SIEMPRE al terminar el POST, con éxito o con error: un
  * token que ya se usó, o que no se va a usar, no tiene por qué seguir viajando.
  * El GET también la borra cuando no sirve (vencida o ilegible): sin cookie
@@ -71,11 +74,19 @@ function borrarPendiente(r: NextResponse): NextResponse {
   return r;
 }
 
-function loginRedirect(origin: string): NextResponse {
+/**
+ * Estado de los redirects: el GET usa el 307 por defecto; el POST usa 303
+ * (Post/Redirect/Get). 307 conserva el método, así que el navegador seguía
+ * el redirect con OTRO POST a /settings, y un refresh en /settings volvía a
+ * enviar el formulario. 303 lo convierte en GET.
+ */
+type RedirectStatus = 303 | 307;
+
+function loginRedirect(origin: string, status: RedirectStatus): NextResponse {
   const destino = new URL('/login', origin);
   destino.searchParams.set('shopify', 'claim');
   destino.searchParams.set('next', '/api/shopify/claim');
-  return NextResponse.redirect(destino);
+  return NextResponse.redirect(destino, status);
 }
 
 /**
@@ -83,17 +94,20 @@ function loginRedirect(origin: string): NextResponse {
  * alguna de las dos. Compartido por GET y POST para que los dos exijan
  * exactamente lo mismo antes de mostrar o de escribir.
  */
-async function abrirReclamo(req: NextRequest): Promise<
+async function abrirReclamo(
+  req: NextRequest,
+  status: RedirectStatus,
+): Promise<
   | { ok: true; user: { userId: string }; shop: string; token: string }
   | { ok: false; res: NextResponse }
 > {
   const origin = req.nextUrl.origin;
   const fail = (motivo: string) =>
-    borrarPendiente(NextResponse.redirect(new URL(`/settings?shopify=${motivo}`, origin)));
+    borrarPendiente(NextResponse.redirect(new URL(`/settings?shopify=${motivo}`, origin), status));
 
   // 1. Sesión.
   const user = await getAuthenticatedUser();
-  if (!user) return { ok: false, res: loginRedirect(origin) };
+  if (!user) return { ok: false, res: loginRedirect(origin, status) };
 
   // 2. Cookie.
   const raw = req.cookies.get(PENDING_INSTALL_COOKIE)?.value;
@@ -105,7 +119,7 @@ async function abrirReclamo(req: NextRequest): Promise<
 }
 
 export async function GET(req: NextRequest) {
-  const abierto = await abrirReclamo(req);
+  const abierto = await abrirReclamo(req, 307);
   if (!abierto.ok) return abierto.res;
 
   const cuenta = await db.user.findUnique({
@@ -125,9 +139,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const origin = req.nextUrl.origin;
   const fail = (motivo: string) =>
-    borrarPendiente(NextResponse.redirect(new URL(`/settings?shopify=${motivo}`, origin)));
+    borrarPendiente(NextResponse.redirect(new URL(`/settings?shopify=${motivo}`, origin), 303));
 
-  const abierto = await abrirReclamo(req);
+  const abierto = await abrirReclamo(req, 303);
   if (!abierto.ok) return abierto.res;
   const { user, shop, token } = abierto;
   const handle = shop.split('.')[0];
@@ -202,7 +216,7 @@ export async function POST(req: NextRequest) {
   if (resultado.kind === 'already_yours') {
     const destino = new URL('/settings?shopify=already_yours', origin);
     destino.searchParams.set('shop', handle);
-    return borrarPendiente(NextResponse.redirect(destino));
+    return borrarPendiente(NextResponse.redirect(destino, 303));
   }
 
   // 4. Webhooks, best-effort (mismo criterio que /callback).
@@ -223,7 +237,7 @@ export async function POST(req: NextRequest) {
   // mostrarlo.
   const destino = new URL(`/settings?shopify=connected${webhookWarning}`, origin);
   destino.searchParams.set('shop', handle);
-  return borrarPendiente(NextResponse.redirect(destino));
+  return borrarPendiente(NextResponse.redirect(destino, 303));
 }
 
 function mensajeSeguro(err: unknown): string {

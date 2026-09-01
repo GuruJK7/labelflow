@@ -71,6 +71,8 @@ describe('GET /api/shopify/claim — pregunta, no escribe (D19)', () => {
   it('sin sesión: vuelve al login con next, y conserva la cookie para poder volver', async () => {
     mocks.getAuthenticatedUser.mockResolvedValue(null);
     const res = await get(pendingCookie());
+    // El GET no viene de un formulario: el 307 por defecto está bien acá.
+    expect(res.status).toBe(307);
     const loc = location(res);
     expect(loc.pathname).toBe('/login');
     expect(loc.searchParams.get('shopify')).toBe('claim');
@@ -138,10 +140,11 @@ describe('GET /api/shopify/claim — pregunta, no escribe (D19)', () => {
   });
 });
 
-describe('POST /api/shopify/claim — escribe', () => {
+describe('POST /api/shopify/claim — escribe, y redirige siempre con 303 (Post/Redirect/Get)', () => {
   it('sin sesión: al login con next, cookie intacta', async () => {
     mocks.getAuthenticatedUser.mockResolvedValue(null);
     const res = await post(pendingCookie());
+    expect(res.status).toBe(303);
     const loc = location(res);
     expect(loc.pathname).toBe('/login');
     expect(loc.searchParams.get('shopify')).toBe('claim');
@@ -152,12 +155,14 @@ describe('POST /api/shopify/claim — escribe', () => {
 
   it('sin cookie (un POST cross-site llega así: la cookie es lax): claim_expired, nada escrito', async () => {
     const res = await post();
+    expect(res.status).toBe(303);
     expect(location(res).searchParams.get('shopify')).toBe('claim_expired');
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
   it('cookie que no descifra: claim_invalid y se borra', async () => {
     const res = await post({ [PENDING_INSTALL_COOKIE]: 'basura' });
+    expect(res.status).toBe(303);
     expect(location(res).searchParams.get('shopify')).toBe('claim_invalid');
     expect(pendingDeleted(res)).toBe(true);
     expect(mocks.transaction).not.toHaveBeenCalled();
@@ -166,6 +171,7 @@ describe('POST /api/shopify/claim — escribe', () => {
   it('la tienda ya es de OTRO user (chequeo en la transacción): already_linked, no crea nada', async () => {
     mocks.tx.tenant.findFirst.mockResolvedValue({ id: 't-ajeno', userId: 'u-otro' });
     const res = await post(pendingCookie());
+    expect(res.status).toBe(303);
     expect(location(res).searchParams.get('shopify')).toBe('already_linked');
     expect(mocks.tx.tenant.create).not.toHaveBeenCalled();
     expect(mocks.registerShopifyWebhooks).not.toHaveBeenCalled();
@@ -175,6 +181,7 @@ describe('POST /api/shopify/claim — escribe', () => {
   it('la tienda ya es de un tenant del MISMO user: already_yours con el handle, no crea nada', async () => {
     mocks.tx.tenant.findFirst.mockResolvedValue({ id: 't-mio', userId: 'u-sesion' });
     const res = await post(pendingCookie());
+    expect(res.status).toBe(303);
     const loc = location(res);
     expect(loc.pathname).toBe('/settings');
     expect(loc.searchParams.get('shopify')).toBe('already_yours');
@@ -199,6 +206,7 @@ describe('POST /api/shopify/claim — escribe', () => {
   it('carrera perdida (P2002): already_linked', async () => {
     mocks.tx.tenant.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 'P2002' }));
     const res = await post(pendingCookie());
+    expect(res.status).toBe(303);
     expect(location(res).searchParams.get('shopify')).toBe('already_linked');
     expect(pendingDeleted(res)).toBe(true);
   });
@@ -213,6 +221,7 @@ describe('POST /api/shopify/claim — escribe', () => {
       mocks.tx.tenant.create.mockRejectedValue(err);
 
       const res = await post(cookie);
+      expect(res.status).toBe(303);
       expect(location(res).searchParams.get('shopify')).toBe('claim_failed');
       expect(pendingDeleted(res)).toBe(true);
 
@@ -305,6 +314,7 @@ describe('POST /api/shopify/claim — escribe', () => {
 
   it('camino feliz: crea el tenant bajo el user de la SESIÓN, registra webhooks, borra la cookie', async () => {
     const res = await post(pendingCookie());
+    expect(res.status).toBe(303);
     const loc = location(res);
     expect(loc.pathname).toBe('/settings');
     expect(loc.searchParams.get('shopify')).toBe('connected');
