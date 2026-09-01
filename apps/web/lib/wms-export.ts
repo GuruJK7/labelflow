@@ -14,6 +14,14 @@
  *     "destinatario": "Juan Pérez", "direccion": "Av. Italia 1234 apto 5",
  *     "ciudad": "Montevideo", "items": [ { "sku": "REM-001", "qty": 2 } ] }
  *
+ * Además de esas 7 claves mandamos 3 informativas —`departamento`,
+ * `reparto_propio` y `printedAt`— que el consumidor YA declara como opcionales
+ * (`PedidoAutoenvia` en wms-mvp/src/app/(app)/picking/actions.ts:278, verificado
+ * el 2026-09-01) y que el RPC ignora: `importar_tanda` lee clave por clave con
+ * `v_pedido->>'...'` sobre `jsonb_array_elements`, así que una clave de más
+ * nunca rompe la importación. DEPO usa `reparto_propio` sólo para contar
+ * cuántos pedidos de la tanda son de logística propia y avisarlo en pantalla.
+ *
  * Detalles del contrato que NO se pueden cambiar de este lado:
  *   - `cliente` se matchea por nombre EXACTO (btrim) contra la tabla `clients`
  *     de DEPO. Si el nombre del tenant en LabelFlow no coincide con el de la
@@ -26,18 +34,29 @@
  *   - `items[].sku` se resuelve contra products(client_id, sku) y después contra
  *     product_aliases. Por eso cuando el ítem no tiene sku mandamos el TÍTULO:
  *     DEPO lo mapea una vez como alias y queda aprendido.
- *   - El ORDEN del array es la pila de impresión (`pack_seq`). Acá se ordena por
- *     `createdAt` ascendente, que es el orden en que el worker generó las
- *     etiquetas. ⚠️ Si el portal imprime el PDF bulk en otro orden, la pila
- *     física no va a coincidir con `pack_seq`. Registrar el orden real del
- *     último bulk print quedó FUERA de esta entrega (ver reporte).
+ *   - El ORDEN del array es la pila de impresión (`pack_seq` del lado de DEPO).
+ *     Se ordena por `packSeq asc nulls last, createdAt asc` — ver ordenarPila().
+ *     ⚠️ packSeq describe UNA impresión: si el operador imprime el día en dos
+ *     tandas (por ejemplo el grupo de Maldonado y después el resto), quedan dos
+ *     numeraciones que arrancan en 1 y `zona=todas` las intercala por
+ *     createdAt. Cuando se imprime por grupo hay que exportar por grupo
+ *     (`?zona=maldonado` / `?zona=resto`): ahí cada tanda sale exactamente en
+ *     el orden de su pila.
  *
  * ── "sin_items" ──────────────────────────────────────────────────────────────
  * Las Labels anteriores a esta feature no tienen filas en LabelItem. Mandarlas
  * a DEPO con `items: []` crearía pedidos vacíos que el packer no puede armar.
  * Van en una lista aparte, con el mismo shape, para que el operador las cargue
  * a mano o las ignore — nunca mezcladas con la tanda importable.
+ *
+ * ── Zonas ────────────────────────────────────────────────────────────────────
+ * `zona` parte la tanda en la pila que reparte LabelFlow (hoy: Maldonado) y la
+ * que se va por DAC. El discriminador es el de lib/departamentos.ts (unión de
+ * "guía LF-" y "departamento normalizado ∈ propios") — el MISMO que usa el
+ * portal para agrupar las etiquetas, así que lo que el operador ve en pantalla
+ * y lo que importa en DEPO no pueden discrepar.
  */
+import { esRepartoPropio, normalizarDepartamento } from './departamentos';
 
 /** Uruguay es UTC-3 fijo (sin DST desde 2015). Mismo criterio que lib/uy-time.ts. */
 const UY_OFFSET_MS = 3 * 60 * 60 * 1000;
@@ -58,8 +77,24 @@ export interface WmsExportLabelRow {
   customerName: string;
   deliveryAddress: string;
   city: string;
+  department: string | null;
   createdAt: Date;
+  /** Posición en la pila de la última impresión bulk del portal. Null = nunca. */
+  packSeq: number | null;
+  /** Cuándo el portal sirvió el PDF por primera vez. Null = sin imprimir. */
+  printedAt: Date | null;
   items: WmsExportItemRow[];
+}
+
+/** Zonas que el operador puede pedir en `?zona=`. */
+export type WmsExportZona = 'maldonado' | 'resto' | 'todas';
+
+export const ZONAS_VALIDAS: readonly WmsExportZona[] = ['maldonado', 'resto', 'todas'];
+
+export function parseZona(valor: string | null | undefined): WmsExportZona | null {
+  if (valor === null || valor === undefined || valor === '') return 'todas';
+  const v = valor.trim().toLowerCase();
+  return (ZONAS_VALIDAS as readonly string[]).includes(v) ? (v as WmsExportZona) : null;
 }
 
 /** Ítem tal cual lo consume `importar_tanda`. */
@@ -68,7 +103,7 @@ export interface DepoItem {
   qty: number;
 }
 
-/** Pedido tal cual lo consume `importar_tanda`. */
+/** Pedido tal cual lo consume `importar_tanda` (+ 3 claves informativas). */
 export interface DepoPedido {
   cliente: string;
   external_ref: string;
@@ -77,11 +112,19 @@ export interface DepoPedido {
   direccion: string;
   ciudad: string;
   items: DepoItem[];
+  /** Departamento NORMALIZADO, o null si el dato de origen no se reconoce. */
+  departamento: string | null;
+  /** true = la reparte LabelFlow, no DAC. Ver lib/departamentos.ts. */
+  reparto_propio: boolean;
+  /** ISO 8601 de la primera impresión desde el portal, o null. */
+  printedAt: string | null;
 }
 
 export interface WmsExportPayload {
   fecha: string;
   cliente: string;
+  /** Zona pedida (`todas` por default). Informativa: DEPO no la usa. */
+  zona: WmsExportZona;
   /** Listos para pegar en `importar_tanda`, en orden de pila. */
   pedidos: DepoPedido[];
   /** Labels del día SIN snapshot de ítems (históricos). Mismo shape, items vacío. */
@@ -169,27 +212,63 @@ export function toDepoPedido(row: WmsExportLabelRow, cliente: string): DepoPedid
     direccion: clean(row.deliveryAddress),
     ciudad: clean(row.city),
     items: toDepoItems(row.items ?? []),
+    departamento: normalizarDepartamento(row.department),
+    reparto_propio: esRepartoPropio(row),
+    printedAt: row.printedAt ? row.printedAt.toISOString() : null,
   };
+}
+
+/**
+ * Orden de la PILA FÍSICA: `packSeq asc nulls last, createdAt asc`.
+ *
+ * packSeq lo estampa el portal con el índice del PDF combinado, así que
+ * describe el mazo que el operador levanta de la impresora. Las que nunca se
+ * imprimieron en bulk (packSeq null) van al FINAL —no al principio— y entre
+ * ellas por `createdAt`: si cayeran primero, DEPO le asignaría los pack_seq
+ * bajos a etiquetas que no están arriba del mazo y el picking saldría al
+ * revés. Ordena una COPIA: la ruta ya pide este mismo orden a Postgres y esto
+ * es la red de seguridad (y lo que hace testeable la regla sin base).
+ */
+export function ordenarPila(rows: WmsExportLabelRow[]): WmsExportLabelRow[] {
+  return [...rows].sort((a, b) => {
+    const pa = a.packSeq ?? null;
+    const pb = b.packSeq ?? null;
+    if (pa !== pb) {
+      if (pa === null) return 1; // nulls last, en cualquier caso
+      if (pb === null) return -1;
+      return pa - pb;
+    }
+    return a.createdAt.getTime() - b.createdAt.getTime();
+  });
+}
+
+/** ¿Esta fila entra en la zona pedida? `todas` no filtra nada. */
+export function filtrarZona(rows: WmsExportLabelRow[], zona: WmsExportZona): WmsExportLabelRow[] {
+  if (zona === 'todas') return rows;
+  const quiero = zona === 'maldonado';
+  return rows.filter((r) => esRepartoPropio(r) === quiero);
 }
 
 /**
  * Arma el payload completo del día para un tenant.
  *
- * `rows` tiene que venir ya filtrado por tenant + estado + día. El orden de
- * entrada se respeta tal cual (es la pila de impresión).
+ * `rows` tiene que venir ya filtrado por tenant + estado + día. Acá se aplica
+ * el filtro de zona y el orden de pila (idempotente respecto del ORDER BY de
+ * la consulta).
  */
 export function buildWmsExportPayload(
   rows: WmsExportLabelRow[],
-  opts: { fecha: string; cliente: string },
+  opts: { fecha: string; cliente: string; zona?: WmsExportZona },
 ): WmsExportPayload {
+  const zona = opts.zona ?? 'todas';
   const pedidos: DepoPedido[] = [];
   const sinItems: DepoPedido[] = [];
 
-  for (const row of rows) {
+  for (const row of ordenarPila(filtrarZona(rows, zona))) {
     const pedido = toDepoPedido(row, opts.cliente);
     if (pedido.items.length === 0) sinItems.push(pedido);
     else pedidos.push(pedido);
   }
 
-  return { fecha: opts.fecha, cliente: opts.cliente, pedidos, sin_items: sinItems };
+  return { fecha: opts.fecha, cliente: opts.cliente, zona, pedidos, sin_items: sinItems };
 }

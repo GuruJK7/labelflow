@@ -16,6 +16,8 @@ import {
   buildWmsExportPayload,
   parseYmd,
   toDepoItems,
+  ordenarPila,
+  parseZona,
   uyDayRange,
   uyToday,
   type WmsExportLabelRow,
@@ -29,7 +31,10 @@ function label(over: Partial<WmsExportLabelRow> = {}): WmsExportLabelRow {
     customerName: 'Juan Pérez',
     deliveryAddress: 'Av. Italia 1234 apto 5',
     city: 'Montevideo',
+    department: 'Montevideo',
     createdAt: new Date('2026-09-01T15:00:00.000Z'),
+    packSeq: null,
+    printedAt: null,
     items: [{ sku: 'REM-001', title: 'Remera', quantity: 2 }],
     ...over,
   };
@@ -40,8 +45,14 @@ describe('shape del pedido — contrato importar_tanda', () => {
     const { pedidos } = buildWmsExportPayload([label()], { fecha: '2026-09-01', cliente: 'Alba Textil' });
 
     expect(pedidos).toHaveLength(1);
+    // Las 7 del RPC + las 3 informativas que el consumidor declara opcionales
+    // (departamento, reparto_propio, printedAt). Ninguna más: cualquier clave
+    // nueva acá se está mandando a DEPO sin que nadie la haya pedido.
     expect(Object.keys(pedidos[0]).sort()).toEqual(
-      ['ciudad', 'cliente', 'destinatario', 'direccion', 'external_ref', 'guia', 'items'].sort(),
+      [
+        'ciudad', 'cliente', 'destinatario', 'direccion', 'external_ref', 'guia', 'items',
+        'departamento', 'reparto_propio', 'printedAt',
+      ].sort(),
     );
     expect(Object.keys(pedidos[0].items[0]).sort()).toEqual(['qty', 'sku']);
   });
@@ -57,6 +68,9 @@ describe('shape del pedido — contrato importar_tanda', () => {
       direccion: 'Av. Italia 1234 apto 5',
       ciudad: 'Montevideo',
       items: [{ sku: 'REM-001', qty: 2 }],
+      departamento: 'Montevideo',
+      reparto_propio: false,
+      printedAt: null,
     });
   });
 
@@ -173,12 +187,21 @@ describe('sin_items — los históricos no van a la tanda', () => {
       direccion: 'Av. Italia 1234 apto 5',
       ciudad: 'Montevideo',
       items: [],
+      departamento: 'Montevideo',
+      reparto_propio: false,
+      printedAt: null,
     });
   });
 
   it('lista vacía devuelve las dos listas vacías, no null', () => {
     const payload = buildWmsExportPayload([], { fecha: '2026-09-01', cliente: 'T' });
-    expect(payload).toEqual({ fecha: '2026-09-01', cliente: 'T', pedidos: [], sin_items: [] });
+    expect(payload).toEqual({
+      fecha: '2026-09-01',
+      cliente: 'T',
+      zona: 'todas',
+      pedidos: [],
+      sin_items: [],
+    });
   });
 });
 
@@ -229,6 +252,158 @@ describe('día local uruguayo', () => {
 
     it('un bisiesto válido se acepta', () => {
       expect(parseYmd('2028-02-29')).toEqual({ y: 2028, m: 2, d: 29 });
+    });
+  });
+});
+
+describe('orden de la pila física — packSeq asc nulls last, createdAt asc', () => {
+  const t = (iso: string) => new Date(iso);
+
+  it('ordena por packSeq y manda las nunca impresas AL FINAL', () => {
+    const payload = buildWmsExportPayload(
+      [
+        label({ shopifyOrderName: '#sin-b', packSeq: null, createdAt: t('2026-09-01T18:00:00Z') }),
+        label({ shopifyOrderName: '#p2', packSeq: 2, createdAt: t('2026-09-01T10:00:00Z') }),
+        label({ shopifyOrderName: '#sin-a', packSeq: null, createdAt: t('2026-09-01T09:00:00Z') }),
+        label({ shopifyOrderName: '#p1', packSeq: 1, createdAt: t('2026-09-01T20:00:00Z') }),
+      ],
+      { fecha: '2026-09-01', cliente: 'T' },
+    );
+
+    // #p1 va primero AUNQUE se haya creado último: la pila manda sobre la hora.
+    expect(payload.pedidos.map((p) => p.external_ref)).toEqual([
+      '#p1',
+      '#p2',
+      '#sin-a',
+      '#sin-b',
+    ]);
+  });
+
+  it('ordenarPila no muta el array de entrada', () => {
+    const rows = [label({ packSeq: 2 }), label({ packSeq: 1 })];
+    const antes = rows.map((r) => r.packSeq);
+    ordenarPila(rows);
+    expect(rows.map((r) => r.packSeq)).toEqual(antes);
+  });
+
+  it('con packSeq empatado (no debería pasar) desempata por createdAt', () => {
+    const out = ordenarPila([
+      label({ id: 'b', packSeq: 1, createdAt: t('2026-09-01T12:00:00Z') }),
+      label({ id: 'a', packSeq: 1, createdAt: t('2026-09-01T11:00:00Z') }),
+    ]);
+    expect(out.map((r) => r.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('departamento, reparto_propio y printedAt', () => {
+  it('normaliza el departamento sucio de prod', () => {
+    const { pedidos } = buildWmsExportPayload(
+      [label({ department: 'Paysandú' }), label({ shopifyOrderName: '#2', department: 'Maldonado Department' })],
+      { fecha: '2026-09-01', cliente: 'T' },
+    );
+    expect(pedidos.map((p) => p.departamento)).toEqual(['Paysandu', 'Maldonado']);
+  });
+
+  it('un departamento que no se reconoce sale como null, no como texto crudo', () => {
+    const { pedidos } = buildWmsExportPayload([label({ department: 'Valencia' })], {
+      fecha: '2026-09-01',
+      cliente: 'T',
+    });
+    expect(pedidos[0].departamento).toBeNull();
+    expect(pedidos[0].reparto_propio).toBe(false);
+  });
+
+  it('marca reparto_propio por departamento y por guía LF-', () => {
+    const { pedidos } = buildWmsExportPayload(
+      [
+        label({ shopifyOrderName: '#mal', department: 'Maldonado' }),
+        label({ shopifyOrderName: '#lf', department: 'Rocha', dacGuia: 'LF-000001' }),
+        label({ shopifyOrderName: '#dac', department: 'Rocha' }),
+      ],
+      { fecha: '2026-09-01', cliente: 'T' },
+    );
+    const byRef = new Map(pedidos.map((p) => [p.external_ref, p.reparto_propio]));
+    expect(byRef.get('#mal')).toBe(true);
+    expect(byRef.get('#lf')).toBe(true);
+    expect(byRef.get('#dac')).toBe(false);
+  });
+
+  it('printedAt sale en ISO 8601 o null', () => {
+    const { pedidos } = buildWmsExportPayload(
+      [
+        label({ shopifyOrderName: '#a', printedAt: new Date('2026-09-01T13:45:00.000Z') }),
+        label({ shopifyOrderName: '#b', printedAt: null }),
+      ],
+      { fecha: '2026-09-01', cliente: 'T' },
+    );
+    const byRef = new Map(pedidos.map((p) => [p.external_ref, p.printedAt]));
+    expect(byRef.get('#a')).toBe('2026-09-01T13:45:00.000Z');
+    expect(byRef.get('#b')).toBeNull();
+  });
+});
+
+describe('zona — partir la tanda en reparto propio / resto', () => {
+  const dia = () => [
+    label({ shopifyOrderName: '#mal', department: 'Maldonado' }),
+    label({ shopifyOrderName: '#lf', department: 'Rocha', dacGuia: 'LF-1' }),
+    label({ shopifyOrderName: '#mvd', department: 'Montevideo' }),
+  ];
+
+  it('todas (default) no filtra nada', () => {
+    const p = buildWmsExportPayload(dia(), { fecha: '2026-09-01', cliente: 'T' });
+    expect(p.zona).toBe('todas');
+    expect(p.pedidos).toHaveLength(3);
+  });
+
+  it('maldonado deja sólo lo de reparto propio', () => {
+    const p = buildWmsExportPayload(dia(), { fecha: '2026-09-01', cliente: 'T', zona: 'maldonado' });
+    expect(p.pedidos.map((x) => x.external_ref).sort()).toEqual(['#lf', '#mal']);
+    expect(p.pedidos.every((x) => x.reparto_propio)).toBe(true);
+  });
+
+  it('resto deja sólo lo que se va por DAC', () => {
+    const p = buildWmsExportPayload(dia(), { fecha: '2026-09-01', cliente: 'T', zona: 'resto' });
+    expect(p.pedidos.map((x) => x.external_ref)).toEqual(['#mvd']);
+  });
+
+  it('las dos zonas son complementarias: ninguna etiqueta se pierde ni se duplica', () => {
+    const rows = dia();
+    const a = buildWmsExportPayload(rows, { fecha: '2026-09-01', cliente: 'T', zona: 'maldonado' });
+    const b = buildWmsExportPayload(rows, { fecha: '2026-09-01', cliente: 'T', zona: 'resto' });
+    const refs = [...a.pedidos, ...b.pedidos].map((x) => x.external_ref).sort();
+    expect(refs).toEqual(['#lf', '#mal', '#mvd']);
+  });
+
+  it('el filtro de zona también parte sin_items', () => {
+    const p = buildWmsExportPayload(
+      [
+        label({ shopifyOrderName: '#mal', department: 'Maldonado', items: [] }),
+        label({ shopifyOrderName: '#mvd', department: 'Montevideo', items: [] }),
+      ],
+      { fecha: '2026-09-01', cliente: 'T', zona: 'maldonado' },
+    );
+    expect(p.pedidos).toHaveLength(0);
+    expect(p.sin_items.map((x) => x.external_ref)).toEqual(['#mal']);
+  });
+
+  describe('parseZona', () => {
+    it('acepta las tres zonas, con mayúsculas y espacios', () => {
+      expect(parseZona('maldonado')).toBe('maldonado');
+      expect(parseZona(' RESTO ')).toBe('resto');
+      expect(parseZona('Todas')).toBe('todas');
+    });
+
+    it('ausente o vacía cae a todas', () => {
+      expect(parseZona(null)).toBe('todas');
+      expect(parseZona(undefined)).toBe('todas');
+      expect(parseZona('')).toBe('todas');
+    });
+
+    it('una zona desconocida es null (la ruta devuelve 400, no exporta de más)', () => {
+      expect(parseZona('canelones')).toBeNull();
+      expect(parseZona('all')).toBeNull();
+      expect(parseZona('maldonado ')).toBe('maldonado');
+      expect(parseZona('mal')).toBeNull();
     });
   });
 });

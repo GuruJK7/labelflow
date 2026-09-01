@@ -38,6 +38,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { esRepartoPropio } from '@/lib/departamentos';
 import type {
   ClientViewStore,
   ClientViewLabel,
@@ -155,6 +156,38 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
 function orderNumber(l: ClientViewLabel): number {
   const digits = (l.orderName ?? '').replace(/[^0-9]/g, '');
   return digits ? parseInt(digits, 10) : Number.NaN;
+}
+
+/**
+ * Corte por zona DENTRO de cada día: la pila que sale a repartir LabelFlow y la
+ * que se despacha por DAC. Son dos operaciones físicas distintas (una la carga
+ * el repartidor en la camioneta, la otra va al mostrador de DAC), así que se
+ * imprimen y se cuentan por separado.
+ *
+ * El discriminador es esRepartoPropio() de lib/departamentos.ts — EL MISMO que
+ * usa el export al WMS. Si acá se usara otra regla, el operador vería una pila
+ * en pantalla y DEPO recibiría otra.
+ *
+ * Se devuelven sólo los grupos con etiquetas: un día que es todo DAC no tiene
+ * por qué mostrar un encabezado "Maldonado" vacío.
+ */
+interface ZonaDelDia {
+  key: 'propio' | 'resto';
+  titulo: string;
+  items: ClientViewLabel[];
+}
+
+function zonasDelDia(items: ClientViewLabel[]): ZonaDelDia[] {
+  const propio: ClientViewLabel[] = [];
+  const resto: ClientViewLabel[] = [];
+  for (const l of items) {
+    if (esRepartoPropio(l)) propio.push(l);
+    else resto.push(l);
+  }
+  return [
+    { key: 'propio' as const, titulo: 'Maldonado (reparto propio)', items: propio },
+    { key: 'resto' as const, titulo: 'Todo Uruguay', items: resto },
+  ].filter((z) => z.items.length > 0);
 }
 
 export function ClientPortal({
@@ -868,6 +901,12 @@ export function ClientPortal({
                     (l) => l.hasPdf && !isPrinted(l),
                   ).length;
 
+                  // Corte por zona dentro del día. `items` ya viene filtrado y
+                  // ordenado, así que cada zona hereda los filtros y el orden
+                  // elegidos arriba sin re-implementar nada.
+                  const zonas = zonasDelDia(items);
+                  const hayCorte = zonas.length > 1;
+
                   return (
                     <section key={dayKey}>
                       {/* Day header */}
@@ -955,163 +994,245 @@ export function ClientPortal({
                         )}
                       </div>
 
-                      {/* Cards */}
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                        {items.map((l) => {
-                          const color = colorByStore.get(l.storeId)!;
-                          const badge = statusBadge(l.status);
-                          const selectable = l.hasPdf;
-                          const isSel = selectedIds.has(l.id);
-                          const printed = isPrinted(l);
+                      {/* Zonas del día + cards */}
+                      <div className="space-y-5">
+                        {zonas.map((zona) => {
+                          const zonaPdfIds = zona.items
+                            .filter((l) => l.hasPdf)
+                            .map((l) => l.id);
+                          const zonaState = groupState(zonaPdfIds);
+                          const zonaPending = zona.items.filter(
+                            (l) => l.hasPdf && !isPrinted(l),
+                          ).length;
+                          const esPropio = zona.key === 'propio';
+
                           return (
-                            <article
-                              key={l.id}
-                              onClick={
-                                selectable ? () => toggleLabel(l.id) : undefined
-                              }
-                              className={cn(
-                                'relative overflow-hidden rounded-xl border bg-white/[0.03] p-4 transition',
-                                color.cardBorder,
-                                selectable && 'cursor-pointer hover:bg-white/[0.05]',
-                                printed && !isSel && 'opacity-60 hover:opacity-90',
-                                isSel &&
-                                  'bg-cyan-500/[0.06] ring-2 ring-cyan-400/60',
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  'absolute inset-y-0 left-0 w-1',
-                                  color.bar,
-                                )}
-                              />
-                              <div className="flex items-start justify-between gap-2 pl-1.5">
-                                <div className="flex min-w-0 items-center gap-2">
-                                  {selectable && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        toggleLabel(l.id);
-                                      }}
-                                      aria-pressed={isSel}
-                                      aria-label={
-                                        isSel
-                                          ? 'Quitar de la selección'
-                                          : 'Agregar a la selección'
-                                      }
-                                      className="shrink-0 rounded-md p-0.5 transition hover:bg-white/10"
-                                    >
-                                      {isSel ? (
-                                        <CheckSquare className="h-4 w-4 text-cyan-300" />
-                                      ) : (
-                                        <Square className="h-4 w-4 text-white/30" />
-                                      )}
-                                    </button>
-                                  )}
-                                  <div className="flex min-w-0 items-center gap-1.5 font-semibold">
-                                    <Hash className="h-3.5 w-3.5 shrink-0 text-white/30" />
-                                    <span className="truncate">
-                                      {l.orderName ?? 'Sin nº'}
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="flex shrink-0 items-center gap-1">
-                                  {/* Icon-only so it never squeezes the order
-                                      number ("Impresa" + "Completada" side by
-                                      side truncated it to "#68…"). */}
-                                  {printed && (
-                                    <span
-                                      title="Impresa"
-                                      aria-label="Impresa"
-                                      className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/10 p-1 text-emerald-300"
-                                    >
-                                      <CheckCircle2 className="h-3 w-3" />
-                                    </span>
-                                  )}
+                            <div key={zona.key}>
+                              {/* Sólo cuando el día tiene las dos zonas: si es
+                                  todo DAC, el encabezado del día ya lo dice
+                                  todo y un subtítulo sería ruido. */}
+                              {hayCorte && (
+                                <div className="mb-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
                                   <span
                                     className={cn(
-                                      'rounded-full border px-2 py-0.5 text-xs',
-                                      badge.cls,
+                                      'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium',
+                                      esPropio
+                                        ? 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+                                        : 'border-white/10 bg-white/[0.04] text-white/60',
                                     )}
                                   >
-                                    {badge.label}
+                                    {esPropio ? (
+                                      <MapPin className="h-3 w-3" />
+                                    ) : (
+                                      <Truck className="h-3 w-3" />
+                                    )}
+                                    {zona.titulo}
                                   </span>
-                                </div>
-                              </div>
-
-                              <div className="mt-2.5 space-y-1.5 pl-1.5 text-sm text-white/60">
-                                <div className="flex items-center gap-1.5">
-                                  <span className={cn('h-2 w-2 rounded-full', color.dot)} />
-                                  <span className={cn('truncate font-medium', color.text)}>
-                                    {nameByStore.get(l.storeId) ?? 'Tienda'}
+                                  <span className="text-xs text-white/40">
+                                    {zona.items.length}{' '}
+                                    {zona.items.length === 1 ? 'etiqueta' : 'etiquetas'}
+                                    {zonaPending > 0 && (
+                                      <> · {zonaPending} sin imprimir</>
+                                    )}
                                   </span>
+                                  {zonaPdfIds.length > 0 && (
+                                    <div className="ml-auto flex items-center gap-1.5">
+                                      <button
+                                        onClick={() => toggleGroup(zonaPdfIds)}
+                                        aria-pressed={zonaState === 'all'}
+                                        className={cn(
+                                          'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium transition',
+                                          zonaState === 'none'
+                                            ? 'border-white/10 bg-white/[0.03] text-white/50 hover:bg-white/[0.06] hover:text-white/80'
+                                            : 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20',
+                                        )}
+                                      >
+                                        {zonaState === 'all' ? (
+                                          <CheckSquare className="h-3.5 w-3.5" />
+                                        ) : (
+                                          <Square className="h-3.5 w-3.5" />
+                                        )}
+                                        {zonaState === 'all'
+                                          ? 'Quitar grupo'
+                                          : 'Seleccionar grupo'}
+                                      </button>
+                                      <button
+                                        onClick={() => handleBulk('print', zonaPdfIds)}
+                                        disabled={bulkLoading !== null}
+                                        className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1 text-xs font-medium text-white/80 transition hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-50"
+                                      >
+                                        {bulkLoading === 'print' ? (
+                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                          <Printer className="h-3.5 w-3.5" />
+                                        )}
+                                        Imprimir grupo
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
-                                <div className="flex items-center gap-1.5">
-                                  <MapPin className="h-3.5 w-3.5 shrink-0 text-white/30" />
-                                  <span className="truncate">{locationLabel(l)}</span>
-                                </div>
-                                {l.dacGuia && (
-                                  <div className="flex items-center gap-1.5">
-                                    <Truck className="h-3.5 w-3.5 shrink-0 text-white/30" />
-                                    <span className="truncate font-mono text-xs">
-                                      DAC {l.dacGuia}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
+                              )}
 
-                              <div className="mt-3 flex items-center justify-between gap-2 pl-1.5">
-                                <span className="text-xs text-white/35">
-                                  {timeFmt.format(new Date(l.createdAt))}
-                                </span>
-                                <div className="flex items-center gap-1.5">
-                                  {l.hasPdf && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setPrintedManual([l.id], !printed);
-                                      }}
-                                      title={
-                                        printed
-                                          ? 'Volver a pendiente (ej.: salió mal la impresión)'
-                                          : 'Marcar como impresa sin abrir el PDF'
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                {zona.items.map((l) => {
+                                  const color = colorByStore.get(l.storeId)!;
+                                  const badge = statusBadge(l.status);
+                                  const selectable = l.hasPdf;
+                                  const isSel = selectedIds.has(l.id);
+                                  const printed = isPrinted(l);
+                                  return (
+                                    <article
+                                      key={l.id}
+                                      onClick={
+                                        selectable ? () => toggleLabel(l.id) : undefined
                                       }
                                       className={cn(
-                                        'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition',
-                                        printed
-                                          ? 'border-white/10 bg-white/[0.03] text-white/50 hover:bg-white/[0.08] hover:text-white/80'
-                                          : 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20',
+                                        'relative overflow-hidden rounded-xl border bg-white/[0.03] p-4 transition',
+                                        color.cardBorder,
+                                        selectable && 'cursor-pointer hover:bg-white/[0.05]',
+                                        printed && !isSel && 'opacity-60 hover:opacity-90',
+                                        isSel &&
+                                          'bg-cyan-500/[0.06] ring-2 ring-cyan-400/60',
                                       )}
                                     >
-                                      {printed ? (
-                                        <RotateCcw className="h-3.5 w-3.5" />
-                                      ) : (
-                                        <CheckCircle2 className="h-3.5 w-3.5" />
-                                      )}
-                                      {printed ? 'Desmarcar' : 'Marcar'}
-                                    </button>
-                                  )}
-                                  {l.hasPdf ? (
-                                    <a
-                                      href={pdfHref(l.id)}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        // The server stamps printedAt when it
-                                        // serves this PDF; mirror it locally.
-                                        overridePrinted([l.id], true);
-                                      }}
-                                      className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-500/20"
-                                    >
-                                      <Download className="h-3.5 w-3.5" />
-                                      PDF
-                                    </a>
-                                  ) : (
-                                    <span className="text-xs text-white/25">Sin PDF</span>
-                                  )}
-                                </div>
+                                      <span
+                                        className={cn(
+                                          'absolute inset-y-0 left-0 w-1',
+                                          color.bar,
+                                        )}
+                                      />
+                                      <div className="flex items-start justify-between gap-2 pl-1.5">
+                                        <div className="flex min-w-0 items-center gap-2">
+                                          {selectable && (
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleLabel(l.id);
+                                              }}
+                                              aria-pressed={isSel}
+                                              aria-label={
+                                                isSel
+                                                  ? 'Quitar de la selección'
+                                                  : 'Agregar a la selección'
+                                              }
+                                              className="shrink-0 rounded-md p-0.5 transition hover:bg-white/10"
+                                            >
+                                              {isSel ? (
+                                                <CheckSquare className="h-4 w-4 text-cyan-300" />
+                                              ) : (
+                                                <Square className="h-4 w-4 text-white/30" />
+                                              )}
+                                            </button>
+                                          )}
+                                          <div className="flex min-w-0 items-center gap-1.5 font-semibold">
+                                            <Hash className="h-3.5 w-3.5 shrink-0 text-white/30" />
+                                            <span className="truncate">
+                                              {l.orderName ?? 'Sin nº'}
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <div className="flex shrink-0 items-center gap-1">
+                                          {/* Icon-only so it never squeezes the order
+                                              number ("Impresa" + "Completada" side by
+                                              side truncated it to "#68…"). */}
+                                          {printed && (
+                                            <span
+                                              title="Impresa"
+                                              aria-label="Impresa"
+                                              className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/10 p-1 text-emerald-300"
+                                            >
+                                              <CheckCircle2 className="h-3 w-3" />
+                                            </span>
+                                          )}
+                                          <span
+                                            className={cn(
+                                              'rounded-full border px-2 py-0.5 text-xs',
+                                              badge.cls,
+                                            )}
+                                          >
+                                            {badge.label}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      <div className="mt-2.5 space-y-1.5 pl-1.5 text-sm text-white/60">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className={cn('h-2 w-2 rounded-full', color.dot)} />
+                                          <span className={cn('truncate font-medium', color.text)}>
+                                            {nameByStore.get(l.storeId) ?? 'Tienda'}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <MapPin className="h-3.5 w-3.5 shrink-0 text-white/30" />
+                                          <span className="truncate">{locationLabel(l)}</span>
+                                        </div>
+                                        {l.dacGuia && (
+                                          <div className="flex items-center gap-1.5">
+                                            <Truck className="h-3.5 w-3.5 shrink-0 text-white/30" />
+                                            <span className="truncate font-mono text-xs">
+                                              DAC {l.dacGuia}
+                                            </span>
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      <div className="mt-3 flex items-center justify-between gap-2 pl-1.5">
+                                        <span className="text-xs text-white/35">
+                                          {timeFmt.format(new Date(l.createdAt))}
+                                        </span>
+                                        <div className="flex items-center gap-1.5">
+                                          {l.hasPdf && (
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setPrintedManual([l.id], !printed);
+                                              }}
+                                              title={
+                                                printed
+                                                  ? 'Volver a pendiente (ej.: salió mal la impresión)'
+                                                  : 'Marcar como impresa sin abrir el PDF'
+                                              }
+                                              className={cn(
+                                                'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition',
+                                                printed
+                                                  ? 'border-white/10 bg-white/[0.03] text-white/50 hover:bg-white/[0.08] hover:text-white/80'
+                                                  : 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20',
+                                              )}
+                                            >
+                                              {printed ? (
+                                                <RotateCcw className="h-3.5 w-3.5" />
+                                              ) : (
+                                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                              )}
+                                              {printed ? 'Desmarcar' : 'Marcar'}
+                                            </button>
+                                          )}
+                                          {l.hasPdf ? (
+                                            <a
+                                              href={pdfHref(l.id)}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                // The server stamps printedAt when it
+                                                // serves this PDF; mirror it locally.
+                                                overridePrinted([l.id], true);
+                                              }}
+                                              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-500/20"
+                                            >
+                                              <Download className="h-3.5 w-3.5" />
+                                              PDF
+                                            </a>
+                                          ) : (
+                                            <span className="text-xs text-white/25">Sin PDF</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </article>
+                                  );
+                                })}
                               </div>
-                            </article>
+                            </div>
                           );
                         })}
                       </div>

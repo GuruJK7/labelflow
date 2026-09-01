@@ -28,6 +28,13 @@ export async function middleware(request: NextRequest) {
     '/api/webhooks',
     '/api/health',                // 2026-05-15 — uptime probe
     '/api/v1/mcp', // MCP uses its own Bearer token auth
+    '/api/v1/wms/export', // 2026-09-01 — export de la tanda al WMS (DEPO). Igual
+                          // que /api/v1/mcp: se autentica con `Authorization:
+                          // Bearer <Tenant.apiKey>` (o con la sesión, si el
+                          // operador la abre en el navegador), y esa resolución
+                          // pasa DENTRO del handler. Sin esta línea el prefijo
+                          // '/api/v1' de protectedPaths rebota el Bearer con
+                          // 401 antes de que el handler llegue a mirarlo.
     '/api/recover/subscription-webhook', // MercadoPago calls this — no session available
     '/api/referrals/track', // Pre-signup endpoint to set signed referral cookie
     '/_next',
