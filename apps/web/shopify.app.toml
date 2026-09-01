@@ -7,7 +7,7 @@
 #   npx shopify app config link      # elegís organización y creás la app
 #   npx shopify app deploy           # sube esta configuración
 #
-# `client_id` lo completa `config link` solo. NO se pone a mano y NO es
+# `client_id` es el de la app real ya creada (org LabelFlow SAS, app 417965080577).
 # secreto (viaja en la URL de autorización). El Client SECRET no va nunca en
 # este archivo: ese va como variable de entorno en Vercel.
 #
@@ -24,6 +24,7 @@
 # Las seis apps que ya existen en la organización Quanam son todas custom, por
 # eso ninguna sirve para el botón universal y hay que crear una nueva.
 
+client_id = "a4231e6cc6a41a79e1b01aebf3dd38b5"
 name = "AutoEnvía"
 handle = "autoenvia"
 application_url = "https://autoenvia.com"
@@ -55,7 +56,7 @@ redirect_urls = [
 ]
 
 [webhooks]
-api_version = "2026-04"
+api_version = "2026-07"
 
   # Pedido pago → encolar al instante en vez de esperar al cron de 15 minutos.
   [[webhooks.subscriptions]]
