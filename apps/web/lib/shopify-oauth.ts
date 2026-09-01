@@ -260,3 +260,13 @@ export const STATE_COOKIE = 'shopify_oauth_state';
 export const TENANT_COOKIE = 'shopify_oauth_tenant';
 /** Vida corta: el usuario va y vuelve de Shopify en segundos. */
 export const STATE_TTL_SECONDS = 600;
+
+/**
+ * Instalación del App Store pendiente de reclamo (D11). El token de la tienda
+ * viaja cifrado en esta cookie hasta que el dueño de la cuenta se loguea y la
+ * reclama en /api/shopify/claim. Vida corta y path acotado: sólo la leen las
+ * rutas de Shopify, ninguna página.
+ */
+export const PENDING_INSTALL_COOKIE = 'shopify_pending_install';
+export const PENDING_INSTALL_PATH = '/api/shopify';
+export const PENDING_INSTALL_TTL_SECONDS = 600;
