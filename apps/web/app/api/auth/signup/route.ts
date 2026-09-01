@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { db } from '@/lib/db';
 import { getRedis } from '@/lib/redis';
 import {
@@ -11,7 +12,7 @@ import {
 import { nuevoTenantBase } from '@/lib/tenant-provision';
 import { issueAndSendVerificationEmail, resolveAppOrigin } from '@/lib/verify-email';
 import { trackServer } from '@/lib/analytics.server';
-import { rateLimitBucketForIp } from '@/lib/rate-limit-ip';
+import { getRequestIp, rateLimitBucketForIp } from '@/lib/rate-limit-ip';
 
 export const runtime = 'nodejs';
 
@@ -92,13 +93,15 @@ async function checkSignupRateLimit(ip: string): Promise<RateLimitVerdict> {
   }
 }
 
-/** Primer salto de x-forwarded-for (Vercel lo escribe él mismo), si no x-real-ip. */
-function getRequestIp(req: Request): string {
-  return (
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    req.headers.get('x-real-ip') ||
-    'unknown'
-  );
+/**
+ * Un id con la misma forma que los cuid de Prisma (`c` + 24 [a-z0-9]) que no
+ * corresponde a ninguna fila. Sólo para la respuesta del honeypot (D26).
+ */
+function fakeCuid(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let out = 'c';
+  for (const byte of crypto.randomBytes(24)) out += alphabet[byte % alphabet.length];
+  return out;
 }
 
 /** Prisma P2002 = violación de unique. Duck-typing para no importar @prisma/client acá. */
@@ -129,13 +132,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Datos inválidos' }, { status: 400 });
     }
 
-    // Honeypot (D25): el form manda `website` desde un input que ningún humano
-    // ve ni alcanza con Tab. Si viene con valor es un bot que rellenó todo:
-    // respondemos 200 con la misma forma que un alta real y no tocamos la
-    // base, para que el bot no sepa que lo detectamos.
+    // Honeypot (D25, D26): el form manda `website` desde un input que ningún
+    // humano ve ni alcanza con Tab. Si viene con valor es un bot que rellenó
+    // todo: respondemos EXACTAMENTE lo que ve un alta real (201 con userId y
+    // tenantId) pero con ids inventados, y no tocamos la base. Antes era
+    // `200 {ok:true}`: con una sola prueba el bot sabía que lo habíamos
+    // detectado y aprendía a omitir el campo.
     const website = (body as { website?: unknown } | null)?.website;
     if (typeof website === 'string' && website.trim() !== '') {
-      return NextResponse.json({ data: { ok: true } }, { status: 200 });
+      return NextResponse.json(
+        { data: { userId: fakeCuid(), tenantId: fakeCuid() } },
+        { status: 201 },
+      );
     }
 
     const parsed = signupSchema.safeParse(body);
@@ -201,14 +209,23 @@ export async function POST(req: Request) {
     // 100% — no hay manera de detectar familia/multi-cuenta).
     let referredByCode: string | null = null;
     let referredById: string | null = null;
+    // Auto-referido por IP (D26): si el referidor se dio de alta desde la
+    // misma IP que este alta, la atribución se conserva (el kickback sólo
+    // sale de una compra PAGA y va protegido por userId) pero el bono de 10
+    // envíos NO se otorga: es el caso "creo A, y después B1..Bn con ?ref=<A>"
+    // para que cada cuenta basura nazca con 20 envíos en vez de 10. Sólo
+    // cuando las dos IPs existen de verdad ('unknown' no cuenta como IP).
+    let mismaIpQueElReferidor = false;
     if (referralCode && isValidReferralCodeShape(referralCode)) {
       const referrer = await db.tenant.findUnique({
         where: { referralCode },
-        select: { id: true, userId: true, user: { select: { email: true } } },
+        select: { id: true, userId: true, signupIp: true, user: { select: { email: true } } },
       });
       if (referrer && referrer.user?.email?.toLowerCase() !== email) {
         referredByCode = referralCode;
         referredById = referrer.id;
+        mismaIpQueElReferidor =
+          signupIp !== 'unknown' && Boolean(referrer.signupIp) && referrer.signupIp === signupIp;
       }
     }
 
@@ -231,8 +248,9 @@ export async function POST(req: Request) {
     // despachar — el saldo pago (`shipmentCredits`, que ya viene con 10 por
     // signup universal) queda intacto hasta que el bonus se agote. Pareo con
     // el kickback del 20% al referrer (mercadopago/route.ts:415-481).
+    // Sin bono si el referidor tiene la misma IP de alta (D26).
     const REFEREE_BONUS_CREDITS = 10;
-    const refereeBonus = referredById ? REFEREE_BONUS_CREDITS : 0;
+    const refereeBonus = referredById && !mismaIpQueElReferidor ? REFEREE_BONUS_CREDITS : 0;
 
     // Create user + tenant in transaction (Prisma maneja la atomicidad
     // dentro de un solo create con nested write).

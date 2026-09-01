@@ -35,6 +35,7 @@ vi.mock('@/lib/redis', () => ({ getRedis: mocks.getRedis }));
 vi.mock('bcryptjs', () => ({ default: { hash: mocks.hash } }));
 
 import { POST } from '@/app/api/auth/signup/route';
+import { buildReferralCookieValue } from '@/lib/referrals';
 
 const BODY_OK = {
   name: 'Juana',
@@ -126,10 +127,17 @@ describe('POST /api/auth/signup', () => {
     expect(res.status).toBe(400);
   });
 
-  it('honeypot con valor → 200 con forma de éxito y NADA en la base', async () => {
+  it('honeypot con valor → 201 con ids falsos con forma de cuid y NADA en la base (D26)', async () => {
     const res = await post({ ...BODY_OK, website: 'http://spam.example' });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ data: { ok: true } });
+    expect(res.status).toBe(201);
+    const { data } = await res.json();
+    // Indistinguible de un alta real: mismas claves, misma forma de id.
+    expect(Object.keys(data).sort()).toEqual(['tenantId', 'userId']);
+    expect(data.userId).toMatch(/^c[a-z0-9]{24}$/);
+    expect(data.tenantId).toMatch(/^c[a-z0-9]{24}$/);
+    expect(data.userId).not.toBe(data.tenantId);
+    const otra = await (await post({ ...BODY_OK, website: 'x' })).json();
+    expect(otra.data.userId).not.toBe(data.userId);
     expect(mocks.userFindUnique).not.toHaveBeenCalled();
     expect(mocks.userCreate).not.toHaveBeenCalled();
     expect(mocks.issueAndSend).not.toHaveBeenCalled();
@@ -247,6 +255,46 @@ describe('POST /api/auth/signup', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  /** Referidor real con código válido; la cookie va firmada como la firma el cliente. */
+  function conReferidor(signupIp: string | null) {
+    mocks.tenantFindUnique.mockResolvedValue({
+      id: 't-ref',
+      userId: 'u-ref',
+      signupIp,
+      user: { email: 'referidor@otra.uy' },
+    });
+    return { cookie: `lf_ref=${encodeURIComponent(buildReferralCookieValue('JK7-A4F2')!)}` };
+  }
+
+  it('referido desde otra IP: atribución + 10 envíos de bono', async () => {
+    const headers = { ...conReferidor('203.0.113.9'), 'x-forwarded-for': '198.51.100.5' };
+    expect((await post(BODY_OK, headers)).status).toBe(201);
+    const tenant = mocks.userCreate.mock.calls[0][0].data.tenants.create[0];
+    expect(tenant.referredById).toBe('t-ref');
+    expect(tenant.referredByCode).toBe('JK7-A4F2');
+    expect(tenant.referralBonusCredits).toBe(10);
+  });
+
+  it('auto-referido por IP: misma IP de alta que el referidor → atribución sí, bono NO (D26)', async () => {
+    const headers = { ...conReferidor('203.0.113.9'), 'x-forwarded-for': '203.0.113.9' };
+    expect((await post(BODY_OK, headers)).status).toBe(201);
+    const tenant = mocks.userCreate.mock.calls[0][0].data.tenants.create[0];
+    expect(tenant.referredById).toBe('t-ref');
+    expect(tenant.referralBonusCredits).toBe(0);
+  });
+
+  it('referidor sin IP registrada: no hay con qué comparar, el bono se otorga', async () => {
+    const headers = { ...conReferidor(null), 'x-forwarded-for': '203.0.113.9' };
+    expect((await post(BODY_OK, headers)).status).toBe(201);
+    expect(mocks.userCreate.mock.calls[0][0].data.tenants.create[0].referralBonusCredits).toBe(10);
+  });
+
+  it('los dos sin IP ("unknown") no cuentan como la misma IP', async () => {
+    const headers = conReferidor('unknown');
+    expect((await post(BODY_OK, headers)).status).toBe(201);
+    expect(mocks.userCreate.mock.calls[0][0].data.tenants.create[0].referralBonusCredits).toBe(10);
   });
 
   it('el mail que no sale no rompe el alta: 201 igual y no se marca como enviado', async () => {
