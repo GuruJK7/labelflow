@@ -259,6 +259,13 @@ model Tenant {
   maxOrdersPerRun    Int     @default(20)
   isActive           Boolean @default(false)
 
+  // Portal del cliente: partir cada día en "Maldonado (reparto propio)" y
+  // "Todo Uruguay" en vez de una sola pila. OFF por default a propósito: los
+  // portales que ya existen (Curvadivina, Onix, Vastora, Aura) tienen que
+  // seguir viéndose EXACTAMENTE igual que antes de esta feature. Se prende por
+  // tenant, y hoy sólo lo necesita el que reparte con logística propia.
+  portalSplitZonas Boolean @default(false)
+
   // Order processing
   orderSortDirection  String @default("oldest_first")
   allowedProductTypes Json?

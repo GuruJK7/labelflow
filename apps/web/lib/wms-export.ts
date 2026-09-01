@@ -36,12 +36,12 @@
  *     DEPO lo mapea una vez como alias y queda aprendido.
  *   - El ORDEN del array es la pila de impresión (`pack_seq` del lado de DEPO).
  *     Se ordena por `packSeq asc nulls last, createdAt asc` — ver ordenarPila().
- *     ⚠️ packSeq describe UNA impresión: si el operador imprime el día en dos
- *     tandas (por ejemplo el grupo de Maldonado y después el resto), quedan dos
- *     numeraciones que arrancan en 1 y `zona=todas` las intercala por
- *     createdAt. Cuando se imprime por grupo hay que exportar por grupo
- *     (`?zona=maldonado` / `?zona=resto`): ahí cada tanda sale exactamente en
- *     el orden de su pila.
+ *     packSeq describe la pila DEL DÍA, no una impresión suelta: el portal
+ *     numera desde `max(packSeq) del día + 1` (ver markClientViewLabelsPrinted
+ *     en lib/client-view.ts), así que imprimir el grupo de Maldonado y después
+ *     el resto da 1..8 y 9..60 — `zona=todas` los concatena en ese orden, sin
+ *     intercalar. Una reimpresión parcial se renumera al final, que es donde
+ *     queda el papel.
  *
  * ── "sin_items" ──────────────────────────────────────────────────────────────
  * Las Labels anteriores a esta feature no tienen filas en LabelItem. Mandarlas

@@ -71,7 +71,10 @@ export async function GET(req: NextRequest) {
   const tenantId = await resolveTenantId(req);
   if (!tenantId) return apiError('No autorizado', 401);
 
-  const dateParam = req.nextUrl.searchParams.get('date') ?? uyToday();
+  // `||` y no `??`: `?date=` (presente pero vacío) devuelve '' , no null, y con
+  // `??` eso llegaba a uyDayRange() como cadena vacía → 400. Un date vacío es
+  // "no me dijiste qué día", igual que no mandar el parámetro: cae a hoy.
+  const dateParam = req.nextUrl.searchParams.get('date') || uyToday();
   const range = uyDayRange(dateParam);
   if (!range) return apiError('Parámetro date inválido — se espera YYYY-MM-DD', 400);
 
@@ -94,9 +97,14 @@ export async function GET(req: NextRequest) {
     },
     // Orden de la PILA FÍSICA impresa. Las que nunca se imprimieron en bulk
     // (packSeq null) caen al final, en el orden en que se generaron.
+    // El `id` es el desempate final: dos etiquetas de la misma corrida pueden
+    // compartir createdAt al milisegundo y Postgres no garantiza un orden
+    // estable para el resto — sin esto, dos exports del mismo día podrían
+    // devolver esas filas al revés y DEPO vería una tanda distinta.
     orderBy: [
       { packSeq: { sort: 'asc', nulls: 'last' } },
       { createdAt: 'asc' },
+      { id: 'asc' },
     ],
     select: {
       id: true,
@@ -110,7 +118,9 @@ export async function GET(req: NextRequest) {
       packSeq: true,
       printedAt: true,
       items: {
-        orderBy: { createdAt: 'asc' },
+        // Mismo desempate: los LabelItem se escriben con un createMany dentro
+        // de una transacción, así que TODOS comparten el createdAt al ms.
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         select: { sku: true, title: true, quantity: true },
       },
     },

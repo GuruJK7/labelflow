@@ -35,9 +35,15 @@ export default async function ClientViewPage({
     notFound();
   }
 
-  const { stores, labels, counts } = await loadClientView(tenantIds);
+  const { stores, labels, counts, splitZonas } = await loadClientView(tenantIds);
 
   return (
-    <ClientPortal token={token} stores={stores} labels={labels} counts={counts} />
+    <ClientPortal
+      token={token}
+      stores={stores}
+      labels={labels}
+      counts={counts}
+      splitZonas={splitZonas}
+    />
   );
 }

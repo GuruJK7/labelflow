@@ -286,7 +286,35 @@ describe('orden de la pila física — packSeq asc nulls last, createdAt asc', (
     expect(rows.map((r) => r.packSeq)).toEqual(antes);
   });
 
-  it('con packSeq empatado (no debería pasar) desempata por createdAt', () => {
+  it('dos grupos impresos por separado se concatenan, no se intercalan', () => {
+    // El portal numera desde max(packSeq) del día + 1, así que el grupo de
+    // Maldonado sale 1..2 y el resto 3..4 AUNQUE el resto se haya creado
+    // antes. `zona=todas` tiene que devolver las dos pilas una detrás de la
+    // otra, en el orden en que salieron de la impresora.
+    const out = ordenarPila([
+      label({ id: 'resto-1', packSeq: 3, createdAt: t('2026-09-01T09:00:00Z') }),
+      label({ id: 'mald-2', packSeq: 2, createdAt: t('2026-09-01T14:00:00Z') }),
+      label({ id: 'resto-2', packSeq: 4, createdAt: t('2026-09-01T08:00:00Z') }),
+      label({ id: 'mald-1', packSeq: 1, createdAt: t('2026-09-01T13:00:00Z') }),
+    ]);
+    expect(out.map((r) => r.id)).toEqual(['mald-1', 'mald-2', 'resto-1', 'resto-2']);
+  });
+
+  it('una reimpresión parcial cae al final de la pila del día', () => {
+    // Reimprimir #b lo renumera al máximo+1: en la mesa el papel reimpreso
+    // queda al final, no vuelve al medio.
+    const out = ordenarPila([
+      label({ id: 'a', packSeq: 1, createdAt: t('2026-09-01T09:00:00Z') }),
+      label({ id: 'b', packSeq: 4, createdAt: t('2026-09-01T09:30:00Z') }),
+      label({ id: 'c', packSeq: 3, createdAt: t('2026-09-01T10:00:00Z') }),
+    ]);
+    expect(out.map((r) => r.id)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('packSeq empatado (sólo por impresiones simultáneas) desempata por createdAt', () => {
+    // Desde que el portal numera contra el máximo del día, un empate ya no
+    // sale de imprimir por grupos: sólo de dos bulk concurrentes que leyeron
+    // el mismo máximo. El orden tiene que seguir siendo determinista.
     const out = ordenarPila([
       label({ id: 'b', packSeq: 1, createdAt: t('2026-09-01T12:00:00Z') }),
       label({ id: 'a', packSeq: 1, createdAt: t('2026-09-01T11:00:00Z') }),

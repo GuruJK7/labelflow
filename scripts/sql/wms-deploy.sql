@@ -14,14 +14,22 @@
 -- Es la concatenación de:
 --   1. scripts/sql/labelitem.sql   — CREATE TABLE "LabelItem" (+ índice + FK)
 --   2. scripts/sql/packseq.sql     — ALTER TABLE "Label" ADD COLUMN "packSeq"
---   3. la fila de client_portal_tokens que le da portal a Kinevia
--- Esos dos archivos quedan como la referencia individual de cada paso (con su
--- rollback documentado); acá van juntos y en UNA sola transacción para que un
--- fallo a mitad de camino no deje la base a medio migrar.
+--   3. ALTER TABLE "Tenant" ADD COLUMN "portalSplitZonas" + prenderlo SOLO en
+--      Kinevia (paso nuevo, sin archivo suelto: no tiene sentido correrlo aparte)
+--   4. la fila de client_portal_tokens que le da portal a Kinevia
+-- Los dos primeros archivos quedan como la referencia individual de cada paso
+-- (con su rollback documentado); acá van juntos y en UNA sola transacción para
+-- que un fallo a mitad de camino no deje la base a medio migrar.
 --
--- TODO es ADITIVO: una tabla nueva, una columna nullable nueva y una fila
--- nueva. No borra, no cambia tipos, no reescribe tablas. Se puede aplicar con
--- tráfico vivo.
+-- TODO es ADITIVO: una tabla nueva, dos columnas nuevas (una nullable, la otra
+-- con DEFAULT false) y una fila nueva. No borra, no cambia tipos, no reescribe
+-- tablas. Se puede aplicar con tráfico vivo.
+--
+-- RE-CORRIBLE: los pasos 3 y 4 son idempotentes (IF NOT EXISTS / NOT EXISTS).
+-- Los pasos 1 y 2 NO lo son: si el script ya se aplicó, el CREATE TABLE y el
+-- ADD COLUMN revientan la transacción con "already exists" y NO se escribe
+-- nada. Es el comportamiento buscado — abortar ruidosamente es mejor que
+-- reaplicar a ciegas — pero implica que este archivo se corre UNA vez.
 --
 -- 🔴 NUNCA usar `prisma db push` para esto: `client_portal_tokens` NO está en
 -- el schema de Prisma (vive sólo en prod), así que un db push la BORRARÍA junto
@@ -59,7 +67,32 @@ ALTER TABLE "LabelItem" ADD CONSTRAINT "LabelItem_labelId_fkey"
 
 ALTER TABLE "Label" ADD COLUMN     "packSeq" INTEGER;
 
--- ─────────────────────────────────────────── 3. Portal de Kinevia
+-- ─────────────────────────────────────────── 3. Tenant.portalSplitZonas
+--
+-- Gate por tenant del split del portal ("Maldonado (reparto propio)" / "Todo
+-- Uruguay" dentro de cada día). Va en false para TODOS y se prende SOLO en
+-- Kinevia: los 4 portales que ya existen (Curvadivina, Onix, Vastora, Aura)
+-- despachan todo por DAC, así que partirles el día en dos pilas les cambiaría
+-- el orden de impresión y les agregaría botones que no pidieron.
+--
+-- `IF NOT EXISTS` + `DEFAULT false` → la columna se puede agregar con tráfico
+-- vivo (Postgres ≥11 no reescribe la tabla para un default no volátil) y el
+-- paso es re-corrible.
+
+ALTER TABLE "Tenant" ADD COLUMN IF NOT EXISTS "portalSplitZonas" BOOLEAN NOT NULL DEFAULT false;
+
+-- Mismo patrón de matching que el portal de abajo: nombre EXACTO y
+-- `HAVING count(*) = 1`. Si hay 0 o 2+ tenants llamados "Kinevia" el subselect
+-- no devuelve fila, el UPDATE no toca nada y el DO $$ del final aborta la
+-- transacción entera con un mensaje legible. Idempotente: re-correrlo lo deja
+-- en true otra vez.
+
+UPDATE "Tenant" SET "portalSplitZonas" = true
+WHERE id = (
+  SELECT max(t.id) FROM "Tenant" t WHERE t.name = 'Kinevia' HAVING count(*) = 1
+);
+
+-- ─────────────────────────────────────────── 4. Portal de Kinevia
 --
 -- Kinevia no tiene fila en `client_portal_tokens` (al 2026-09-01 hay 4:
 -- Curvadivina, Onix, Vastora y Aura), así que hoy no tiene link de portal — y
@@ -118,22 +151,32 @@ SELECT
     WHERE table_name = 'LabelItem')                         AS tabla_labelitem,
   (SELECT count(*) FROM information_schema.columns
     WHERE table_name = 'Label' AND column_name = 'packSeq') AS columna_packseq,
+  (SELECT count(*) FROM information_schema.columns
+    WHERE table_name = 'Tenant'
+      AND column_name = 'portalSplitZonas')                 AS columna_splitzonas,
   (SELECT count(*) FROM "LabelItem")                        AS filas_labelitem,
+  (SELECT count(*) FROM "Tenant" WHERE "portalSplitZonas")  AS tenants_con_split,
   (SELECT count(*) FROM client_portal_tokens)               AS portales_totales,
   (SELECT count(*) FROM client_portal_tokens cpt
      JOIN "Tenant" t ON t.id = cpt.tenant_ids
     WHERE t.name = 'Kinevia')                               AS portales_kinevia;
 
--- Esperado: tabla_labelitem=1 · columna_packseq=1 · filas_labelitem=0 (el
--- worker todavía no corrió) · portales_totales=5 · portales_kinevia=1.
+-- Esperado: tabla_labelitem=1 · columna_packseq=1 · columna_splitzonas=1 ·
+-- filas_labelitem=0 (el worker todavía no corrió) · tenants_con_split=1 (SOLO
+-- Kinevia) · portales_totales=5 · portales_kinevia=1.
 
 -- ── ROLLBACK (si hiciera falta deshacerlo) ───────────────────────────────────
--- Los tres pasos son independientes; el orden no importa. Borrar el portal
+-- Los cuatro pasos son independientes; el orden no importa. Borrar el portal
 -- invalida el link que se le pasó al cliente.
 --
 -- BEGIN;
 -- DELETE FROM client_portal_tokens
 --   WHERE tenant_ids = (SELECT id FROM "Tenant" WHERE name = 'Kinevia');
+-- ALTER TABLE "Tenant" DROP COLUMN "portalSplitZonas";
 -- ALTER TABLE "Label" DROP COLUMN "packSeq";
 -- DROP TABLE "LabelItem";
 -- COMMIT;
+--
+-- Rollback PARCIAL, sin tocar el schema (apagar el split y dejar el portal de
+-- Kinevia igual que los otros 4):
+--   UPDATE "Tenant" SET "portalSplitZonas" = false WHERE name = 'Kinevia';

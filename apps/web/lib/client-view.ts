@@ -22,6 +22,7 @@
 
 import { createHash, timingSafeEqual } from 'crypto';
 import { db } from '@/lib/db';
+import { startOfDayUy } from '@/lib/uy-time';
 
 export interface ClientViewStore {
   id: string;
@@ -189,10 +190,11 @@ export async function loadClientView(tenantIds: string[]): Promise<{
   stores: ClientViewStore[];
   labels: ClientViewLabel[];
   counts: ClientViewCounts;
+  splitZonas: boolean;
 }> {
   const emptyCounts: ClientViewCounts = { byStore: {}, total: 0, month: 0 };
   if (tenantIds.length === 0)
-    return { stores: [], labels: [], counts: emptyCounts };
+    return { stores: [], labels: [], counts: emptyCounts, splitZonas: false };
 
   // Rolling window: show every (downloadable) label created in the last N days,
   // not a fixed "most recent 2000" — see getClientViewWindowDays() for why.
@@ -204,7 +206,12 @@ export async function loadClientView(tenantIds: string[]): Promise<{
   const [tenants, rows, totalByStore, monthByStore] = await Promise.all([
     db.tenant.findMany({
       where: { id: { in: tenantIds } },
-      select: { id: true, name: true, shopifyStoreUrl: true },
+      select: {
+        id: true,
+        name: true,
+        shopifyStoreUrl: true,
+        portalSplitZonas: true,
+      },
     }),
     db.label.findMany({
       where: {
@@ -287,7 +294,15 @@ export async function loadClientView(tenantIds: string[]): Promise<{
     month += m;
   }
 
-  return { stores, labels, counts: { byStore, total, month } };
+  // El corte por zonas es UNA vista del portal, y el portal puede mostrar
+  // varias tiendas a la vez: alcanza con que UNA de las tiendas del link lo
+  // tenga prendido para que el día se muestre partido. Con el default (false
+  // en los 4 tenants que ya tienen portal) el portal se comporta EXACTAMENTE
+  // como antes de la feature: un solo grupo por día, mismo orden, mismos
+  // botones.
+  const splitZonas = tenants.some((t) => t.portalSplitZonas === true);
+
+  return { stores, labels, counts: { byStore, total, month }, splitZonas };
 }
 
 /**
@@ -314,20 +329,45 @@ export async function getClientViewLabelPdfPath(
  * within the caller's tenant allow-list. Best-effort by design: callers must
  * never fail a PDF response because the stamp failed.
  *
- * `stampPackSeq` (bulk only) additionally records the PHYSICAL STACK ORDER:
- * `ids[i]` gets `packSeq = i + 1`. Two things make that meaningful, and both
- * are why this is opt-in instead of always-on:
+ * `stampPackSeq` (bulk only) additionally records the PHYSICAL STACK ORDER.
+ * Two things make that meaningful, and both are why this is opt-in instead of
+ * always-on:
  *
  *   - The caller must be the bulk endpoint, whose `ids` are the labels that
  *     actually made it into the merged PDF, IN MERGE ORDER. That merged file is
- *     what comes out of the printer, so index+1 IS the position in the stack.
- *     The single-PDF endpoint passes one id at a time with no relation to any
- *     stack, so stamping there would write a meaningless `packSeq = 1` on every
- *     label the client ever downloaded one by one.
+ *     what comes out of the printer, so the position in `ids` IS the position
+ *     in the stack. The single-PDF endpoint passes one id at a time with no
+ *     relation to any stack, so stamping there would write a meaningless
+ *     `packSeq = 1` on every label the client ever downloaded one by one.
  *   - Unlike printedAt, a reprint OVERWRITES packSeq: the old stack no longer
  *     exists physically, so keeping its order would describe a pile of paper
  *     that is already in the bin. That is also why the packSeq update is NOT
  *     filtered by `printedAt: null`.
+ *
+ * ── SEMÁNTICA DE LA NUMERACIÓN ──────────────────────────────────────────────
+ * `packSeq` NO arranca en 1 en cada impresión: arranca en
+ * `max(packSeq) del MISMO día local uruguayo de ESE tenant + 1` (0 si el día
+ * todavía no tiene ninguno). Es decir, numera contra la PILA DEL DÍA, no
+ * contra el PDF que se acaba de mandar a imprimir. Consecuencias, que son el
+ * punto:
+ *
+ *   - Imprimir por grupos deja de intercalar. Maldonado (8 etiquetas) sale
+ *     1..8 y después "Todo Uruguay" (52) sale 9..60. Con el índice del array
+ *     los dos grupos arrancaban en 1 y `?zona=todas` los mezclaba por
+ *     createdAt, que es un orden que no existe en ninguna mesa.
+ *   - Una reimpresión parcial se va AL FINAL, que es donde queda el papel:
+ *     el operador reimprime 3 etiquetas y las apoya arriba/al final de la
+ *     pila, no las vuelve a intercalar en el medio.
+ *   - El corte es el día LOCAL uruguayo (startOfDayUy), el mismo con el que el
+ *     export arma `?date=`, así que la numeración y la tanda exportada hablan
+ *     del mismo conjunto de etiquetas.
+ *   - Cada (tenant, día) numera aparte: dos tiendas del mismo link no se pisan
+ *     los números, porque el export es por tenant.
+ *
+ * Concurrencia: dos impresiones bulk simultáneas del mismo día pueden leer el
+ * mismo máximo y empatar. No se serializa a propósito (sería un lock sobre un
+ * día entero para un caso que en la práctica es un operador con un navegador);
+ * el empate lo desempata el `createdAt asc` del export.
  *
  * The WMS export (lib/wms-export.ts) orders by `packSeq asc nulls last,
  * createdAt asc`, so DEPO's pack_seq matches the operator's actual stack.
@@ -349,22 +389,81 @@ export async function markClientViewLabelsPrinted(
 
   if (!opts.stampPackSeq) return;
 
-  // One statement per label (the value differs per row) but a single round
-  // trip and a single transaction: a half-written stack order would be worse
-  // than none. Deduped because `packSeq` must be a position, not a coin flip
+  // Deduped, order preserved: `packSeq` must be a position, not a coin flip
   // between two indexes of the same id.
+  const orderedIds: string[] = [];
   const seen = new Set<string>();
-  const updates = [];
   for (const id of ids) {
     if (seen.has(id)) continue;
     seen.add(id);
+    orderedIds.push(id);
+  }
+
+  // Qué tenant y qué día es cada etiqueta. También filtra: un id que no está
+  // en el allow-list (o no existe) no consume un número de la pila.
+  const rows = await db.label.findMany({
+    where: { id: { in: orderedIds }, tenantId: { in: tenantIds } },
+    select: { id: true, tenantId: true, createdAt: true },
+  });
+  const metaById = new Map(rows.map((r) => [r.id, r]));
+
+  // Un grupo por (tenant, día local UY): cada uno numera contra su propio día.
+  interface DayGroup {
+    tenantId: string;
+    gte: Date;
+    lt: Date;
+    next: number;
+  }
+  const groups = new Map<string, DayGroup>();
+  for (const r of rows) {
+    const gte = startOfDayUy(r.createdAt);
+    const key = `${r.tenantId}|${gte.getTime()}`;
+    if (groups.has(key)) continue;
+    groups.set(key, {
+      tenantId: r.tenantId,
+      gte,
+      lt: new Date(gte.getTime() + 24 * 60 * 60 * 1000),
+      next: 1,
+    });
+  }
+  if (groups.size === 0) return;
+
+  // max(packSeq) del día → desde dónde sigue la numeración.
+  const keys = Array.from(groups.keys());
+  const maxes = await Promise.all(
+    keys.map((k) => {
+      const g = groups.get(k)!;
+      return db.label.aggregate({
+        where: {
+          tenantId: g.tenantId,
+          createdAt: { gte: g.gte, lt: g.lt },
+        },
+        _max: { packSeq: true },
+      });
+    }),
+  );
+  keys.forEach((k, i) => {
+    groups.get(k)!.next = (maxes[i]?._max?.packSeq ?? 0) + 1;
+  });
+
+  // One statement per label (the value differs per row) but a single round
+  // trip and a single transaction: a half-written stack order would be worse
+  // than none.
+  const updates = [];
+  for (const id of orderedIds) {
+    const meta = metaById.get(id);
+    if (!meta) continue;
+    const gte = startOfDayUy(meta.createdAt);
+    const group = groups.get(`${meta.tenantId}|${gte.getTime()}`)!;
     updates.push(
       db.label.updateMany({
         where: { id, tenantId: { in: tenantIds } },
-        data: { packSeq: seen.size },
+        data: { packSeq: group.next },
       }),
     );
+    group.next += 1;
   }
+  if (updates.length === 0) return;
   await db.$transaction(updates);
 }
 

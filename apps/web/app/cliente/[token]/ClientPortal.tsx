@@ -38,7 +38,10 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { esRepartoPropio } from '@/lib/departamentos';
+// El corte por zonas vive en lib/portal-zonas.ts (módulo puro, gateado por
+// `Tenant.portalSplitZonas`): con el gate apagado devuelve un solo grupo y el
+// portal se comporta exactamente como antes de la feature.
+import { zonasDelDia } from '@/lib/portal-zonas';
 import type {
   ClientViewStore,
   ClientViewLabel,
@@ -158,48 +161,18 @@ function orderNumber(l: ClientViewLabel): number {
   return digits ? parseInt(digits, 10) : Number.NaN;
 }
 
-/**
- * Corte por zona DENTRO de cada día: la pila que sale a repartir LabelFlow y la
- * que se despacha por DAC. Son dos operaciones físicas distintas (una la carga
- * el repartidor en la camioneta, la otra va al mostrador de DAC), así que se
- * imprimen y se cuentan por separado.
- *
- * El discriminador es esRepartoPropio() de lib/departamentos.ts — EL MISMO que
- * usa el export al WMS. Si acá se usara otra regla, el operador vería una pila
- * en pantalla y DEPO recibiría otra.
- *
- * Se devuelven sólo los grupos con etiquetas: un día que es todo DAC no tiene
- * por qué mostrar un encabezado "Maldonado" vacío.
- */
-interface ZonaDelDia {
-  key: 'propio' | 'resto';
-  titulo: string;
-  items: ClientViewLabel[];
-}
-
-function zonasDelDia(items: ClientViewLabel[]): ZonaDelDia[] {
-  const propio: ClientViewLabel[] = [];
-  const resto: ClientViewLabel[] = [];
-  for (const l of items) {
-    if (esRepartoPropio(l)) propio.push(l);
-    else resto.push(l);
-  }
-  return [
-    { key: 'propio' as const, titulo: 'Maldonado (reparto propio)', items: propio },
-    { key: 'resto' as const, titulo: 'Todo Uruguay', items: resto },
-  ].filter((z) => z.items.length > 0);
-}
-
 export function ClientPortal({
   token,
   stores,
   labels,
   counts,
+  splitZonas,
 }: {
   token: string;
   stores: ClientViewStore[];
   labels: ClientViewLabel[];
   counts: ClientViewCounts;
+  splitZonas: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -893,19 +866,26 @@ export function ClientPortal({
                   for (const l of items)
                     perStore.set(l.storeId, (perStore.get(l.storeId) ?? 0) + 1);
 
-                  const dayPdfIds = items
+                  // Corte por zona dentro del día. `items` ya viene filtrado y
+                  // ordenado, así que cada zona hereda los filtros y el orden
+                  // elegidos arriba sin re-implementar nada.
+                  const zonas = zonasDelDia(items, splitZonas);
+                  const hayCorte = zonas.length > 1;
+
+                  // ⚠️ Se calcula DESPUÉS del corte y recorriendo las zonas, no
+                  // `items`: "Imprimir día" tiene que salir en el MISMO orden en
+                  // que las etiquetas están en pantalla, o el PDF (y con él el
+                  // packSeq, y con él el pack_seq de DEPO) describe una pila que
+                  // no es la que el operador tiene en la mano. Sin split hay una
+                  // sola zona, así que el orden es idéntico al de `items`.
+                  const dayPdfIds = zonas
+                    .flatMap((z) => z.items)
                     .filter((l) => l.hasPdf)
                     .map((l) => l.id);
                   const dayState = groupState(dayPdfIds);
                   const dayPending = items.filter(
                     (l) => l.hasPdf && !isPrinted(l),
                   ).length;
-
-                  // Corte por zona dentro del día. `items` ya viene filtrado y
-                  // ordenado, así que cada zona hereda los filtros y el orden
-                  // elegidos arriba sin re-implementar nada.
-                  const zonas = zonasDelDia(items);
-                  const hayCorte = zonas.length > 1;
 
                   return (
                     <section key={dayKey}>
