@@ -531,6 +531,15 @@ model Label {
   // from the portal. Null = not printed/downloaded yet. A timestamp (not a
   // boolean) so the portal can also show WHEN it was printed.
   printedAt            DateTime?
+  // Posición de esta etiqueta en la PILA FÍSICA de la última impresión bulk del
+  // portal (1 = la de arriba). La estampa markClientViewLabelsPrinted con el
+  // índice del array de ids que se mandó a mergear, y SOLO en el bulk: el PDF
+  // combinado sale en ese mismo orden, así que la pila que el operador levanta
+  // de la impresora queda descrita por este número. Reimprimir pisa el valor (la
+  // pila vieja ya no existe). Null = nunca se imprimió en bulk; el export de WMS
+  // ordena `packSeq asc nulls last, createdAt asc` para que esas caigan al final
+  // en el orden en que se generaron.
+  packSeq              Int?
 
   // M-2 (2026-04-21 audit): reconcile used to count "auto-retry:<orderName>"
   // entries in RunLog with a `contains` substring scan to decide whether a

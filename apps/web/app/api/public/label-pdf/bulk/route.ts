@@ -152,8 +152,13 @@ export async function POST(req: NextRequest) {
 
     // Stamp printedAt (first time only) on everything that was served, so the
     // portal shows them as printed. Never blocks the PDF response.
+    //
+    // stampPackSeq: `mergedIds` is in merge order, which is the page order of
+    // the file the client is about to print — i.e. the physical stack. That
+    // order is what the WMS export sends to DEPO as pack_seq, so it has to be
+    // recorded HERE (the single-PDF endpoint has no stack to describe).
     try {
-      await markClientViewLabelsPrinted(mergedIds, tenantIds);
+      await markClientViewLabelsPrinted(mergedIds, tenantIds, { stampPackSeq: true });
     } catch (err) {
       console.error('Portal bulk printedAt stamp error:', err);
     }

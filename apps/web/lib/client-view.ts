@@ -313,10 +313,29 @@ export async function getClientViewLabelPdfPath(
  * null values so the original first-print time is never overwritten, and only
  * within the caller's tenant allow-list. Best-effort by design: callers must
  * never fail a PDF response because the stamp failed.
+ *
+ * `stampPackSeq` (bulk only) additionally records the PHYSICAL STACK ORDER:
+ * `ids[i]` gets `packSeq = i + 1`. Two things make that meaningful, and both
+ * are why this is opt-in instead of always-on:
+ *
+ *   - The caller must be the bulk endpoint, whose `ids` are the labels that
+ *     actually made it into the merged PDF, IN MERGE ORDER. That merged file is
+ *     what comes out of the printer, so index+1 IS the position in the stack.
+ *     The single-PDF endpoint passes one id at a time with no relation to any
+ *     stack, so stamping there would write a meaningless `packSeq = 1` on every
+ *     label the client ever downloaded one by one.
+ *   - Unlike printedAt, a reprint OVERWRITES packSeq: the old stack no longer
+ *     exists physically, so keeping its order would describe a pile of paper
+ *     that is already in the bin. That is also why the packSeq update is NOT
+ *     filtered by `printedAt: null`.
+ *
+ * The WMS export (lib/wms-export.ts) orders by `packSeq asc nulls last,
+ * createdAt asc`, so DEPO's pack_seq matches the operator's actual stack.
  */
 export async function markClientViewLabelsPrinted(
   ids: string[],
   tenantIds: string[],
+  opts: { stampPackSeq?: boolean } = {},
 ): Promise<void> {
   if (ids.length === 0 || tenantIds.length === 0) return;
   await db.label.updateMany({
@@ -327,6 +346,26 @@ export async function markClientViewLabelsPrinted(
     },
     data: { printedAt: new Date() },
   });
+
+  if (!opts.stampPackSeq) return;
+
+  // One statement per label (the value differs per row) but a single round
+  // trip and a single transaction: a half-written stack order would be worse
+  // than none. Deduped because `packSeq` must be a position, not a coin flip
+  // between two indexes of the same id.
+  const seen = new Set<string>();
+  const updates = [];
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    updates.push(
+      db.label.updateMany({
+        where: { id, tenantId: { in: tenantIds } },
+        data: { packSeq: seen.size },
+      }),
+    );
+  }
+  await db.$transaction(updates);
 }
 
 /**
