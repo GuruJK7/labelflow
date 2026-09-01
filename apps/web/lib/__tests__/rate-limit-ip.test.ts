@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { rateLimitBucketForIp } from '../rate-limit-ip';
 
 /**
- * Cubo del rate limit del alta (D25): IPv4 exacta, IPv6 por /64. La clave
+ * Cubo del rate limit del alta (D26): IPv4 exacta, IPv6 por /64. La clave
  * de Redis se arma con esto; si dos direcciones del mismo /64 dieran cubos
  * distintos, el límite por IP no limitaría nada en IPv6.
  */

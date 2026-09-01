@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
- * POST /api/auth/signup — alta pública (D22) y anti-abuso mínimo (D24).
+ * POST /api/auth/signup — alta pública (D23) y anti-abuso mínimo (D25).
  *
  * Todo lo externo está mockeado: Prisma, bcrypt (el hash con cost 12 tarda
  * ~250 ms y acá no probamos bcrypt), Resend, PostHog y Redis. Lo que sí se
@@ -169,7 +169,7 @@ describe('POST /api/auth/signup', () => {
   });
 
   /**
-   * Redis falso para el rate limit (D24/D25): un contador por clave, como
+   * Redis falso para el rate limit (D25/D26): un contador por clave, como
    * INCR de verdad. `exec` devuelve la forma de ioredis `[[err, valor], ...]`.
    */
   function redisFalso(inicial: Record<string, number> = {}) {
@@ -203,7 +203,7 @@ describe('POST /api/auth/signup', () => {
     expect(counts['signup:rl:global']).toBe(1);
   });
 
-  it('IPv6: todo el /64 comparte el contador (D25)', async () => {
+  it('IPv6: todo el /64 comparte el contador (D26)', async () => {
     const { pipeline } = redisFalso({ 'signup:rl:ip:2001:db8:85a3:1::/64': 5 });
     const res = await post(BODY_OK, { 'x-forwarded-for': '2001:db8:85a3:1:aaaa:bbbb:cccc:dddd' });
     expect(res.status).toBe(429);
@@ -211,7 +211,7 @@ describe('POST /api/auth/signup', () => {
     expect(mocks.userCreate).not.toHaveBeenCalled();
   });
 
-  it('tope global: con 40 altas en la hora, la 41 → 429 aunque venga de una IP nueva (D25)', async () => {
+  it('tope global: con 40 altas en la hora, la 41 → 429 aunque venga de una IP nueva (D26)', async () => {
     redisFalso({ 'signup:rl:global': 40 });
     const res = await post(BODY_OK, { 'x-forwarded-for': '198.51.100.77' });
     expect(res.status).toBe(429);

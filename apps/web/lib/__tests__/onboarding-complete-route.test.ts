@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
  * POST /api/v1/onboarding/complete — la única puerta que prende `isActive`
- * (y con eso el cron del worker). D25: exige email verificado, sin importar
+ * (y con eso el cron del worker). D26: exige email verificado, sin importar
  * `EMAIL_VERIFICATION_REQUIRED`.
  */
 const mocks = vi.hoisted(() => ({
@@ -57,7 +57,7 @@ describe('POST /api/v1/onboarding/complete', () => {
     });
   });
 
-  it('email SIN verificar → 422 con código y email, y NO activa (D25)', async () => {
+  it('email SIN verificar → 422 con código y email, y NO activa (D26)', async () => {
     mocks.tenantFindUnique.mockResolvedValueOnce({
       ...TENANT_LISTO,
       user: { email: 'juana@tienda.uy', emailVerified: null },

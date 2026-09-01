@@ -17,7 +17,7 @@ export const runtime = 'nodejs';
 
 const signupSchema = z.object({
   name: z.string().trim().min(1).max(100),
-  // Normalización (D24): sin espacios en los bordes y en minúsculas ANTES de
+  // Normalización (D25): sin espacios en los bordes y en minúsculas ANTES de
   // validar, así "  Juan@Gmail.com " y "juan@gmail.com" son la misma cuenta
   // (el 409 de duplicado y el login comparan contra lo guardado). Un espacio
   // en el medio no se arregla: se rechaza.
@@ -38,14 +38,14 @@ const signupSchema = z.object({
   referralCode: z.string().nullable().optional(),
 });
 
-// Gate del alta pública (D22). Default = bloqueado: sin ALLOW_PUBLIC_SIGNUP=true
+// Gate del alta pública (D23). Default = bloqueado: sin ALLOW_PUBLIC_SIGNUP=true
 // nadie puede POSTear y conseguir una cuenta, aunque el form de /signup esté
 // visible. La bandera la maneja el operador en Vercel.
 function isPublicSignupEnabled(): boolean {
   return (process.env.ALLOW_PUBLIC_SIGNUP ?? '').toLowerCase() === 'true';
 }
 
-// Rate limit por IP + tope global (D24, D25). Mismo mecanismo que
+// Rate limit por IP + tope global (D25, D26). Mismo mecanismo que
 // password-reset/request y verify-email/send: contador en Redis (Upstash,
 // compartido entre instancias de Vercel) con INCR + EXPIRE. Fail-open: sin
 // REDIS_URL o con Redis caído no se limita nada — preferimos un alta de más a
@@ -54,7 +54,7 @@ function isPublicSignupEnabled(): boolean {
 // es el mismo para todas las lambdas.
 const RATE_LIMIT_TTL = 60 * 60; // 1 h
 const RATE_LIMIT_MAX = 5; // 5 altas por IP por hora: una familia/oficina entera cabe
-// Tope global (D25): es el kill-switch barato contra un script que rota IPs.
+// Tope global (D26): es el kill-switch barato contra un script que rota IPs.
 // Acota el peor caso a ~40/h ≈ 1.000 altas/día pase lo que pase con las IPs
 // (cada alta = User + Tenant + 10 créditos + un mail por Resend). Sólo se
 // incrementa cuando la IP pasó su propio límite, así una sola IP bloqueada
@@ -129,7 +129,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Datos inválidos' }, { status: 400 });
     }
 
-    // Honeypot (D24): el form manda `website` desde un input que ningún humano
+    // Honeypot (D25): el form manda `website` desde un input que ningún humano
     // ve ni alcanza con Tab. Si viene con valor es un bot que rellenó todo:
     // respondemos 200 con la misma forma que un alta real y no tocamos la
     // base, para que el bot no sepa que lo detectamos.

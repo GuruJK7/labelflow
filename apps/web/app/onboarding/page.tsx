@@ -205,7 +205,7 @@ export default function OnboardingPage() {
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? 'No se pudo completar el setup');
-        // Sin email confirmado no se activa (D25): mostramos el camino para
+        // Sin email confirmado no se activa (D26): mostramos el camino para
         // reenviar el mail en vez de dejar al usuario con un error seco.
         setVerifyEmailHref(
           data.code === 'email_not_verified'

@@ -11,7 +11,7 @@
  *     429 rate limit, 400) se muestra tal cual arriba del form.
  *   - Honeypot: el input `website` está fuera de la vista y del tab order.
  *     Un humano nunca lo completa; un bot que rellena todo sí. El server
- *     responde 200 sin crear nada si viene con valor (D24).
+ *     responde 200 sin crear nada si viene con valor (D25).
  *   - Atribución de referidos: se captura ?ref=<code> y se le pide al server
  *     que firme una cookie HMAC (POST /api/referrals/track). El handler de
  *     signup SOLO confía en esa cookie e ignora el `referralCode` del body.

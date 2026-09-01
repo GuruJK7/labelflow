@@ -18,7 +18,7 @@ import {
  * scheduler picks them up on the next cron run. Pre-existing isActive=true
  * tenants are unchanged.
  *
- * Email verificado (D25): activar exige `User.emailVerified`, sin importar
+ * Email verificado (D26): activar exige `User.emailVerified`, sin importar
  * `EMAIL_VERIFICATION_REQUIRED`. Es la única puerta que prende `isActive`, y
  * con ella el cron del worker (cada 15 min por tenant activo con saldo) y el
  * botón manual. Sin esto, un script podía crear N cuentas sin abrir jamás

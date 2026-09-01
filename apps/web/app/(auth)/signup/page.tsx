@@ -3,7 +3,7 @@
  * las env vars de Google OAuth en SSR y le pasa `googleEnabled` al form para
  * que el botón sólo se renderice cuando de verdad funciona.
  *
- * 2026-09-01 (D22): vuelve el alta pública (self-serve). Esta página había
+ * 2026-09-01 (D23): vuelve el alta pública (self-serve). Esta página había
  * quedado como "Acceso por invitación" desde el pivot B2B de mayo 2026; el
  * formulario (`SignupForm`) nunca se borró. El gate real sigue siendo
  * `ALLOW_PUBLIC_SIGNUP` en POST /api/auth/signup (default apagado): con la
