@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db';
 import {
   normalizeShopDomain,
   buildAuthorizeUrl,
@@ -6,6 +7,7 @@ import {
   generateState,
   callbackUrl,
   STATE_COOKIE,
+  TENANT_COOKIE,
   FLOW_COOKIE,
   FLOW_APPSTORE,
   STATE_TTL_SECONDS,
@@ -34,25 +36,33 @@ export const dynamic = 'force-dynamic';
  * Shopify verifica esto explícitamente: es la comprobación automática
  * "Inicia la autenticación inmediatamente después de la instalación".
  *
+ * NO ES SÓLO INSTALAR: ES CADA APERTURA (D12)
+ * -------------------------------------------
+ * Shopify carga la App URL cada vez que el comerciante abre la app desde su
+ * admin, no sólo al instalar. Si cada apertura reiniciara OAuth, cada apertura
+ * terminaría en el callback aprovisionando "de nuevo" y mandando otro mail.
+ * Por eso, si la tienda ya está conectada (dominio vinculado y token vigente),
+ * acá no se reinicia nada: se manda al comerciante directo al login.
+ *
  * SEGURIDAD
  * ---------
  * `shop` viene de un request sin autenticar, así que antes de redirigir a ningún
  * lado se verifica el HMAC de Shopify sobre el query, la frescura del timestamp
  * y la forma del dominio. Sin las tres, esto sería un open redirect con nuestra
- * marca encima.
+ * marca encima. Los errores van a /login?shopify=<motivo> (pública, muestra el
+ * mensaje); nunca a /settings, que rebota sin sesión y pierde el motivo.
  */
 export async function GET(req: NextRequest) {
   const origin = req.nextUrl.origin;
   const params = req.nextUrl.searchParams;
+  const fail = (motivo: string) => NextResponse.redirect(new URL(`/login?shopify=${motivo}`, origin));
 
   const clientId = process.env.SHOPIFY_API_KEY;
   const secret = process.env.SHOPIFY_API_SECRET;
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? origin;
 
   // Sin credenciales no se puede ni empezar. Fail-closed y visible.
-  if (!clientId || !secret) {
-    return NextResponse.redirect(new URL('/?shopify=misconfigured', origin));
-  }
+  if (!clientId || !secret) return fail('misconfigured');
 
   const shop = normalizeShopDomain(params.get('shop'));
   if (!shop) {
@@ -62,14 +72,23 @@ export async function GET(req: NextRequest) {
   }
 
   // 1. Autenticidad: esto lo mandó Shopify, no cualquiera.
-  if (!verifyOAuthHmac(params, secret)) {
-    return NextResponse.redirect(new URL('/?shopify=bad_hmac', origin));
-  }
+  if (!verifyOAuthHmac(params, secret)) return fail('bad_hmac');
 
   // 2. Frescura: un enlace de instalación viejo, interceptado, no sirve.
   const ts = Number(params.get('timestamp'));
-  if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) {
-    return NextResponse.redirect(new URL('/?shopify=stale', origin));
+  if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) return fail('stale');
+
+  // 3. ¿Ya está conectada? Entonces esto es una apertura, no una instalación.
+  const yaConectada = await db.tenant.findFirst({
+    where: { shopifyStoreUrl: shop, shopifyToken: { not: null } },
+    select: { id: true },
+  });
+  if (yaConectada) {
+    const r = NextResponse.redirect(new URL('/login?shopify=open', origin));
+    r.cookies.delete(STATE_COOKIE);
+    r.cookies.delete(FLOW_COOKIE);
+    r.cookies.delete(TENANT_COOKIE);
+    return r;
   }
 
   const state = generateState();
@@ -92,5 +111,8 @@ export async function GET(req: NextRequest) {
   // Marca que este OAuth nació en el App Store: el callback tiene que
   // aprovisionar cuenta en vez de exigir sesión.
   res.cookies.set(FLOW_COOKIE, FLOW_APPSTORE, cookieOpts);
+  // Un "Conectar" del dashboard abandonado no puede contaminar esta
+  // instalación: el callback rechaza FLOW=appstore + TENANT a la vez.
+  res.cookies.delete(TENANT_COOKIE);
   return res;
 }

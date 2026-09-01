@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Zap, ArrowRight, Loader2, Package, Truck, Mail, CheckCircle2 } from 'lucide-react';
 import { GoogleSignInButton, OrDivider } from '../_components/GoogleSignInButton';
+import { safeRelativePath } from '@/lib/safe-next';
+import { shopifyLoginMessage } from '@/lib/shopify-messages';
 
 export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
   const router = useRouter();
@@ -13,6 +15,20 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
   // so they know to log in with the NEW password they just set.
   const searchParams = useSearchParams();
   const justReset = searchParams.get('reset') === 'ok';
+
+  // ?shopify=<motivo> → llegó desde el flujo del App Store (sin sesión). Los
+  // éxitos tienen texto propio; los errores, uno genérico. Nunca viene el
+  // email en la query: el banner habla de "el email de contacto de tu tienda".
+  const shopifyMsg = shopifyLoginMessage(searchParams.get('shopify'));
+
+  // ?next= (lo pone /api/shopify/callback y /api/shopify/install) o
+  // ?callbackUrl= (lo pone el middleware): a dónde volver después de entrar.
+  // Sólo rutas relativas del mismo origen; cualquier otra cosa cae al
+  // dashboard. Sin este filtro, /login sería un open redirect.
+  const destino =
+    safeRelativePath(searchParams.get('next')) ??
+    safeRelativePath(searchParams.get('callbackUrl')) ??
+    '/dashboard';
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -35,7 +51,13 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
     if (result?.error) {
       setError('Email o password incorrectos');
     } else {
-      router.push('/dashboard');
+      if (destino.startsWith('/api/')) {
+        // Un route handler (p.ej. /api/shopify/claim) no es una página: se
+        // navega entero, no por el router del App Router.
+        window.location.assign(destino);
+        return;
+      }
+      router.push(destino);
       router.refresh();
     }
   }
@@ -122,7 +144,7 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
               "click → bounce to /login" footgun. */}
           {googleEnabled && (
             <>
-              <GoogleSignInButton callbackUrl="/dashboard" label="Continuar con Google" />
+              <GoogleSignInButton callbackUrl={destino} label="Continuar con Google" />
               <OrDivider label="o con email" />
             </>
           )}
@@ -131,6 +153,24 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
             <div className="bg-green-500/10 border border-green-500/20 text-green-400 px-4 py-3 rounded-xl text-sm flex items-center gap-2 mb-4">
               <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
               <span>Contraseña actualizada. Iniciá sesión con la nueva.</span>
+            </div>
+          )}
+
+          {shopifyMsg && (
+            <div
+              role="status"
+              className={`px-4 py-3 rounded-xl text-sm flex items-start gap-2 mb-4 border ${
+                shopifyMsg.ok
+                  ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-300'
+                  : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+              }`}
+            >
+              {shopifyMsg.ok ? (
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              ) : (
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0 mt-2" />
+              )}
+              <span>{shopifyMsg.text}</span>
             </div>
           )}
 
