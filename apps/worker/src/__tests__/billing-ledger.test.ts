@@ -4,10 +4,12 @@ import {
   recordRefundForShipment,
   assertWalletInvariant,
   getOrCreateWalletForTenant,
+  repairUnrecordedShipments,
   isBillableGuia,
+  type LedgerTx,
 } from '../billing/ledger';
 import { periodTotalMilli, uyu } from '../billing/tiers';
-import { periodOf } from '../billing/settle';
+import { periodOf, shipmentIdemKey } from '../billing/settle';
 import { FakeLedgerDb } from './helpers/fake-ledger-db';
 
 const SEP = new Date('2026-09-10T15:00:00Z'); // 2026-09 en UY
@@ -206,6 +208,141 @@ describe('ledger — concurrencia', () => {
       }
       expect(w.balanceMilli).toBe(0n); // sombra
     }
+  });
+});
+
+describe('ledger — contrato de lock (FOR UPDATE primero)', () => {
+  /**
+   * El fake serializa todo con un mutex, así que un bug de locking no rompe
+   * el test de 1000 operaciones. Este espía mira ADENTRO de cada transacción
+   * y afirma que la primera sentencia es el SELECT … FOR UPDATE sobre "Wallet".
+   * Si alguien borra lockWallet(), lo cambia por un SELECT común o lo mueve
+   * después de una lectura, esto falla.
+   */
+  function spyTransactions(fake: FakeLedgerDb): string[][] {
+    const perTx: string[][] = [];
+    const original = fake.$transaction.bind(fake);
+    fake.$transaction = <T,>(fn: (tx: LedgerTx) => Promise<T>) =>
+      original(async (tx) => {
+        const ops: string[] = [];
+        perTx.push(ops);
+        const rec =
+          <A extends unknown[], R>(name: string, f: (...a: A) => R) =>
+          (...a: A): R => {
+            ops.push(name);
+            return f(...a);
+          };
+        const spied: LedgerTx = {
+          $queryRaw: (q, ...values) => {
+            ops.push(`raw:${q.raw.join('$')}|${values.join(',')}`);
+            return tx.$queryRaw(q, ...values);
+          },
+          wallet: {
+            findUnique: rec('wallet.findUnique', tx.wallet.findUnique),
+            update: rec('wallet.update', tx.wallet.update),
+          },
+          walletEntry: {
+            findUnique: rec('walletEntry.findUnique', tx.walletEntry.findUnique),
+            create: rec('walletEntry.create', tx.walletEntry.create),
+            count: rec('walletEntry.count', tx.walletEntry.count),
+            aggregate: rec('walletEntry.aggregate', tx.walletEntry.aggregate),
+          },
+        };
+        return fn(spied);
+      });
+    return perTx;
+  }
+
+  const LOCK_FIRST = /^raw:SELECT "id" FROM "Wallet" WHERE "id" = \$ FOR UPDATE\|(\S+)$/;
+
+  it('cada $transaction de recordShipment / refund / invariante arranca con SELECT … FOR UPDATE sobre "Wallet"', async () => {
+    const perTx = spyTransactions(db);
+    await ship('t-aura', 'G-1');
+    await ship('t-aura', 'G-1'); // no-op, pero igual bajo lock
+    await ship('t-aura-2', 'G-2');
+    await recordRefundForShipment(db, { tenantId: 't-aura', dacGuia: 'G-1' });
+    const w = await getOrCreateWalletForTenant(db, 't-aura');
+    await assertWalletInvariant(db, w.id, YM_SEP);
+
+    expect(perTx).toHaveLength(5);
+    for (const ops of perTx) {
+      expect(ops.length).toBeGreaterThan(1);
+      const m = LOCK_FIRST.exec(ops[0]);
+      expect(m, `primera sentencia: ${ops[0]}`).not.toBeNull();
+      expect(m![1]).toBe(w.id); // el lock es sobre ESTE wallet, no sobre cualquiera
+      // y ninguna lectura del período viene antes del lock
+      expect(ops.slice(1).some((o) => o.startsWith('raw:'))).toBe(false);
+    }
+  });
+
+  it('el espía discrimina: una transacción que lee antes de lockear no pasa', async () => {
+    const perTx = spyTransactions(db);
+    await db.$transaction(async (tx) => {
+      await tx.walletEntry.findUnique({ where: { idemKey: 'x' } });
+      await tx.$queryRaw`SELECT "id" FROM "Wallet" WHERE "id" = ${'w'} FOR UPDATE`;
+    });
+    expect(LOCK_FIRST.test(perTx[0][0])).toBe(false);
+  });
+});
+
+describe('ledger — reparación Label → ledger (repairUnrecordedShipments)', () => {
+  it('una guía persistida sin asiento se repara; correrlo dos veces no duplica', async () => {
+    // El hook corrió para G-2 pero no para G-1 (SIGTERM entre el upsert y el hook).
+    db.seedLabel({ id: 'l-1', tenantId: 't-aura', dacGuia: 'G-1', createdAt: AUG });
+    db.seedLabel({ id: 'l-2', tenantId: 't-aura', dacGuia: 'G-2', createdAt: SEP });
+    db.seedLabel({ id: 'l-p', tenantId: 't-aura', dacGuia: 'PENDING-1', createdAt: SEP });
+    db.seedLabel({ id: 'l-t', tenantId: 't-aura', dacGuia: 'TEST-1', createdAt: SEP });
+    db.seedLabel({ id: 'l-lf', tenantId: 't-aura', dacGuia: 'LF-000001', createdAt: SEP });
+    db.seedLabel({ id: 'l-null', tenantId: 't-aura', dacGuia: null, createdAt: SEP });
+    db.seedLabel({ id: 'l-o', tenantId: 't-otro', dacGuia: 'G-1', createdAt: SEP }); // misma numeración, otro user
+    await ship('t-aura', 'G-2');
+    const w = await getOrCreateWalletForTenant(db, 't-aura');
+    const txBefore = db.transactionsRun;
+
+    const first = await repairUnrecordedShipments(db, { limit: 10 });
+    expect(first).toMatchObject({ scanned: 6, repaired: 2, alreadyRecorded: 1, notBillable: 3, exhausted: true });
+    expect(first.repairedLabelIds).toEqual(['l-1', 'l-o']);
+    // una transacción por guía reparada, ninguna por las que ya estaban
+    expect(db.transactionsRun - txBefore).toBe(2);
+
+    // el período es el del hecho (createdAt), no el de hoy
+    const g1 = db.entries.find((e) => e.idemKey === shipmentIdemKey('t-aura', 'G-1'));
+    expect(g1).toMatchObject({ periodYm: YM_AUG, labelId: 'l-1', jobId: null, shadow: true });
+    expect(db.netOf(w.id, YM_AUG)).toBe(-periodTotalMilli(1));
+    expect(db.netOf(w.id, YM_SEP)).toBe(-periodTotalMilli(1));
+    await assertWalletInvariant(db, w.id, YM_AUG);
+    await assertWalletInvariant(db, w.id, YM_SEP);
+
+    const entriesAfterFirst = db.entries.length;
+    const second = await repairUnrecordedShipments(db, { limit: 10 });
+    expect(second).toMatchObject({ scanned: 6, repaired: 0, alreadyRecorded: 3, notBillable: 3, exhausted: true });
+    expect(db.entries).toHaveLength(entriesAfterFirst);
+    expect(db.entriesOf(w.id, 'shipment')).toHaveLength(2);
+  });
+
+  it('respeta limit y pagina por cursor; el resto queda para la próxima corrida', async () => {
+    for (let i = 1; i <= 7; i++) {
+      db.seedLabel({ id: `l-${i}`, tenantId: 't-aura', dacGuia: `G-${i}`, createdAt: new Date(SEP.getTime() + i * 1000) });
+    }
+    const a = await repairUnrecordedShipments(db, { limit: 3, pageSize: 2 });
+    expect(a).toMatchObject({ repaired: 3, exhausted: false });
+    expect(a.repairedLabelIds).toEqual(['l-1', 'l-2', 'l-3']); // en orden de createdAt
+    const b = await repairUnrecordedShipments(db, { limit: 10, pageSize: 2 });
+    expect(b).toMatchObject({ repaired: 4, alreadyRecorded: 3, exhausted: true });
+    const w = await getOrCreateWalletForTenant(db, 't-aura');
+    expect(db.entriesOf(w.id, 'shipment')).toHaveLength(7);
+    expect(db.netOf(w.id, YM_SEP)).toBe(-periodTotalMilli(7));
+    await assertWalletInvariant(db, w.id, YM_SEP);
+  });
+
+  it('acota por tenantId y since', async () => {
+    db.seedLabel({ id: 'l-a', tenantId: 't-aura', dacGuia: 'G-A', createdAt: AUG });
+    db.seedLabel({ id: 'l-s', tenantId: 't-aura', dacGuia: 'G-S', createdAt: SEP });
+    db.seedLabel({ id: 'l-o', tenantId: 't-otro', dacGuia: 'G-O', createdAt: SEP });
+    const r = await repairUnrecordedShipments(db, { tenantId: 't-aura', since: SEP });
+    expect(r).toMatchObject({ scanned: 1, repaired: 1 });
+    expect(r.repairedLabelIds).toEqual(['l-s']);
+    await expect(repairUnrecordedShipments(db, { limit: 0 })).rejects.toThrow(RangeError);
   });
 });
 

@@ -39,6 +39,19 @@ export function prismaLedgerClient(prisma: PrismaClient): LedgerClient {
       findUnique: (args) => prisma.wallet.findUnique(args),
       create: (args) => prisma.wallet.create(args),
     },
-    $transaction: (fn) => prisma.$transaction((tx) => fn(txOf(tx))),
+    label: {
+      findMany: (args) => prisma.label.findMany(args),
+    },
+    walletEntry: {
+      findMany: (args) => prisma.walletEntry.findMany(args),
+    },
+    // Opciones explícitas y más holgadas que el default de Prisma (maxWait 2 s,
+    // timeout 5 s): un solo user multi-tienda = un solo wallet, y con
+    // WORKER_CONCURRENCY=2 dos jobs pueden hacer cola en el FOR UPDATE. Con un
+    // pico de latencia Render↔DB el default vencía y el asiento se perdía en
+    // silencio (el hook lo traga). 120 concurrentes sobre el mismo wallet
+    // tardaron 308 ms en local, así que 15 s es techo, no expectativa.
+    $transaction: (fn) =>
+      prisma.$transaction((tx) => fn(txOf(tx)), { maxWait: 5000, timeout: 15000 }),
   };
 }

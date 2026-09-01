@@ -99,6 +99,28 @@ export interface LedgerTx {
   };
 }
 
+/** Lo mínimo de Label que necesita el reparador (repairUnrecordedShipments). */
+export interface LedgerLabel {
+  id: string;
+  tenantId: string;
+  dacGuia: string | null;
+  createdAt: Date;
+}
+
+export interface LedgerLabelFindManyArgs {
+  where: {
+    dacGuia: { not: null };
+    tenantId?: string;
+    createdAt?: { gte: Date };
+  };
+  select: { id: true; tenantId: true; dacGuia: true; createdAt: true };
+  orderBy: Array<{ createdAt: 'asc' } | { id: 'asc' }>;
+  take: number;
+  /** Paginación por cursor (keyset): la fila del cursor se salta con skip: 1. */
+  cursor?: { id: string };
+  skip?: number;
+}
+
 export interface LedgerClient {
   tenant: {
     findUnique(args: {
@@ -109,6 +131,17 @@ export interface LedgerClient {
   wallet: {
     findUnique(args: { where: { userId: string } }): Promise<LedgerWallet | null>;
     create(args: { data: { userId: string } }): Promise<LedgerWallet>;
+  };
+  /** Sólo lectura: el ledger nunca escribe Label. */
+  label: {
+    findMany(args: LedgerLabelFindManyArgs): Promise<LedgerLabel[]>;
+  };
+  /** Lectura fuera de transacción, para filtrar en lote qué guías ya tienen asiento. */
+  walletEntry: {
+    findMany(args: {
+      where: { idemKey: { in: string[] } };
+      select: { idemKey: true };
+    }): Promise<Array<{ idemKey: string }>>;
   };
   $transaction<T>(fn: (tx: LedgerTx) => Promise<T>): Promise<T>;
 }
@@ -464,6 +497,140 @@ export async function recordRefundForShipment(
     }
     throw err;
   }
+}
+
+// ─── Reparación Label → ledger ───────────────────────────────────────────────
+
+export interface RepairUnrecordedOptions {
+  /** Máximo de envíos a ASENTAR en esta corrida (no de filas leídas). Default 100. */
+  limit?: number;
+  /** Acotar a un tenant (usa el índice (tenantId, createdAt) de Label). */
+  tenantId?: string;
+  /** Sólo Labels creadas desde esta fecha. Sin esto recorre toda la tabla. */
+  since?: Date;
+  /** Tamaño de página de lectura de Label. Default 500. */
+  pageSize?: number;
+}
+
+export interface RepairUnrecordedReport {
+  /** Labels leídas (con dacGuia no nulo, antes de filtrar placeholders). */
+  scanned: number;
+  /** Envíos asentados en esta corrida. */
+  repaired: number;
+  /** Guías reales que ya tenían asiento (o lo ganaron en una carrera). */
+  alreadyRecorded: number;
+  /** PENDING-/TEST-/LF-: no facturables, se saltan. */
+  notBillable: number;
+  /** true si se recorrió todo el rango; false si cortó por `limit`. */
+  exhausted: boolean;
+  /** ids de Label reparadas, para el log. */
+  repairedLabelIds: string[];
+}
+
+/**
+ * Cierra la ventana at-most-once entre `Label.dacGuia` y el hook de sombra.
+ *
+ * El worker persiste la guía (transacción 1) y recién después llama al hook
+ * (transacción 2). Un SIGTERM, deploy o timeout entre las dos deja una guía
+ * real sin asiento, y nadie vuelve a llamar al hook porque el ciclo siguiente
+ * salta la orden (ya tiene guía). Esta función busca Labels con guía real
+ * (isBillableGuia) sin `WalletEntry(reason='shipment')` para (tenantId, guía)
+ * y las asienta con `at = label.createdAt`, así el período contable es el del
+ * hecho y no el del día en que se repara.
+ *
+ * Idempotente por construcción: recordShipment ya es no-op si la guía existe,
+ * y acá además se filtra en lote por idemKey para no abrir una transacción
+ * por cada guía ya asentada. Correrla dos veces no duplica nada.
+ *
+ * NO está programada en ningún cron. Es el paso 0 del cutover (docs/WALLET.md)
+ * y se corre a mano: sin `since` recorre TODA la tabla Label paginada por
+ * (createdAt, id), lo cual está bien para una corrida puntual y no para cada
+ * ciclo. Si algún día se programa, va con `since` acotado (p.ej. 48 h) para
+ * que la lectura sea barata.
+ */
+export async function repairUnrecordedShipments(
+  client: LedgerClient,
+  options: RepairUnrecordedOptions = {},
+): Promise<RepairUnrecordedReport> {
+  const limit = options.limit ?? 100;
+  const pageSize = Math.max(1, options.pageSize ?? 500);
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new RangeError(`repairUnrecordedShipments: limit debe ser un entero >= 1, recibió ${limit}`);
+  }
+
+  const report: RepairUnrecordedReport = {
+    scanned: 0,
+    repaired: 0,
+    alreadyRecorded: 0,
+    notBillable: 0,
+    exhausted: false,
+    repairedLabelIds: [],
+  };
+
+  const where: LedgerLabelFindManyArgs['where'] = { dacGuia: { not: null } };
+  if (options.tenantId) where.tenantId = options.tenantId;
+  if (options.since) where.createdAt = { gte: options.since };
+
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await client.label.findMany({
+      where,
+      select: { id: true, tenantId: true, dacGuia: true, createdAt: true },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: pageSize,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    if (page.length === 0) {
+      report.exhausted = true;
+      break;
+    }
+    report.scanned += page.length;
+    cursor = page[page.length - 1].id;
+
+    const billable = page.filter((l) => isBillableGuia(l.dacGuia));
+    report.notBillable += page.length - billable.length;
+
+    if (billable.length > 0) {
+      const keys = billable.map((l) => shipmentIdemKey(l.tenantId, l.dacGuia as string));
+      const existing = new Set(
+        (
+          await client.walletEntry.findMany({
+            where: { idemKey: { in: keys } },
+            select: { idemKey: true },
+          })
+        ).map((e) => e.idemKey),
+      );
+
+      for (let i = 0; i < billable.length; i++) {
+        if (existing.has(keys[i])) {
+          report.alreadyRecorded += 1;
+          continue;
+        }
+        const label = billable[i];
+        const r = await recordShipment(client, {
+          tenantId: label.tenantId,
+          dacGuia: label.dacGuia as string,
+          labelId: label.id,
+          jobId: null,
+          at: label.createdAt,
+        });
+        if (r.recorded) {
+          report.repaired += 1;
+          report.repairedLabelIds.push(label.id);
+          if (report.repaired >= limit) return report; // exhausted queda en false
+        } else {
+          // alreadyRecorded (carrera con un hook) o not_billable (imposible acá).
+          report.alreadyRecorded += 1;
+        }
+      }
+    }
+
+    if (page.length < pageSize) {
+      report.exhausted = true;
+      break;
+    }
+  }
+  return report;
 }
 
 // ─── Reconciliación ──────────────────────────────────────────────────────────

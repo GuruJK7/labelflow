@@ -26,6 +26,8 @@ import type {
   LedgerEntry,
   LedgerEntryCreate,
   LedgerEntryWhere,
+  LedgerLabel,
+  LedgerLabelFindManyArgs,
 } from '../../billing/ledger';
 
 export class FakeP2002 extends Error {
@@ -44,6 +46,8 @@ export class FakeLedgerDb implements LedgerClient, LedgerTx {
   tenants = new Map<string, { userId: string }>();
   wallets: FullWallet[] = [];
   entries: LedgerEntry[] = [];
+  /** Labels "persistidas por el worker". Sólo las lee el reparador. */
+  labels: LedgerLabel[] = [];
   /** Cuántos `walletEntry.create` siguientes deben fallar (simula caída de DB). */
   failNextCreates = 0;
   transactionsRun = 0;
@@ -53,6 +57,32 @@ export class FakeLedgerDb implements LedgerClient, LedgerTx {
   seedTenant(id: string, userId: string): void {
     this.tenants.set(id, { userId });
   }
+
+  seedLabel(label: { id?: string; tenantId: string; dacGuia: string | null; createdAt: Date }): LedgerLabel {
+    const l: LedgerLabel = { id: label.id ?? nextId('lbl'), ...label };
+    this.labels.push(l);
+    return l;
+  }
+
+  label = {
+    findMany: async (args: LedgerLabelFindManyArgs): Promise<LedgerLabel[]> => {
+      const w = args.where;
+      let rows = this.labels.filter(
+        (l) =>
+          l.dacGuia !== null &&
+          (w.tenantId === undefined || l.tenantId === w.tenantId) &&
+          (w.createdAt === undefined || l.createdAt.getTime() >= w.createdAt.gte.getTime()),
+      );
+      // orderBy [{createdAt asc}, {id asc}] — el único orden que pide el ledger.
+      rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      if (args.cursor) {
+        const idx = rows.findIndex((l) => l.id === args.cursor!.id);
+        if (idx < 0) throw new Error('fake: cursor not found');
+        rows = rows.slice(idx + (args.skip ?? 0));
+      }
+      return rows.slice(0, args.take).map((l) => ({ ...l }));
+    },
+  };
 
   private matches(e: LedgerEntry, w: LedgerEntryWhere): boolean {
     if (e.walletId !== w.walletId || e.periodYm !== w.periodYm) return false;
@@ -92,6 +122,10 @@ export class FakeLedgerDb implements LedgerClient, LedgerTx {
     findUnique: async (args: { where: { idemKey: string } }) => {
       const e = this.entries.find((x) => x.idemKey === args.where.idemKey);
       return e ? { ...e } : null;
+    },
+    findMany: async (args: { where: { idemKey: { in: string[] } }; select: { idemKey: true } }) => {
+      const wanted = new Set(args.where.idemKey.in);
+      return this.entries.filter((e) => wanted.has(e.idemKey)).map((e) => ({ idemKey: e.idemKey }));
     },
     create: async (args: { data: LedgerEntryCreate }) => {
       if (this.failNextCreates > 0) {
