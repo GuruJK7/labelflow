@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rateLimitBucketForIp } from '../rate-limit-ip';
+import { getRequestIp, rateLimitBucketForIp } from '../rate-limit-ip';
 
 /**
  * Cubo del rate limit del alta (D26): IPv4 exacta, IPv6 por /64. La clave
@@ -33,5 +33,22 @@ describe('rateLimitBucketForIp', () => {
 
   it('IPv4 mapeada en IPv6 se trata como la IPv4', () => {
     expect(rateLimitBucketForIp('::ffff:203.0.113.9')).toBe('203.0.113.9');
+  });
+});
+
+describe('getRequestIp', () => {
+  const req = (headers: Record<string, string>) =>
+    new Request('https://autoenvia.com/x', { headers });
+
+  it('primer salto de x-forwarded-for, sin espacios', () => {
+    expect(getRequestIp(req({ 'x-forwarded-for': ' 203.0.113.9 , 10.0.0.1' }))).toBe('203.0.113.9');
+  });
+
+  it('sin x-forwarded-for cae a x-real-ip', () => {
+    expect(getRequestIp(req({ 'x-real-ip': '198.51.100.7' }))).toBe('198.51.100.7');
+  });
+
+  it('sin ninguno → "unknown" (todos los sin-IP comparten contador)', () => {
+    expect(getRequestIp(req({}))).toBe('unknown');
   });
 });

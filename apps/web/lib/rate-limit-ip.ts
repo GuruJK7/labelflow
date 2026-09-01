@@ -20,3 +20,16 @@ export function rateLimitBucketForIp(ip: string): string {
     .join(':');
   return `${prefix}::/64`;
 }
+
+/**
+ * IP del cliente para el rate limit: primer salto de `x-forwarded-for` (lo
+ * escribe Vercel), si no `x-real-ip`; sin ninguno, `'unknown'` — todos los
+ * sin-IP comparten un contador. La usan signup y verify-email/send.
+ */
+export function getRequestIp(req: Request): string {
+  return (
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    req.headers.get('x-real-ip') ||
+    'unknown'
+  );
+}
