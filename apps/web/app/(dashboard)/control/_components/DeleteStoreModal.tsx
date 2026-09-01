@@ -55,7 +55,7 @@ export function DeleteStoreModal({
       }
       onDeleted(tenantName);
     } catch {
-      setError('Error de conexion');
+      setError('Error de conexión');
       setDeleting(false);
     }
   };

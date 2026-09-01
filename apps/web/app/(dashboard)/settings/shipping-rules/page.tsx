@@ -77,11 +77,11 @@ type RulePreset = {
 const RULE_PRESETS: RulePreset[] = [
   {
     id: 'high-value',
-    title: 'Envios grandes (> $3.000 UYU)',
+    title: 'Envíos grandes (> $3.000 UYU)',
     summary: 'Pedidos con total superior a $3.000 se marcan REMITENTE.',
-    useCase: 'Cuando pagas vos los envios caros en vez de cobrarselos al cliente.',
+    useCase: 'Cuando pagás vos los envíos caros en vez de cobrárselos al cliente.',
     icon: '💰',
-    name: 'Envios grandes (> $3.000 UYU)',
+    name: 'Envíos grandes (> $3.000 UYU)',
     ruleType: 'THRESHOLD_TOTAL',
     config: { minTotalUyu: 3000 },
     priority: 100,
@@ -90,7 +90,7 @@ const RULE_PRESETS: RulePreset[] = [
     id: 'second-order',
     title: 'Segundo pedido del mismo cliente (60 min)',
     summary: 'Si un cliente hace 2+ pedidos en 60 min, del 2do en adelante va REMITENTE.',
-    useCase: 'Evitar cobrar envio multiple cuando el cliente compra varios productos seguidos.',
+    useCase: 'Evitar cobrar envío múltiple cuando el cliente compra varios productos seguidos.',
     icon: '🔁',
     name: 'Segundo pedido del mismo cliente (60 min)',
     ruleType: 'CONSECUTIVE_ORDERS',
@@ -101,7 +101,7 @@ const RULE_PRESETS: RulePreset[] = [
     id: 'vip-tag',
     title: 'Clientes VIP (tag "vip")',
     summary: 'Pedidos de clientes con el tag "vip" en Shopify se marcan REMITENTE.',
-    useCase: 'Envio gratis para tus mejores clientes; el tag lo asignas en Shopify.',
+    useCase: 'Envío gratis para tus mejores clientes; el tag lo asignás en Shopify.',
     icon: '⭐',
     name: 'Clientes VIP (tag "vip")',
     ruleType: 'CUSTOMER_TAG',
@@ -111,7 +111,7 @@ const RULE_PRESETS: RulePreset[] = [
   {
     id: 'bulk-items',
     title: 'Pedidos mayoristas (5+ items)',
-    summary: 'Pedidos con 5 items o mas se marcan REMITENTE.',
+    summary: 'Pedidos con 5 items o más se marcan REMITENTE.',
     useCase: 'Clientes que compran al por mayor o hacen regalos grandes.',
     icon: '📦',
     name: 'Pedidos mayoristas (5+ items)',
@@ -121,11 +121,11 @@ const RULE_PRESETS: RulePreset[] = [
   },
   {
     id: 'nth-free',
-    title: 'Cada 10mo envio gratis',
-    summary: 'El envio numero 10, 20, 30... de cada cliente se marca REMITENTE.',
+    title: 'Cada 10mo envío gratis',
+    summary: 'El envío número 10, 20, 30... de cada cliente se marca REMITENTE.',
     useCase: 'Programa de fidelidad simple.',
     icon: '🎁',
-    name: 'Cada 10mo envio gratis',
+    name: 'Cada 10mo envío gratis',
     ruleType: 'NTH_SHIPMENT_FREE',
     config: { nth: 10 },
     priority: 60,
@@ -224,12 +224,12 @@ export default function ShippingRulesPage() {
     <div className="p-6 max-w-5xl">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Reglas de envio</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Reglas de envío</h1>
           <p className="text-sm text-gray-600 mt-1">
             Configura cuando un pedido se marca como <b>REMITENTE</b> (lo pagas vos en DAC)
             en lugar de DESTINATARIO (lo paga el cliente al recibir). Las reglas se evaluan de
             arriba hacia abajo; la primera que coincide gana. Si ninguna coincide, se usa el
-            umbral clasico de la seccion Configuracion.
+            umbral clásico de la sección Configuración.
           </p>
           <p className="text-xs text-gray-500 mt-2 leading-relaxed">
             <b>¿Que pasa con los REMITENTE?</b> El worker deja una nota en Shopify con el monto
@@ -428,7 +428,7 @@ function RuleModal({
       <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900">
-            {isEdit ? 'Editar regla' : 'Nueva regla de envio'}
+            {isEdit ? 'Editar regla' : 'Nueva regla de envío'}
           </h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <X className="w-5 h-5" />
@@ -503,7 +503,7 @@ function RuleModal({
               value={name}
               onChange={(e) => setName(e.target.value)}
               maxLength={100}
-              placeholder="Ej: VIPs siempre envio gratis"
+              placeholder="Ej: VIPs siempre envío gratis"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
             />
           </Field>
@@ -590,7 +590,7 @@ function ConfigEditor({
   switch (ruleType) {
     case 'THRESHOLD_TOTAL':
       return (
-        <Field label="Monto minimo en UYU (estricto mayor que)">
+        <Field label="Monto mínimo en UYU (estricto mayor que)">
           <input
             type="number"
             value={config.minTotalUyu ?? ''}
@@ -615,13 +615,13 @@ function ConfigEditor({
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
           />
           <p className="text-xs text-gray-500 mt-1">
-            Si el mismo cliente ya tiene un pedido dentro de este periodo, el nuevo va como REMITENTE.
+            Si el mismo cliente ya tiene un pedido dentro de este período, el nuevo va como REMITENTE.
           </p>
         </Field>
       );
     case 'NTH_SHIPMENT_FREE':
       return (
-        <Field label="Cada N envios">
+        <Field label="Cada N envíos">
           <input
             type="number"
             value={config.nth ?? ''}
@@ -631,7 +631,7 @@ function ConfigEditor({
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
           />
           <p className="text-xs text-gray-500 mt-1">
-            El 2do, 4to, Nesimo... envio al mismo email va como REMITENTE. Se cuentan etiquetas CREATED y COMPLETED.
+            El 2do, 4to, N-ésimo... envío al mismo email va como REMITENTE. Se cuentan etiquetas CREATED y COMPLETED.
           </p>
         </Field>
       );
@@ -652,7 +652,7 @@ function ConfigEditor({
       );
     case 'ITEM_COUNT':
       return (
-        <Field label="Minimo de items (estricto mayor que)">
+        <Field label="Mínimo de items (estricto mayor que)">
           <input
             type="number"
             value={config.minItems ?? ''}
@@ -662,7 +662,7 @@ function ConfigEditor({
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
           />
           <p className="text-xs text-gray-500 mt-1">
-            Pedidos con mas items que este numero → REMITENTE.
+            Pedidos con más items que este número → REMITENTE.
           </p>
         </Field>
       );
@@ -714,7 +714,7 @@ function formatConfig(type: ShippingRuleType, c: ConfigDraft): string {
     case 'CONSECUTIVE_ORDERS':
       return `ventana ${c.windowMinutes ?? '?'} min`;
     case 'NTH_SHIPMENT_FREE':
-      return `cada ${c.nth ?? '?'} envios`;
+      return `cada ${c.nth ?? '?'} envíos`;
     case 'CUSTOMER_TAG':
       return `tag "${c.tag ?? '?'}"`;
     case 'ITEM_COUNT':

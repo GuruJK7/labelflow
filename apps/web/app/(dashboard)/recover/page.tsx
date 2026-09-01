@@ -26,7 +26,7 @@ const STATUS_LABELS: Record<CartStatus, string> = {
   MESSAGE_2_SENT: 'Msg 2 enviado',
   RECOVERED: 'Recuperado',
   OPTED_OUT: 'Opt-out',
-  NO_PHONE: 'Sin telefono',
+  NO_PHONE: 'Sin teléfono',
   FAILED: 'Fallido',
 };
 
@@ -100,7 +100,7 @@ export default function RecoverPage() {
         setSyncResult(data.error || 'Error al sincronizar');
       }
     } catch {
-      setSyncResult('Error de conexion');
+      setSyncResult('Error de conexión');
     } finally {
       setSyncing(false);
     }
@@ -151,7 +151,7 @@ export default function RecoverPage() {
                 : 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'
             )}
           >
-            {isActive ? 'Activo' : isSubscribed ? 'Inactivo' : 'Sin suscripcion'}
+            {isActive ? 'Activo' : isSubscribed ? 'Inactivo' : 'Sin suscripción'}
           </span>
         </div>
 
@@ -179,7 +179,7 @@ export default function RecoverPage() {
                   : 'text-zinc-500 hover:text-zinc-300'
               )}
             >
-              {p === '7d' ? '7 dias' : p === '30d' ? '30 dias' : 'Todo'}
+              {p === '7d' ? '7 días' : p === '30d' ? '30 días' : 'Todo'}
             </button>
           ))}
         </div>
@@ -204,7 +204,7 @@ export default function RecoverPage() {
               Activa AutoEnvia Recover para recuperar carritos abandonados
             </p>
             <p className="text-zinc-400 text-xs">
-              Envia mensajes de WhatsApp automaticos a clientes que no completaron su compra.
+              Envía mensajes de WhatsApp automáticos a clientes que no completaron su compra.
             </p>
           </div>
           <a
@@ -223,7 +223,7 @@ export default function RecoverPage() {
             <p className="text-white font-medium text-sm">Modulo activo</p>
             <p className="text-zinc-500 text-xs mt-0.5">
               {isActive
-                ? 'El sistema detecta y recupera carritos abandonados automaticamente.'
+                ? 'El sistema detecta y recupera carritos abandonados automáticamente.'
                 : 'Activa el modulo para empezar a recuperar carritos.'}
             </p>
           </div>
@@ -277,7 +277,7 @@ export default function RecoverPage() {
           <div className="flex items-center gap-2 mb-3">
             <TrendingUp className="w-4 h-4 text-cyan-400" />
             <span className="text-xs text-zinc-500 font-medium uppercase tracking-wide">
-              Tasa de recuperacion
+              Tasa de recuperación
             </span>
           </div>
           <p className="text-3xl font-bold text-white">

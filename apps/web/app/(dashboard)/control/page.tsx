@@ -119,7 +119,7 @@ export default function ControlPage() {
       setOverview(json.data as Overview);
       anyRunningRef.current = (json.data as Overview).queue.some((q) => q.running);
     } catch {
-      setError('Error de conexion');
+      setError('Error de conexión');
     }
   }, []);
 
@@ -180,7 +180,7 @@ export default function ControlPage() {
         }
         return true;
       } catch {
-        if (!silent) setError('Error de conexion');
+        if (!silent) setError('Error de conexión');
         return false;
       }
     },
@@ -217,7 +217,7 @@ export default function ControlPage() {
         }
         return true;
       } catch {
-        if (!silent) setError('Error de conexion');
+        if (!silent) setError('Error de conexión');
         return false;
       }
     },
@@ -228,7 +228,7 @@ export default function ControlPage() {
     async (tenantId: string, retryable: number) => {
       if (retryable <= 0) return;
       const n = Math.min(retryable, 50);
-      if (!window.confirm(`Reintentar ${n} envio(s) sin completar de esta tienda? Se reprocesan en DAC.`)) return;
+      if (!window.confirm(`¿Reintentar ${n} envío(s) sin completar de esta tienda? Se reprocesan en DAC.`)) return;
       setError('');
       setBusy((b) => ({ ...b, [tenantId]: 'retry' }));
       await postRetry(tenantId, n);
@@ -251,7 +251,7 @@ export default function ControlPage() {
     const targets = (overview?.stores ?? []).filter((s) => s.stuck.retryable > 0);
     if (targets.length === 0) return;
     const totalN = targets.reduce((sum, s) => sum + Math.min(s.stuck.retryable, 50), 0);
-    if (!window.confirm(`Reintentar ${totalN} envio(s) sin completar de ${targets.length} tienda(s)? Se reprocesan en DAC.`)) return;
+    if (!window.confirm(`¿Reintentar ${totalN} envío(s) sin completar de ${targets.length} tienda(s)? Se reprocesan en DAC.`)) return;
     setError('');
     setBulkRetrying(true);
     const failed: string[] = [];
@@ -282,7 +282,7 @@ export default function ControlPage() {
     // Skip stores already running/queued or mid-action — the server would 409.
     const eligible = chosen.filter((s) => !s.running && !busy[s.id]);
     if (eligible.length === 0) {
-      setError('Las tiendas seleccionadas ya estan en ejecucion o en cola.');
+      setError('Las tiendas seleccionadas ya están en ejecución o en cola.');
       return;
     }
     setError('');
@@ -355,7 +355,7 @@ export default function ControlPage() {
         </div>
         <div className="flex items-center gap-3">
           <div className="glass rounded-xl px-4 py-2 text-right">
-            <p className="text-[10px] uppercase tracking-wider text-zinc-500">Envios disponibles</p>
+            <p className="text-[10px] uppercase tracking-wider text-zinc-500">Envíos disponibles</p>
             <p className={cn('text-lg font-bold', (wallet?.availableCredits ?? 0) > 0 ? 'text-emerald-300' : 'text-amber-300')}>
               {wallet?.availableCredits ?? 0}
             </p>
@@ -445,8 +445,8 @@ export default function ControlPage() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-60" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-400" />
             </span>
-            <h2 className="text-sm font-semibold text-white">En ejecucion y en cola</h2>
-            <span className="text-xs text-zinc-500">{queue.length} en linea</span>
+            <h2 className="text-sm font-semibold text-white">En ejecución y en cola</h2>
+            <span className="text-xs text-zinc-500">{queue.length} en línea</span>
           </div>
           <div className="space-y-2">
             {queue.map((q, idx) => {
@@ -512,7 +512,7 @@ export default function ControlPage() {
       {stores.length === 0 ? (
         <div className="glass rounded-2xl p-10 text-center text-zinc-500">
           <Store className="w-8 h-8 mx-auto mb-3 opacity-50" />
-          No tenes tiendas todavia.
+          No tenés tiendas todavía.
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 mb-8">

@@ -9,7 +9,7 @@ export default function AdsLayout({
     <FeatureGate
       flag="ads"
       title="Meta Ads Agent"
-      description="Sube creativos desde Google Drive, crea anuncios en Meta automaticamente y pausa los que no rinden con reglas inteligentes."
+      description="Sube creativos desde Google Drive, crea anuncios en Meta automáticamente y pausa los que no rinden con reglas inteligentes."
     >
       <div>
         <div className="flex items-center gap-3 mb-8">

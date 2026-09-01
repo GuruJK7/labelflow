@@ -52,7 +52,7 @@ export function checkRunGate(holder: RunGateInput): RunGate {
     return {
       ok: false,
       status: 403,
-      message: 'Tu cuenta esta pausada. Escribinos para reactivarla.',
+      message: 'Tu cuenta está pausada. Escribinos para reactivarla.',
     };
   }
 
@@ -63,7 +63,7 @@ export function checkRunGate(holder: RunGateInput): RunGate {
     return {
       ok: false,
       status: 403,
-      message: 'Te quedaste sin envios. Compra un pack para seguir despachando.',
+      message: 'Te quedaste sin envíos. Comprá un pack para seguir despachando.',
     };
   }
 
@@ -102,7 +102,7 @@ export function checkPlanLimit(
     return {
       ok: false,
       status: 429,
-      message: `Alcanzaste el limite de ${limit} etiquetas este mes. Upgrade tu plan para continuar.`,
+      message: `Alcanzaste el límite de ${limit} etiquetas este mes. Mejorá tu plan para continuar.`,
     };
   }
   return { ok: true };

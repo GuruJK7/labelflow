@@ -89,20 +89,20 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
           <div className="space-y-8 max-w-md">
             <div>
               <h2 className="text-3xl font-bold text-white leading-tight">
-                Automatiza tus envios
+                Automatizá tus envíos
                 <br />
                 <span className="text-cyan-400">de Shopify a DAC</span>
               </h2>
               <p className="text-zinc-500 mt-3 leading-relaxed">
-                Genera etiquetas, descarga PDFs y notifica a tus clientes. Todo automatico.
+                Generá etiquetas, descargá PDFs y notificá a tus clientes. Todo automático.
               </p>
             </div>
 
             <div className="space-y-4">
               {[
                 { icon: Package, text: 'Pedidos sincronizados en tiempo real' },
-                { icon: Truck, text: 'Etiquetas DAC generadas automaticamente' },
-                { icon: Mail, text: 'Notificacion con guia al cliente' },
+                { icon: Truck, text: 'Etiquetas DAC generadas automáticamente' },
+                { icon: Mail, text: 'Notificación con guía al cliente' },
               ].map(({ icon: Icon, text }) => (
                 <div key={text} className="flex items-center gap-3 text-sm text-zinc-400">
                   <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center flex-shrink-0">
@@ -248,7 +248,7 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
 
           <div className="mt-6 pt-6 border-t border-white/[0.04] text-center">
             <Link href="/" className="text-[11px] text-zinc-600 hover:text-zinc-400 transition-colors">
-              Volver a la pagina principal
+              Volver a la página principal
             </Link>
           </div>
         </div>

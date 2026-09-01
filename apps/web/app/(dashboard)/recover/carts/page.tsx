@@ -18,7 +18,7 @@ const STATUS_LABELS: Record<CartStatus, string> = {
   MESSAGE_2_SENT: 'Msg 2 enviado',
   RECOVERED: 'Recuperado',
   OPTED_OUT: 'Opt-out',
-  NO_PHONE: 'Sin telefono',
+  NO_PHONE: 'Sin teléfono',
   FAILED: 'Fallido',
 };
 
@@ -37,7 +37,7 @@ const FILTERS: { label: string; value: CartStatus | 'all' }[] = [
   { label: 'Pendientes', value: 'PENDING' },
   { label: 'Enviados', value: 'MESSAGE_1_SENT' },
   { label: 'Recuperados', value: 'RECOVERED' },
-  { label: 'Sin telefono', value: 'NO_PHONE' },
+  { label: 'Sin teléfono', value: 'NO_PHONE' },
   { label: 'Opt-out', value: 'OPTED_OUT' },
   { label: 'Fallidos', value: 'FAILED' },
 ];
@@ -62,7 +62,7 @@ function getProductSummary(cartItems: unknown): string {
   if (!Array.isArray(items) || items.length === 0) return '—';
   const first = items[0]?.title ?? '—';
   if (items.length === 1) return first;
-  return `${first} y ${items.length - 1} mas`;
+  return `${first} y ${items.length - 1} más`;
 }
 
 export default function RecoverCartsPage() {
@@ -226,7 +226,7 @@ export default function RecoverCartsPage() {
       {pages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-xs text-zinc-600">
-            Pagina {page} de {pages} ({total} total)
+            Página {page} de {pages} ({total} total)
           </p>
           <div className="flex items-center gap-2">
             <button

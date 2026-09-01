@@ -42,7 +42,7 @@ describe('checkRunGate', () => {
   it('sin saldo y sin suscripción legacy, se bloquea con un mensaje sobre el saldo', () => {
     const r = checkRunGate(holder({ shipmentCredits: 0, referralBonusCredits: 0 }));
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.message).toMatch(/sin envios/i);
+    if (!r.ok) expect(r.message).toMatch(/sin envíos/i);
   });
 
   it('el legacy con suscripción viva pasa aunque tenga saldo en 0 — no se rompe a nadie', () => {

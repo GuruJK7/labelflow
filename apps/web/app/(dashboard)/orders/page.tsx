@@ -102,7 +102,7 @@ export default function OrdersPage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Package className="w-4 h-4 text-cyan-400" />
-            <span className="text-[11px] font-medium text-cyan-400 uppercase tracking-wider">Gestion</span>
+            <span className="text-[11px] font-medium text-cyan-400 uppercase tracking-wider">Gestión</span>
           </div>
           <h1 className="text-2xl font-bold text-white">Pedidos procesados</h1>
           <p className="text-zinc-500 text-sm mt-0.5">{total} etiquetas en total</p>
@@ -169,7 +169,7 @@ export default function OrdersPage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
-                    {['Pedido', 'Cliente', 'Guia DAC', 'Estado', 'Pago', 'Monto', 'Ciudad', 'Fecha', ''].map((h) => (
+                    {['Pedido', 'Cliente', 'Guía DAC', 'Estado', 'Pago', 'Monto', 'Ciudad', 'Fecha', ''].map((h) => (
                       <th key={h} className="text-left px-5 py-3.5 text-[11px] font-semibold text-zinc-500 uppercase tracking-wider whitespace-nowrap">
                         {h}
                       </th>
@@ -281,7 +281,7 @@ export default function OrdersPage() {
                             <td colSpan={9} className="px-5 py-4">
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
                                 <div>
-                                  <p className="text-zinc-600 mb-0.5">Direccion</p>
+                                  <p className="text-zinc-600 mb-0.5">Dirección</p>
                                   <p className="text-zinc-300">{label.deliveryAddress}</p>
                                 </div>
                                 <div>
@@ -289,7 +289,7 @@ export default function OrdersPage() {
                                   <p className="text-zinc-300">{label.department}</p>
                                 </div>
                                 <div>
-                                  <p className="text-zinc-600 mb-0.5">Telefono</p>
+                                  <p className="text-zinc-600 mb-0.5">Teléfono</p>
                                   <p className="text-zinc-300">{label.customerPhone ?? '-'}</p>
                                 </div>
                                 <div>

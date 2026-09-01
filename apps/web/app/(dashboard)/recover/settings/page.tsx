@@ -60,7 +60,7 @@ export default function RecoverSettingsPage() {
         setWhatsappPhoneNumberId(cfg.whatsappPhoneNumberId ?? '');
         setWhatsappApiTokenSet(cfg.whatsappApiTokenSet ?? false);
       })
-      .catch(() => setError('Error al cargar configuracion'))
+      .catch(() => setError('Error al cargar configuración'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -106,7 +106,7 @@ export default function RecoverSettingsPage() {
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch {
-      setError('Error de conexion');
+      setError('Error de conexión');
     } finally {
       setSaving(false);
     }
@@ -128,7 +128,7 @@ export default function RecoverSettingsPage() {
         setTestResult({ ok: false, msg: data.error ?? 'Error desconocido' });
       }
     } catch {
-      setTestResult({ ok: false, msg: 'Error de conexion' });
+      setTestResult({ ok: false, msg: 'Error de conexión' });
     } finally {
       setTesting(false);
     }
@@ -145,9 +145,9 @@ export default function RecoverSettingsPage() {
   return (
     <div className="space-y-6 animate-fade-in max-w-2xl">
       <div>
-        <h1 className="text-2xl font-bold text-white">Configuracion Recover</h1>
+        <h1 className="text-2xl font-bold text-white">Configuración Recover</h1>
         <p className="text-zinc-500 text-sm mt-1">
-          Personaliza el timing y los mensajes de recuperacion de carritos.
+          Personalizá el timing y los mensajes de recuperación de carritos.
         </p>
       </div>
 
@@ -214,7 +214,7 @@ export default function RecoverSettingsPage() {
             onChange={(e) => setMessageTemplate1(e.target.value)}
             rows={4}
             className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-500/40 resize-none"
-            placeholder="Escribe tu mensaje aqui..."
+            placeholder="Escribí tu mensaje aquí..."
           />
         </div>
 
@@ -299,7 +299,7 @@ export default function RecoverSettingsPage() {
       <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5 space-y-5">
         <div className="flex items-center gap-2">
           <Wifi className="w-4 h-4 text-emerald-400" />
-          <h2 className="text-sm font-semibold text-white">Conexion de WhatsApp</h2>
+          <h2 className="text-sm font-semibold text-white">Conexión de WhatsApp</h2>
         </div>
 
         {/* Mode selector */}
@@ -313,8 +313,8 @@ export default function RecoverSettingsPage() {
                 : 'bg-white/[0.02] border-white/[0.06] text-zinc-400 hover:text-zinc-200'
             )}
           >
-            <span className="text-xs font-semibold">Numero de AutoEnvia</span>
-            <span className="text-[10px] opacity-70">Los mensajes salen del numero compartido de AutoEnvia</span>
+            <span className="text-xs font-semibold">Número de AutoEnvía</span>
+            <span className="text-[10px] opacity-70">Los mensajes salen del número compartido de AutoEnvía</span>
           </button>
           <button
             onClick={() => setWhatsappMode('OWN')}
@@ -325,7 +325,7 @@ export default function RecoverSettingsPage() {
                 : 'bg-white/[0.02] border-white/[0.06] text-zinc-400 hover:text-zinc-200'
             )}
           >
-            <span className="text-xs font-semibold">Mi propio numero</span>
+            <span className="text-xs font-semibold">Mi propio número</span>
             <span className="text-[10px] opacity-70">Conecta tu propia cuenta de WhatsApp Business API</span>
           </button>
         </div>
@@ -372,14 +372,14 @@ export default function RecoverSettingsPage() {
 
         {whatsappMode === 'PLATFORM' && (
           <p className="text-xs text-zinc-500">
-            AutoEnvia envia los mensajes desde su numero de WhatsApp Business.
+            AutoEnvía envía los mensajes desde su número de WhatsApp Business.
             No necesitas configurar nada adicional.
           </p>
         )}
 
         {/* Test connection */}
         <div className="border-t border-white/[0.06] pt-4">
-          <p className="text-xs text-zinc-400 mb-2">Probar conexion — envia un mensaje de prueba</p>
+          <p className="text-xs text-zinc-400 mb-2">Probar conexión — envía un mensaje de prueba</p>
           <div className="flex items-center gap-2">
             <input
               value={testPhone}
@@ -408,7 +408,7 @@ export default function RecoverSettingsPage() {
       {/* Opt-out keyword */}
       <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
         <label className="block text-xs text-zinc-400 mb-2">
-          Palabra clave para opt-out (el cliente envia esta palabra para dejar de recibir mensajes)
+          Palabra clave para opt-out (el cliente envía esta palabra para dejar de recibir mensajes)
         </label>
         <input
           value={optOutKeyword}

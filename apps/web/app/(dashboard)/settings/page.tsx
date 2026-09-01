@@ -320,7 +320,7 @@ export default function SettingsPage() {
   return (
     <div>
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">Configuracion</h1>
+        <h1 className="text-2xl font-bold text-white">Configuración</h1>
         <p className="text-zinc-500 text-sm mt-1">Conecta tus servicios</p>
       </div>
 
@@ -551,8 +551,8 @@ export default function SettingsPage() {
             <label className={labelClass}>Orden de procesamiento</label>
             <div className="flex gap-2 mt-1">
               {([
-                { value: 'oldest_first' as const, label: 'Mas antiguos primero' },
-                { value: 'newest_first' as const, label: 'Mas recientes primero' },
+                { value: 'oldest_first' as const, label: 'Más antiguos primero' },
+                { value: 'newest_first' as const, label: 'Más recientes primero' },
               ]).map((opt) => (
                 <button
                   key={opt.value}
@@ -659,7 +659,7 @@ export default function SettingsPage() {
                 <p className="text-sm text-white font-medium">Reparto propio (no cargar en DAC)</p>
                 <p className="text-[10px] text-zinc-500 mt-0.5">
                   {selfDeliveryEnabled
-                    ? 'Los pedidos con destino en los departamentos elegidos no se cargan en DAC: LabelFlow les emite su propia etiqueta y no se consume credito de envio'
+                    ? 'Los pedidos con destino en los departamentos elegidos no se cargan en DAC: LabelFlow les emite su propia etiqueta y no se consume crédito de envío'
                     : 'Desactivado — todos los pedidos se cargan en DAC'}
                 </p>
               </div>
@@ -700,12 +700,12 @@ export default function SettingsPage() {
                 </div>
                 <p className="text-[10px] text-zinc-600 mt-2">
                   {selfDeliveryDepartments.length === 0
-                    ? 'Sin departamentos elegidos — no se excluye ningun pedido de DAC'
+                    ? 'Sin departamentos elegidos — no se excluye ningún pedido de DAC'
                     : `Los pedidos a ${selfDeliveryDepartments.join(', ')} los despacha la tienda`}
                 </p>
                 <p className="text-[10px] text-zinc-600 mt-1.5">
                   Si el destino da senales contradictorias (ej. la ciudad dice un departamento y el
-                  codigo postal otro), el pedido se carga en DAC igual: es preferible una guia de mas
+                  código postal otro), el pedido se carga en DAC igual: es preferible una guía de más
                   que un paquete que nadie despacha.
                 </p>
               </div>
@@ -732,12 +732,12 @@ export default function SettingsPage() {
         <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
           <div className="flex items-center gap-2 mb-5">
             <Clock className="w-4 h-4 text-cyan-400" />
-            <h2 className="text-sm font-semibold text-white">Programacion automatica</h2>
+            <h2 className="text-sm font-semibold text-white">Programación automática</h2>
           </div>
 
           {/* Dias de la semana */}
           <div className="mb-5">
-            <label className={labelClass}>Dias de ejecucion</label>
+            <label className={labelClass}>Días de ejecución</label>
             <div className="flex gap-2 mt-1">
               {DAYS.map((day) => (
                 <button
@@ -765,7 +765,7 @@ export default function SettingsPage() {
           {/* Horarios con limite por slot */}
           <div className="mb-5">
             <div className="flex items-center justify-between mb-1">
-              <label className={labelClass + ' mb-0'}>Horarios de ejecucion</label>
+              <label className={labelClass + ' mb-0'}>Horarios de ejecución</label>
               {scheduleSlots.length > 0 && (
                 <button
                   onClick={() => setScheduleSlots([])}
@@ -778,7 +778,7 @@ export default function SettingsPage() {
             {scheduleSlots.length === 0 ? (
               <div className="bg-zinc-800/20 border border-dashed border-white/[0.08] rounded-lg p-4 text-center mt-1">
                 <p className="text-xs text-zinc-500">No hay horarios programados</p>
-                <p className="text-[10px] text-zinc-600 mt-1">Agrega un horario para automatizar el envio de etiquetas</p>
+                <p className="text-[10px] text-zinc-600 mt-1">Agregá un horario para automatizar el envío de etiquetas</p>
               </div>
             ) : (
               <div className="space-y-2 mt-1">
@@ -820,15 +820,15 @@ export default function SettingsPage() {
           <div className="bg-zinc-800/30 border border-white/[0.04] rounded-lg px-4 py-3 mb-4">
             <p className="text-[11px] text-zinc-500 mb-1">Resumen:</p>
             {scheduleSlots.length === 0 ? (
-              <p className="text-xs text-zinc-500">Sin programacion — los envios no se ejecutaran automaticamente</p>
+              <p className="text-xs text-zinc-500">Sin programación — los envíos no se ejecutarán automáticamente</p>
             ) : (
               <>
                 <p className="text-xs text-white">
                   <Calendar className="w-3 h-3 inline mr-1 text-cyan-400" />
                   {scheduleDays.length === 7
-                    ? 'Todos los dias'
+                    ? 'Todos los días'
                     : scheduleDays.length === 0
-                      ? 'Ningun dia seleccionado'
+                      ? 'Ningún día seleccionado'
                       : scheduleDays.sort((a, b) => a - b).map(d => DAYS.find(dd => dd.value === d)?.label).join(', ')
                   }
                 </p>
@@ -857,7 +857,7 @@ export default function SettingsPage() {
             disabled={saving === 'schedule'}
             className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
           >
-            {saving === 'schedule' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar programacion
+            {saving === 'schedule' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar programación
           </button>
           <InlineMessage section="schedule" />
         </div>
@@ -866,7 +866,7 @@ export default function SettingsPage() {
         <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
           <div className="flex items-center gap-2 mb-4">
             <Printer className="w-4 h-4 text-zinc-400" />
-            <h2 className="text-sm font-semibold text-white">Impresion</h2>
+            <h2 className="text-sm font-semibold text-white">Impresión</h2>
           </div>
           <PrinterSetup
             defaultPrinter={settings?.defaultPrinter}
@@ -881,7 +881,7 @@ export default function SettingsPage() {
         {settings?.apiKey && (
           <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
             <h2 className="text-sm font-semibold text-white mb-2">API Key (MCP)</h2>
-            <p className="text-xs text-zinc-500 mb-3">Usa esta clave para conectar desde Claude Desktop u otros clientes MCP.</p>
+            <p className="text-xs text-zinc-500 mb-3">Usá esta clave para conectar desde Claude Desktop u otros clientes MCP.</p>
             <code className="block bg-zinc-800 px-4 py-2.5 rounded-lg text-cyan-400 text-xs font-mono break-all">{settings.apiKey}</code>
           </div>
         )}
@@ -928,12 +928,12 @@ export default function SettingsPage() {
                   });
                   const data = await res.json();
                   if (res.ok) {
-                    setTestResult({ type: 'success', text: `Job creado (${data.data?.jobId?.slice(-6)}). Revisa la seccion de etiquetas en unos minutos.` });
+                    setTestResult({ type: 'success', text: `Job creado (${data.data?.jobId?.slice(-6)}). Revisá la sección de etiquetas en unos minutos.` });
                   } else {
                     setTestResult({ type: 'error', text: data.error ?? 'Error al crear test job' });
                   }
                 } catch {
-                  setTestResult({ type: 'error', text: 'Error de conexion' });
+                  setTestResult({ type: 'error', text: 'Error de conexión' });
                 }
                 setTestRunning(false);
               }}
