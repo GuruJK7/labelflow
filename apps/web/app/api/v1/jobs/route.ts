@@ -3,7 +3,7 @@ import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getPlanLimit } from '@/lib/mercadopago';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
-import { checkRunGate } from '@/lib/can-run';
+import { checkRunGate, checkPlanLimit } from '@/lib/can-run';
 
 export async function POST(req: Request) {
   const auth = await getAuthenticatedTenant();
@@ -60,14 +60,10 @@ export async function POST(req: Request) {
     labelsThisMonth: originating.labelsThisMonth,
   };
 
-  // Check plan limit
-  const limit = getPlanLimit(tenant.stripePriceId);
-  if (tenant.labelsThisMonth >= limit) {
-    return apiError(
-      `Alcanzaste el limite de ${limit} etiquetas este mes. Upgrade tu plan para continuar.`,
-      429
-    );
-  }
+  // Tope por plan legacy. Los clientes de packs no tienen plan: su tope es el
+  // saldo, ya verificado arriba. Ver lib/can-run.ts.
+  const planGate = checkPlanLimit(tenant, getPlanLimit);
+  if (!planGate.ok) return apiError(planGate.message, planGate.status);
 
   // Check no running job
   const running = await isJobRunning(auth.tenantId);

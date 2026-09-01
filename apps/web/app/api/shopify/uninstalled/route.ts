@@ -30,15 +30,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 });
   }
 
-  const shop = normalizeShopDomain(req.headers.get('x-shopify-shop-domain'));
-  if (!shop) return NextResponse.json({ ok: true });
+  // El dominio se toma del CUERPO YA VERIFICADO, no del header.
+  //
+  // El HMAC de Shopify firma únicamente el cuerpo crudo (`lib/shopify-webhook.ts`).
+  // El header `x-shopify-shop-domain` queda FUERA de la firma, así que confiar en
+  // él para decidir a quién desconectar deja la puerta abierta a reenviar un
+  // cuerpo válido cambiando el header y desconectar tiendas ajenas.
+  let shopFromBody: string | null = null;
+  try {
+    const body = JSON.parse(raw) as { myshopify_domain?: string; domain?: string };
+    shopFromBody = normalizeShopDomain(body.myshopify_domain ?? body.domain ?? null);
+  } catch {
+    return NextResponse.json({ ok: true });
+  }
+  if (!shopFromBody) return NextResponse.json({ ok: true });
 
-  // updateMany: si no hay tenant con ese dominio, es un no-op silencioso.
-  // Devolvemos 200 igual — a Shopify hay que contestarle rápido y OK, si no
-  // reintenta y termina dando de baja la suscripción del webhook.
+  // El header sólo sirve para contrastar. Si no coincide, algo está mal.
+  const shopFromHeader = normalizeShopDomain(req.headers.get('x-shopify-shop-domain'));
+  if (shopFromHeader && shopFromHeader !== shopFromBody) {
+    return NextResponse.json({ error: 'domain mismatch' }, { status: 401 });
+  }
+
+  // Se limpia SÓLO el token.
+  //
+  // 🔴 NO tocar `isActive`: no es un flag de "conectado a Shopify", es el flag de
+  // FACTURACIÓN que lee el scheduler del worker (`jobs/scheduler.ts`) y
+  // `checkRunGate`. Apagarlo acá le cortaba el despacho al cliente por TODAS sus
+  // fuentes —VentaFlow, reparto propio, Correo— y nada lo volvía a prender:
+  // ni reconectar por OAuth ni comprar otro pack. Peor en multi-tienda, donde el
+  // saldo vive en el tenant más viejo: desinstalar en una tienda apagaba todas.
+  // Lo encontró la revisión adversarial del 2026-09-01.
   await db.tenant.updateMany({
-    where: { shopifyStoreUrl: shop },
-    data: { shopifyToken: null, isActive: false },
+    where: { shopifyStoreUrl: shopFromBody },
+    data: { shopifyToken: null },
   });
 
   return NextResponse.json({ ok: true });

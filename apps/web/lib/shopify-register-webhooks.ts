@@ -16,7 +16,7 @@
  * un error para nosotros — es el estado deseado. Reinstalar no duplica.
  */
 
-const API_VERSION = '2026-04';
+const API_VERSION = '2026-07'; // debe coincidir con shopify.app.toml
 
 /** Topics que necesita AutoEnvía. `app/uninstalled` es obligatorio para no seguir cobrando a quien se fue. */
 export const WEBHOOK_TOPICS = ['orders/paid', 'app/uninstalled'] as const;

@@ -25,6 +25,7 @@ const SHOPIFY_OAUTH_MESSAGES: Record<string, { ok: boolean; text: string }> = {
   stale: { ok: false, text: 'La conexión tardó demasiado. Probá de nuevo.' },
   no_session: { ok: false, text: 'Se cerró tu sesión en el medio. Ingresá otra vez y reintentá.' },
   not_owner: { ok: false, text: 'Esa tienda no es tuya. Cambiá de tienda arriba y reintentá.' },
+  shop_mismatch: { ok: false, text: 'Este espacio ya está conectado a otra tienda. Para sumar una nueva, creála desde el selector de tiendas y conectala desde ahí.' },
   exchange_failed: { ok: false, text: 'Shopify rechazó la conexión. Probá de nuevo en unos minutos.' },
   no_code: { ok: false, text: 'Shopify no devolvió la autorización. Probá de nuevo.' },
   misconfigured: { ok: false, text: 'La conexión con Shopify no está configurada todavía. Avisanos.' },

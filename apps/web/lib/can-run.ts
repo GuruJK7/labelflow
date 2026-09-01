@@ -31,9 +31,16 @@ export interface RunGateInput {
   referralBonusCredits: number;
 }
 
+export interface PlanLimitInput {
+  /** Plan legacy de MercadoPago. `null` en todo cliente que llegó por packs. */
+  stripePriceId: string | null;
+  /** Etiquetas del mes de la tienda que origina la corrida. */
+  labelsThisMonth: number;
+}
+
 export type RunGate =
   | { ok: true }
-  | { ok: false; status: 403; message: string };
+  | { ok: false; status: 403 | 429; message: string };
 
 /** Saldo total de envíos del holder: comprados + bonificados. */
 export function creditBalance(h: Pick<RunGateInput, 'shipmentCredits' | 'referralBonusCredits'>): number {
@@ -60,5 +67,43 @@ export function checkRunGate(holder: RunGateInput): RunGate {
     };
   }
 
+  return { ok: true };
+}
+
+/**
+ * Tope mensual de etiquetas por plan.
+ *
+ * POR QUÉ ESTO TAMBIÉN VIVE ACÁ
+ * -----------------------------
+ * Destrabar `checkRunGate` sin tocar esto no arregla nada: `getPlanLimit(null)`
+ * devuelve 0 (`lib/mercadopago.ts:66`), y los tres disparos manuales hacen
+ * `labelsThisMonth >= limit`. Para un cliente de packs —que tiene
+ * `stripePriceId = null`, porque los únicos dos writers de ese campo son el
+ * flujo legacy de suscripción de MercadoPago— eso es `0 >= 0`, o sea 429
+ * "Alcanzaste el límite de 0 etiquetas". El cliente seguía sin poder despachar;
+ * lo único que cambiaba era el número del error.
+ *
+ * Lo detectó la revisión adversarial del 2026-09-01 re-derivando las 72
+ * combinaciones de (isActive × subscriptionStatus × saldo × stripePriceId).
+ *
+ * La regla correcta: el plan legacy topea por etiquetas; el modelo de packs
+ * topea por SALDO, y el saldo ya lo verificó `checkRunGate`. Sin plan legacy,
+ * no hay tope de etiquetas que aplicar.
+ */
+export function checkPlanLimit(
+  input: PlanLimitInput,
+  getLimit: (planId: string | null) => number,
+): RunGate {
+  // Cliente de packs: el límite es la billetera, no un plan que no tiene.
+  if (!input.stripePriceId) return { ok: true };
+
+  const limit = getLimit(input.stripePriceId);
+  if (input.labelsThisMonth >= limit) {
+    return {
+      ok: false,
+      status: 429,
+      message: `Alcanzaste el limite de ${limit} etiquetas este mes. Upgrade tu plan para continuar.`,
+    };
+  }
   return { ok: true };
 }

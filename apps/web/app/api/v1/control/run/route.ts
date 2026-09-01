@@ -16,7 +16,7 @@ import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
 import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { getPlanLimit } from '@/lib/mercadopago';
-import { checkRunGate } from '@/lib/can-run';
+import { checkRunGate, checkPlanLimit } from '@/lib/can-run';
 
 export async function POST(req: Request) {
   const auth = await getAuthenticatedUser();
@@ -62,10 +62,11 @@ export async function POST(req: Request) {
 
   // Plan label limit — counted against the originating store's month, same as
   // POST /api/v1/jobs.
-  const limit = getPlanLimit(holder.stripePriceId);
-  if (owned.labelsThisMonth >= limit) {
-    return apiError(`Alcanzaste el limite de ${limit} etiquetas este mes. Upgrade tu plan para continuar.`, 429);
-  }
+  const planGate = checkPlanLimit(
+    { stripePriceId: holder.stripePriceId, labelsThisMonth: owned.labelsThisMonth },
+    getPlanLimit,
+  );
+  if (!planGate.ok) return apiError(planGate.message, planGate.status);
 
   // Soft gate: one job per store at a time. This is a non-atomic read, so two
   // near-simultaneous requests could both pass; that is acceptable because the
