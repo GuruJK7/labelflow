@@ -8,6 +8,12 @@
  *   3. In a transaction: update User.passwordHash + mark token used.
  *   4. Return success — the user can now log in with the new password.
  *
+ * Email verificado (D26): el link llegó por mail y usarlo demuestra control
+ * del buzón, así que en el mismo paso se marca `User.emailVerified` (si ya
+ * estaba, se conserva la fecha). Es lo que deja verificado al comerciante
+ * que instala desde el App Store de Shopify: su "elegí tu contraseña" (D12)
+ * es este mismo token, y `onboarding/complete` exige email verificado.
+ *
  * If the token is missing, expired, already used, or doesn't exist, we
  * return 400 with a generic message. The exact failure mode is logged
  * server-side for SRE but NOT exposed to the client.
@@ -66,7 +72,12 @@ export async function POST(req: Request) {
     await db.$transaction([
       db.user.update({
         where: { id: validation.userId },
-        data: { passwordHash },
+        data: {
+          passwordHash,
+          // Control del buzón demostrado → email verificado (D26). No pisa
+          // una fecha existente.
+          emailVerified: validation.emailVerified ?? new Date(),
+        },
       }),
       db.passwordResetToken.update({
         where: { id: validation.tokenId },
