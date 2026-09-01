@@ -35,10 +35,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Find tenant with active recover module (post-HMAC — shopDomain is now trusted)
+  // Find tenant with active recover module (post-HMAC — shopDomain is now trusted).
+  // Insensible a mayúsculas (D18): una fila guardada como `MiTienda…` por el
+  // camino manual no se encontraba con el dominio en minúsculas de Shopify y
+  // el carrito abandonado se descartaba en silencio.
   const tenant = await db.tenant.findFirst({
     where: {
-      shopifyStoreUrl: shopDomain,
+      shopifyStoreUrl: { equals: shopDomain, mode: 'insensitive' },
       isActive: true,
     },
     select: {

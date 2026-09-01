@@ -8,6 +8,7 @@ import {
   callbackUrl,
   STATE_COOKIE,
   TENANT_COOKIE,
+  FLOW_COOKIE,
   STATE_TTL_SECONDS,
 } from '@/lib/shopify-oauth';
 
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest) {
   // chequeo, dos cuentas podrían apuntar a la misma tienda de Shopify y el
   // worker despacharía los mismos pedidos dos veces.
   const yaConectada = await db.tenant.findFirst({
-    where: { shopifyStoreUrl: shop, id: { not: auth.tenantId } },
+    where: { shopifyStoreUrl: { equals: shop, mode: 'insensitive' }, id: { not: auth.tenantId } },
     select: { id: true },
   });
   if (yaConectada) {
@@ -81,5 +82,10 @@ export async function GET(req: NextRequest) {
   };
   res.cookies.set(STATE_COOKIE, state, cookieOpts);
   res.cookies.set(TENANT_COOKIE, auth.tenantId, cookieOpts);
+  // Si el comerciante apretó "Instalar" en el App Store hace un rato y lo
+  // abandonó, la cookie de flujo sigue viva 10 minutos. Sin borrarla acá, el
+  // callback tomaría ESTA conexión como una instalación del App Store,
+  // ignoraría el tenant elegido y aprovisionaría por el email de la tienda.
+  res.cookies.delete(FLOW_COOKIE);
   return res;
 }

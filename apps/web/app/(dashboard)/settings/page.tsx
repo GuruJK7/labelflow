@@ -3,33 +3,20 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar, Printer, FlaskConical, Play } from 'lucide-react';
 import { PrinterSetup } from '@/components/printing/PrinterSetup';
+import {
+  SHOPIFY_OAUTH_MESSAGES,
+  shopHandleFromParam,
+  connectedNewStoreMessage,
+  alreadyYoursMessage,
+} from '@/lib/shopify-messages';
 
 interface ScheduleSlot {
   time: string;   // "HH:MM"
   maxOrders: number; // 0 = all
 }
 
-/**
- * Resultado del ida y vuelta de OAuth con Shopify. El callback vuelve a
- * /settings?shopify=<motivo>, y acá se traduce a algo que el comerciante pueda
- * accionar. Cada motivo dice qué pasó Y qué hacer — un "error" a secas en un
- * flujo de conexión termina siempre en un mensaje de WhatsApp.
- */
-const SHOPIFY_OAUTH_MESSAGES: Record<string, { ok: boolean; text: string }> = {
-  connected: { ok: true, text: 'Tienda conectada. Ya podemos leer tus pedidos y marcarlos como enviados.' },
-  bad_shop: { ok: false, text: 'Ese no parece un dominio de Shopify. Tiene que terminar en .myshopify.com.' },
-  already_linked: { ok: false, text: 'Esa tienda ya está conectada a otra cuenta. Escribinos y lo resolvemos.' },
-  missing_scopes: { ok: false, text: 'Faltaron permisos al autorizar. Volvé a conectar y aceptá todos.' },
-  bad_hmac: { ok: false, text: 'No pudimos validar la respuesta de Shopify. Probá de nuevo desde el botón.' },
-  bad_state: { ok: false, text: 'La conexión expiró o se abrió en otra pestaña. Probá de nuevo.' },
-  stale: { ok: false, text: 'La conexión tardó demasiado. Probá de nuevo.' },
-  no_session: { ok: false, text: 'Se cerró tu sesión en el medio. Ingresá otra vez y reintentá.' },
-  not_owner: { ok: false, text: 'Esa tienda no es tuya. Cambiá de tienda arriba y reintentá.' },
-  shop_mismatch: { ok: false, text: 'Este espacio ya está conectado a otra tienda. Para sumar una nueva, creála desde el selector de tiendas y conectala desde ahí.' },
-  exchange_failed: { ok: false, text: 'Shopify rechazó la conexión. Probá de nuevo en unos minutos.' },
-  no_code: { ok: false, text: 'Shopify no devolvió la autorización. Probá de nuevo.' },
-  misconfigured: { ok: false, text: 'La conexión con Shopify no está configurada todavía. Avisanos.' },
-};
+// Los textos viven en lib/shopify-messages.ts porque /login los muestra
+// también (rama App Store, sin sesión). Un solo diccionario, dos pantallas.
 
 function ShopifyOAuthStatus() {
   const [estado, setEstado] = useState<{ ok: boolean; text: string } | null>(null);
@@ -39,14 +26,25 @@ function ShopifyOAuthStatus() {
     const p = new URLSearchParams(window.location.search);
     const motivo = p.get('shopify');
     if (!motivo) return;
-    setEstado(SHOPIFY_OAUTH_MESSAGES[motivo] ?? { ok: false, text: `No pudimos conectar (${motivo}).` });
-    setScopes(p.get('scopes'));
-    if (p.get('webhooks')) {
+    const webhooksWarning = !!p.get('webhooks');
+    // `shop` lo pone /api/shopify/claim: la tienda reclamada NO es la activa,
+    // el banner tiene que nombrarla. Sólo se acepta un handle con forma
+    // válida: lo que no pase queda fuera, nunca se muestra texto de la URL.
+    const handle =
+      motivo === 'connected' || motivo === 'already_yours' ? shopHandleFromParam(p.get('shop')) : null;
+    if (handle && motivo === 'already_yours') {
+      setEstado(alreadyYoursMessage(handle));
+    } else if (handle) {
+      setEstado(connectedNewStoreMessage(handle, webhooksWarning));
+    } else if (webhooksWarning) {
       setEstado({
         ok: true,
         text: 'Tienda conectada, pero no pudimos activar el aviso instantáneo de pedidos nuevos. Van a entrar igual, con hasta 15 minutos de demora.',
       });
+    } else {
+      setEstado(SHOPIFY_OAUTH_MESSAGES[motivo] ?? { ok: false, text: `No pudimos conectar (${motivo}).` });
     }
+    setScopes(p.get('scopes'));
     // Limpiar la URL para que un F5 no repita el mensaje.
     window.history.replaceState({}, '', window.location.pathname);
   }, []);

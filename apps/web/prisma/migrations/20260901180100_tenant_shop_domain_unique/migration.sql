@@ -1,0 +1,46 @@
+-- Índice único parcial sobre Tenant.shopifyStoreUrl (D18 → D22).
+--
+-- 🔴🔴 DECISIÓN PENDIENTE DE ADRIAN. NO APLICAR SIN ESA DECISIÓN.
+--
+-- main soporta A PROPÓSITO que dos tenants compartan la misma tienda de
+-- Shopify:
+--   - commit 94a6282 (2026-05-08, incidente Aura, near-miss): "Alex" y
+--     "Nueva tienda" apuntaban a la misma tienda; el segundo estuvo a un
+--     ciclo de re-despachar (y re-facturar en DAC) los pedidos #1147–#1158
+--     que el primero ya había despachado. El arreglo NO fue prohibir
+--     compartir tienda: fue que el worker lo contemple. El propio commit lo
+--     dice: el estado recomendado es un tenant por tienda, pero compartirla
+--     es legítimo (distintos horarios, filtros de producto, auditoría
+--     durante una reinstalación) y el filtro existe para que nunca cause un
+--     doble envío.
+--   - apps/worker/src/jobs/process-orders.job.ts, `sharedTenantIds`: busca
+--     TODOS los tenants con el mismo shopifyStoreUrl y saltea los pedidos
+--     que cualquiera de ellos ya completó.
+--   - `settings PUT` respeta ese caso desde D21: no da 409 si el dominio no
+--     cambia, para que un tenant que comparte tienda pueda rotar su token.
+--
+-- Aplicar este índice implica RETIRAR ese diseño: desde ese momento una
+-- tienda pertenece a UN tenant; los que hoy la comparten quedan con
+-- shopifyStoreUrl NULL salvo uno (con su saldo y sus etiquetas revisados a
+-- mano), y `sharedTenantIds` pasa a ser código muerto. Lo que se gana: cierra
+-- la carrera reclamo-vs-"Conectar del dashboard" (la rama B de /callback
+-- chequea `tomadaPorOtro` fuera de transacción) y el P2002 que /claim,
+-- /callback y provisionFromShopify ya traducen a already_linked/conflict
+-- salta también por dominio, no sólo por slug.
+--
+-- Requisitos ANTES de aplicar, en este orden:
+--   1. Decisión explícita de Adrian: compartir tienda deja de ser válido.
+--   2. 20260901180000_tenant_shop_domain_lower ya aplicada (si no,
+--      `MiTienda…` y `mitienda…` no chocan acá pero sí después del UPDATE).
+--   3. El SELECT de duplicados de ese archivo devuelve 0 filas.
+--
+-- schema.prisma NO cambia: el índice es parcial (WHERE NOT NULL) y Prisma no
+-- sabe expresarlo; un @unique haría que el próximo `db push` intente crear
+-- un índice completo distinto.
+--
+-- Revertir: DROP INDEX "Tenant_shopifyStoreUrl_key"; el código insensible a
+-- mayúsculas sigue siendo correcto sin él.
+
+CREATE UNIQUE INDEX IF NOT EXISTS "Tenant_shopifyStoreUrl_key"
+  ON "Tenant" ("shopifyStoreUrl")
+  WHERE "shopifyStoreUrl" IS NOT NULL;

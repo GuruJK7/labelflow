@@ -77,8 +77,12 @@ export async function POST(req: NextRequest) {
   // tenant row is already gone. We persist the GdprRequest either way —
   // the compliance record must exist even if we have nothing left to
   // redact for that shop.
+  //
+  // Insensible a mayúsculas (D18): el camino manual pudo guardar el dominio
+  // con mayúsculas; Shopify lo manda en minúsculas. Sin esto el GdprRequest
+  // quedaba sin tenantId para esa tienda.
   const tenant = await db.tenant.findFirst({
-    where: { shopifyStoreUrl: shopDomain },
+    where: { shopifyStoreUrl: { equals: shopDomain, mode: 'insensitive' } },
     select: { id: true },
   });
 
