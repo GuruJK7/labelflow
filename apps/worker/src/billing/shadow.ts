@@ -24,6 +24,13 @@ export interface ShadowShipmentInput {
   dacGuia: string | null | undefined;
   labelId?: string | null;
   jobId?: string | null;
+  /**
+   * Momento del hecho (Label.createdAt). Define el período contable: una guía
+   * recuperada por orphan-reconcile a los 30 min de emitida, o reparada
+   * semanas después, se asienta en el mes en que existió, no en el que se
+   * asentó. Si no viene, el ledger usa "ahora".
+   */
+  at?: Date | null;
 }
 
 export async function shadowRecordShipment(input: ShadowShipmentInput): Promise<void> {
@@ -35,6 +42,7 @@ export async function shadowRecordShipment(input: ShadowShipmentInput): Promise<
       dacGuia: input.dacGuia,
       labelId: input.labelId ?? null,
       jobId: input.jobId ?? null,
+      at: input.at instanceof Date && !Number.isNaN(input.at.getTime()) ? input.at : undefined,
     });
     if (result.recorded) {
       logger.info(
@@ -55,9 +63,28 @@ export async function shadowRecordShipment(input: ShadowShipmentInput): Promise<
       );
     }
   } catch (err) {
-    logger.warn(
-      { tenantId: input.tenantId, guia: input.dacGuia, err: (err as Error)?.message },
-      'wallet-shadow: no se pudo asentar el envío; el job sigue',
-    );
+    // Todos los mensajes conservan el prefijo 'wallet-shadow: no se pudo asentar'
+    // porque el chequeo de humo del primer día (docs/WALLET.md) grepea eso.
+    const code = (err as { code?: unknown })?.code;
+    const ctx = {
+      tenantId: input.tenantId,
+      guia: input.dacGuia,
+      code: typeof code === 'string' ? code : undefined,
+      err: (err as Error)?.message,
+    };
+    if (code === 'P2002') {
+      // recordShipment ya lo absorbe; si llega acá es una unique que no es
+      // la del ledger. Ruido, no divergencia.
+      logger.warn(ctx, 'wallet-shadow: no se pudo asentar el envío (unique); el job sigue');
+    } else if (code === 'P2021') {
+      logger.error(
+        ctx,
+        'wallet-shadow: no se pudo asentar el envío — migración wallet_ledger no aplicada (P2021: la tabla no existe); el job sigue',
+      );
+    } else {
+      // Nivel error a propósito: cada línea es un envío que la sombra NO vio y
+      // que después se lee como divergencia. Que no quede mudo en un warn.
+      logger.error(ctx, 'wallet-shadow: no se pudo asentar el envío; el job sigue');
+    }
   }
 }

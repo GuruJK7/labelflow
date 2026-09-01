@@ -217,7 +217,7 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
           update: { jobId, dacGuia: result.guia, status: 'CREATED', errorMessage: null, autoRetryCount: 0 },
         });
         // Ledger en sombra (WALLET_SHADOW=1). Nunca lanza; no reemplaza el cobro real.
-        await shadowRecordShipment({ tenantId, dacGuia: result.guia, labelId: labelRecord.id, jobId });
+        await shadowRecordShipment({ tenantId, dacGuia: result.guia, labelId: labelRecord.id, jobId, at: labelRecord.createdAt });
 
         // PDF (best-effort, no bloquea el éxito)
         let pdfBase64: string | null = null;

@@ -1005,7 +1005,9 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         });
         // Ledger en sombra (WALLET_SHADOW=1): asienta la guía real recién
         // persistida. Nunca lanza; el cobro real sigue siendo deductCreditsAndStamp.
-        await shadowRecordShipment({ tenantId, dacGuia: result.guia, labelId: labelRecord.id, jobId });
+        // `at` = momento del hecho, para que el período contable no dependa de
+        // cuándo corrió el hook.
+        await shadowRecordShipment({ tenantId, dacGuia: result.guia, labelId: labelRecord.id, jobId, at: labelRecord.createdAt });
 
         slog.info('order-db', `Label record saved: ${labelRecord.id}`, {
           guia: result.guia,
