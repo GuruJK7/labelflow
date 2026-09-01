@@ -35,6 +35,10 @@ export const SHOPIFY_OAUTH_MESSAGES: Record<string, ShopifyMessage> = {
   claim_expired: { ok: false, text: 'La instalación venció antes de que entraras. Volvé a instalar desde Shopify: son diez segundos.' },
   claim_invalid: { ok: false, text: 'No pudimos leer la instalación pendiente. Volvé a instalar desde Shopify.' },
   claim_failed: { ok: false, text: 'No pudimos vincular la tienda. Probá de nuevo en unos minutos.' },
+  // La tienda que se intentó reclamar ya es de un tenant de ESTE usuario (la
+  // conectó por Reconectar o con token manual mientras la cookie vivía). No
+  // es un error y no hay que escribirle a soporte: está en el selector.
+  already_yours: { ok: true, text: 'Esa tienda ya está conectada a tu cuenta: elegila en el selector.' },
 };
 
 /**
@@ -104,6 +108,11 @@ const WEBHOOKS_WARNING_TAIL =
  * reclamado NO queda activo (el activo vive en el JWT y sólo lo cambia el
  * TenantSwitcher desde el cliente), así que hay que decir de cuál se habla.
  */
+/** Variante de `already_yours` que nombra la tienda cuando /claim mandó el handle. */
+export function alreadyYoursMessage(handle: string): ShopifyMessage {
+  return { ok: true, text: `La tienda ${handle} ya está conectada a tu cuenta: elegila en el selector.` };
+}
+
 export function connectedNewStoreMessage(handle: string, webhooksWarning: boolean): ShopifyMessage {
   const base = `La tienda ${handle} quedó conectada como tienda nueva: elegila en el selector para cargar sus credenciales de DAC.`;
   return {

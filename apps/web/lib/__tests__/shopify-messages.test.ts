@@ -3,8 +3,10 @@ import { describe, it, expect } from 'vitest';
 import {
   shopHandleFromParam,
   connectedNewStoreMessage,
+  alreadyYoursMessage,
   shopifyLoginMessage,
   SHOPIFY_LOGIN_GENERIC_ERROR,
+  SHOPIFY_OAUTH_MESSAGES,
 } from '../shopify-messages';
 
 /**
@@ -68,5 +70,21 @@ describe('shopifyLoginMessage', () => {
   it('cualquier otro error sigue cayendo en el genérico', () => {
     expect(shopifyLoginMessage('bad_hmac')).toBe(SHOPIFY_LOGIN_GENERIC_ERROR);
     expect(shopifyLoginMessage(null)).toBeNull();
+  });
+});
+
+describe('already_yours', () => {
+  it('el diccionario de /settings lo tiene, como informativo (no es un error ni un ticket)', () => {
+    expect(SHOPIFY_OAUTH_MESSAGES.already_yours).toEqual({
+      ok: true,
+      text: 'Esa tienda ya está conectada a tu cuenta: elegila en el selector.',
+    });
+  });
+
+  it('con handle, nombra la tienda', () => {
+    expect(alreadyYoursMessage('acme')).toEqual({
+      ok: true,
+      text: 'La tienda acme ya está conectada a tu cuenta: elegila en el selector.',
+    });
   });
 });

@@ -3,7 +3,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar, Printer, FlaskConical, Play } from 'lucide-react';
 import { PrinterSetup } from '@/components/printing/PrinterSetup';
-import { SHOPIFY_OAUTH_MESSAGES, shopHandleFromParam, connectedNewStoreMessage } from '@/lib/shopify-messages';
+import {
+  SHOPIFY_OAUTH_MESSAGES,
+  shopHandleFromParam,
+  connectedNewStoreMessage,
+  alreadyYoursMessage,
+} from '@/lib/shopify-messages';
 
 interface ScheduleSlot {
   time: string;   // "HH:MM"
@@ -25,8 +30,11 @@ function ShopifyOAuthStatus() {
     // `shop` lo pone /api/shopify/claim: la tienda reclamada NO es la activa,
     // el banner tiene que nombrarla. Sólo se acepta un handle con forma
     // válida: lo que no pase queda fuera, nunca se muestra texto de la URL.
-    const handle = motivo === 'connected' ? shopHandleFromParam(p.get('shop')) : null;
-    if (handle) {
+    const handle =
+      motivo === 'connected' || motivo === 'already_yours' ? shopHandleFromParam(p.get('shop')) : null;
+    if (handle && motivo === 'already_yours') {
+      setEstado(alreadyYoursMessage(handle));
+    } else if (handle) {
       setEstado(connectedNewStoreMessage(handle, webhooksWarning));
     } else if (webhooksWarning) {
       setEstado({
