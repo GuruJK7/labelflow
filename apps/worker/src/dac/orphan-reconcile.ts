@@ -47,6 +47,7 @@
 import type { Page } from 'playwright';
 import { db } from '../db';
 import { findRecentGuiaForRecipient } from './shipment';
+import { shadowRecordShipment } from '../billing/shadow';
 import type { StepLogger } from '../logger';
 
 const STEP = 'orphan-reconcile';
@@ -159,6 +160,7 @@ export async function reconcileOrphansForTenant(
       customerName: true,
       city: true,
       department: true,
+      createdAt: true,
     },
   });
   const labelByOrderId = new Map(labels.map((l) => [l.shopifyOrderId, l]));
@@ -286,6 +288,10 @@ export async function reconcileOrphansForTenant(
             },
           }),
         ]);
+        // Ledger en sombra (WALLET_SHADOW=1): la guía recuperada es un envío
+        // real que hoy nunca se cobra (finalize-recovered-guias no factura).
+        // Nunca lanza.
+        await shadowRecordShipment({ tenantId, dacGuia: rescued.guia, labelId: label.id, jobId: null, at: label.createdAt });
         // Track the just-adopted guía so we don't adopt it again on a sibling
         // orphan in this same pass (the same guía cannot belong to two orders).
         excludeGuias.push(rescued.guia);

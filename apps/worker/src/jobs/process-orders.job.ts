@@ -41,6 +41,7 @@ import {
 import { sendShipmentNotification } from '../notifier/email';
 import { uploadLabelPdf } from '../storage/upload';
 import { createStepLogger } from '../logger';
+import { shadowRecordShipment } from '../billing/shadow';
 import logger from '../logger';
 import { sleep } from '../utils';
 import fs from 'fs';
@@ -1003,6 +1004,11 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             autoRetryCount: 0,
           },
         });
+        // Ledger en sombra (WALLET_SHADOW=1): asienta la guía real recién
+        // persistida. Nunca lanza; el cobro real sigue siendo deductCreditsAndStamp.
+        // `at` = momento del hecho, para que el período contable no dependa de
+        // cuándo corrió el hook.
+        await shadowRecordShipment({ tenantId, dacGuia: result.guia, labelId: labelRecord.id, jobId, at: labelRecord.createdAt });
 
         slog.info('order-db', `Label record saved: ${labelRecord.id}`, {
           guia: result.guia,

@@ -31,6 +31,7 @@ import { downloadOrdersJsonFromStorage } from '../storage/upload';
 import { uploadLabelPdf } from '../storage/upload';
 import { createStepLogger } from '../logger';
 import logger from '../logger';
+import { shadowRecordShipment } from '../billing/shadow';
 import { sleep } from '../utils';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
@@ -384,13 +385,22 @@ export async function agentBulkUploadJob(job: {
         slog.success('order-shipment', `DAC shipment created for ${order.name}`, { guia: result.guia });
 
         // Update label with guia, mark CREATED
-        await db.label.update({
+        const updatedLabel = await db.label.update({
           where: { id: labelId },
           data: {
             dacGuia: result.guia,
             status: 'CREATED',
             errorMessage: null,
           },
+        });
+        // Ledger en sombra (WALLET_SHADOW=1). Ignora PENDING-; nunca lanza.
+        // `at` = Label.createdAt: el período contable es el del hecho.
+        await shadowRecordShipment({
+          tenantId: job.tenantId,
+          dacGuia: result.guia,
+          labelId,
+          jobId: job.id,
+          at: updatedLabel.createdAt,
         });
 
         // Download PDF (skip if PENDING guia). pdfUploaded is read by the

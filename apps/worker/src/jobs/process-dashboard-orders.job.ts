@@ -32,6 +32,7 @@ import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { persistLabelItems } from './label-items';
 import { createStepLogger } from '../logger';
 import logger from '../logger';
+import { shadowRecordShipment } from '../billing/shadow';
 import { sleep } from '../utils';
 import { getConfirmedDashboardOrders, markDashboardOrdersLoaded, pushDashboardLabels, type DashboardLabelResult } from '../dashboard/orders';
 import { toShopifyOrder, stableNumericId } from '../dashboard/adapter';
@@ -216,6 +217,8 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
           },
           update: { jobId, dacGuia: result.guia, status: 'CREATED', errorMessage: null, autoRetryCount: 0 },
         });
+        // Ledger en sombra (WALLET_SHADOW=1). Nunca lanza; no reemplaza el cobro real.
+        await shadowRecordShipment({ tenantId, dacGuia: result.guia, labelId: labelRecord.id, jobId, at: labelRecord.createdAt });
 
         // Snapshot de ítems para el export al WMS (best-effort, nunca tira).
         // OJO: en esta fuente los ítems llegan HOY sin sku — el adapter mapea
