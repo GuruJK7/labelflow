@@ -120,6 +120,46 @@ describe('POST /api/v1/jobs — tipo de job según la tienda (D33/H10)', () => {
     expect(mocks.jobCreate.mock.calls[0][0].data.type).toBe('PROCESS_ORDERS');
   });
 
+  // Revisión 2026-09-02: process-dashboard-orders.job.ts no lee el RunLog
+  // `maxOrdersOverride` (trae hasta 100 confirmados y recorta sólo por saldo).
+  // "Procesar 1 pedido" en un tenant de Excel despacharía todos.
+  describe('límite de pedidos con Dashboard con Excel', () => {
+    it('maxOrders=1 → 422 sin crear job ni RunLog', async () => {
+      originating = EXCEL_STORE;
+      const res = await post({ maxOrders: 1 });
+      expect(res.status).toBe(422);
+      expect((await res.json()).error).toMatch(/sólo aplica a tiendas Shopify/);
+      expect(mocks.jobCreate).not.toHaveBeenCalled();
+      expect(mocks.runLogCreate).not.toHaveBeenCalled();
+    });
+
+    it('testMode=true (equivale a 1 pedido) → 422 sin crear job', async () => {
+      originating = EXCEL_STORE;
+      expect((await post({ testMode: true })).status).toBe(422);
+      expect(mocks.jobCreate).not.toHaveBeenCalled();
+      expect(mocks.runLogCreate).not.toHaveBeenCalled();
+    });
+
+    it('sin límite → 200, job PROCESS_DASHBOARD_ORDERS y sin RunLog de override', async () => {
+      originating = EXCEL_STORE;
+      const res = await post({});
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data).toMatchObject({ type: 'PROCESS_DASHBOARD_ORDERS', maxOrders: 0, message: 'Job encolado: todos los pedidos' });
+      expect(mocks.runLogCreate).not.toHaveBeenCalled();
+    });
+
+    it('Shopify con maxOrders=1 sigue igual: job + RunLog maxOrdersOverride=1', async () => {
+      const res = await post({ maxOrders: 1 });
+      expect(res.status).toBe(200);
+      expect((await res.json()).data).toMatchObject({ type: 'PROCESS_ORDERS', maxOrders: 1 });
+      expect(mocks.runLogCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.runLogCreate.mock.calls[0][0].data).toMatchObject({
+        jobId: 'job-1', tenantId: 'tenant-1', message: 'maxOrdersOverride=1',
+      });
+    });
+  });
+
   it('sin tienda → 422 y no encola ni calienta token', async () => {
     originating = { ...EXCEL_STORE, dashboardSourceEnabled: false };
     const res = await post({});

@@ -96,10 +96,25 @@ export async function POST(req: Request) {
     await warmShopifyToken(auth.tenantId);
   }
 
-  const jobId = await enqueueProcessOrders(auth.tenantId, 'MANUAL', { type });
-
   // Store maxOrders override in RunLog so the worker reads it
   const effectiveMax = maxOrders || (testMode ? 1 : 0);
+
+  // Revisión 2026-09-02: el job de Dashboard con Excel
+  // (apps/worker/src/jobs/process-dashboard-orders.job.ts) trae hasta
+  // DASHBOARD_FETCH_LIMIT=100 pedidos confirmados y sólo recorta por saldo:
+  // NO lee el RunLog `maxOrdersOverride` como hace process-orders.job.ts.
+  // Encolar "1 pedido" ahí despacharía todos y quemaría créditos que el
+  // usuario no pidió gastar. Hasta que ese job lea el override (worker, otro
+  // turno), el límite se rechaza antes de crear el job.
+  if (kind === 'dashboard' && effectiveMax > 0) {
+    return apiError(
+      'El límite de pedidos sólo aplica a tiendas Shopify. Con Dashboard con Excel se procesan todos los pedidos confirmados: ejecutá sin límite.',
+      422,
+    );
+  }
+
+  const jobId = await enqueueProcessOrders(auth.tenantId, 'MANUAL', { type });
+
   if (effectiveMax > 0) {
     await db.runLog.create({
       data: {
