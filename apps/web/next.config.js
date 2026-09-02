@@ -49,8 +49,18 @@ const nextConfig = {
   // correcciones que sí se hicieron sobre page.tsx llegó nunca a un visitante.
   //
   // La raíz vuelve a resolverse por el App Router, que es donde vive el
-  // landing mantenible. `public/landing.html` queda en el repo, ya sin nada
-  // que lo sirva, hasta que se confirme que no se necesita.
+  // landing mantenible.
+  //
+  // `apps/web/public/landing.html` se BORRÓ (2026-09-02). Sacar el rewrite no
+  // alcanzaba: Next sirve todo `public/` desde la raíz, así que el estático
+  // seguía respondiendo 200 en `/landing.html` — indexable, con "Solicitar
+  // demo", cinco CTA a WhatsApp para coordinar una llamada, cero enlaces a
+  // /signup y un <title> casi duplicado compitiendo contra el de `/`. Estaba
+  // verificado con curl contra el dev server, no leyendo el config.
+  //
+  // NO volver a dejar un HTML de marketing en `public/`: cualquier archivo ahí
+  // es una URL pública aunque ninguna ruta lo enlace. Si hace falta la copia
+  // vieja, está en el historial de git.
 };
 
 module.exports = nextConfig;
