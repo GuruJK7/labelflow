@@ -55,9 +55,16 @@ export interface ResultadoRepartoPropio {
   codigos: string[];
 }
 
-/** Nota que queda en el pedido de Shopify para que se entienda por que no hay guia DAC. */
+/**
+ * Nota que queda en el pedido de Shopify para que se entienda por que no hay guia DAC.
+ *
+ * El texto es SOLO informativo: a diferencia de `LabelFlow-GUIA:`
+ * (shopify/orders-graphql.ts), que es el marcador de idempotencia y no se
+ * toca, nadie parsea esta nota. Por eso se puede decir la marca que el
+ * comerciante conoce.
+ */
 const notaShopify = (codigo: string, depto: string) =>
-  `LabelFlow: reparto propio (${depto}) — etiqueta ${codigo}. No se generó guía DAC.`;
+  `AutoEnvía: reparto propio (${depto}) — etiqueta ${codigo}. No se generó guía DAC.`;
 
 export async function procesarPedidosRepartoPropio(
   pedidos: Array<{ order: ShopifyOrder; veredicto: VeredictoZona }>,
