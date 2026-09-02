@@ -28,7 +28,10 @@ export const WHOP_SIGNATURE_TOLERANCE_SECONDS = 300;
  * Vive acá y no en la ruta porque Next no permite exportar constantes desde
  * un `route.ts`.
  */
-export const WHOP_PENDING_REUSE_MINUTES = 30;
+// Igual a la ventana de 24 h que mira el webhook al acreditar: si fueran
+// distintas, un clic abandonado hace 31 min más uno nuevo dejaban DOS
+// PENDING dentro de las 24 h y el pago real terminaba en 'flagged'.
+export const WHOP_PENDING_REUSE_MINUTES = 24 * 60;
 
 let warnedInvalidJson = false;
 
