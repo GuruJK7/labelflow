@@ -45,6 +45,7 @@ function render(rateLabel = '40') {
     createElement(VolumeSelector, {
       usdUyuRateMilli: 40_000,
       usdUyuRateLabel: rateLabel,
+      largePacks: false,
       whopPacks: [],
       loadingPackId: null,
       onPayMercadoPago: vi.fn(),

@@ -67,6 +67,8 @@ interface CreditState {
   fx: { usdUyuRateMilli: number; usdUyuRateLabel: string };
   /** Ids de pack con link de Whop configurado (las URLs quedan en el server). */
   whopPacks: string[];
+  /** Si los paquetes de 2.500 y 5.000 están habilitados para autoservicio. */
+  largePacks?: boolean;
   recentPurchases: Array<{
     id: string;
     packId: string;
@@ -274,6 +276,7 @@ function BillingContent() {
         <VolumeSelector
           usdUyuRateMilli={fx.usdUyuRateMilli}
           usdUyuRateLabel={fx.usdUyuRateLabel}
+          largePacks={state?.largePacks === true}
           whopPacks={whopPacks}
           loadingPackId={loading}
           onPayMercadoPago={handleBuy}

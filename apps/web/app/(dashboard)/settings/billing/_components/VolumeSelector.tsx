@@ -34,6 +34,11 @@ export interface VolumeSelectorProps {
   usdUyuRateMilli: number;
   /** El mismo tipo, ya formateado para mostrar ("40", "41,5"). */
   usdUyuRateLabel: string;
+  /**
+   * Si `pack_2500`/`pack_5000` se venden en autoservicio (`ENABLE_LARGE_CREDIT_PACKS`).
+   * Viene del server por `/api/credit-packs/me`: acá `process.env` está vacío.
+   */
+  largePacks: boolean;
   whopPacks: string[];
   loadingPackId: string | null;
   onPayMercadoPago: (packId: string) => void;
@@ -46,6 +51,7 @@ const usd = (milli: number) => formatUsdMilli(BigInt(Math.round(milli)));
 export function VolumeSelector({
   usdUyuRateMilli,
   usdUyuRateLabel,
+  largePacks,
   whopPacks,
   loadingPackId,
   onPayMercadoPago,
@@ -57,8 +63,8 @@ export function VolumeSelector({
 
   const rateMilli = BigInt(usdUyuRateMilli);
   const quote: VolumeQuote = useMemo(
-    () => quoteForVolume(volume, rateMilli),
-    [volume, usdUyuRateMilli],
+    () => quoteForVolume(volume, rateMilli, { largePacks }),
+    [volume, usdUyuRateMilli, largePacks],
   );
   const steps = useMemo(() => listPricingSteps(rateMilli), [usdUyuRateMilli]);
   const isPreset = (VOLUME_PRESETS as readonly number[]).includes(volume) && custom === '';
@@ -239,10 +245,12 @@ export function VolumeSelector({
                 )}
                 .
               </p>
-              {quote.quantity > 1 && (
+              {quote.needsCustomQuote && (
                 <p className="mt-2 text-amber-300/90">
-                  Se compra de a un paquete por vez: repetí la compra {quote.quantity} veces o
-                  escribinos por WhatsApp para armar uno a medida.
+                  Para {fmt(quote.monthlyShipments)} envíos por mes el precio se arma a medida:
+                  escribinos por WhatsApp y lo cerramos. Comprando paquetes sueltos te saldría más
+                  caro que el precio de tu escalón — mientras tanto podés repetir la compra{' '}
+                  {quote.quantity} veces.
                 </p>
               )}
             </div>

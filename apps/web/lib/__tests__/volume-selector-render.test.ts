@@ -12,11 +12,17 @@ import { VolumeSelector } from '@/app/(dashboard)/settings/billing/_components/V
 /** 40 UYU/USD en milésimos: el tipo base de D35. */
 const RATE_MILLI = 40_000;
 
-function render(whopPacks: string[], rateMilli = RATE_MILLI, rateLabel = '40') {
+function render(
+  whopPacks: string[],
+  rateMilli = RATE_MILLI,
+  rateLabel = '40',
+  largePacks = false,
+) {
   return renderToStaticMarkup(
     createElement(VolumeSelector, {
       usdUyuRateMilli: rateMilli,
       usdUyuRateLabel: rateLabel,
+      largePacks,
       whopPacks,
       loadingPackId: null,
       onPayMercadoPago: vi.fn(),
@@ -74,6 +80,24 @@ describe('<VolumeSelector>', () => {
     const html = render(['pack_100']);
     expect(html).toContain('Pagar con Whop');
     expect(html).toContain('Whop cobra en dólares');
+  });
+
+  it('la escalera se ve entera aunque los paquetes grandes no se vendan solos', () => {
+    // Lo que se gatea es qué se puede COMPRAR; el tarifario por volumen de D35
+    // se sigue mostrando completo, que es lo que Adrian decidió.
+    const html = render([]);
+    expect(html).toContain('USD 0,14');
+    expect(html).toContain('USD 0,11');
+    expect(html).toContain('5.000 o más');
+  });
+
+  it('con 100 envíos no aparece el cartel de cotización a medida', () => {
+    // El cartel es para volúmenes por encima del paquete más grande comprable
+    // (`needsCustomQuote`). Que no salga acá es lo único que este render puede
+    // afirmar: el estado del selector no se puede cambiar sin eventos. Que SÍ
+    // salga a partir de 2.500 está fijado sobre la cotización, en
+    // `credit-packs-selfserve.test.ts`.
+    expect(render([])).not.toContain('se arma a medida');
   });
 
   it('sin emojis en el copy', () => {

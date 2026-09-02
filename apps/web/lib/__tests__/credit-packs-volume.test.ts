@@ -24,10 +24,18 @@ import { BASE_USD_UYU_RATE_MILLI, periodTotalUsdMilli } from '@/lib/pricing';
  */
 const RATE = BASE_USD_UYU_RATE_MILLI;
 
+/**
+ * `pack_2500` y `pack_5000` NO se venden en autoservicio mientras Adrian no
+ * firme (ver `SELF_SERVE_PACK_SHIPMENTS`). Los casos que hablan del catálogo
+ * completo lo piden explícito; lo que pasa con la env apagada —que es el
+ * default— está en `credit-packs-selfserve.test.ts`.
+ */
+const CON_PACKS_GRANDES = { largePacks: true } as const;
+
 describe('catálogo', () => {
-  it('los ocho paquetes, con su precio en dólares y su total en pesos al tipo base', () => {
+  it('con la env prendida, los ocho paquetes con su precio en USD y su total en pesos al tipo base', () => {
     expect(
-      listPacks(RATE).map((p) => [
+      listPacks(RATE, CON_PACKS_GRANDES).map((p) => [
         p.id,
         p.shipments,
         p.pricePerShipmentUsdMilli,
@@ -63,16 +71,19 @@ describe('catálogo', () => {
     ))).toBe(true);
   });
 
-  it('los dos paquetes nuevos de D35 existen', () => {
-    expect(getPack('pack_2500', RATE)?.shipments).toBe(2500);
-    expect(getPack('pack_5000', RATE)?.shipments).toBe(5000);
+  it('los dos paquetes nuevos de D35 existen, pero sólo con la env prendida', () => {
+    expect(getPack('pack_2500', RATE, CON_PACKS_GRANDES)?.shipments).toBe(2500);
+    expect(getPack('pack_5000', RATE, CON_PACKS_GRANDES)?.shipments).toBe(5000);
+    // Sin la env no se pueden comprar: ver credit-packs-selfserve.test.ts.
+    expect(getPack('pack_2500', RATE)).toBeNull();
+    expect(getPack('pack_5000', RATE)).toBeNull();
   });
 
   it('rechaza ids inventados sin romperse', () => {
     for (const malo of ['pack_7', 'pack_', 'pack_1e3', '../pack_10', 'PACK_10', '', 'pack_010']) {
       expect(getPack(malo, RATE), malo).toBeNull();
     }
-    expect(packIdList()).toBe(
+    expect(packIdList(CON_PACKS_GRANDES)).toBe(
       'pack_10, pack_50, pack_100, pack_250, pack_500, pack_1000, pack_2500, pack_5000',
     );
   });
@@ -84,9 +95,11 @@ describe('catálogo', () => {
     expect(getPack('pack_100', 44_000n)!.totalPriceUsdMilli).toBe(37_000);
   });
 
-  it('los presets del selector son cantidades comprables', () => {
+  it('con la env prendida, cada preset del selector tiene su paquete exacto', () => {
     expect([...VOLUME_PRESETS]).toEqual([50, 100, 250, 500, 1000, 2500, 5000]);
-    for (const n of VOLUME_PRESETS) expect(quoteForVolume(n, RATE).pack.shipments).toBe(n);
+    for (const n of VOLUME_PRESETS) {
+      expect(quoteForVolume(n, RATE, CON_PACKS_GRANDES).pack.shipments, `preset ${n}`).toBe(n);
+    }
   });
 });
 
@@ -105,7 +118,7 @@ describe('listPricingSteps', () => {
   });
 });
 
-describe('quoteForVolume', () => {
+describe('quoteForVolume (catálogo completo)', () => {
   it.each([
     // n, pack, qty, efectivo USD milli, mes USD milli, mes UYU, tramo
     [1, 'pack_10', 1, 500, 500, 20, 'Hasta 49 envíos por mes'],
@@ -125,7 +138,7 @@ describe('quoteForVolume', () => {
   ])(
     'n=%i → %s ×%i, efectivo %i milésimos de USD, mes USD %i / UYU %i (%s)',
     (n, packId, qty, efectivo, mesUsd, mesUyu, tramo) => {
-      const q = quoteForVolume(n, RATE);
+      const q = quoteForVolume(n, RATE, CON_PACKS_GRANDES);
       expect(q.pack.id).toBe(packId);
       expect(q.quantity).toBe(qty);
       expect(q.effectiveUnitUsdMilli).toBe(efectivo);
@@ -152,7 +165,7 @@ describe('quoteForVolume', () => {
 
   it('ahorro frente al precio de entrada: n × 0,50 − total del mes', () => {
     for (const n of [1, 10, 50, 100, 250, 500, 1000, 2500, 5000]) {
-      const q = quoteForVolume(n, RATE);
+      const q = quoteForVolume(n, RATE, CON_PACKS_GRANDES);
       expect(q.savingsVsBaseUsdMilli, `n=${n}`).toBe(n * 500 - Number(periodTotalUsdMilli(n)));
     }
     expect(quoteForVolume(100, RATE).savingsVsBaseUsdMilli).toBe(13_000); // USD 13
@@ -169,9 +182,9 @@ describe('quoteForVolume', () => {
       totalAtStepUsdMilli: 75_000,
       totalAtStepUyu: 3_000,
     });
-    expect(quoteForVolume(5000, RATE).nextStep).toBeNull();
+    expect(quoteForVolume(5000, RATE, CON_PACKS_GRANDES).nextStep).toBeNull();
     // En la zona de tope el ahorro real es 0: la UI no muestra el empujón.
-    expect(quoteForVolume(4999, RATE).nextStep!.savesPerShipmentUsdMilli).toBe(0);
+    expect(quoteForVolume(4999, RATE, CON_PACKS_GRANDES).nextStep!.savesPerShipmentUsdMilli).toBe(0);
   });
 
   it('acepta el máximo y rechaza uno más', () => {
@@ -182,10 +195,10 @@ describe('quoteForVolume', () => {
   });
 
   it('invariante: el efectivo nunca sube, el mes nunca baja, y los pesos son enteros', () => {
-    let prevUnit = quoteForVolume(1, RATE).effectiveUnitUsdMilli;
-    let prevMes = quoteForVolume(1, RATE).monthlyTotalUyu;
+    let prevUnit = quoteForVolume(1, RATE, CON_PACKS_GRANDES).effectiveUnitUsdMilli;
+    let prevMes = quoteForVolume(1, RATE, CON_PACKS_GRANDES).monthlyTotalUyu;
     for (let n = 2; n <= 6000; n++) {
-      const q = quoteForVolume(n, RATE);
+      const q = quoteForVolume(n, RATE, CON_PACKS_GRANDES);
       expect(q.effectiveUnitUsdMilli, `efectivo subió en ${n}`).toBeLessThanOrEqual(prevUnit);
       expect(q.monthlyTotalUyu, `el mes bajó en ${n}`).toBeGreaterThanOrEqual(prevMes);
       expect(Number.isInteger(q.monthlyTotalUyu), `n=${n}`).toBe(true);
