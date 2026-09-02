@@ -25,6 +25,10 @@ const DISMISS_TTL_MS = 1000 * 60 * 30; // 30 min — re-show frequently when at 
  * We've already given 10 free shipments — at this point the user has seen
  * the value and the buy-now CTA is the rational next step.
  */
+/** El pack que muestran el botón y el teaser. Uno solo, para que no puedan
+ *  ofrecer cantidades distintas en el mismo modal. */
+const PACK_TEASER_SHIPMENTS = 100;
+
 export function CreditExhaustedModal() {
   const [dismissed, setDismissed] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -81,12 +85,22 @@ export function CreditExhaustedModal() {
             tirar conversión. */}
         <PackTeaser onCtaClick={handleDismiss} />
 
+        {/* 🔴 EL PRECIO VA EN DÓLARES, y no es cosmético.
+            Decía «1.500 UYU» escrito a mano. Dos problemas: (a) ese número se
+            desactualiza solo la primera vez que se mueve `USD_UYU_RATE`, y
+            (b) a un comerciante que instaló la app desde Shopify le ofrecía un
+            precio del riel de MercadoPago, que es exactamente lo que el
+            requisito 1.2 del App Store prohíbe — apareció grabando el
+            screencast de revisión, encima de la pantalla de compra.
+            El dólar sirve para los dos rieles y sale de la misma tabla que
+            cobra la caja. */}
         <Link
           href="/settings/billing"
           onClick={handleDismiss}
           className="block w-full bg-cyan-500 hover:bg-cyan-400 text-zinc-950 font-semibold text-sm py-2.5 px-4 rounded-lg text-center transition-colors"
         >
-          Comprar 100 envíos · 1.500 UYU
+          Comprar {PACK_TEASER_SHIPMENTS} envíos · USD{' '}
+          {formatUsdMilli(periodTotalUsdMilli(PACK_TEASER_SHIPMENTS))}
         </Link>
         {/* Cross-sell a referidos: si el costo es objeción, hay alternativa
             sin tarjeta. El kickback del 20% (REFERRAL_KICKBACK_RATE en
@@ -122,7 +136,7 @@ function PackTeaser({ onCtaClick }: { onCtaClick: () => void }) {
   // así que el teaser habla en dólares — la moneda en la que está denominado
   // el precio desde D35. El monto en pesos aparece en /settings/billing, que
   // sí lo pide al server.
-  const shipments = 100;
+  const shipments = PACK_TEASER_SHIPMENTS;
   const baseUnitMilli = Number(PRICING_TIERS[0].unitPriceUsdMilli);
   const totalUsdMilli = periodTotalUsdMilli(shipments);
   const unitUsdMilli = Number(totalUsdMilli) / shipments;
