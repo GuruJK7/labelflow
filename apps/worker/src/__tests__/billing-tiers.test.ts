@@ -8,10 +8,23 @@ import {
   effectiveUnitPriceMilli,
   quote,
   assertTiersValid,
+  usdMilliToUyuMilliAtBase,
+  BASE_USD_UYU_RATE_MILLI,
+  type Tier,
 } from '../billing/tiers';
 
-/** Rango de barrido. Cubre con margen el tramo más alto (1000). */
-const SWEEP = 2000;
+/** Rango de barrido. Cubre con margen el escalón más alto (5000). */
+const SWEEP = 6000;
+
+/** Constructor de tramos para los casos negativos de `assertTiersValid`. */
+function t(minShipments: number, unitPriceUsdMilli: bigint, label: string): Tier {
+  return {
+    minShipments,
+    unitPriceUsdMilli,
+    unitPriceMilli: usdMilliToUyuMilliAtBase(unitPriceUsdMilli),
+    label,
+  };
+}
 
 describe('tarifario — estructura', () => {
   it('el tarifario vigente es válido', () => {
@@ -20,37 +33,67 @@ describe('tarifario — estructura', () => {
 
   it('rechaza un tarifario que sube de precio al subir el volumen', () => {
     expect(() =>
-      assertTiersValid([
-        { minShipments: 0, unitPriceMilli: uyu(10), label: 'a' },
-        { minShipments: 50, unitPriceMilli: uyu(12), label: 'b' },
-      ]),
+      assertTiersValid([t(0, 250n, 'a'), t(50, 300n, 'b')]),
     ).toThrow(/no es más barato/);
   });
 
   it('rechaza un tarifario que no arranca en 0', () => {
     expect(() =>
-      assertTiersValid([{ minShipments: 10, unitPriceMilli: uyu(20), label: 'a' }]),
+      assertTiersValid([t(10, 500n, 'a')]),
     ).toThrow(/arrancar en 0/);
   });
 
   it('rechaza tramos desordenados', () => {
     expect(() =>
-      assertTiersValid([
-        { minShipments: 0, unitPriceMilli: uyu(20), label: 'a' },
-        { minShipments: 100, unitPriceMilli: uyu(15), label: 'b' },
-        { minShipments: 50, unitPriceMilli: uyu(12), label: 'c' },
-      ]),
+      assertTiersValid([t(0, 500n, 'a'), t(100, 370n, 'b'), t(50, 300n, 'c')]),
     ).toThrow(/desordenados/);
   });
 
-  it('conserva exactamente los precios que ya cobra credit-packs.ts', () => {
-    expect(unitPriceFor(1)).toBe(uyu(20));
-    expect(unitPriceFor(50)).toBe(uyu(17));
-    expect(unitPriceFor(100)).toBe(uyu(15));
-    expect(unitPriceFor(250)).toBe(uyu(12));
-    expect(unitPriceFor(500)).toBe(uyu(10));
-    expect(unitPriceFor(1000)).toBe(uyu(7));
-    expect(unitPriceFor(99999)).toBe(uyu(7));
+  it('la escalera en dólares es exactamente la de D35', () => {
+    expect(TIERS.map((x) => [x.minShipments, Number(x.unitPriceUsdMilli)])).toEqual([
+      [0, 500],
+      [50, 420],
+      [100, 370],
+      [250, 300],
+      [500, 250],
+      [1000, 175],
+      [2500, 140],
+      [5000, 110],
+    ]);
+  });
+
+  it('los pesos se derivan del dólar al tipo base, nunca se escriben a mano', () => {
+    expect(BASE_USD_UYU_RATE_MILLI).toBe(40_000n);
+    for (const tier of TIERS) {
+      expect(tier.unitPriceMilli, `tramo ${tier.minShipments}`).toBe(
+        usdMilliToUyuMilliAtBase(tier.unitPriceUsdMilli),
+      );
+    }
+    // Y a tipo 40 dan estos pesos por envío.
+    expect(TIERS.map((x) => Number(x.unitPriceMilli))).toEqual([
+      20_000, 16_800, 14_800, 12_000, 10_000, 7_000, 5_600, 4_400,
+    ]);
+  });
+
+  it('rechaza un tramo cuyo precio en pesos no salga del de dólares', () => {
+    expect(() =>
+      assertTiersValid([
+        t(0, 500n, 'a'),
+        { minShipments: 50, unitPriceUsdMilli: 420n, unitPriceMilli: uyu(17), label: 'b' },
+      ]),
+    ).toThrow(/desenganchado/);
+  });
+
+  it('unitPriceFor devuelve el precio del escalón, también en los nuevos', () => {
+    expect(unitPriceFor(1)).toBe(usdMilliToUyuMilliAtBase(500n));
+    expect(unitPriceFor(50)).toBe(usdMilliToUyuMilliAtBase(420n));
+    expect(unitPriceFor(100)).toBe(usdMilliToUyuMilliAtBase(370n));
+    expect(unitPriceFor(250)).toBe(usdMilliToUyuMilliAtBase(300n));
+    expect(unitPriceFor(500)).toBe(usdMilliToUyuMilliAtBase(250n));
+    expect(unitPriceFor(1000)).toBe(usdMilliToUyuMilliAtBase(175n));
+    expect(unitPriceFor(2500)).toBe(usdMilliToUyuMilliAtBase(140n));
+    expect(unitPriceFor(5000)).toBe(usdMilliToUyuMilliAtBase(110n));
+    expect(unitPriceFor(99999)).toBe(usdMilliToUyuMilliAtBase(110n));
   });
 
   it('tierFor devuelve el tramo correcto en los bordes', () => {
@@ -60,6 +103,10 @@ describe('tarifario — estructura', () => {
     expect(tierFor(100).minShipments).toBe(100);
     expect(tierFor(999).minShipments).toBe(500);
     expect(tierFor(1000).minShipments).toBe(1000);
+    expect(tierFor(2499).minShipments).toBe(1000);
+    expect(tierFor(2500).minShipments).toBe(2500);
+    expect(tierFor(4999).minShipments).toBe(2500);
+    expect(tierFor(5000).minShipments).toBe(5000);
   });
 });
 
@@ -88,7 +135,7 @@ describe('tarifario — total del período', () => {
     }
   });
 
-  it('elimina las cinco zonas muertas del tarifario original', () => {
+  it('elimina las siete zonas muertas de la escalera', () => {
     // Con `n × precio(n)` a secas estos volúmenes pagaban MÁS que el piso del
     // tramo siguiente. Cada par de abajo es una zona muerta real del tarifario
     // que hoy está en producción.
@@ -97,12 +144,16 @@ describe('tarifario — total del período', () => {
       [49, 50],
       [89, 100],
       [99, 100],
-      [201, 250],
+      [203, 250],
       [249, 250],
       [417, 500],
       [499, 500],
       [701, 1000],
       [999, 1000],
+      [2001, 2500],
+      [2499, 2500],
+      [3929, 5000],
+      [4999, 5000],
     ];
     for (const [menos, mas] of zonasMuertas) {
       const ingenuo = BigInt(menos) * unitPriceFor(menos);
@@ -125,15 +176,35 @@ describe('tarifario — total del período', () => {
     }
   });
 
-  it('los totales de referencia coinciden con la tabla comercial vigente', () => {
-    // Los mismos números que hoy muestra credit-packs.ts, para que la
-    // migración no cambie ningún precio anunciado.
+  it('los totales de referencia son los de D35 convertidos al tipo base', () => {
+    // USD 5 / 21 / 37 / 75 / 125 / 175 / 350 / 550 a 40 UYU/USD.
     expect(periodTotalMilli(10)).toBe(uyu(200));
-    expect(periodTotalMilli(50)).toBe(uyu(850));
-    expect(periodTotalMilli(100)).toBe(uyu(1500));
+    expect(periodTotalMilli(50)).toBe(uyu(840));
+    expect(periodTotalMilli(100)).toBe(uyu(1480));
     expect(periodTotalMilli(250)).toBe(uyu(3000));
     expect(periodTotalMilli(500)).toBe(uyu(5000));
     expect(periodTotalMilli(1000)).toBe(uyu(7000));
+    expect(periodTotalMilli(2500)).toBe(uyu(14000));
+    expect(periodTotalMilli(5000)).toBe(uyu(22000));
+  });
+
+  it('NINGÚN escalón cobra más que el tarifario viejo en pesos', () => {
+    // La promesa de D35 es "ningún cliente actual paga más" y ahora se cumple
+    // en los SEIS escalones viejos. El de 1.000 era la excepción mientras valía
+    // 0,18 (7/40 redondeado para arriba → 7,20 UYU); con 0,175 da 7,00 clavado.
+    // Decisión de Adrian del 2026-09-02; este test cae si alguien la revierte.
+    const viejos: Array<[number, number]> = [
+      [0, 20],
+      [50, 17],
+      [100, 15],
+      [250, 12],
+      [500, 10],
+      [1000, 7],
+    ];
+    for (const [corte, precioViejo] of viejos) {
+      expect(unitPriceFor(corte), `escalón ${corte}`).toBeLessThanOrEqual(uyu(precioViejo));
+    }
+    expect(unitPriceFor(1000)).toBe(uyu(7)); // 7,00 UYU exactos, no 7,20
   });
 
   it('el precio efectivo nunca supera al de lista', () => {

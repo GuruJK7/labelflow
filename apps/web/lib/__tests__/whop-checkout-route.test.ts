@@ -76,8 +76,9 @@ describe('GET /api/credit-packs/whop-checkout', () => {
       tenantId: 'tenant-1',
       packId: 'pack_100',
       shipments: 100,
-      pricePerShipmentUyu: 15,
-      totalPriceUyu: 1500,
+      // 100 envíos = USD 37,00 (D35) a 40 UYU/USD = 1.480 UYU; 14,80 por envío.
+      pricePerShipmentUyu: 14.8,
+      totalPriceUyu: 1480,
       status: 'PENDING',
     });
     expect(created.mpExternalRef).toMatch(/^whop\|tmp_/);

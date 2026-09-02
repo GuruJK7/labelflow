@@ -117,12 +117,13 @@ describe('liquidación — invariante del período', () => {
     // Si por un crash quedó registrado de menos, la siguiente liquidación
     // lleva el período a su valor correcto sin intervención.
     const roto = computeSettlement({ billableShipments: 100, recordedNetMilli: -uyu(400) });
-    expect(roto.deltaMilli).toBe(-uyu(1100));
+    expect(roto.deltaMilli).toBe(-(periodTotalMilli(100) - uyu(400)));
     expect(-uyu(400) + roto.deltaMilli).toBe(-periodTotalMilli(100));
 
     // Y si quedó registrado de MÁS, la corrección va en sentido contrario.
     const pasado = computeSettlement({ billableShipments: 100, recordedNetMilli: -uyu(9000) });
-    expect(pasado.deltaMilli).toBe(uyu(7500));
+    expect(pasado.deltaMilli).toBe(uyu(9000) - periodTotalMilli(100));
+    expect(pasado.deltaMilli).toBeGreaterThan(0n);
     expect(-uyu(9000) + pasado.deltaMilli).toBe(-periodTotalMilli(100));
   });
 
@@ -143,11 +144,13 @@ describe('liquidación — el arbitraje que rompió la spec anterior', () => {
     // El ataque exacto que encontró la revisión adversarial del 2026-09-01
     // contra el diseño de rebates: con débito bruto + reintegro al precio de
     // lista, un depósito de 7.000 terminaba en 12.087 de saldo acreditado.
-    const DEPOSITO = uyu(7000);
+    // El depósito es exactamente lo que cuestan 1.000 envíos hoy: así el test
+    // sigue siendo el ataque original aunque cambie el tarifario.
+    const DEPOSITO = periodTotalMilli(1000);
     const l = new Ledger();
 
     for (let i = 1; i <= 1000; i++) l.addShipment('t1', `G${i}`);
-    expect(l.netMilli).toBe(-uyu(7000));
+    expect(l.netMilli).toBe(-periodTotalMilli(1000));
     expect(DEPOSITO + l.netMilli).toBe(0n); // gastó todo, saldo cero
 
     for (let i = 1; i <= 1000; i++) l.refundShipment('t1', `G${i}`);
@@ -156,13 +159,15 @@ describe('liquidación — el arbitraje que rompió la spec anterior', () => {
     expect(l.netMilli).toBe(0n);
     const saldoFinal = DEPOSITO + l.netMilli;
     expect(saldoFinal).toBe(DEPOSITO); // exactamente lo depositado, ni un peso más
-    expect(saldoFinal).toBeLessThan(uyu(12087)); // el número del ataque, ahora imposible
+    // 12.087 era el saldo que dejaba el ataque partiendo de un depósito de
+    // 7.000. Escalado al depósito de hoy, el ataque sigue siendo imposible.
+    expect(saldoFinal).toBeLessThan((DEPOSITO * 12087n) / 7000n);
   });
 
   it('reintegrar sólo los envíos caros tampoco deja ganancia', () => {
     // La variante suave del ataque: quedarse con los baratos y devolver los
     // caros, que en el modelo de rebates dejaba el envío a 3,89 en vez de 7.
-    const DEPOSITO = uyu(7000);
+    const DEPOSITO = periodTotalMilli(1000);
     const l = new Ledger();
     for (let i = 1; i <= 1000; i++) l.addShipment('t1', `G${i}`);
     for (let i = 1; i <= 249; i++) l.refundShipment('t1', `G${i}`);
@@ -173,8 +178,8 @@ describe('liquidación — el arbitraje que rompió la spec anterior', () => {
 
     const pagadoNeto = -l.netMilli;
     const efectivo = pagadoNeto / BigInt(quedaron);
-    // Con 751 envíos el techo es el total del tramo de 1000: 7.000.
-    expect(pagadoNeto).toBe(uyu(7000));
+    // Con 751 envíos el techo sigue siendo el total del tramo de 1000.
+    expect(pagadoNeto).toBe(periodTotalMilli(1000));
     // El piso del tarifario es 7 UYU/envío. El precio efectivo nunca puede
     // quedar por debajo: eso era exactamente lo que lograba el ataque (3,89).
     expect(efectivo).toBeGreaterThanOrEqual(unitPriceFor(1000));

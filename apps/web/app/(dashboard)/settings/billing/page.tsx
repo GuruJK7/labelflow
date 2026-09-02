@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { SettingsNav } from '../_components/SettingsNav';
 import { VolumeSelector } from './_components/VolumeSelector';
+import { formatUsdMilli, formatUsdUnitMilli } from '@/lib/pricing';
 import {
   Check,
   AlertCircle,
@@ -20,10 +21,23 @@ import {
 interface Pack {
   id: string;
   shipments: number;
+  /** Precio autoritativo (D35), en milésimos de USD. */
+  pricePerShipmentUsdMilli: number;
+  totalPriceUsdMilli: number;
+  /** Derivados del anterior al tipo de cambio de referencia; sólo para mostrar y cobrar. */
   pricePerShipmentUyu: number;
   totalPriceUyu: number;
   label: string;
 }
+
+const usd = (milli: number) => formatUsdMilli(BigInt(Math.round(milli)));
+/**
+ * Precios POR ENVÍO. Van con el formateador exacto en milésimos y no con `usd`:
+ * el escalón de 1.000 vale 0,175 y con dos decimales se leería "0,18" — el
+ * número que se descartó justamente porque no cierra contra los 7,00 UYU
+ * que se cobran.
+ */
+const usdUnit = (milli: number) => formatUsdUnitMilli(BigInt(Math.round(milli)));
 
 // Marketing copy per pack — keeps the JSX clean and centralizes voice.
 // If business adds/renames packs, update this map.
@@ -34,6 +48,8 @@ const PACK_COPY: Record<string, { tagline: string }> = {
   pack_250:  { tagline: 'Para negocios en crecimiento' },
   pack_500:  { tagline: 'Para tiendas con alta demanda' },
   pack_1000: { tagline: 'Para operaciones establecidas' },
+  pack_2500: { tagline: 'Para volumen mayorista' },
+  pack_5000: { tagline: 'El mejor precio por envío' },
 };
 
 interface CreditState {
@@ -46,8 +62,20 @@ interface CreditState {
     total: number;
   };
   packs: Pack[];
+  /** La escalera completa de D35, con el total ya convertido a pesos en el server. */
+  pricingSteps: Array<{
+    minShipments: number;
+    label: string;
+    unitPriceUsdMilli: number;
+    totalAtStepUsdMilli: number;
+    totalAtStepUyu: number;
+  }>;
+  /** Tipo de cambio con el que el server convirtió todo lo de arriba. */
+  fx: { usdUyuRateMilli: number; usdUyuRateLabel: string };
   /** Ids de pack con link de Whop configurado (las URLs quedan en el server). */
   whopPacks: string[];
+  /** Si los paquetes de 2.500 y 5.000 están habilitados para autoservicio. */
+  largePacks?: boolean;
   recentPurchases: Array<{
     id: string;
     packId: string;
@@ -103,8 +131,13 @@ function BillingContent() {
   const whopPacks = state?.whopPacks ?? [];
   const whopEnabled = whopPacks.length > 0;
 
-  // Reference price (smallest pack) for "you save" calculations
-  const refPrice = packs.find((p) => p.id === 'pack_10')?.pricePerShipmentUyu ?? 20;
+  // Precio de referencia (escalón de entrada) para el "ahorrás N%", en USD:
+  // el porcentaje no depende del tipo de cambio y así no se mueve con él.
+  const refPriceUsdMilli =
+    packs.find((p) => p.id === 'pack_10')?.pricePerShipmentUsdMilli ?? 500;
+  // El tipo de cambio SIEMPRE viene del server: `USD_UYU_RATE` no existe en el
+  // bundle del navegador y el default silencioso mostraría otro precio en pesos.
+  const fx = state?.fx;
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -119,7 +152,9 @@ function BillingContent() {
           Comprá envíos. <span className="text-zinc-500">Pagás solo por lo que usás.</span>
         </h1>
         <p className="text-zinc-400 text-sm mt-2 max-w-2xl">
-          Sin suscripciones, sin caducidad. Cuanto más comprás, menos pagás por envío.
+          Sin suscripciones, sin caducidad. Cuanto más envíos hacés en el mes, menos pagás por
+          envío. Los precios están en dólares y MercadoPago los cobra en pesos al tipo de cambio de
+          referencia que usamos{fx ? ` (${fx.usdUyuRateLabel} UYU/USD)` : ''}.
         </p>
       </div>
 
@@ -241,20 +276,29 @@ function BillingContent() {
         </div>
       </div>
 
-      {/* Selector por volumen (D34) */}
-      <VolumeSelector
-        whopPacks={whopPacks}
-        loadingPackId={loading}
-        onPayMercadoPago={handleBuy}
-        onPayWhop={handleBuyWhop}
-      />
+      {/* Selector por volumen (D34/D35). Sin el tipo de cambio del server no se
+          renderiza: mostrar pesos calculados a un tipo distinto del que cobra el
+          checkout es peor que no mostrarlos. */}
+      {fx && (
+        <VolumeSelector
+          usdUyuRateMilli={fx.usdUyuRateMilli}
+          usdUyuRateLabel={fx.usdUyuRateLabel}
+          largePacks={state?.largePacks === true}
+          whopPacks={whopPacks}
+          loadingPackId={loading}
+          onPayMercadoPago={handleBuy}
+          onPayWhop={handleBuyWhop}
+        />
+      )}
 
       {/* Packs section title */}
       <div id="packs" className="flex items-end justify-between mb-5 mt-12">
         <div>
-          <h2 className="text-xl font-bold text-white">Todos los packs</h2>
+          <h2 className="text-xl font-bold text-white">Todos los paquetes</h2>
           <p className="text-zinc-500 text-sm mt-1">
-            Sin caducidad. Pago único con MercadoPago{whopEnabled ? ' o Whop' : ''}.
+            Sin caducidad. Pago único con MercadoPago{whopEnabled ? ' o Whop' : ''}. Precio en
+            dólares, cobro en pesos al tipo de referencia
+            {fx ? ` (${fx.usdUyuRateLabel} UYU/USD)` : ''}.
           </p>
         </div>
         <div className="hidden md:flex items-center gap-2 text-xs text-zinc-500">
@@ -312,11 +356,13 @@ function BillingContent() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-12 pt-4">
         {packs.map((pack) => {
           const isPopular = pack.id === 'pack_100';
-          const isBest = pack.id === 'pack_1000';
+          const isBest = pack.id === 'pack_5000';
           const isLoading = loading === pack.id;
           const savings =
-            refPrice > 0 && pack.pricePerShipmentUyu < refPrice
-              ? Math.round(((refPrice - pack.pricePerShipmentUyu) / refPrice) * 100)
+            refPriceUsdMilli > 0 && pack.pricePerShipmentUsdMilli < refPriceUsdMilli
+              ? Math.round(
+                  ((refPriceUsdMilli - pack.pricePerShipmentUsdMilli) / refPriceUsdMilli) * 100,
+                )
               : 0;
 
           return (
@@ -408,17 +454,16 @@ function BillingContent() {
 
                 {/* Price */}
                 <div className="border-y border-white/[0.06] py-4 mb-5">
-                  {pack.shipments * refPrice > pack.totalPriceUyu && (
+                  {pack.shipments * refPriceUsdMilli > pack.totalPriceUsdMilli && (
                     <p className="text-[11px] text-zinc-600 line-through mb-1 tabular-nums">
-                      Antes ${(pack.shipments * refPrice).toLocaleString('es-UY')} UYU
+                      Antes USD {usd(pack.shipments * refPriceUsdMilli)}
                     </p>
                   )}
                   <div className="flex items-baseline gap-1.5">
-                    <span className="text-zinc-500 text-sm">$</span>
+                    <span className="text-zinc-500 text-sm">USD</span>
                     <span className="text-4xl font-bold text-white tabular-nums tracking-tight">
-                      {pack.totalPriceUyu.toLocaleString('es-UY')}
+                      {usd(pack.totalPriceUsdMilli)}
                     </span>
-                    <span className="text-xs text-zinc-500 font-medium">UYU</span>
                   </div>
                   <p className="text-xs text-zinc-400 mt-1.5">
                     <span
@@ -426,9 +471,12 @@ function BillingContent() {
                         isBest ? 'text-amber-400' : 'text-cyan-400'
                       }`}
                     >
-                      ${pack.pricePerShipmentUyu}
+                      USD {usdUnit(pack.pricePerShipmentUsdMilli)}
                     </span>{' '}
-                    UYU por envío
+                    por envío
+                  </p>
+                  <p className="text-[11px] text-zinc-500 mt-1 tabular-nums">
+                    ≈ ${pack.totalPriceUyu.toLocaleString('es-UY')} UYU hoy
                   </p>
                 </div>
 

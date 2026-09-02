@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
-import { listPacks } from '@/lib/credit-packs';
+import { listPacks, listPricingSteps, largePacksEnabled } from '@/lib/credit-packs';
+import { formatRate, getUsdUyuRateMilli } from '@/lib/pricing';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { getWhopCheckoutUrls } from '@/lib/whop';
 
@@ -69,9 +70,20 @@ export async function GET() {
       total: holderWallet.shipmentCredits + holderWallet.referralBonusCredits,
     },
     packs: listPacks(),
+    // La escalera completa de D35, con el total en pesos ya convertido. La UI
+    // no puede calcularlo sola: `USD_UYU_RATE` es una env de servidor.
+    pricingSteps: listPricingSteps(),
+    fx: {
+      usdUyuRateMilli: Number(getUsdUyuRateMilli()),
+      usdUyuRateLabel: formatRate(getUsdUyuRateMilli()),
+    },
     // Ids de pack con link de Whop configurado (D34). Las URLs quedan en el
     // server: el botón manda a /api/credit-packs/whop-checkout?pack=.
     whopPacks: Object.keys(getWhopCheckoutUrls()),
+    // Si `pack_2500`/`pack_5000` se pueden comprar solos. El selector de volumen
+    // calcula su cotización en el navegador, donde `process.env` viene vacío:
+    // sin este dato mostraría el catálogo chico aunque la env esté prendida.
+    largePacks: largePacksEnabled(),
     recentPurchases,
   });
 }
