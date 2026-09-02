@@ -30,7 +30,7 @@ export async function GET() {
   });
   const allUserTenantIds = userTenantIds.map((t) => t.id);
 
-  const [holderWallet, recentPurchases] = await Promise.all([
+  const [holderWallet, recentPurchases, originating] = await Promise.all([
     db.tenant.findUnique({
       where: { id: holderId },
       select: {
@@ -54,6 +54,11 @@ export async function GET() {
         paidAt: true,
         createdAt: true,
       },
+    }),
+    // La tienda que origina la compra: decide el riel de cobro (ver más abajo).
+    db.tenant.findUnique({
+      where: { id: auth.tenantId },
+      select: { shopifyStoreUrl: true, shopifyToken: true },
     }),
   ]);
 
@@ -80,6 +85,17 @@ export async function GET() {
     // Ids de pack con link de Whop configurado (D34). Las URLs quedan en el
     // server: el botón manda a /api/credit-packs/whop-checkout?pack=.
     whopPacks: Object.keys(getWhopCheckoutUrls()),
+    /**
+     * La tienda desde la que se está comprando entró por la app de Shopify.
+     *
+     * 🔴 Decide QUIÉN COBRA, y no es cosmético: el requisito 1.2 del App Store
+     * prohíbe que una app distribuida ahí cobre por fuera de la Billing API.
+     * Con esto en `true` la pantalla ofrece un solo botón, el de Shopify.
+     * Se mira el tenant que ORIGINA la compra, no el holder: un usuario puede
+     * tener una tienda de Shopify y otra por Excel, y cada una paga por donde
+     * corresponde.
+     */
+    shopifyBilling: Boolean(originating?.shopifyStoreUrl && originating?.shopifyToken),
     // Si `pack_2500`/`pack_5000` se pueden comprar solos. El selector de volumen
     // calcula su cotización en el navegador, donde `process.env` viene vacío:
     // sin este dato mostraría el catálogo chico aunque la env esté prendida.

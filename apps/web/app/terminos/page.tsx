@@ -63,10 +63,16 @@ export default function TerminosPage() {
               <Link href="/#precios" className="text-cyan-400 hover:underline">la página de precios</Link>.
             </p>
             <p className="mb-2">
-              El cobro se realiza en pesos uruguayos a través de MercadoPago, convertido desde el
-              precio de lista en dólares al tipo de cambio de referencia que AutoEnvía publica en
-              su tarifario. No es la cotización del día y puede cambiar; el monto exacto en pesos
-              se muestra antes de confirmar el pago.
+              Quién cobra depende de cómo esté conectada la tienda. Si el usuario instaló la
+              aplicación de AutoEnvía desde la tienda de aplicaciones de Shopify, el cargo se
+              realiza <strong className="text-zinc-300">en dólares y por única vez en la factura de
+              Shopify</strong> de su tienda, con la aprobación previa del usuario en Shopify.
+            </p>
+            <p className="mb-2">
+              En los demás casos el cobro se realiza en pesos uruguayos a través de MercadoPago,
+              convertido desde el precio de lista en dólares al tipo de cambio de referencia que
+              AutoEnvía publica en su tarifario. No es la cotización del día y puede cambiar; el
+              monto exacto en pesos se muestra antes de confirmar el pago.
             </p>
             <p>
               Al crear la cuenta, el usuario recibe {TRIAL_SHIPMENTS} envíos de prueba sin costo y
@@ -146,8 +152,8 @@ export default function TerminosPage() {
             <p className="mt-2">
               Los envíos ya consumidos no se reembolsan, porque corresponden a guías efectivamente
               emitidas ante DAC. Para solicitar un reembolso, escribinos por los canales de la
-              cláusula 11. Los reembolsos se procesan por el mismo medio de pago en un plazo de 10
-              días hábiles.
+              cláusula 11. Los reembolsos se procesan por el mismo medio por el que se cobró —la
+              factura de Shopify o MercadoPago, según corresponda— en un plazo de 10 días hábiles.
             </p>
           </section>
 

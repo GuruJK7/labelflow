@@ -32,8 +32,24 @@ import { shopifyGraphql, SHOPIFY_GRAPHQL_API_VERSION } from '@/lib/shopify-graph
 
 const API_VERSION = SHOPIFY_GRAPHQL_API_VERSION; // debe coincidir con shopify.app.toml
 
-/** Topics que necesita AutoEnvía. `app/uninstalled` es obligatorio para no seguir cobrando a quien se fue. */
-export const WEBHOOK_TOPICS = ['orders/paid', 'app/uninstalled'] as const;
+/**
+ * Topics que necesita AutoEnvía.
+ *   - `orders/paid`: el disparo instantáneo del despacho.
+ *   - `app/uninstalled`: obligatorio para no seguir cobrando a quien se fue.
+ *   - `app_purchases_one_time/update`: el aviso de que un cargo de la Billing
+ *     API quedó aprobado. Sin esto, el comerciante que instala desde el App
+ *     Store paga y no se le acredita nada hasta que vuelva al panel.
+ *
+ * 🔴 LAS TIENDAS YA INSTALADAS NO LO TIENEN. Los webhooks son por tienda y se
+ * registran al instalar: las que se conectaron antes de esto necesitan una
+ * re-registración (el mismo `registerShopifyWebhooks` es idempotente, así que
+ * volver a correrlo sobre una tienda vieja sólo agrega el que falta).
+ */
+export const WEBHOOK_TOPICS = [
+  'orders/paid',
+  'app/uninstalled',
+  'app_purchases_one_time/update',
+] as const;
 
 /** 'orders/paid' → 'ORDERS_PAID' (enum WebhookSubscriptionTopic, verificado). */
 export function webhookTopicEnum(topic: string): string {
@@ -89,9 +105,13 @@ function normalizeUri(u: string): string {
 }
 
 export function webhookAddressFor(topic: string, appOrigin: string): string {
-  return topic === 'app/uninstalled'
-    ? `${appOrigin}/api/shopify/uninstalled`
-    : `${appOrigin}/api/webhooks/shopify`;
+  if (topic === 'app/uninstalled') return `${appOrigin}/api/shopify/uninstalled`;
+  // El cobro tiene su propio receptor: mezclarlo con el de pedidos obligaría
+  // a que la ruta más caliente del producto ramifique por topic.
+  if (topic === 'app_purchases_one_time/update') {
+    return `${appOrigin}/api/webhooks/shopify/app-purchases`;
+  }
+  return `${appOrigin}/api/webhooks/shopify`;
 }
 
 export async function registerShopifyWebhooks(

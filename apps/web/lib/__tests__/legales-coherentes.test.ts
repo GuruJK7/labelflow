@@ -50,6 +50,13 @@ describe('páginas legales: sin productos inventados', () => {
     expect(TERMINOS).toContain("from '@/lib/pricing'");
     expect(TERMINOS).toContain('LIST_PRICE_USD');
   });
+
+  it('dice quién cobra en cada camino, no sólo MercadoPago', () => {
+    // Desde que existe el riel de la Billing API, decir sólo "MercadoPago"
+    // es falso para todo comerciante que instaló la app desde el App Store.
+    expect(TERMINOS).toContain('factura de\n              Shopify');
+    expect(TERMINOS).toContain('MercadoPago');
+  });
 });
 
 describe('páginas legales: el canal de contacto recibe', () => {
