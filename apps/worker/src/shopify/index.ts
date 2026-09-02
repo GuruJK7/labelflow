@@ -4,7 +4,7 @@ import { createShopifyClient as createRestClient } from './client';
 import * as restOrders from './orders';
 import * as restFulfillment from './fulfillment';
 import type { ShopifyOrder } from './types';
-import type { ShopifyGraphqlClient } from './graphql-client';
+import type { ShopifyGraphqlClient, ShopifyTokenSource } from './graphql-client';
 import {
   getShopifyApiPolicy,
   isRestForbiddenError,
@@ -20,6 +20,7 @@ export { ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from './fulfi
 export { ShopifyProtectedDataError, isShopifyProtectedDataError } from './errors';
 export type { ShopifyOrder } from './types';
 export type { ShopifyApiContext, ShopifyApiMode } from './mode';
+export type { ShopifyTokenProvider, ShopifyTokenSource } from './graphql-client';
 
 /**
  * Fachada de Shopify del worker (D27).
@@ -113,9 +114,15 @@ async function dispatch<T>(
   }
 }
 
+/**
+ * `token` puede ser el string de siempre (custom app, no vence) o un
+ * proveedor `() => Promise<string>` (token expirable, D29): en ese caso cada
+ * request le pide el token vigente y un 401 en GraphQL se reintenta una vez
+ * con el token rotado. Ver `shopify/access.ts#shopifyTokenSourceForTenant`.
+ */
 export function createShopifyClient(
   storeUrl: string,
-  token: string,
+  token: ShopifyTokenSource,
   ctx: Omit<ShopifyApiContext, 'storeUrl'> = {},
 ): ShopifyClient {
   const fullCtx: ShopifyApiContext = { ...ctx, storeUrl };

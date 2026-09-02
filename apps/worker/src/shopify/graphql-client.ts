@@ -135,6 +135,16 @@ export interface ShopifyGraphqlClient {
   lastErrors: GraphqlErrorEntry[];
 }
 
+/**
+ * Origen del access token por request (D29, revisión). Un job del worker
+ * puede durar más que la hora de vida de un token expirable: en vez de
+ * capturar el string en el closure, el cliente le pide el token al proveedor
+ * en cada request, y ante un 401 le pide uno FORZADO (rotación) y reintenta
+ * exactamente una vez. Un string fijo sigue siendo válido (tokens legacy).
+ */
+export type ShopifyTokenProvider = (opts?: { forceRefresh?: boolean }) => Promise<string>;
+export type ShopifyTokenSource = string | ShopifyTokenProvider;
+
 export interface GraphqlClientOptions {
   apiVersion?: string;
   timeoutMs?: number;
@@ -174,7 +184,7 @@ export function throttleWaitSeconds(cost: GraphqlCost | undefined): number {
 
 export function createShopifyGraphqlClient(
   storeUrl: string,
-  token: string,
+  token: ShopifyTokenSource,
   opts: GraphqlClientOptions = {},
 ): ShopifyGraphqlClient {
   const apiVersion = opts.apiVersion ?? SHOPIFY_GRAPHQL_API_VERSION;
@@ -193,15 +203,20 @@ export function createShopifyGraphqlClient(
     async request<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
       let throttleRetries = 0;
       let transportRetries = 0;
+      let authRetried = false;
+      /** Token ya rotado tras un 401: se usa en el reintento en vez de volver a pedirlo. */
+      let forcedAccess: string | null = null;
 
       // eslint-disable-next-line no-constant-condition
       while (true) {
+        const access: string = forcedAccess ?? (typeof token === 'string' ? token : await token());
+        forcedAccess = null;
         let resp: Response;
         try {
           resp = await fetchImpl(endpoint, {
             method: 'POST',
             headers: {
-              'X-Shopify-Access-Token': token,
+              'X-Shopify-Access-Token': access,
               'Content-Type': 'application/json',
               Accept: 'application/json',
             },
@@ -239,8 +254,23 @@ export function createShopifyGraphqlClient(
           );
         }
 
+        if (resp.status === 401 && typeof token !== 'string' && !authRetried) {
+          // Token expirable que venció a mitad de un job largo: se le pide al
+          // proveedor uno rotado y se reintenta UNA vez. Si el proveedor
+          // devuelve el mismo string (sin secret en el entorno, o el 401 no
+          // es por vencimiento) no tiene sentido repetir: sube el 401.
+          authRetried = true;
+          const fresh = await token({ forceRefresh: true });
+          if (fresh !== access) {
+            logger.warn({ storeUrl }, 'Shopify GraphQL 401: token renovado, reintentando una vez');
+            forcedAccess = fresh;
+            continue;
+          }
+        }
+
         if (!resp.ok) {
-          // 401 token inválido · 402 tienda congelada · 403 tienda marcada como
+          // 401 token inválido (ya reintentado con token rotado si había
+          // proveedor) · 402 tienda congelada · 403 tienda marcada como
           // fraudulenta (NO es "sin scopes") · 404 · 423 bloqueada. Ninguno se
           // reintenta en el mismo ciclo; el mensaje no lleva el token.
           const body = await resp.text().catch(() => '');
