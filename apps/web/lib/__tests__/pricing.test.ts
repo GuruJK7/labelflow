@@ -387,6 +387,56 @@ describe('la promesa de D35: ningún cliente actual paga más', () => {
     }
   });
 
+  it('LA SUBA ES UN REDONDEO PARA ARRIBA, y es el único de la escalera', () => {
+    // 🔴 Lo que hace que esto sea una decisión y no un capricho: de los seis
+    // escalones viejos, tres caen justo en un centavo (0,50 / 0,30 / 0,25) y
+    // tres no. De esos tres, DOS se redondearon para abajo —a favor del
+    // cliente— y uno solo para arriba, y es exactamente el que rompe la
+    // promesa. La escalera de D35 no tiene una regla de redondeo consistente.
+    const direccion = [...LEGACY_UNIT_PRICE_UYU].map(([corte, viejoUyu]) => {
+      // El precio en USD exacto que sale de dividir por el tipo base, en milésimos.
+      const exactoUsdMilli = (BigInt(viejoUyu) * 1_000_000n) / BASE_USD_UYU_RATE_MILLI;
+      const enD35 = unitPriceUsdMilliFor(corte);
+      return [
+        corte,
+        Number(exactoUsdMilli),
+        Number(enD35),
+        enD35 > exactoUsdMilli ? 'arriba' : enD35 < exactoUsdMilli ? 'abajo' : 'exacto',
+      ];
+    });
+    expect(direccion).toEqual([
+      [0, 500, 500, 'exacto'],
+      [50, 425, 420, 'abajo'],
+      [100, 375, 370, 'abajo'],
+      [250, 300, 300, 'exacto'],
+      [500, 250, 250, 'exacto'],
+      [1000, 175, 180, 'arriba'], // el único, y el único que sube en pesos
+    ]);
+    expect(direccion.filter((d) => d[3] === 'arriba')).toHaveLength(1);
+  });
+
+  it('las dos salidas posibles cierran la promesa sin tocar nada más', () => {
+    // Para que Adrian decida sobre números, no sobre adjetivos. Ninguna de las
+    // dos se aplica acá: la escalera queda como la dictó D35.
+    const conEscalon = (usdMilli: bigint) =>
+      PRICING_TIERS.map((t) =>
+        t.minShipments === 1000 ? { ...t, unitPriceUsdMilli: usdMilli } : t,
+      );
+
+    // (a) 175n = 7/40 exacto. El escalón queda en 7,00 UYU: nadie paga más.
+    expect(legacyPriceRegressions(BASE_USD_UYU_RATE_MILLI, conEscalon(175n))).toEqual([]);
+    expect(usdMilliToUyuMilli(175n, BASE_USD_UYU_RATE_MILLI)).toBe(7_000n);
+
+    // (b) 170n = redondear para abajo al centavo, como los otros dos. 6,80 UYU.
+    expect(legacyPriceRegressions(BASE_USD_UYU_RATE_MILLI, conEscalon(170n))).toEqual([]);
+    expect(usdMilliToUyuMilli(170n, BASE_USD_UYU_RATE_MILLI)).toBe(6_800n);
+
+    // Las dos siguen siendo una escalera válida (más barata que 0,25, más cara
+    // que 0,14): cambiar ese número no rompe ningún invariante estructural.
+    expect(() => assertPricingTiersValid(conEscalon(175n))).not.toThrow();
+    expect(() => assertPricingTiersValid(conEscalon(170n))).not.toThrow();
+  });
+
   it('a 44 UYU/USD (el tipo hardcodeado en otros repos) suben LOS SEIS escalones', () => {
     // Deja constancia de la consecuencia de subir la env: el precio en dólares
     // es fijo, así que todo movimiento del tipo de cambio se traslada al peso.
