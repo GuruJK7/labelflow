@@ -167,8 +167,10 @@ function BillingContent() {
         </h1>
         <p className="text-zinc-400 text-sm mt-2 max-w-2xl">
           Sin suscripciones, sin caducidad. Cuanto más envíos hacés en el mes, menos pagás por
-          envío. Los precios están en dólares y MercadoPago los cobra en pesos al tipo de cambio de
-          referencia que usamos{fx ? ` (${fx.usdUyuRateLabel} UYU/USD)` : ''}.
+          envío.{' '}
+          {shopifyBilling
+            ? 'Los precios están en dólares y el cargo va a la factura de tu tienda de Shopify, por única vez.'
+            : `Los precios están en dólares y MercadoPago los cobra en pesos al tipo de cambio de referencia que usamos${fx ? ` (${fx.usdUyuRateLabel} UYU/USD)` : ''}.`}
         </p>
       </div>
 
@@ -221,7 +223,8 @@ function BillingContent() {
           <div>
             <p className="text-sm font-semibold text-yellow-300">Pago pendiente</p>
             <p className="text-xs text-yellow-400/70 mt-0.5">
-              MercadoPago está procesando. Vas a ver los envíos acreditados al confirmarse.
+              {shopifyBilling ? 'Shopify' : 'MercadoPago'} está procesando. Vas a ver los envíos
+              acreditados al confirmarse.
             </p>
           </div>
         </div>
@@ -337,7 +340,11 @@ function BillingContent() {
               Pago seguro
             </p>
             <p className="text-[10px] sm:text-[11px] text-zinc-500 leading-tight truncate">
-              {whopEnabled ? 'MercadoPago o Whop' : 'Vía MercadoPago'}
+              {shopifyBilling
+                ? 'Vía Shopify'
+                : whopEnabled
+                  ? 'MercadoPago o Whop'
+                  : 'Vía MercadoPago'}
             </p>
           </div>
         </div>
