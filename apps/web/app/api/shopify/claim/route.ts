@@ -6,6 +6,7 @@ import { encrypt } from '@/lib/encryption';
 import { escapeHtml } from '@/lib/html-escape';
 import { PENDING_INSTALL_COOKIE, PENDING_INSTALL_PATH } from '@/lib/shopify-oauth';
 import { openPendingInstall } from '@/lib/shopify-pending-install';
+import { parseShopifyCredential } from '@/lib/shopify-token';
 import { fetchShopInfo, tenantSlugForShop } from '@/lib/shopify-provision';
 import { registerShopifyWebhooks } from '@/lib/shopify-register-webhooks';
 import { nuevoTenantBase } from '@/lib/tenant-provision';
@@ -160,6 +161,11 @@ export async function POST(req: NextRequest) {
   const abierto = await abrirReclamo(req, 303);
   if (!abierto.ok) return abierto.res;
   const { user, shop, token } = abierto;
+  // `token` es lo que se GUARDA (el envelope entero de D29, o un token pelado
+  // si Shopify no dio refresh); `access` es lo que se USA para hablar con
+  // Shopify ahora. La cookie ya validó que sea un string no vacío.
+  const access = parseShopifyCredential(token)?.access;
+  if (!access) return fail('claim_invalid');
 
   // 2b. La tienda del formulario tiene que ser la de la cookie (ver cabecera).
   if ((await tiendaDelFormulario(req)) !== shop) return fail('claim_invalid');
@@ -169,7 +175,7 @@ export async function POST(req: NextRequest) {
 
   // Nombre real de la tienda si Shopify contesta; si no, el handle. No vale
   // la pena frenar un reclamo por un nombre.
-  const info = await fetchShopInfo(shop, token);
+  const info = await fetchShopInfo(shop, access);
   const name = info?.name ?? handle;
 
   // 3. Crear el tenant bajo el usuario de la sesión, si la tienda sigue libre.
@@ -245,7 +251,7 @@ export async function POST(req: NextRequest) {
   let webhookWarning = '';
   try {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? origin;
-    const r = await registerShopifyWebhooks(shop, token, appUrl);
+    const r = await registerShopifyWebhooks(shop, access, appUrl);
     if (r.failed.length > 0) webhookWarning = '&webhooks=partial';
   } catch {
     webhookWarning = '&webhooks=failed';
