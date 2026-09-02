@@ -307,7 +307,13 @@ body {
   --red: #f87171;
   --hair: rgba(255, 255, 255, 0.07);
   --hair-strong: rgba(255, 255, 255, 0.12);
-  --muted: #5b5b66;
+  /* --muted lo usan rótulos de 9-11px (marcas del slider, "UYU POR ENVÍO",
+     el pie de la calculadora, el nombre del panel). En #5b5b66 daban 2,95:1
+     sobre #050505 — abajo del 4,5:1 que pide WCAG AA para texto chico, y son
+     justo los rótulos que le dan sentido a los números grandes en cyan.
+     #8b8b95 da 6,04:1 sobre #050505 y 5,89:1 sobre las tarjetas, y sigue
+     leyéndose como secundario contra el blanco de los valores. */
+  --muted: #8b8b95;
   --txt-2: #a1a1aa;
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
   --ease-lop: cubic-bezier(0.22, 1, 0.36, 1);
@@ -357,6 +363,15 @@ body {
 
 /* ── Batch printing ── */
 .batch-print { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+/* Sin este breakpoint, a 375px cada panel quedaba en 155px contra una
+   .stackzone de 164px fijos y etiquetas de 100px: el chip "1 clic" desbordaba
+   6,7px y lo recortaba el overflow:hidden, el título caía en tres renglones y
+   una etiqueta impresa tapaba medio botón. Nada de eso genera scroll
+   horizontal, así que medir scrollWidth no lo veía. Apilados, cada panel tiene
+   el ancho completo y todo entra. */
+@media (max-width: 640px) {
+  .batch-print { grid-template-columns: 1fr; gap: 14px; }
+}
 .batch-print .pside { padding: 0; display: flex; flex-direction: column; min-height: 210px; overflow: hidden; }
 .batch-print .pside .hd { display: flex; align-items: center; gap: 10px; padding: 13px 18px; border-bottom: 1px solid var(--hair); }
 .batch-print .pside .hd svg { width: 15px; height: 15px; flex: 0 0 auto; }
@@ -543,6 +558,21 @@ body {
 .pcalc .pcstat span { display: block; margin-top: 9px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); line-height: 1.6; }
 .pcalc .foot { margin-top: 18px; font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.04em; text-align: center; position: relative; }
 .pcalc .cta-inline { display: flex; justify-content: center; margin-top: 22px; position: relative; }
+
+/* ── Foco de teclado en la landing ─────────────────────────────────────────
+   Medido con Tab real (no con .focus() por JS, que en Chrome ni siquiera
+   dispara :focus-visible en un <a>): los enlaces heredaban `outline: auto`
+   con outline-color = currentColor. En el CTA primario eso es #09090b sobre
+   cyan y en los del pie es un gris sobre #050505: un anillo que en la práctica
+   no se ve. Se fuerza el mismo cyan del sistema, con offset, para que quien
+   navega con teclado sepa siempre dónde está parado. */
+.lop-landing a:focus-visible,
+.lop-landing button:focus-visible,
+.lop-landing summary:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
 @media (max-width: 640px) {
   .pcalc { padding: 24px 18px 22px; }
   .pcalc .pc-out { grid-template-columns: 1fr 1fr; gap: 8px; }

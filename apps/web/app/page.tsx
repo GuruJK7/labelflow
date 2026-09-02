@@ -58,7 +58,7 @@ export const metadata = {
 
 export default function LandingPage() {
   return (
-    <div className="relative min-h-screen bg-[#050505] overflow-x-clip text-white">
+    <div className="lop-landing relative min-h-screen bg-[#050505] overflow-x-clip text-white">
       <ScrollProgress />
 
       {/* Fondo: grilla + orbes ambientales. Decorativo. */}
@@ -81,7 +81,7 @@ export default function LandingPage() {
               <span className="font-display font-bold text-white text-[15px] tracking-tight">
                 Auto<span className="text-cyan-400">Envía</span>
               </span>
-              <span className="hidden sm:inline font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-medium">
+              <span className="hidden sm:inline font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-400 font-medium">
                 Envíos con DAC
               </span>
             </div>
@@ -175,13 +175,13 @@ export default function LandingPage() {
                 Iniciar sesión
               </Link>
             </div>
-            <p className="mt-5 text-[13px] text-zinc-500">
+            <p className="mt-5 text-[13px] text-zinc-400">
               {TRIAL_SHIPMENTS} envíos de prueba al crear la cuenta. No pedimos tarjeta.
             </p>
           </ScrollReveal>
 
           <ScrollReveal variant="up" delay={400}>
-            <div className="flex flex-wrap items-center justify-center gap-x-4 sm:gap-x-6 gap-y-2 mt-7 sm:mt-8 text-[11px] sm:text-xs text-zinc-500">
+            <div className="flex flex-wrap items-center justify-center gap-x-4 sm:gap-x-6 gap-y-2 mt-7 sm:mt-8 text-[11px] sm:text-xs text-zinc-400">
               <span className="flex items-center gap-1.5">
                 <Check className="w-3.5 h-3.5 text-emerald-400" aria-hidden />
                 Se instala desde Shopify
@@ -207,7 +207,7 @@ export default function LandingPage() {
         />
         <ScrollReveal>
           <div className="relative max-w-5xl mx-auto">
-            <p className="text-center font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500 mb-7">
+            <p className="text-center font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-400 mb-7">
               Con lo que se conecta
             </p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -332,7 +332,7 @@ export default function LandingPage() {
                 </p>
               </div>
               <BatchPrinting />
-              <p className="mt-4 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-600">
+              <p className="mt-4 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">
                 Animación de demostración · no son datos de una cuenta real
               </p>
             </div>
@@ -489,7 +489,7 @@ export default function LandingPage() {
                   Auto<span className="text-cyan-400">Envía</span>
                 </span>
               </div>
-              <p className="mt-3 max-w-[26ch] text-[13px] leading-relaxed text-zinc-500">
+              <p className="mt-3 max-w-[26ch] text-[13px] leading-relaxed text-zinc-400">
                 Despacho automático con DAC para tiendas uruguayas.
               </p>
             </div>
@@ -514,7 +514,7 @@ export default function LandingPage() {
                   href={WHATSAPP_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-[13px] text-zinc-500 transition-colors hover:text-zinc-200"
+                  className="inline-flex items-center gap-1.5 text-[13px] text-zinc-400 transition-colors hover:text-zinc-200"
                 >
                   <MessageCircle className="h-3.5 w-3.5" aria-hidden />
                   Consultas por WhatsApp
@@ -523,7 +523,7 @@ export default function LandingPage() {
             </FooterCol>
           </div>
 
-          <p className="mt-10 border-t border-white/[0.06] pt-6 text-[12px] text-zinc-600">
+          <p className="mt-10 border-t border-white/[0.06] pt-6 text-[12px] text-zinc-400">
             {BRAND} — Uruguay. DAC, Shopify y MercadoPago son marcas de sus respectivos titulares;
             {BRAND} no está afiliada a ellas.
           </p>
@@ -702,7 +702,7 @@ function IntegrationCard({
         {icon}
         <span className="font-display text-[13px] font-bold text-white">{name}</span>
       </div>
-      <p className="mt-2 text-[12.5px] leading-relaxed text-zinc-500">{detail}</p>
+      <p className="mt-2 text-[12.5px] leading-relaxed text-zinc-400">{detail}</p>
     </div>
   );
 }
@@ -716,7 +716,7 @@ function BigStat({ value, label, detail }: { value: string; label: string; detai
       <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">
         {label}
       </p>
-      <p className="mt-2.5 text-[13px] leading-relaxed text-zinc-500">{detail}</p>
+      <p className="mt-2.5 text-[13px] leading-relaxed text-zinc-400">{detail}</p>
     </div>
   );
 }
@@ -741,7 +741,7 @@ function Step({
         {index + 1}
       </div>
       <div className={index % 2 === 0 ? 'md:pr-4 md:text-right' : 'md:col-start-2 md:pl-4'}>
-        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-600">
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">
           Paso {index + 1} · {note}
         </span>
         <h3 className="mt-2 font-display text-xl font-bold tracking-tight text-white sm:text-2xl">
@@ -768,7 +768,7 @@ function Feature({ title, body, art }: { title: string; body: string; art: React
 function FooterCol({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
-      <h2 className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">{title}</h2>
+      <h2 className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">{title}</h2>
       <ul className="mt-3 space-y-2">{children}</ul>
     </div>
   );
@@ -777,7 +777,7 @@ function FooterCol({ title, children }: { title: string; children: ReactNode }) 
 function FooterLink({ href, children }: { href: string; children: ReactNode }) {
   return (
     <li>
-      <Link href={href} className="text-[13px] text-zinc-500 transition-colors hover:text-zinc-200">
+      <Link href={href} className="text-[13px] text-zinc-400 transition-colors hover:text-zinc-200">
         {children}
       </Link>
     </li>
@@ -787,7 +787,7 @@ function FooterLink({ href, children }: { href: string; children: ReactNode }) {
 function FooterAnchor({ href, children }: { href: string; children: ReactNode }) {
   return (
     <li>
-      <a href={href} className="text-[13px] text-zinc-500 transition-colors hover:text-zinc-200">
+      <a href={href} className="text-[13px] text-zinc-400 transition-colors hover:text-zinc-200">
         {children}
       </a>
     </li>
