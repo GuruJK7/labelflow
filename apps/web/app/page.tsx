@@ -26,7 +26,14 @@ import { HeroChaos } from './_components/HeroChaos';
 import { TimelineFill } from './_components/TimelineFill';
 import { PricingSelector } from './_components/PricingSelector';
 import { TRIAL_SHIPMENTS } from '@/lib/trial';
-import { CREDIT_PACKS, BASE_PRICE_PER_SHIPMENT_UYU } from '@/lib/credit-packs';
+import { SELF_SERVE_PACK_SHIPMENTS, largePacksEnabled } from '@/lib/credit-packs';
+import {
+  PRICING_TIERS,
+  formatUsdUnitMilli,
+  formatRate,
+  getUsdUyuRateMilli,
+  unitPriceUsdMilliFor,
+} from '@/lib/pricing';
 import { ONBOARDING_STEPS } from '@/lib/onboarding-state';
 import type { ReactNode } from 'react';
 
@@ -34,10 +41,22 @@ import type { ReactNode } from 'react';
  *  flip this single constant if the public name ever changes. */
 const BRAND = 'AutoEnvía';
 
-/** Precio por envío más bajo del tarifario (pack más grande). Se lee de la tabla
- *  que cobra el checkout en vez de escribirlo a mano: si mañana cambia un tramo,
- *  la landing cambia sola y no queda mintiendo. */
-const LOWEST_PRICE_UYU = CREDIT_PACKS.pack_1000.pricePerShipmentUyu;
+/**
+ * Precios de la copy estática, EN DÓLARES. Salen de la misma tabla que cobra el
+ * checkout (`PRICING_TIERS`) en vez de escribirse a mano: si mañana se mueve un
+ * escalón, la landing cambia sola y no queda mintiendo.
+ *
+ * Van en dólares y no en pesos a propósito. El tarifario está denominado en USD
+ * (D35) y el peso depende de `USD_UYU_RATE`, que es env de servidor: un número
+ * en pesos horneado en el texto estático se desactualiza en silencio la primera
+ * vez que Adrian mueve el tipo. Los pesos se muestran donde el usuario puede
+ * elegir la moneda y el tipo viaja con ellos (el simulador).
+ */
+const LIST_PRICE_USD = formatUsdUnitMilli(PRICING_TIERS[0].unitPriceUsdMilli);
+/** El escalón más barato que se puede comprar solo (arriba de eso es a medida). */
+const LOWEST_PRICE_USD = formatUsdUnitMilli(
+  unitPriceUsdMilliFor(SELF_SERVE_PACK_SHIPMENTS[SELF_SERVE_PACK_SHIPMENTS.length - 1]),
+);
 
 /** Minutos de configuración: la suma de las estimaciones que ve el usuario en el
  *  asistente (lib/onboarding-state.ts) da 8,5 → "menos de 10 minutos". */
@@ -251,9 +270,9 @@ export default function LandingPage() {
               detail="El asistente te lleva por todos. Menos de 10 minutos."
             />
             <BigStat
-              value={`${LOWEST_PRICE_UYU} UYU`}
+              value={`USD ${LOWEST_PRICE_USD}`}
               label="por envío, el más barato"
-              detail={`Baja de ${BASE_PRICE_PER_SHIPMENT_UYU} a ${LOWEST_PRICE_UYU} según el pack.`}
+              detail={`Baja de USD ${LIST_PRICE_USD} a USD ${LOWEST_PRICE_USD} según el volumen.`}
             />
           </div>
         </ScrollReveal>
@@ -380,7 +399,11 @@ export default function LandingPage() {
           </ScrollReveal>
 
           <ScrollReveal variant="scale">
-            <PricingSelector />
+            <PricingSelector
+              rateMilliValue={Number(getUsdUyuRateMilli())}
+              rateLabel={formatRate(getUsdUyuRateMilli())}
+              largePacks={largePacksEnabled()}
+            />
           </ScrollReveal>
 
           <ScrollReveal stagger className="mt-8 grid sm:grid-cols-3 gap-3">
@@ -661,7 +684,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: '¿Cómo se cobra?',
-    a: `Comprás un pack de envíos por MercadoPago, con un pago único, y se descuenta un envío por cada guía emitida con éxito. Cuanto más grande el pack, más barato el envío: va de ${BASE_PRICE_PER_SHIPMENT_UYU} a ${LOWEST_PRICE_UYU} UYU. No hay mensualidad ni cobro automático al mes siguiente.`,
+    a: `Comprás un pack de envíos por MercadoPago, con un pago único, y se descuenta un envío por cada guía emitida con éxito. Cuanto más grande el pack, más barato el envío: va de USD ${LIST_PRICE_USD} a USD ${LOWEST_PRICE_USD} por envío, y el cobro se hace en pesos al tipo de cambio de referencia que publicamos en el simulador. No hay mensualidad ni cobro automático al mes siguiente.`,
   },
   {
     q: '¿Puedo tener varias tiendas?',
