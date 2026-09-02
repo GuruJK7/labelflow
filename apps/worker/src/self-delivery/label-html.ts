@@ -1,7 +1,7 @@
 import { code128bSvg } from './code128';
 
 /**
- * Etiqueta de envio propia de LabelFlow (10 x 15 cm), para los pedidos que se
+ * Etiqueta de envio propia de AutoEnvia (10 x 15 cm), para los pedidos que se
  * reparten sin pasar por DAC.
  *
  * Criterios de diseno — esto se imprime y viaja pegado a una caja, asi que
@@ -195,7 +195,7 @@ export function etiquetaHtml(d: DatosEtiqueta): string {
       <svg class="rayo" viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
         <path d="M13.2 2 4 13.6h6.1L9.6 22l9.6-11.9h-6.4z"/>
       </svg>
-      <span class="marca-nombre">LabelFlow</span>
+      <span class="marca-nombre">AutoEnvía</span>
     </div>
     <div class="remitente">
       <div class="rot">Remitente</div>
