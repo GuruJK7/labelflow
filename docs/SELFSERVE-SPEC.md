@@ -151,7 +151,7 @@ Mismo patrón que `admin/layout.tsx` (3 líneas cada uno):
 - `app/(dashboard)/orders/layout.tsx` (nuevo)
 - `app/(dashboard)/reports/layout.tsx` (nuevo)
 
-No se gatean: `/settings/referrals` (H16: el pill del TopBar lleva ahí), `/settings/shipping-rules` y `/settings/billing` (son parte de "Configuración" para el usuario), `/ads` y `/recover` (ya cerrados por flag en prod). APIs `/api/v1/control/*` no cambian: ya filtran por ownership.
+No se gatean: `/settings/referrals` (H16: el pill del TopBar lleva ahí), `/settings/shipping-rules` y `/settings/billing` (son parte de "Configuración" para el usuario), `/ads` y `/recover` (ya cerrados por flag en prod). APIs `/api/v1/control/*`: para el usuario no cambian (filtran por ownership); para el admin alcanzan además todos los tenants activos, vía `lib/control-scope.ts` (D32, revisión 2026-09-02).
 
 ### 4.4 Configuración para el usuario (estructura; el contenido en §6)
 

@@ -6,22 +6,26 @@
  * per store. Separate from /overview because it makes one Shopify API call per
  * store; it is throttled (lib/shopify-pending cache) and the dashboard calls it
  * on load + manual refresh, NOT on the fast poll loop, to respect rate limits.
+ *
+ * Alcance: los tenants del usuario; para el admin, además todos los activos
+ * (lib/control-scope), los mismos que lista /overview.
  */
 
 import { db } from '@/lib/db';
-import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
+import { apiError, apiSuccess } from '@/lib/api-utils';
+import { getControlActor, controlTenantWhere } from '@/lib/control-scope';
 import { getUnfulfilledCount } from '@/lib/shopify-pending';
 import { maybeReconcileStuck } from '@/lib/shopify-reconcile';
 
 export async function GET(req: Request) {
-  const auth = await getAuthenticatedUser();
-  if (!auth) return apiError('No autorizado', 401);
+  const actor = await getControlActor();
+  if (!actor) return apiError('No autorizado', 401);
 
   const { searchParams } = new URL(req.url);
   const force = searchParams.get('force') === '1';
 
   const tenants = await db.tenant.findMany({
-    where: { userId: auth.userId },
+    where: controlTenantWhere(actor),
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     select: { id: true },
   });

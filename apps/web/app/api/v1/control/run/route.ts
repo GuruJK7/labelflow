@@ -9,10 +9,15 @@
  * plan-active gate, per-store isJobRunning lock, and enqueueProcessOrders (which
  * goes through the worker's PendingShipment duplicate-shipment guard). It adds
  * NO new shipment path.
+ *
+ * Alcance: el usuario opera sus tiendas; el admin (ADMIN_EMAILS) además
+ * cualquier tenant activo (lib/control-scope). El gate de plan/saldo se
+ * evalúa sobre el holder del DUEÑO de la tienda, no del que aprieta el botón.
  */
 
 import { db } from '@/lib/db';
-import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
+import { apiError, apiSuccess } from '@/lib/api-utils';
+import { getControlActor, controlTenantWhere } from '@/lib/control-scope';
 import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { getPlanLimit } from '@/lib/mercadopago';
@@ -20,8 +25,8 @@ import { checkRunGate, checkPlanLimit } from '@/lib/can-run';
 import { warmShopifyToken } from '@/lib/shopify-access';
 
 export async function POST(req: Request) {
-  const auth = await getAuthenticatedUser();
-  if (!auth) return apiError('No autorizado', 401);
+  const actor = await getControlActor();
+  if (!actor) return apiError('No autorizado', 401);
 
   let tenantId = '';
   let maxOrders = 0; // 0 = tenant default (all)
@@ -36,10 +41,11 @@ export async function POST(req: Request) {
   }
   if (!tenantId) return apiError('Falta tenantId', 422);
 
-  // Ownership — the store must belong to the user. Same 403 whether it is
-  // someone else's or does not exist (no-leak posture, mirrors tenants/switch).
+  // Alcance — the store must belong to the user (or, for an admin, be any
+  // active tenant: lib/control-scope). Same 403 whether it is someone else's
+  // or does not exist (no-leak posture, mirrors tenants/switch).
   const owned = await db.tenant.findFirst({
-    where: { id: tenantId, userId: auth.userId },
+    where: { id: tenantId, ...controlTenantWhere(actor) },
     select: { id: true, name: true, labelsThisMonth: true },
   });
   if (!owned) return apiError('Tienda no encontrada', 403);
