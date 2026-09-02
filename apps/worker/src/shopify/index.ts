@@ -8,13 +8,16 @@ import type { ShopifyGraphqlClient } from './graphql-client';
 import {
   getShopifyApiPolicy,
   isRestForbiddenError,
+  isRestKnownWorking,
   markRestForbidden,
+  markRestWorking,
   resolveShopifyApi,
   type ShopifyApiContext,
   type ShopifyApiMode,
 } from './mode';
 
 export { ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from './fulfillment';
+export { ShopifyProtectedDataError, isShopifyProtectedDataError } from './errors';
 export type { ShopifyOrder } from './types';
 export type { ShopifyApiContext, ShopifyApiMode } from './mode';
 
@@ -31,8 +34,10 @@ export type { ShopifyApiContext, ShopifyApiMode } from './mode';
  *     tenant lo necesita. Con SHOPIFY_API_MODE=rest el proceso nunca carga ni
  *     llama nada de GraphQL (hay test que lo afirma).
  *
- * `mode.ts` decide por tenant; si en modo auto REST contesta 403 (app sin
- * REST), se memoriza y la MISMA operación se reintenta por GraphQL.
+ * `mode.ts` decide por tenant; si en modo auto REST contesta un 403 que diga
+ * positivamente "app sin REST" — y ese tenant nunca tuvo un 2xx REST en este
+ * proceso — se memoriza y la MISMA operación se reintenta por GraphQL. Un
+ * 403 de scopes / `merchant approval` / cualquier otro texto sube tal cual.
  */
 
 type GraphqlModules = {
@@ -89,9 +94,14 @@ async function dispatch<T>(
   if (resolveShopifyApi(client.ctx) === 'graphql') return runGraphql();
 
   try {
-    return await viaRest(client.rest);
+    const result = await viaRest(client.rest);
+    // REST le respondió: este tenant NO es "app sin REST". Ningún 403
+    // posterior (scopes, pedidos de más de 60 días) lo puede conmutar.
+    markRestWorking(client.ctx);
+    return result;
   } catch (err) {
     if (getShopifyApiPolicy() !== 'auto') throw err;
+    if (isRestKnownWorking(client.ctx)) throw err;
     const forbidden = isRestForbiddenError(err);
     if (!forbidden) throw err;
     markRestForbidden(client.ctx, forbidden.body);

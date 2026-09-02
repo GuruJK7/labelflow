@@ -1,8 +1,9 @@
 // D27: la fachada `shopify/index.ts` elige REST o GraphQL por tenant.
 //   - modo rest / slug normal: llama a orders.ts/fulfillment.ts con el axios de
 //     siempre y NUNCA carga los módulos GraphQL (ni siquiera el import).
-//   - slug shop-*: GraphQL directo sin tocar REST.
-//   - auto + 403 REST: fallback a GraphQL en la misma operación y memo.
+//   - slug == tenantSlugForShop(storeUrl) (App Store): GraphQL directo sin tocar REST.
+//   - auto + 403 REST que diga "app sin REST" en un tenant sin 2xx previo:
+//     fallback a GraphQL en la misma operación y memo. Cualquier otro 403 sube.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const state = vi.hoisted(() => ({
@@ -57,7 +58,7 @@ import {
   ShopifyMissingScopesError,
   _resetGraphqlModules,
 } from '../shopify';
-import { _resetShopifyApiMemo, isRestForbiddenFor } from '../shopify/mode';
+import { _resetShopifyApiMemo, isRestForbiddenFor, isRestKnownWorking } from '../shopify/mode';
 
 const TOKEN = 'shpat_x';
 
@@ -130,7 +131,16 @@ describe('modo rest / tenant con token manual: camino REST intacto y sin GraphQL
   });
 });
 
-describe('auto + slug shop-*: GraphQL directo', () => {
+describe('auto + slug del App Store: GraphQL directo', () => {
+  it('slug manual que empieza con shop- (email shop@…) sigue en REST', async () => {
+    const client = createShopifyClient('marca.myshopify.com', TOKEN, { tenantId: 't3b', slug: 'shop-marca-m1abcd' });
+    expect(client.mode()).toBe('rest');
+    restAxios.get.mockResolvedValue({ data: { orders: [] } });
+    await getUnfulfilledOrders(client);
+    expect(restAxios.get).toHaveBeenCalledTimes(1);
+    expect(gqlOrders.getUnfulfilledOrders).not.toHaveBeenCalled();
+  });
+
   it('no toca REST y usa el cliente GraphQL de la tienda', async () => {
     const client = createShopifyClient('autoenvia-qa.myshopify.com', TOKEN, { tenantId: 't3', slug: 'shop-autoenvia-qa' });
     expect(client.mode()).toBe('graphql');
@@ -199,6 +209,34 @@ describe('auto + 403 REST (app sin REST): fallback y memo', () => {
     // Otro tenant no se contagia.
     const otro = createShopifyClient('aura.myshopify.com', TOKEN, { tenantId: 't5', slug: 'aura' });
     expect(otro.mode()).toBe('rest');
+  });
+
+  it('403 "merchant approval for read_orders scope" (token de custom app) NO conmuta: sube tal cual y el tenant sigue en REST', async () => {
+    const client = createShopifyClient('aura.myshopify.com', TOKEN, { tenantId: 't6a', slug: 'aura' });
+    restAxios.get.mockRejectedValueOnce(axiosErr(403, { errors: '[API] This action requires merchant approval for read_orders scope.' }));
+    await expect(getUnfulfilledOrders(client)).rejects.toThrow(/403/);
+    expect(gqlOrders.getUnfulfilledOrders).not.toHaveBeenCalled();
+    expect(isRestForbiddenFor({ tenantId: 't6a' })).toBe(false);
+    expect(client.mode()).toBe('rest');
+
+    // Lo mismo para el GET directo de los jobs y un 403 "Forbidden" pelado.
+    restAxios.get.mockRejectedValueOnce(axiosErr(403, 'Forbidden'));
+    await expect(client.get('/orders/1.json')).rejects.toThrow(/403/);
+    expect(gqlOrders.getOrderRestShim).not.toHaveBeenCalled();
+    expect(client.mode()).toBe('rest');
+  });
+
+  it('un tenant al que REST ya le respondió 2xx nunca conmuta, ni con el cuerpo de "app sin REST"', async () => {
+    const client = createShopifyClient('aura.myshopify.com', TOKEN, { tenantId: 't6b', slug: 'aura' });
+    restAxios.get.mockResolvedValueOnce({ data: { orders: [] } });
+    await getUnfulfilledOrders(client);
+    expect(isRestKnownWorking({ tenantId: 't6b' })).toBe(true);
+
+    restAxios.get.mockRejectedValueOnce(axiosErr(403, { errors: 'This app is not approved to use the REST Admin API.' }));
+    await expect(client.get('/orders/1.json')).rejects.toThrow(/403/);
+    expect(gqlOrders.getOrderRestShim).not.toHaveBeenCalled();
+    expect(isRestForbiddenFor({ tenantId: 't6b' })).toBe(false);
+    expect(client.mode()).toBe('rest');
   });
 
   it('401 / 500 REST NO conmutan: el error sube tal cual', async () => {
