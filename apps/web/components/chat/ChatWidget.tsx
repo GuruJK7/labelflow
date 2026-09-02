@@ -13,7 +13,7 @@ interface Message {
 const WELCOME_MESSAGE: Message = {
   id: 'welcome',
   role: 'assistant',
-  content: 'Hola. Soy el asistente de LabelFlow. Puedo ayudarte con soporte técnico, resolver dudas sobre la plataforma o recibir tu feedback. ¿En qué te puedo ayudar?',
+  content: 'Hola. Soy el asistente de AutoEnvía. Puedo ayudarte con soporte técnico, resolver dudas sobre la plataforma o recibir tu feedback. ¿En qué te puedo ayudar?',
 };
 
 export function ChatWidget() {
@@ -242,7 +242,7 @@ export function ChatWidget() {
                 <Bot className="w-4 h-4 text-white" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-white">Soporte LabelFlow</h3>
+                <h3 className="text-sm font-semibold text-white">Soporte AutoEnvía</h3>
                 <div className="flex items-center gap-1.5">
                   <span className="status-dot active" />
                   <span className="text-[10px] text-zinc-500">Online</span>
@@ -373,7 +373,7 @@ export function ChatWidget() {
               </button>
             </div>
             <p className="text-[9px] text-zinc-700 text-center mt-2">
-              Asistente IA de LabelFlow — puede cometer errores
+              Asistente IA de AutoEnvía — puede cometer errores
             </p>
           </div>
         </div>

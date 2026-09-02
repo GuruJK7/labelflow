@@ -664,7 +664,7 @@ export default function SettingsPage() {
                 <p className="text-sm text-white font-medium">Reparto propio (no cargar en DAC)</p>
                 <p className="text-[10px] text-zinc-500 mt-0.5">
                   {selfDeliveryEnabled
-                    ? 'Los pedidos con destino en los departamentos elegidos no se cargan en DAC: LabelFlow les emite su propia etiqueta y no se consume crédito de envío'
+                    ? 'Los pedidos con destino en los departamentos elegidos no se cargan en DAC: AutoEnvía les emite su propia etiqueta y no se consume crédito de envío'
                     : 'Desactivado — todos los pedidos se cargan en DAC'}
                 </p>
               </div>

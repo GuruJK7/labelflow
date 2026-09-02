@@ -56,7 +56,7 @@ const REQUIRED_SCOPES = [
   },
   {
     name: 'write_assigned_fulfillment_orders',
-    why: 'Aceptar/cerrar fulfillment orders desde LabelFlow.',
+    why: 'Aceptar/cerrar fulfillment orders desde AutoEnvía.',
   },
   {
     name: 'read_merchant_managed_fulfillment_orders',

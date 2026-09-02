@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
 
     const result = await preApproval.create({
       body: {
-        reason: `LabelFlow ${plan.name} - ${plan.labelLimit === 999999 ? 'Etiquetas ilimitadas' : `${plan.labelLimit} etiquetas/mes`}`,
+        reason: `AutoEnvía ${plan.name} - ${plan.labelLimit === 999999 ? 'Etiquetas ilimitadas' : `${plan.labelLimit} etiquetas/mes`}`,
         auto_recurring: {
           frequency: 1,
           frequency_type: 'months',

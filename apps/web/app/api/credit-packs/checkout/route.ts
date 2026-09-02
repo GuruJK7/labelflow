@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
         items: [
           {
             id: pack.id,
-            title: `LabelFlow - Pack ${pack.shipments} envíos`,
+            title: `AutoEnvía - Pack ${pack.shipments} envíos`,
             description: `${pack.shipments} envíos a ${pack.pricePerShipmentUyu} UYU c/u`,
             quantity: 1,
             currency_id: 'UYU',

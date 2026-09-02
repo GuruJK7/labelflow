@@ -24,7 +24,7 @@
 const RESEND_API = 'https://api.resend.com/emails';
 
 /** Default sender — verified at the Resend dashboard for autoenvia.com. */
-const DEFAULT_FROM = 'LabelFlow <noreply@autoenvia.com>';
+const DEFAULT_FROM = 'AutoEnvía <noreply@autoenvia.com>';
 
 export type SendResult =
   | { ok: true; id: string }
@@ -151,7 +151,7 @@ function emailShell(opts: { title: string; body: string; cta?: { href: string; l
           <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;">
             <tr>
               <td style="padding:24px 32px;border-bottom:1px solid #f4f4f5;">
-                <span style="font-size:18px;font-weight:700;color:#111827;letter-spacing:-0.01em;">Label<span style="color:#06b6d4;">Flow</span></span>
+                <span style="font-size:18px;font-weight:700;color:#111827;letter-spacing:-0.01em;">Auto<span style="color:#06b6d4;">Envía</span></span>
               </td>
             </tr>
             <tr>
@@ -168,8 +168,8 @@ function emailShell(opts: { title: string; body: string; cta?: { href: string; l
             </tr>
             <tr>
               <td style="padding:20px 32px;background:#fafafa;border-top:1px solid #f4f4f5;font-size:12px;color:#9ca3af;line-height:1.5;">
-                LabelFlow · Automatización Shopify → DAC para Uruguay<br/>
-                <a href="https://autoenvia.com" style="color:#06b6d4;text-decoration:none;">autoenvia.com</a>
+                AutoEnvía · Automatización Shopify → DAC para Uruguay<br/>
+                por LabelFlow SAS · <a href="https://autoenvia.com" style="color:#06b6d4;text-decoration:none;">autoenvia.com</a>
               </td>
             </tr>
           </table>
@@ -194,24 +194,24 @@ export function renderVerificationEmail(opts: { name: string; verifyUrl: string 
   const safeName = (name || 'Hola').slice(0, 80);
 
   const html = emailShell({
-    title: 'Confirmá tu email para activar LabelFlow',
+    title: 'Confirmá tu email para activar AutoEnvía',
     body: `<p style="margin:0 0 12px;">Hola <strong>${safeName}</strong>,</p>
-<p style="margin:0 0 12px;">Gracias por crear una cuenta en LabelFlow. Para empezar a despachar pedidos de Shopify hacia DAC sin escribir guías a mano, confirmá que este email es tuyo:</p>`,
+<p style="margin:0 0 12px;">Gracias por crear una cuenta en AutoEnvía. Para empezar a despachar pedidos de Shopify hacia DAC sin escribir guías a mano, confirmá que este email es tuyo:</p>`,
     cta: { href: verifyUrl, label: 'Confirmar mi email' },
   });
 
   const text = `Hola ${safeName},
 
-Gracias por crear una cuenta en LabelFlow. Confirmá tu email entrando a este link:
+Gracias por crear una cuenta en AutoEnvía. Confirmá tu email entrando a este link:
 
 ${verifyUrl}
 
 El link expira en 24 horas. Si no fuiste vos, podés ignorar este mensaje.
 
-— LabelFlow / autoenvia.com`;
+— AutoEnvía (por LabelFlow SAS) / autoenvia.com`;
 
   return {
-    subject: 'Confirmá tu email — LabelFlow',
+    subject: 'Confirmá tu email — AutoEnvía',
     html,
     text,
   };
@@ -236,16 +236,16 @@ export function renderPasswordResetEmail(opts: { name: string; resetUrl: string 
   const safeName = (name || 'Hola').slice(0, 80);
 
   const html = emailShell({
-    title: 'Cambiá tu contraseña de LabelFlow',
+    title: 'Cambiá tu contraseña de AutoEnvía',
     body: `<p style="margin:0 0 12px;">Hola <strong>${safeName}</strong>,</p>
-<p style="margin:0 0 12px;">Recibimos un pedido para restablecer la contraseña de tu cuenta en LabelFlow. Si fuiste vos, hacé clic en el botón de abajo para elegir una nueva contraseña:</p>
+<p style="margin:0 0 12px;">Recibimos un pedido para restablecer la contraseña de tu cuenta en AutoEnvía. Si fuiste vos, hacé clic en el botón de abajo para elegir una nueva contraseña:</p>
 <p style="margin:0 0 12px;font-size:13px;color:#666;">El link expira en <strong>1 hora</strong>. Si no fuiste vos, podés ignorar este mensaje — tu contraseña actual no cambia hasta que alguien complete el formulario.</p>`,
     cta: { href: resetUrl, label: 'Elegir nueva contraseña' },
   });
 
   const text = `Hola ${safeName},
 
-Recibimos un pedido para restablecer tu contraseña en LabelFlow.
+Recibimos un pedido para restablecer tu contraseña en AutoEnvía.
 
 Si fuiste vos, entrá a este link para elegir una nueva contraseña:
 
@@ -253,10 +253,10 @@ ${resetUrl}
 
 El link expira en 1 hora. Si no fuiste vos, podés ignorar este mensaje — tu contraseña actual no cambia hasta que alguien complete el formulario.
 
-— LabelFlow / autoenvia.com`;
+— AutoEnvía (por LabelFlow SAS) / autoenvia.com`;
 
   return {
-    subject: 'Restablecer contraseña — LabelFlow',
+    subject: 'Restablecer contraseña — AutoEnvía',
     html,
     text,
   };

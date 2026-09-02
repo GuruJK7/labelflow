@@ -38,7 +38,7 @@ export function ForgotPasswordForm() {
               <Zap className="w-4 h-4 text-white" />
             </div>
             <span className="font-bold text-white text-lg">
-              Label<span className="text-cyan-400">Flow</span>
+              Auto<span className="text-cyan-400">Envía</span>
             </span>
           </Link>
         </div>
@@ -50,7 +50,7 @@ export function ForgotPasswordForm() {
             </div>
             <h2 className="text-xl font-bold text-white">Revisá tu email</h2>
             <p className="text-zinc-400 text-sm">
-              Si <strong className="text-zinc-200">{email}</strong> está registrado en LabelFlow, te
+              Si <strong className="text-zinc-200">{email}</strong> está registrado en AutoEnvía, te
               enviamos un link para elegir una nueva contraseña. El link expira en 1 hora.
             </p>
             <p className="text-zinc-600 text-xs">

@@ -72,7 +72,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
               <Zap className="w-4 h-4 text-white" />
             </div>
             <span className="font-bold text-white text-lg">
-              Label<span className="text-cyan-400">Flow</span>
+              Auto<span className="text-cyan-400">Envía</span>
             </span>
           </Link>
         </div>

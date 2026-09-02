@@ -40,7 +40,7 @@ import {
  * Verified end-to-end on 2026-04-29 against the operator's KARBON store
  * (cfzf6b-dk.myshopify.com) — TWICE, with two independent apps in the same
  * Dev Dashboard. Both tokens (shpat_f7f2... and shpat_7004...) authenticated
- * against the live Admin API and granted all 10 scopes the LabelFlow worker
+ * against the live Admin API and granted all 10 scopes the AutoEnvía worker
  * requires. The second run surfaced two real-world traps now documented:
  *   - Typo "callbac" (missing trailing "k") in the redirect_uri field →
  *     "Oauth error invalid_request: The redirect_uri is not whitelisted".
@@ -97,7 +97,7 @@ const REQUIRED_SCOPES: { name: string; resource: string; why: string }[] = [
   {
     name: 'write_assigned_fulfillment_orders',
     resource: 'Assigned fulfillment',
-    why: 'Aceptar/cerrar fulfillment orders desde LabelFlow.',
+    why: 'Aceptar/cerrar fulfillment orders desde AutoEnvía.',
   },
   {
     name: 'read_merchant_managed_fulfillment_orders',
@@ -160,7 +160,7 @@ http.server.HTTPServer(("localhost", PORT), H).serve_forever()
 
 const OAUTH_URL_TEMPLATE = `https://{TU_TIENDA}.myshopify.com/admin/oauth/authorize?client_id={CLIENT_ID}&scope=${ALL_SCOPES_CSV}&redirect_uri=http://localhost:3456/callback&state=labelflow`;
 
-const CLAUDE_DESKTOP_PROMPT = `Sos un agente con acceso a Chrome MCP. Tu tarea es generar un token Admin API de Shopify para el comercio del usuario y entregárselo al final, listo para pegar en LabelFlow.
+const CLAUDE_DESKTOP_PROMPT = `Sos un agente con acceso a Chrome MCP. Tu tarea es generar un token Admin API de Shopify para el comercio del usuario y entregárselo al final, listo para pegar en AutoEnvía.
 
 REGLAS CRÍTICAS
 - Verificá visualmente cada paso antes de hacer clic. No alucines.
@@ -226,7 +226,7 @@ FLUJO COMPLETO
    - Mostrá al usuario:
      - URL de tienda: <SLUG>.myshopify.com
      - Token: shpat_...
-   - Recordá que debe pegarlo en /onboarding o /settings de LabelFlow
+   - Recordá que debe pegarlo en /onboarding o /settings de AutoEnvía
    - Sugerile rotar el Client Secret en Configuración (no afecta al token ya generado)
 
 VALIDACIÓN
@@ -635,7 +635,7 @@ for /f "tokens=5" %a in ('netstat -ano ^| findstr :3456 ^| findstr LISTENING') d
         <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
           %USERPROFILE%\Desktop\shopify_tokens.json
         </code>{' '}
-        (Windows). Antes de pegarlo en LabelFlow, corré este chequeo —
+        (Windows). Antes de pegarlo en AutoEnvía, corré este chequeo —
         reemplazá <code className="font-mono">shpat_TU_TOKEN</code> y{' '}
         <code className="font-mono">xxxxxx-xx</code> por los valores tuyos:
         <div className="mt-3">
@@ -722,10 +722,10 @@ if ($missing) {
   },
   {
     n: 11,
-    title: 'Pegar el token en LabelFlow',
+    title: 'Pegar el token en AutoEnvía',
     body: (
       <>
-        Volvé al onboarding (o a Configuración → Shopify) de LabelFlow:
+        Volvé al onboarding (o a Configuración → Shopify) de AutoEnvía:
         <ul className="mt-3 space-y-1 text-zinc-300 text-sm list-disc pl-5">
           <li>
             <span className="text-zinc-100 font-semibold">URL de tienda</span>:{' '}
@@ -746,7 +746,7 @@ if ($missing) {
           </li>
         </ul>
         Click <span className="text-zinc-100 font-semibold">Verificar</span>.
-        LabelFlow valida contra Shopify y guarda el token cifrado AES-256.
+        AutoEnvía valida contra Shopify y guarda el token cifrado AES-256.
         ¡Listo!
       </>
     ),
@@ -758,7 +758,7 @@ if ($missing) {
             Tienda conectada
           </div>
           <div className="mt-2 text-xs text-zinc-400 max-w-xs">
-            Tu token queda cifrado en LabelFlow con AES-256. El worker empieza
+            Tu token queda cifrado en AutoEnvía con AES-256. El worker empieza
             a procesar pedidos automáticamente.
           </div>
         </div>
@@ -797,7 +797,7 @@ export default function ShopifyTokenTutorialPage() {
           Cómo generar tu token Admin API de Shopify
         </h1>
         <p className="mt-4 text-base text-zinc-400 leading-relaxed max-w-3xl">
-          LabelFlow usa el Admin API de Shopify para leer tus pedidos y crear
+          AutoEnvía usa el Admin API de Shopify para leer tus pedidos y crear
           fulfillments con el número de guía DAC. Para eso necesitás un token{' '}
           <code className="text-cyan-300 bg-black/40 px-1.5 py-0.5 rounded text-sm font-mono">
             shpat_*
@@ -826,7 +826,7 @@ export default function ShopifyTokenTutorialPage() {
               10 alcances
             </div>
             <div className="text-xs text-zinc-500 mt-1">
-              Mínimos necesarios para que LabelFlow funcione. Nada más.
+              Mínimos necesarios para que AutoEnvía funcione. Nada más.
             </div>
           </div>
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
@@ -1070,7 +1070,7 @@ py --version`}
                 Listo — y un detalle final
               </h3>
               <p className="mt-2 text-sm text-zinc-300 leading-relaxed">
-                Una vez que LabelFlow guardó tu token (paso 11), el server
+                Una vez que AutoEnvía guardó tu token (paso 11), el server
                 Python local ya no hace falta. Volvé a la terminal donde corre
                 y apretá{' '}
                 <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
@@ -1085,7 +1085,7 @@ py --version`}
                 <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded text-xs font-mono">
                   ~/Desktop/shopify_tokens.json
                 </code>{' '}
-                ya está en LabelFlow cifrado AES-256, así que el archivo
+                ya está en AutoEnvía cifrado AES-256, así que el archivo
                 local también podés moverlo a un lugar seguro o borrarlo.
               </p>
             </div>
@@ -1123,12 +1123,12 @@ py --version`}
               a: 'El intercambio falló. Verificá que el dict APPS del script Python tenga el par correcto Client ID + Secret (sin espacios al copiar). Si rotaste el secret después de copiar, regeneralo y volvé a editar el script.',
             },
             {
-              q: 'LabelFlow dice "Token rechazado por Shopify"',
+              q: 'AutoEnvía dice "Token rechazado por Shopify"',
               a: 'Casi siempre falta algún scope. Corré el chequeo del paso 10 y mirá si dice MISSING:[...]. Si falta alguno, pegá el CSV completo en el paso 3, creá una versión nueva, y publicá.',
             },
             {
               q: 'Tengo varios tokens generados para la misma tienda',
-              a: 'Pasa cuando creás varias apps en el Dev Dashboard. Todos los tokens generados siguen siendo válidos hasta que desinstales/elimines la app que los emitió. Pegá en LabelFlow el último que generaste; si querés limpiar los viejos, eliminá las apps no usadas en el Dev Dashboard.',
+              a: 'Pasa cuando creás varias apps en el Dev Dashboard. Todos los tokens generados siguen siendo válidos hasta que desinstales/elimines la app que los emitió. Pegá en AutoEnvía el último que generaste; si querés limpiar los viejos, eliminá las apps no usadas en el Dev Dashboard.',
             },
             {
               q: 'La pantalla "Instalar app" muestra otra tienda (no la mía)',
@@ -1192,7 +1192,7 @@ py --version`}
 }
 
 export const metadata = {
-  title: 'Cómo generar tu token de Shopify · LabelFlow',
+  title: 'Cómo generar tu token de Shopify · AutoEnvía',
   description:
     'Tutorial paso a paso para obtener un token Admin API de Shopify (shpat_) usando el flujo nuevo del Dev Dashboard 2026. Con capturas reales y prompt para Claude Desktop.',
 };

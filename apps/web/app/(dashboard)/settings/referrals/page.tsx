@@ -56,7 +56,7 @@ export default function ReferralsPage() {
   function shareWhatsApp() {
     if (!state?.referralLink) return;
     const msg = encodeURIComponent(
-      `Te recomiendo LabelFlow para automatizar tus envíos con DAC. Te regalan ${TRIAL_SHIPMENTS} envíos gratis si te registrás con mi link: ${state.referralLink}`,
+      `Te recomiendo AutoEnvía para automatizar tus envíos con DAC. Te regalan ${TRIAL_SHIPMENTS} envíos gratis si te registrás con mi link: ${state.referralLink}`,
     );
     window.open(`https://wa.me/?text=${msg}`, '_blank');
   }

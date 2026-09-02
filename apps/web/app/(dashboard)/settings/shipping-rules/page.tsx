@@ -133,6 +133,28 @@ const RULE_PRESETS: RulePreset[] = [
   },
 ];
 
+/* ─── Tokens visuales ─────────────────────────────────────────────────────
+ * Los mismos de /settings (settings/page.tsx): el layout del dashboard pinta
+ * #050505, las tarjetas son glass zinc-900/50 y el único acento es cyan.
+ *
+ * El botón primario usa la variante `cyan-500 sobre zinc-950` — la que ya
+ * usan /settings/billing y /settings/referrals — y no `cyan-600 con texto
+ * blanco`: esa combinación da 3,7:1 y no llega al 4,5:1 que exige texto de
+ * este tamaño. Mismo acento, distinta polaridad.
+ *
+ * Todo el texto de contenido va en zinc-400 o más claro (>= 7:1 sobre la
+ * tarjeta). zinc-500 queda en 4,0:1, así que acá no se usa para texto.
+ */
+const CARD = 'bg-zinc-900/50 border border-white/[0.06] rounded-xl';
+const INPUT =
+  'w-full px-3.5 py-2.5 bg-zinc-800/50 border border-white/[0.08] rounded-lg text-white text-sm placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition-colors';
+const BTN_PRIMARY =
+  'inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-zinc-950 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const BTN_GHOST =
+  'px-4 py-2 rounded-lg text-sm text-zinc-300 hover:bg-white/[0.06] transition-colors disabled:opacity-50';
+const HELP = 'text-xs text-zinc-400 mt-1.5 leading-relaxed';
+const ALERT_ERROR = 'p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm';
+
 export default function ShippingRulesPage() {
   const [rules, setRules] = useState<ShippingRuleDTO[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -222,56 +244,55 @@ export default function ShippingRulesPage() {
   };
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="max-w-5xl">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-white">Reglas de envío</h1>
+        <p className="text-zinc-400 text-sm mt-1">
+          Cuándo el envío lo pagás vos en DAC (REMITENTE) en vez de cobrárselo al cliente
+        </p>
+      </div>
+
       <SettingsNav />
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Reglas de envío</h1>
-          <p className="text-sm text-gray-600 mt-1">
-            Configura cuando un pedido se marca como <b>REMITENTE</b> (lo pagas vos en DAC)
-            en lugar de DESTINATARIO (lo paga el cliente al recibir). Las reglas se evaluan de
-            arriba hacia abajo; la primera que coincide gana. Si ninguna coincide, se usa el
-            umbral clásico de la sección Configuración.
+
+      <div className="flex items-start justify-between gap-6 mb-6">
+        <div className="max-w-2xl rounded-lg bg-zinc-800/30 border border-white/[0.04] p-4 space-y-2">
+          <p className="text-xs text-zinc-400 leading-relaxed">
+            Las reglas se evalúan de arriba hacia abajo y la primera que coincide gana: ese pedido
+            va como <b className="text-zinc-200 font-semibold">REMITENTE</b> en vez de
+            DESTINATARIO. Si no coincide ninguna, se aplica el umbral clásico de la sección
+            Configuración.
           </p>
-          <p className="text-xs text-gray-500 mt-2 leading-relaxed">
-            <b>¿Que pasa con los REMITENTE?</b> El worker deja una nota en Shopify con el monto
-            del pedido y vos lo cargas a mano en DAC. No se usa tarjeta guardada.
+          <p className="text-xs text-zinc-400 leading-relaxed">
+            <b className="text-zinc-200 font-semibold">¿Qué pasa con los REMITENTE?</b> El worker
+            deja una nota en Shopify con el monto del pedido y vos lo cargás a mano en DAC. No se
+            usa tarjeta guardada.
           </p>
         </div>
-        <button
-          onClick={() => setCreating(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 text-sm font-medium"
-        >
+        <button onClick={() => setCreating(true)} className={`${BTN_PRIMARY} shrink-0`}>
           <Plus className="w-4 h-4" /> Nueva regla
         </button>
       </div>
 
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
-          {error}
-        </div>
-      )}
+      {error && <div className={`mb-4 ${ALERT_ERROR}`}>{error}</div>}
 
       {loading && !rules ? (
-        <div className="flex items-center gap-2 text-gray-500 text-sm">
+        <div className="flex items-center gap-2 text-zinc-400 text-sm">
           <Loader2 className="w-4 h-4 animate-spin" /> Cargando...
         </div>
       ) : rules && rules.length === 0 ? (
-        <div className="border border-dashed border-gray-300 rounded-lg p-10 text-center">
-          <p className="text-gray-600 mb-4">
-            No hay reglas configuradas. Se sigue aplicando el umbral clasico de <b>paymentThreshold</b>.
+        <div className="bg-zinc-900/30 border border-dashed border-white/[0.10] rounded-xl p-10 text-center">
+          <p className="text-zinc-400 text-sm mb-4">
+            No hay reglas configuradas. Se sigue aplicando el umbral clásico de{' '}
+            <b className="text-zinc-200 font-mono font-semibold">paymentThreshold</b>.
           </p>
-          <button
-            onClick={() => setCreating(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 text-sm"
-          >
+          <button onClick={() => setCreating(true)} className={BTN_PRIMARY}>
             <Plus className="w-4 h-4" /> Crear la primera regla
           </button>
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className={`${CARD} overflow-hidden`}>
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600 text-xs uppercase">
+            <thead className="bg-white/[0.02] text-zinc-400 text-[11px] uppercase tracking-wider">
               <tr>
                 <th className="px-3 py-2 text-left w-12">#</th>
                 <th className="px-3 py-2 text-left">Nombre</th>
@@ -283,25 +304,25 @@ export default function ShippingRulesPage() {
             </thead>
             <tbody>
               {rules?.map((rule, idx) => (
-                <tr key={rule.id} className="border-t border-gray-100 hover:bg-gray-50">
-                  <td className="px-3 py-2 font-mono text-xs text-gray-500">{idx + 1}</td>
-                  <td className="px-3 py-2 font-medium text-gray-900">{rule.name}</td>
-                  <td className="px-3 py-2 text-gray-700">{RULE_TYPE_LABELS[rule.ruleType]}</td>
-                  <td className="px-3 py-2 text-gray-600 font-mono text-xs">
+                <tr key={rule.id} className="border-t border-white/[0.06] hover:bg-white/[0.02] transition-colors">
+                  <td className="px-3 py-2.5 font-mono text-xs text-zinc-400">{idx + 1}</td>
+                  <td className="px-3 py-2.5 font-medium text-white">{rule.name}</td>
+                  <td className="px-3 py-2.5 text-zinc-300">{RULE_TYPE_LABELS[rule.ruleType]}</td>
+                  <td className="px-3 py-2.5 text-zinc-400 font-mono text-xs">
                     {formatConfig(rule.ruleType, rule.config as ConfigDraft)}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2.5">
                     {rule.isActive ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-xs">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs">
                         Activa
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-xs">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-700/40 border border-white/[0.08] text-zinc-300 text-xs">
                         Pausada
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-3 py-2.5 text-right">
                     <div className="inline-flex items-center gap-1">
                       <IconButton
                         title="Subir"
@@ -426,13 +447,17 @@ function RuleModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="glass rounded-xl border border-white/10 shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
+          <h2 className="text-base font-semibold text-white">
             {isEdit ? 'Editar regla' : 'Nueva regla de envío'}
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <button
+            onClick={onClose}
+            aria-label="Cerrar"
+            className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -441,18 +466,18 @@ function RuleModal({
           {/* Plantillas — solo visible al crear. Un click rellena el form entero
               con los valores recomendados y colapsa esta seccion. */}
           {!isEdit && showPresets && (
-            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+            <div className="rounded-lg border border-white/[0.06] bg-zinc-800/30 p-4">
               <div className="flex items-start justify-between mb-3">
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-900">
+                  <h3 className="text-sm font-semibold text-white">
                     Empezar con una plantilla
                   </h3>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    Elegi un preset comun y edita los valores si hace falta. O{' '}
+                  <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                    Elegí un preset común y editá los valores si hace falta. O{' '}
                     <button
                       type="button"
                       onClick={() => setShowPresets(false)}
-                      className="text-gray-700 underline hover:text-black"
+                      className="text-cyan-400 underline underline-offset-2 hover:text-cyan-300 transition-colors"
                     >
                       empezar desde cero
                     </button>.
@@ -466,20 +491,20 @@ function RuleModal({
                     key={preset.id}
                     type="button"
                     onClick={() => applyPreset(preset)}
-                    className="group text-left rounded-lg border border-gray-200 bg-white p-3 hover:border-black hover:shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-black"
+                    className="group text-left rounded-lg border border-white/[0.06] bg-zinc-900/60 p-3 hover:border-cyan-500/40 hover:bg-zinc-900 transition-all focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
                   >
                     <div className="flex items-start gap-2">
                       <span className="text-lg leading-none" aria-hidden="true">
                         {preset.icon}
                       </span>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 group-hover:text-black">
+                        <p className="text-sm font-medium text-white">
                           {preset.title}
                         </p>
-                        <p className="text-[11px] text-gray-600 mt-0.5 leading-snug">
+                        <p className="text-[11px] text-zinc-400 mt-1 leading-snug">
                           {preset.summary}
                         </p>
-                        <p className="text-[10px] text-gray-400 mt-1 leading-snug italic">
+                        <p className="text-[10px] text-zinc-400 mt-1 leading-snug italic">
                           {preset.useCase}
                         </p>
                       </div>
@@ -494,7 +519,7 @@ function RuleModal({
             <button
               type="button"
               onClick={() => setShowPresets(true)}
-              className="text-xs text-gray-500 hover:text-black underline underline-offset-2"
+              className="text-xs text-zinc-400 hover:text-cyan-400 underline underline-offset-2 transition-colors"
             >
               ← Volver a ver plantillas
             </button>
@@ -506,7 +531,7 @@ function RuleModal({
               onChange={(e) => setName(e.target.value)}
               maxLength={100}
               placeholder="Ej: VIPs siempre envío gratis"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
+              className={INPUT}
             />
           </Field>
 
@@ -514,7 +539,7 @@ function RuleModal({
             <select
               value={ruleType}
               onChange={(e) => changeRuleType(e.target.value as ShippingRuleType)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-black"
+              className={`${INPUT} [color-scheme:dark]`}
             >
               {SHIPPING_RULE_TYPES.map((t) => (
                 <option key={t} value={t}>
@@ -522,7 +547,7 @@ function RuleModal({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">{RULE_TYPE_DESCRIPTIONS[ruleType]}</p>
+            <p className={HELP}>{RULE_TYPE_DESCRIPTIONS[ruleType]}</p>
           </Field>
 
           <ConfigEditor ruleType={ruleType} config={config} onChange={setConfig} />
@@ -535,39 +560,33 @@ function RuleModal({
                 onChange={(e) => setPriority(parseInt(e.target.value || '0', 10))}
                 min={0}
                 max={10000}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
+                className={INPUT}
               />
             </Field>
             <Field label="Estado">
-              <label className="flex items-center gap-2 mt-1 cursor-pointer">
+              <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={isActive}
                   onChange={(e) => setIsActive(e.target.checked)}
-                  className="w-4 h-4"
+                  className="w-4 h-4 accent-cyan-500"
                 />
-                <span className="text-sm text-gray-700">{isActive ? 'Activa' : 'Pausada'}</span>
+                <span className="text-sm text-zinc-300">{isActive ? 'Activa' : 'Pausada'}</span>
               </label>
             </Field>
           </div>
 
-          {err && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">{err}</div>
-          )}
+          {err && <div className={ALERT_ERROR}>{err}</div>}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 bg-gray-50 rounded-b-xl">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg"
-            disabled={saving}
-          >
+        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/[0.06] bg-white/[0.02] rounded-b-xl">
+          <button onClick={onClose} className={BTN_GHOST} disabled={saving}>
             Cancelar
           </button>
           <button
             onClick={submit}
             disabled={saving || !name.trim()}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 text-sm font-medium disabled:opacity-50"
+            className={BTN_PRIMARY}
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             Guardar
@@ -598,9 +617,9 @@ function ConfigEditor({
             value={config.minTotalUyu ?? ''}
             onChange={(e) => onChange({ minTotalUyu: parseFloat(e.target.value || '0') })}
             min={1}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
+            className={INPUT}
           />
-          <p className="text-xs text-gray-500 mt-1">
+          <p className={HELP}>
             Pedidos con total convertido a UYU mayor que este monto → REMITENTE.
           </p>
         </Field>
@@ -614,9 +633,9 @@ function ConfigEditor({
             onChange={(e) => onChange({ windowMinutes: parseInt(e.target.value || '0', 10) })}
             min={1}
             max={1440}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
+            className={INPUT}
           />
-          <p className="text-xs text-gray-500 mt-1">
+          <p className={HELP}>
             Si el mismo cliente ya tiene un pedido dentro de este período, el nuevo va como REMITENTE.
           </p>
         </Field>
@@ -630,9 +649,9 @@ function ConfigEditor({
             onChange={(e) => onChange({ nth: parseInt(e.target.value || '0', 10) })}
             min={2}
             max={1000}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
+            className={INPUT}
           />
-          <p className="text-xs text-gray-500 mt-1">
+          <p className={HELP}>
             El 2do, 4to, N-ésimo... envío al mismo email va como REMITENTE. Se cuentan etiquetas CREATED y COMPLETED.
           </p>
         </Field>
@@ -645,9 +664,9 @@ function ConfigEditor({
             onChange={(e) => onChange({ tag: e.target.value })}
             maxLength={100}
             placeholder="vip"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
+            className={INPUT}
           />
-          <p className="text-xs text-gray-500 mt-1">
+          <p className={HELP}>
             Comparacion case-insensitive contra tags del pedido o del cliente en Shopify.
           </p>
         </Field>
@@ -661,9 +680,9 @@ function ConfigEditor({
             onChange={(e) => onChange({ minItems: parseInt(e.target.value || '0', 10) })}
             min={1}
             max={100}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
+            className={INPUT}
           />
-          <p className="text-xs text-gray-500 mt-1">
+          <p className={HELP}>
             Pedidos con más items que este número → REMITENTE.
           </p>
         </Field>
@@ -676,7 +695,7 @@ function ConfigEditor({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
+      <label className="block text-xs font-medium text-zinc-400 mb-1.5">{label}</label>
       {children}
     </div>
   );
@@ -700,8 +719,10 @@ function IconButton({
       title={title}
       onClick={onClick}
       disabled={disabled}
-      className={`p-1.5 rounded-md disabled:opacity-30 disabled:cursor-not-allowed ${
-        danger ? 'text-red-600 hover:bg-red-50' : 'text-gray-600 hover:bg-gray-100'
+      className={`p-1.5 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+        danger
+          ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10'
+          : 'text-zinc-400 hover:text-white hover:bg-white/[0.06]'
       }`}
     >
       {children}

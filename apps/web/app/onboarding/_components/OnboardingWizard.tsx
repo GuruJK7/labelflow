@@ -132,7 +132,7 @@ export function OnboardingWizard({
               <Zap className="w-4 h-4 text-white" />
             </div>
             <span className="font-bold text-white text-sm">
-              Label<span className="text-cyan-400">Flow</span>
+              Auto<span className="text-cyan-400">Envía</span>
             </span>
           </div>
           <span className="text-[11px] text-zinc-600 hidden sm:block">
