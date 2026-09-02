@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 
 export const metadata = {
-  title: 'LabelFlow Enterprise',
+  title: 'AutoEnvía',
 };
 
 export default function HomeRedirect() {

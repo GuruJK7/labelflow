@@ -80,8 +80,9 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
             </div>
             <div>
               <h1 className="font-bold text-white text-lg tracking-tight leading-none">
-                Label<span className="text-cyan-400">Flow</span>
+                Auto<span className="text-cyan-400">Envía</span>
               </h1>
+              <p className="text-[10px] text-zinc-600 mt-0.5">por LabelFlow SAS</p>
             </div>
           </Link>
 
@@ -129,7 +130,7 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
                 <Zap className="w-4 h-4 text-white" />
               </div>
               <span className="font-bold text-white text-lg">
-                Label<span className="text-cyan-400">Flow</span>
+                Auto<span className="text-cyan-400">Envía</span>
               </span>
             </Link>
           </div>

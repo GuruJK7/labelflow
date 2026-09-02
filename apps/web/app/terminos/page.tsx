@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 
 export const metadata = {
-  title: 'Términos de Servicio — LabelFlow',
+  title: 'Términos de Servicio — AutoEnvía',
 };
 
 export default function TerminosPage() {
@@ -25,8 +25,8 @@ export default function TerminosPage() {
           <section>
             <h2 className="text-lg font-semibold text-white mb-3">1. Descripción del servicio</h2>
             <p>
-              LabelFlow es una plataforma de software como servicio (SaaS) que automatiza la
-              generación de etiquetas de envío de DAC Uruguay a partir de pedidos de tiendas
+              AutoEnvía, servicio operado por LabelFlow SAS, es una plataforma de software como
+              servicio (SaaS) que automatiza la generación de etiquetas de envío de DAC Uruguay a partir de pedidos de tiendas
               Shopify. El servicio incluye la creación automática de guías, generación de PDFs de
               etiquetas y notificación por email a los destinatarios con información de rastreo.
             </p>
@@ -35,7 +35,7 @@ export default function TerminosPage() {
           <section>
             <h2 className="text-lg font-semibold text-white mb-3">2. Planes y precios</h2>
             <p className="mb-2">
-              LabelFlow ofrece los siguientes planes con precios en dólares estadounidenses (USD),
+              AutoEnvía ofrece los siguientes planes con precios en dólares estadounidenses (USD),
               facturados mensualmente a través de MercadoPago:
             </p>
             <ul className="list-disc list-inside space-y-1 text-zinc-400">
@@ -52,7 +52,7 @@ export default function TerminosPage() {
           <section>
             <h2 className="text-lg font-semibold text-white mb-3">3. Condiciones de uso</h2>
             <p>
-              Al utilizar LabelFlow, el usuario se compromete a: (a) proporcionar información
+              Al utilizar AutoEnvía, el usuario se compromete a: (a) proporcionar información
               veraz y actualizada; (b) mantener la confidencialidad de sus credenciales de acceso;
               (c) no utilizar el servicio para fines ilegales; (d) ser responsable del contenido
               y datos que procesa a través de la plataforma.
@@ -63,19 +63,19 @@ export default function TerminosPage() {
             <h2 className="text-lg font-semibold text-white mb-3">4. Credenciales de DAC y Shopify</h2>
             <p>
               El usuario es el único responsable de las credenciales de acceso a su cuenta de DAC
-              (dac.com.uy) y de su tienda Shopify. LabelFlow almacena estas credenciales de forma
+              (dac.com.uy) y de su tienda Shopify. AutoEnvía almacena estas credenciales de forma
               cifrada (AES-256-GCM) y las utiliza exclusivamente para la generación de etiquetas
               de envío en nombre del usuario.
             </p>
             <p className="mt-2">
               El usuario garantiza que tiene autorizacion para utilizar dichas cuentas y que su uso
-              a través de LabelFlow cumple con los términos de servicio de DAC y Shopify.
+              a través de AutoEnvía cumple con los términos de servicio de DAC y Shopify.
             </p>
           </section>
 
           <section>
             <h2 className="text-lg font-semibold text-white mb-3">5. Limitacion de responsabilidad</h2>
-            <p>LabelFlow no sera responsable por:</p>
+            <p>LabelFlow SAS no sera responsable por:</p>
             <ul className="list-disc list-inside space-y-1 text-zinc-400 mt-2">
               <li>Interrupciones o cambios en el servicio de DAC Uruguay (dac.com.uy)</li>
               <li>Interrupciones o cambios en la API de Shopify</li>
@@ -84,7 +84,7 @@ export default function TerminosPage() {
               <li>Danos indirectos, incidentales o consecuentes derivados del uso del servicio</li>
             </ul>
             <p className="mt-2">
-              La responsabilidad maxima de LabelFlow estara limitada al monto pagado por el
+              La responsabilidad maxima de LabelFlow SAS estara limitada al monto pagado por el
               usuario en los ultimos 3 meses de servicio.
             </p>
           </section>
@@ -92,13 +92,13 @@ export default function TerminosPage() {
           <section>
             <h2 className="text-lg font-semibold text-white mb-3">6. Tratamiento de datos de terceros</h2>
             <p>
-              El usuario reconoce que LabelFlow procesa datos personales de terceros (destinatarios
+              El usuario reconoce que LabelFlow SAS procesa datos personales de terceros (destinatarios
               de envíos), incluyendo nombre, dirección, teléfono y email. El usuario es responsable
               de obtener el consentimiento necesario de los destinatarios para el tratamiento de
               sus datos conforme a la Ley 18.331 de Protección de Datos Personales de Uruguay.
             </p>
             <p className="mt-2">
-              LabelFlow actua como encargado del tratamiento de estos datos, procesandolos
+              LabelFlow SAS actua como encargado del tratamiento de estos datos, procesandolos
               únicamente para la finalidad de generación de etiquetas de envío y notificación
               al destinatario.
             </p>
@@ -124,7 +124,7 @@ export default function TerminosPage() {
           <section>
             <h2 className="text-lg font-semibold text-white mb-3">8. Modificaciones</h2>
             <p>
-              LabelFlow se reserva el derecho de modificar estos términos con un aviso previo de
+              LabelFlow SAS se reserva el derecho de modificar estos términos con un aviso previo de
               15 días hábiles. Las modificaciones serán notificadas por email al usuario. El uso
               continuado del servicio después del período de aviso constituye aceptación de los
               nuevos términos.
@@ -135,7 +135,7 @@ export default function TerminosPage() {
             <h2 className="text-lg font-semibold text-white mb-3">9. Ley aplicable y jurisdiccion</h2>
             <p>
               Estos términos se rigen por las leyes de la República Oriental del Uruguay. Cualquier
-              controversia derivada del uso de LabelFlow sera sometida a la jurisdiccion de los
+              controversia derivada del uso de AutoEnvía sera sometida a la jurisdiccion de los
               Juzgados Letrados de Primera Instancia en lo Civil de Montevideo, Uruguay, con renuncia
               expresa a cualquier otro fuero o jurisdiccion que pudiera corresponder.
             </p>
@@ -164,7 +164,7 @@ export default function TerminosPage() {
         </div>
 
         <div className="mt-16 pt-8 border-t border-white/[0.06] flex items-center justify-between text-xs text-zinc-600">
-          <span>LabelFlow</span>
+          <span>AutoEnvía · por LabelFlow SAS</span>
           <Link href="/privacidad" className="text-cyan-400/60 hover:text-cyan-400 transition-colors">
             Política de Privacidad
           </Link>

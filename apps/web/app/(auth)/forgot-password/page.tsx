@@ -13,8 +13,8 @@
 import { ForgotPasswordForm } from './ForgotPasswordForm';
 
 export const metadata = {
-  title: 'Recuperar contraseña — LabelFlow',
-  description: 'Restablecé tu contraseña de LabelFlow para volver al panel.',
+  title: 'Recuperar contraseña — AutoEnvía',
+  description: 'Restablecé tu contraseña de AutoEnvía para volver al panel.',
 };
 
 export default function ForgotPasswordPage() {

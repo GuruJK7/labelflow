@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 
 export const metadata = {
-  title: 'Política de Privacidad — LabelFlow',
+  title: 'Política de Privacidad — AutoEnvía',
 };
 
 export default function PrivacidadPage() {
@@ -25,7 +25,8 @@ export default function PrivacidadPage() {
           <section>
             <h2 className="text-lg font-semibold text-white mb-3">1. Responsable del tratamiento</h2>
             <p>
-              LabelFlow, con domicilio en Montevideo, Uruguay, es el responsable del tratamiento
+              LabelFlow SAS, con domicilio en Montevideo, Uruguay, operadora del servicio
+              AutoEnvía, es el responsable del tratamiento
               de los datos personales recabados a través de esta plataforma, en cumplimiento con
               la Ley 18.331 de Protección de Datos Personales y Acción de Habeas Data y su
               Decreto Reglamentario 414/009.
@@ -157,7 +158,7 @@ export default function PrivacidadPage() {
           <section>
             <h2 className="text-lg font-semibold text-white mb-3">10. Cookies</h2>
             <p>
-              LabelFlow utiliza únicamente cookies esenciales para el funcionamiento de la
+              AutoEnvía utiliza únicamente cookies esenciales para el funcionamiento de la
               plataforma (sesión de usuario, token CSRF). No utilizamos cookies de rastreo,
               analiticas o publicitarias.
             </p>
@@ -191,7 +192,7 @@ export default function PrivacidadPage() {
         </div>
 
         <div className="mt-16 pt-8 border-t border-white/[0.06] flex items-center justify-between text-xs text-zinc-600">
-          <span>LabelFlow</span>
+          <span>AutoEnvía · por LabelFlow SAS</span>
           <Link href="/terminos" className="text-cyan-400/60 hover:text-cyan-400 transition-colors">
             Términos de Servicio
           </Link>

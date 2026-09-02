@@ -53,7 +53,7 @@ function VerifyEmailContent() {
         <div className="text-center mb-8">
           <Link href="/" className="inline-block">
             <h1 className="text-3xl font-bold text-white">
-              Label<span className="text-cyan-400">Flow</span>
+              Auto<span className="text-cyan-400">Envía</span>
             </h1>
           </Link>
         </div>

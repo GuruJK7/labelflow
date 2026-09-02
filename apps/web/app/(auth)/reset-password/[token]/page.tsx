@@ -13,7 +13,7 @@
 import { ResetPasswordForm } from './ResetPasswordForm';
 
 export const metadata = {
-  title: 'Elegir nueva contraseña — LabelFlow',
+  title: 'Elegir nueva contraseña — AutoEnvía',
 };
 
 type Props = {

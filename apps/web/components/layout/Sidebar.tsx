@@ -48,9 +48,9 @@ export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
           {!collapsed && (
             <div className="animate-fade-in">
               <h1 className="font-bold text-white text-[15px] tracking-tight leading-none">
-                Label<span className="text-cyan-400">Flow</span>
+                Auto<span className="text-cyan-400">Envía</span>
               </h1>
-              <p className="text-[10px] text-zinc-600 mt-0.5">Shopify x DAC</p>
+              <p className="text-[10px] text-zinc-600 mt-0.5">por LabelFlow SAS</p>
             </div>
           )}
         </Link>
