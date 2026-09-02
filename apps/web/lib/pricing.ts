@@ -99,6 +99,7 @@ export const BASE_USD_UYU_RATE_MILLI = 40_000n;
 export const USD_UYU_RATE_ENV = 'USD_UYU_RATE';
 
 let warnedInvalidRate = false;
+let warnedRegressions = false;
 
 /**
  * Tipo de cambio vigente en milésimos de UYU por dólar.
@@ -124,7 +125,47 @@ export function getUsdUyuRateMilli(env: NodeJS.ProcessEnv = process.env): bigint
     }
     return BASE_USD_UYU_RATE_MILLI;
   }
+  warnIfRateRaisesLegacyPrices(parsed);
   return parsed;
+}
+
+/**
+ * Deja rastro cuando el tipo de cambio configurado SUBE, en pesos, el precio de
+ * escalones que antes de D35 costaban menos.
+ *
+ * POR QUÉ EXISTE. `USD_UYU_RATE` se cambia con `vercel env add`: sin PR, sin
+ * redeploy, sin que falle ningún test (los tests corren con tipos literales,
+ * no con el valor de la env). Un 44 —el número que los otros dos repos tienen
+ * hardcodeado— sube los seis escalones viejos entre 8,7 % y 13,1 % y hoy no
+ * quedaría una sola línea de log. `legacyPriceRegressions()` ya medía esto,
+ * pero sólo la llamaban los tests. Acá se engancha al camino real.
+ *
+ * NO ES RUIDO: la suba del escalón de 1.000 al tipo BASE es la excepción
+ * conocida de D35 (7,00 → 7,20) y no dispara nada. Sólo dispara lo que D35 no
+ * previó, y cuando dispara lista TODOS los escalones que suben, incluido el de
+ * 1.000, para que el aviso alcance para decidir. Una vez por proceso.
+ *
+ * NO bloquea el checkout a propósito: quedarse sin cobrar por una env mal
+ * puesta es peor que cobrar de más dejándolo escrito.
+ */
+function warnIfRateRaisesLegacyPrices(rateMilli: bigint): void {
+  if (warnedRegressions) return;
+  if (unexpectedLegacyRegressions(rateMilli).length === 0) return;
+  warnedRegressions = true;
+  const detalle = legacyPriceRegressions(rateMilli)
+    .map(
+      (r) =>
+        `${r.minShipments}+ envíos: ${r.legacyUyu} → ${formatUyuMilli(r.newUyuMilli)} UYU ` +
+        `(+${formatPercent(r.newUyuMilli, BigInt(r.legacyUyu) * UYU_MILLI)} %)`,
+    )
+    .join('; ');
+  console.error(
+    `[pricing] ALERTA DE PRECIO: con ${USD_UYU_RATE_ENV}=${formatRate(rateMilli)} SUBE en pesos lo ` +
+      `que paga un cliente que ya estaba, respecto del tarifario anterior a D35 — ${detalle}. ` +
+      `El tipo más alto al que ningún precio viejo sube es ` +
+      `${formatRate(maxRateWithoutIncreaseMilli())} UYU/USD. Si la suba es intencional, ` +
+      `anotala en docs/DECISIONES.md; si no, revertí la env.`,
+  );
 }
 
 /** Parser puro del texto de la env. `null` si no sirve. Exportado para tests. */
@@ -138,9 +179,10 @@ export function parseRateMilli(raw: string): bigint | null {
   return milli;
 }
 
-/** Sólo para tests: permite volver a emitir el aviso de tipo de cambio inválido. */
+/** Sólo para tests: permite volver a emitir los avisos de tipo de cambio. */
 export function _resetPricingWarnings(): void {
   warnedInvalidRate = false;
+  warnedRegressions = false;
 }
 
 /**
@@ -371,6 +413,24 @@ export function legacyPriceRegressions(
 }
 
 /**
+ * Las subas que D35 NO previó, al tipo dado.
+ *
+ * La línea de base es lo que ya sube al tipo BASE: el escalón de 1.000, que es
+ * la excepción asumida y documentada de D35. Todo lo que aparece por encima de
+ * esa línea es una suba nueva, causada por mover `USD_UYU_RATE`, y es lo que
+ * dispara la alerta. Vacío al tipo base y a cualquier tipo menor.
+ */
+export function unexpectedLegacyRegressions(
+  rateMilli: bigint,
+  tiers: readonly PricingTier[] = PRICING_TIERS,
+): LegacyRegression[] {
+  const asumidas = new Set(
+    legacyPriceRegressions(BASE_USD_UYU_RATE_MILLI, tiers).map((r) => r.minShipments),
+  );
+  return legacyPriceRegressions(rateMilli, tiers).filter((r) => !asumidas.has(r.minShipments));
+}
+
+/**
  * El tipo de cambio más alto al que ningún precio viejo sube, en milésimos.
  * Con la escalera de D35 da 38.888 (38,888 UYU/USD), fijado por el escalón de
  * 1.000: 7 UYU / 0,18 USD. Por encima de eso, `legacyPriceRegressions()` deja
@@ -401,6 +461,22 @@ export function formatUsdMilli(usdMilli: bigint): string {
   const whole = cents / 100n;
   const rest = cents % 100n;
   return `${whole.toLocaleString('es-UY')},${rest.toString().padStart(2, '0')}`;
+}
+
+/** `7920n` → `"7,92"`. Milésimos de peso con dos decimales. Sólo para mensajes. */
+export function formatUyuMilli(uyuMilli: bigint): string {
+  const cents = divRoundHalfUp(uyuMilli, 10n);
+  return `${(cents / 100n).toLocaleString('es-UY')},${(cents % 100n).toString().padStart(2, '0')}`;
+}
+
+/**
+ * Variación porcentual de `valor` sobre `base`, con un decimal, en enteros.
+ * Sólo para el texto de la alerta: no se calcula plata con esto.
+ */
+export function formatPercent(valor: bigint, base: bigint): string {
+  if (base <= 0n) throw new RangeError('formatPercent: base no positiva');
+  const decimas = divRoundHalfUp((valor - base) * 1000n, base); // décimas de %
+  return `${decimas / 10n},${(decimas % 10n).toString()}`;
 }
 
 /** `40000n` → `"40"`, `38875n` → `"38,875"`. Sin ceros decorativos. */

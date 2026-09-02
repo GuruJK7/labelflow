@@ -11,6 +11,9 @@ import {
   formatUsdMilli,
   getUsdUyuRateMilli,
   legacyPriceRegressions,
+  unexpectedLegacyRegressions,
+  formatPercent,
+  formatUyuMilli,
   maxRateWithoutIncreaseMilli,
   nextTierHint,
   parseRateMilli,
@@ -391,6 +394,71 @@ describe('la promesa de D35: ningún cliente actual paga más', () => {
     expect(legacyPriceRegressions(44_000n).map((r) => r.minShipments)).toEqual([
       0, 50, 100, 250, 500, 1000,
     ]);
+  });
+});
+
+describe('guardarraíl: mover USD_UYU_RATE deja rastro', () => {
+  /**
+   * `USD_UYU_RATE` se cambia con `vercel env add`: sin PR, sin redeploy y sin
+   * que falle un solo test, porque los tests corren con tipos literales y no
+   * con el valor de la env. Antes de esto, subir la env a 44 encarecía los seis
+   * escalones viejos entre 8,7 % y 13,1 % sin dejar una línea de log.
+   */
+  it('la línea de base son las subas ya asumidas por D35: al tipo base no hay ninguna nueva', () => {
+    expect(unexpectedLegacyRegressions(BASE_USD_UYU_RATE_MILLI)).toEqual([]);
+    // Y por debajo del techo tampoco, obviamente.
+    expect(unexpectedLegacyRegressions(38_888n)).toEqual([]);
+    expect(unexpectedLegacyRegressions(20_000n)).toEqual([]);
+  });
+
+  it('a 44 las cinco subas NUEVAS son las que D35 no previó (la de 1000 ya estaba)', () => {
+    expect(unexpectedLegacyRegressions(44_000n).map((r) => r.minShipments)).toEqual([
+      0, 50, 100, 250, 500,
+    ]);
+  });
+
+  it('al tipo base el checkout NO grita: la excepción de D35 no es ruido', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(getUsdUyuRateMilli({ [USD_UYU_RATE_ENV]: '40' })).toBe(40_000n);
+    expect(getUsdUyuRateMilli({})).toBe(40_000n);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('con la env en 44 avisa UNA vez, nombra los escalones que suben y el techo', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(getUsdUyuRateMilli({ [USD_UYU_RATE_ENV]: '44' })).toBe(44_000n);
+    expect(getUsdUyuRateMilli({ [USD_UYU_RATE_ENV]: '44' })).toBe(44_000n);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const msg = String(spy.mock.calls[0][0]);
+    // Los SEIS escalones que suben, no sólo los nuevos: el aviso tiene que
+    // alcanzar para decidir sin ir a buscar nada más.
+    for (const corte of [0, 50, 100, 250, 500, 1000]) {
+      expect(msg, `escalón ${corte}`).toContain(`${corte}+ envíos`);
+    }
+    expect(msg).toContain('22,00 UYU'); // 0,50 × 44
+    expect(msg).toContain('+10,0 %');
+    expect(msg).toContain('7,92 UYU'); // el de 1000: 0,18 × 44
+    expect(msg).toContain('+13,1 %');
+    expect(msg).toContain('38,888'); // el techo
+    expect(msg).toContain('ALERTA DE PRECIO');
+    spy.mockRestore();
+  });
+
+  it('el aviso no sale si el tipo baja', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(getUsdUyuRateMilli({ [USD_UYU_RATE_ENV]: '36' })).toBe(36_000n);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('formatPercent y formatUyuMilli son enteros, no floats', () => {
+    expect(formatUyuMilli(7_920n)).toBe('7,92');
+    expect(formatUyuMilli(22_000n)).toBe('22,00');
+    expect(formatPercent(7_200n, 7_000n)).toBe('2,9'); // +2,86 % → 2,9
+    expect(formatPercent(22_000n, 20_000n)).toBe('10,0');
+    expect(formatPercent(7_920n, 7_000n)).toBe('13,1');
+    expect(() => formatPercent(1n, 0n)).toThrow(RangeError);
   });
 });
 
