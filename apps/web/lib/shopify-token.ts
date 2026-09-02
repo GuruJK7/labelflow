@@ -182,6 +182,12 @@ export async function refreshShopifyCredential(input: {
 }): Promise<ShopifyCredential> {
   const fetchImpl = input.fetchImpl ?? (globalThis.fetch as FetchLike);
   const now = input.now ?? Date.now();
+  // El client_secret de la app viaja en este POST: sólo puede ir a un host de
+  // Shopify. Una fila con shopifyStoreUrl arbitraria (token pegado a mano) no
+  // puede convertirse en un exfiltrador del secret (revisión de seguridad D29).
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(input.shop)) {
+    throw new ShopifyRefreshError(`refresh: host no permitido para ${input.shop}`);
+  }
   let res: Response;
   try {
     res = await fetchImpl(`https://${input.shop}/admin/oauth/access_token`, {

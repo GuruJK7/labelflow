@@ -497,3 +497,13 @@ describe('getValidShopifyAccessToken', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
+
+describe('refreshShopifyCredential — host', () => {
+  it('no manda el client_secret a un host que no sea *.myshopify.com', async () => {
+    const fetchImpl = vi.fn();
+    await expect(
+      refreshShopifyCredential({ shop: 'evil.example.com', refresh: 'shprt_x', clientId: 'id', secret: 's', fetchImpl: fetchImpl as never }),
+    ).rejects.toThrow(/host no permitido/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
