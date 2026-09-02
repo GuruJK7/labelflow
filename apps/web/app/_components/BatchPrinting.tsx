@@ -185,8 +185,11 @@ export function BatchPrinting() {
     };
   }, [inView]);
 
+  // Decorativa de punta a punta: el párrafo que la precede ya explica que las
+  // etiquetas del día bajan en un solo PDF, así que para un lector de pantalla
+  // esto es sólo ruido animado.
   return (
-    <div ref={ref as React.Ref<HTMLDivElement>} className="batch-print">
+    <div ref={ref as React.Ref<HTMLDivElement>} className="batch-print" aria-hidden>
       {/* Manual */}
       <div className="lop-panel pside human">
         <div className="hd">

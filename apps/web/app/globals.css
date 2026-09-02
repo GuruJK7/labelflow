@@ -471,8 +471,10 @@ body {
      and below the trust row above the funnel — so they never sit on the copy */
   .hero-chaos .o1 { top: 10%; left: 3%; right: auto; }
   .hero-chaos .o4 { top: 11%; right: 3%; left: auto; }
-  .hero-chaos .o2 { top: 85%; left: 3%; right: auto; }
-  .hero-chaos .o5 { top: 88%; right: 3%; left: auto; }
+  /* El par de abajo se esconde en teléfonos: el hero creció (la línea de los
+     envíos de prueba + la fila de chips) y estas dos tarjetas caían justo
+     encima del texto. Arriba quedan o1 y o4, que no chocan con nada. */
+  .hero-chaos .o2, .hero-chaos .o5 { display: none; }
   .hero-chaos .funnel { bottom: 22px; gap: 7px; }
   .hero-chaos .funnel .ring { width: 40px; height: 40px; border-radius: 12px; }
   .hero-chaos .funnel .ring svg { width: 15px; height: 15px; }
@@ -553,4 +555,13 @@ body {
   .batch-print .lbl,
   .batch-print .printbtn,
   .batch-print .pside.human .printer .led { animation: none !important; }
+  /* Las animaciones ambientales de la landing quedaban corriendo aunque el
+     sistema pidiera menos movimiento: los orbes del fondo giran 14 y 18
+     segundos en loop infinito, el haz del hero 8 y el degradado del título 6.
+     Son decorativas, así que se congelan en un estado válido en vez de
+     seguir latiendo. */
+  .animate-float-slow,
+  .animate-float-slower,
+  .animate-beam,
+  .animate-gradient { animation: none !important; }
 }

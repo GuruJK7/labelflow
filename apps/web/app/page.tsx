@@ -75,7 +75,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2.5 group">
             <div className="w-8 h-8 bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-lg flex items-center justify-center shadow-lg shadow-cyan-500/20 group-hover:shadow-cyan-500/40 transition-shadow">
-              <Zap className="w-4 h-4 text-white" />
+              <Zap className="w-4 h-4 text-white" aria-hidden />
             </div>
             <div className="flex items-baseline gap-2">
               <span className="font-display font-bold text-white text-[15px] tracking-tight">
@@ -103,9 +103,12 @@ export default function LandingPage() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* Debajo de sm el logo + dos botones no entran en 375px y se pisan.
+                Queda sólo el primario: el hero repite "Iniciar sesión" justo
+                abajo, así que no se pierde el acceso a la cuenta. */}
             <Link
               href="/login"
-              className="border border-white/10 text-zinc-200 hover:bg-white/[0.04] hover:border-white/20 px-3 sm:px-4 py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold transition-colors"
+              className="hidden sm:inline-flex border border-white/10 text-zinc-200 hover:bg-white/[0.04] hover:border-white/20 px-3 sm:px-4 py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold transition-colors"
             >
               Iniciar sesión
             </Link>
@@ -163,7 +166,7 @@ export default function LandingPage() {
                 className="group inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-zinc-950 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-xl shadow-cyan-500/30 hover:shadow-cyan-500/60 hover:-translate-y-0.5 glow-cyan w-full sm:w-auto justify-center"
               >
                 Crear cuenta gratis
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" aria-hidden />
               </Link>
               <Link
                 href="/login"
@@ -209,22 +212,22 @@ export default function LandingPage() {
             </p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <IntegrationCard
-                icon={<Store className="w-4 h-4" />}
+                icon={<Store className="w-4 h-4" aria-hidden />}
                 name="Shopify"
                 detail="La app se instala desde tu tienda. Los pedidos pagos entran al instante."
               />
               <IntegrationCard
-                icon={<Truck className="w-4 h-4" />}
+                icon={<Truck className="w-4 h-4" aria-hidden />}
                 name="DAC"
                 detail="Con tu cuenta de dac.com.uy. La guía y el seguimiento salen a tu nombre."
               />
               <IntegrationCard
-                icon={<FileSpreadsheet className="w-4 h-4" />}
+                icon={<FileSpreadsheet className="w-4 h-4" aria-hidden />}
                 name="Dashboard con Excel"
                 detail="Si no vendés por Shopify, cargás los pedidos ahí y los levantamos."
               />
               <IntegrationCard
-                icon={<CreditCard className="w-4 h-4" />}
+                icon={<CreditCard className="w-4 h-4" aria-hidden />}
                 name="MercadoPago"
                 detail="Sólo para que compres tus envíos. Pago único, no una suscripción."
               />
@@ -459,7 +462,7 @@ export default function LandingPage() {
                   className="group inline-flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-500 px-7 py-3.5 text-sm font-semibold text-zinc-950 shadow-xl shadow-cyan-500/30 transition-all hover:-translate-y-0.5 hover:bg-cyan-400 hover:shadow-cyan-500/60 sm:w-auto"
                 >
                   Crear cuenta gratis
-                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" aria-hidden />
                 </Link>
                 <Link
                   href="/login"
@@ -501,7 +504,6 @@ export default function LandingPage() {
             <FooterCol title="Tu cuenta">
               <FooterLink href="/signup">Crear cuenta gratis</FooterLink>
               <FooterLink href="/login">Iniciar sesión</FooterLink>
-              <FooterLink href="/tutorial">Guía de conexión</FooterLink>
             </FooterCol>
 
             <FooterCol title="Legales y contacto">

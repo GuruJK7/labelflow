@@ -139,7 +139,7 @@ export function PricingSelector() {
           className="group inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-7 py-3.5 font-display text-sm font-bold text-zinc-950 shadow-lg shadow-cyan-500/30 transition-all hover:-translate-y-0.5 hover:bg-cyan-400 hover:shadow-cyan-500/50"
         >
           Empezar con 5 envíos gratis
-          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" aria-hidden />
         </Link>
       </div>
 
