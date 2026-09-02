@@ -188,7 +188,7 @@ export default function LandingPage() {
               </span>
               <span className="flex items-center gap-1.5">
                 <Check className="w-3.5 h-3.5 text-emerald-400" aria-hidden />
-                También sirve sin Shopify
+                Las guías salen con tu cuenta de DAC
               </span>
               <span className="flex items-center gap-1.5">
                 <Check className="w-3.5 h-3.5 text-emerald-400" aria-hidden />
@@ -223,8 +223,8 @@ export default function LandingPage() {
               />
               <IntegrationCard
                 icon={<FileSpreadsheet className="w-4 h-4" aria-hidden />}
-                name="Dashboard con Excel"
-                detail="Si no vendés por Shopify, cargás los pedidos ahí y los levantamos."
+                name="Tu correo saliente"
+                detail="Opcional: al emitirse la guía le llega un mail al comprador con el seguimiento."
               />
               <IntegrationCard
                 icon={<CreditCard className="w-4 h-4" aria-hidden />}
@@ -543,7 +543,7 @@ const STEPS: { title: string; body: string; note: string }[] = [
   },
   {
     title: 'Conectás tu tienda',
-    body: 'Si vendés por Shopify, instalás la app desde tu tienda: autorizás los permisos y volvés conectado, sin copiar ni pegar ningún token. Si no vendés por Shopify, cargás los pedidos en el Dashboard de AutoEnvía desde un Excel y los levantamos de ahí.',
+    body: 'Instalás la app desde tu tienda de Shopify: autorizás los permisos y volvés conectado, sin crear una app privada ni copiar un token de acceso. El asistente te confirma en pantalla que la tienda quedó conectada.',
     note: '2 minutos',
   },
   {
@@ -576,7 +576,7 @@ const FEATURES: { title: string; body: string; art: ReactNode }[] = [
   },
   {
     title: 'Portal para el depósito, sin login',
-    body: 'Le pasás un link privado a quien empaqueta y ve sólo sus etiquetas: las descarga y marca las que ya imprimió. No necesita usuario ni contraseña, el link no se indexa en buscadores y uno inválido devuelve un 404 común.',
+    body: 'Si tenés depósito propio o tercerizado, te armamos un link privado para quien empaqueta: ve sólo las etiquetas de tus tiendas, las descarga y marca las que ya imprimió. No necesita usuario ni contraseña, el link no se indexa en buscadores y uno inválido devuelve un 404 común. El link lo generamos nosotros a pedido; todavía no se prende desde tu panel.',
     art: <ArtPortal />,
   },
   {
@@ -585,8 +585,8 @@ const FEATURES: { title: string; body: string; art: ReactNode }[] = [
     art: <ArtReglas />,
   },
   {
-    title: 'Reintentos que no duplican',
-    body: 'Si algo se trabó, reintentás desde el panel. Antes de emitir se saltean los pedidos que ya tienen guía —aunque la haya emitido otra tienda tuya—, las direcciones que ya rebotaron sin cambios y los envíos que quedaron a medias. Nadie termina con dos guías ni con dos cobros de DAC.',
+    title: 'Nunca dos guías del mismo pedido',
+    body: 'Antes de emitir, cada corrida saltea los pedidos que ya tienen guía completa —aunque la haya emitido otra tienda tuya—, las direcciones que ya rebotaron y siguen igual, y los envíos que quedaron a medias. Vale para la corrida automática y para la que disparás vos. Nadie termina con dos guías ni con dos cobros de DAC.',
     art: <ArtRetry />,
   },
 ];
@@ -603,8 +603,8 @@ const FOUNDATIONS: { title: string; body: string; icon: ReactNode }[] = [
     icon: <Lock className="h-4 w-4" aria-hidden />,
   },
   {
-    title: 'Cada cuenta ve lo suyo',
-    body: 'Las rutas de la API resuelven tu cuenta desde tu sesión y nunca aceptan un identificador de cuenta enviado por quien consulta.',
+    title: 'Ningún cliente ve lo de otro',
+    body: 'Cada consulta se resuelve contra tu sesión y se valida que la tienda sea tuya antes de responder. Nuestro equipo tiene acceso de operador para destrabarte algo; ningún otro cliente lo tiene.',
     icon: <Database className="h-4 w-4" aria-hidden />,
   },
   {
@@ -649,7 +649,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: '¿Qué pasa si un pedido falla?',
-    a: 'Queda marcado y no se despacha a medias. Si la dirección es la que trae problema, el pedido va a revisión para que la corrijas en tu tienda; si se trabó por otra cosa, lo reintentás desde el panel. El reintento saltea todo lo que ya tiene guía, así que no se emite dos veces ni te lo vuelve a cobrar DAC.',
+    a: 'Queda marcado y no se despacha a medias. Si el problema es la dirección, el pedido va a revisión: lo corregís en tu tienda y la corrida siguiente lo vuelve a tomar solo. Si se trabó por otra cosa, escribinos y lo destrabamos nosotros (hoy eso no se resuelve desde tu panel). En ningún caso se emite dos veces: una corrida nunca vuelve a emitir un pedido que ya tiene guía completa, así que DAC no te lo cobra de nuevo.',
   },
   {
     q: '¿Tengo que dejar la computadora prendida?',
@@ -657,7 +657,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: '¿Sirve si no vendo por Shopify?',
-    a: 'Sí. Cargás los pedidos en el Dashboard de AutoEnvía desde un Excel y nosotros los levantamos de ahí. La diferencia honesta: por ese camino no hay aviso instantáneo, los pedidos se procesan cada 15 minutos o una vez por hora, y el modo lo elegís vos en la configuración.',
+    a: 'Hoy, no del todo. El alta que hacés solo conecta tiendas de Shopify. Existe un segundo camino —cargás los pedidos desde un Excel en el Dashboard de AutoEnvía y los levantamos de ahí— pero ese acceso todavía te lo habilitamos nosotros a mano: no lo podés activar desde el asistente. Si vendés por fuera de Shopify, escribinos antes de crear la cuenta.',
   },
   {
     q: '¿Cómo se cobra?',
@@ -669,7 +669,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: '¿Mis datos están seguros?',
-    a: 'Tu acceso a DAC y el permiso de tu tienda se guardan cifrados con AES-256-GCM. Cada cuenta consulta únicamente sus propios datos: las rutas de la API toman la cuenta de tu sesión y nunca la aceptan del pedido. Además queda registro de cada corrida. El tratamiento de datos personales sigue lo que dice nuestra política de privacidad, alineada con la Ley 18.331.',
+    a: 'Tu acceso a DAC y el permiso de tu tienda se guardan cifrados con AES-256-GCM. Ningún cliente puede ver los datos de otro: cada consulta se resuelve contra tu sesión y se valida que la tienda sea tuya antes de responder. Sí tenemos acceso de operador nosotros, que es lo que nos deja destrabarte un envío cuando pasa algo; queda registro de cada corrida. El tratamiento de datos personales sigue nuestra política de privacidad, alineada con la Ley 18.331.',
   },
   {
     q: '¿En qué se diferencia de cargarlo a mano?',
@@ -958,8 +958,8 @@ function ArtReglas() {
 function ArtRetry() {
   return (
     <svg viewBox="0 0 260 104" className={SVG} role="presentation" aria-hidden focusable="false">
-      <text x="10" y="20" fill="#71717a" fontSize="8" fontFamily="monospace">
-        reintento
+      <text x="10" y="20" fill="#a1a1aa" fontSize="8" fontFamily="monospace">
+        cada corrida
       </text>
       {[
         { l: 'ya tiene guía', ok: false },
