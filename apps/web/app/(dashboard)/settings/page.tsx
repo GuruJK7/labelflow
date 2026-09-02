@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar, Printer, FlaskConical, Play } from 'lucide-react';
 import { PrinterSetup } from '@/components/printing/PrinterSetup';
 import { SettingsNav } from './_components/SettingsNav';
+import { WizardShortcuts } from './_components/WizardShortcuts';
 import {
   SHOPIFY_OAUTH_MESSAGES,
   shopHandleFromParam,
@@ -328,6 +329,7 @@ export default function SettingsPage() {
       <SettingsNav />
 
       <div className="space-y-6 max-w-2xl">
+        <WizardShortcuts />
         {/* Shopify */}
         <div id="tiendas" className="scroll-mt-24 bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
           <div className="flex items-center justify-between mb-4">
