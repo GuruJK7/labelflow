@@ -14,11 +14,13 @@ import {
   ShopifyRefreshTransient,
   ShopifyRefreshError,
   SHOPIFY_TOKEN_REINSTALL_MESSAGE,
+  SHOPIFY_TOKEN_JOB_SKEW_MS,
+  SHOPIFY_TOKEN_RACE_GRACE_MS,
   __resetShopifyTokenState,
   type ShopifyCredential,
   type ShopifyTokenDb,
 } from '../shopify-token';
-import { encrypt, decrypt } from '../encryption';
+import { encrypt, decrypt } from '@/lib/encryption';
 
 /**
  * Tokens offline expirables (D29). Lo que tiene que quedar clavado:
@@ -28,6 +30,10 @@ import { encrypt, decrypt } from '../encryption';
  *   - el UPDATE es condicional al cifrado leído: nunca pisa lo que otro
  *     proceso (o un reinstall) escribió,
  *   - invalid_grant con la base sin cambios NO borra nada: error accionable + null,
+ *   - invalid_grant por CARRERA con otro proceso (su UPDATE llega después del
+ *     error) no pide reinstalar: espera, relee, y si el access viejo todavía
+ *     vive lo usa,
+ *   - el margen es del llamador: un job largo arranca con ~1 h entera,
  *   - ningún log de este módulo contiene un token.
  */
 
@@ -234,6 +240,15 @@ describe('refreshShopifyCredential', () => {
 });
 
 describe('getValidShopifyAccessToken', () => {
+  /** Espera de la carrera sin dormir de verdad; registra cuánto se pidió esperar. */
+  const esperas: number[] = [];
+  const sleep = vi.fn(async (ms: number) => {
+    esperas.push(ms);
+  });
+  beforeEach(() => {
+    esperas.length = 0;
+    sleep.mockClear();
+  });
   const base = (db: ShopifyTokenDb, cipher: string | null, fetchImpl?: ReturnType<typeof vi.fn>, over: Record<string, unknown> = {}) => ({
     db,
     tenant: { id: TENANT, shopifyStoreUrl: SHOP, shopifyToken: cipher },
@@ -241,6 +256,7 @@ describe('getValidShopifyAccessToken', () => {
     secret: SECRET,
     now: NOW,
     fetchImpl: fetchImpl as unknown as (input: string, init?: RequestInit) => Promise<Response>,
+    sleep,
     ...over,
   });
 
@@ -358,8 +374,8 @@ describe('getValidShopifyAccessToken', () => {
     expect(avisos[0]).toContain(TENANT);
   });
 
-  it('invalid_grant con la base sin cambios → null, error accionable, y el token NO se borra', async () => {
-    const cipher = encrypt(serializeShopifyCredential(envelope({ exp: NOW + 60 * 1000 })));
+  it('invalid_grant con la base sin cambios y el access VENCIDO → null, error accionable, y el token NO se borra (dos relecturas con espera)', async () => {
+    const cipher = encrypt(serializeShopifyCredential(envelope({ exp: NOW - 1000 })));
     const { db, state, updateMany, findUnique } = fakeDb(cipher);
     const fetchImpl = vi.fn(async () => new Response('{"error":"invalid_grant"}', { status: 400 }));
 
@@ -367,10 +383,94 @@ describe('getValidShopifyAccessToken', () => {
     expect(r.access).toBeNull();
     expect(r.reason).toBe('reinstall');
     expect(r.access === null && r.message).toBe(SHOPIFY_TOKEN_REINSTALL_MESSAGE);
-    expect(findUnique).toHaveBeenCalledTimes(1);
+    expect(findUnique).toHaveBeenCalledTimes(2);
+    expect(esperas).toEqual([SHOPIFY_TOKEN_RACE_GRACE_MS]);
     expect(updateMany).not.toHaveBeenCalled();
     expect(state.cipher).toBe(cipher);
     expect(logs.some((l) => l.includes('reinstalar la app') && l.includes(TENANT))).toBe(true);
+  });
+
+  it('carrera entre procesos: invalid_grant llega ANTES del UPDATE del otro; la segunda relectura (tras la espera) ya ve el par nuevo → se usa, sin pedir reinstalar', async () => {
+    const viejo = encrypt(serializeShopifyCredential(envelope({ exp: NOW + 60 * 1000 })));
+    const rotadoPorOtro = encrypt(serializeShopifyCredential(envelope({ access: 'shpat_de_otro', refresh: 'shprt_de_otro', exp: NOW + HORA })));
+    const { db, state, updateMany, findUnique } = fakeDb(viejo);
+    const fetchImpl = vi.fn(async () => new Response('{"error":"invalid_grant"}', { status: 400 }));
+    // El UPDATE del ganador aterriza durante la espera.
+    sleep.mockImplementationOnce(async (ms: number) => {
+      esperas.push(ms);
+      state.cipher = rotadoPorOtro;
+    });
+
+    const r = await resolveShopifyAccessToken(base(db, viejo, fetchImpl));
+    expect(r.access).toBe('shpat_de_otro');
+    expect(r.reason).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(findUnique).toHaveBeenCalledTimes(2);
+    expect(esperas).toEqual([SHOPIFY_TOKEN_RACE_GRACE_MS]);
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(state.cipher).toBe(rotadoPorOtro);
+    expect(logs.some((l) => l.includes('reinstalar'))).toBe(false);
+  });
+
+  it('invalid_grant con la base estable pero el access todavía VIVO → devuelve ese access (reason null), avisa, y NO declara reinstall', async () => {
+    const cipher = encrypt(serializeShopifyCredential(envelope({ exp: NOW + 60 * 1000 })));
+    const { db, state, updateMany, findUnique } = fakeDb(cipher);
+    const fetchImpl = vi.fn(async () => new Response('{"error":"invalid_grant"}', { status: 400 }));
+
+    const r = await resolveShopifyAccessToken(base(db, cipher, fetchImpl));
+    expect(r.access).toBe('shpat_viejo');
+    expect(r.reason).toBeNull();
+    expect(findUnique).toHaveBeenCalledTimes(2);
+    expect(esperas).toEqual([SHOPIFY_TOKEN_RACE_GRACE_MS]);
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(state.cipher).toBe(cipher);
+    expect(logs.some((l) => l.includes('invalid_grant') && l.includes('todavía no venció'))).toBe(true);
+    expect(logs.some((l) => l.startsWith('[shopify/token] refresh rechazado (invalid_grant) y access vencido'))).toBe(false);
+  });
+
+  it('skewMs es del llamador: con 30 min de vida el default no renueva, SHOPIFY_TOKEN_JOB_SKEW_MS (55 min) sí, e Infinity fuerza la rotación de un par fresco', async () => {
+    const treinta = encrypt(serializeShopifyCredential(envelope({ exp: NOW + 30 * 60 * 1000 })));
+    const { db: db1, updateMany: u1 } = fakeDb(treinta);
+    const f1 = vi.fn(async () => tokenResponse());
+    expect(await getValidShopifyAccessToken(base(db1, treinta, f1))).toBe('shpat_viejo');
+    expect(f1).not.toHaveBeenCalled();
+    expect(await getValidShopifyAccessToken(base(db1, treinta, f1, { skewMs: SHOPIFY_TOKEN_JOB_SKEW_MS }))).toBe('shpat_nuevo');
+    expect(f1).toHaveBeenCalledTimes(1);
+    expect(u1).toHaveBeenCalledTimes(1);
+
+    const fresco = encrypt(serializeShopifyCredential(envelope({ exp: NOW + HORA })));
+    const { db: db2 } = fakeDb(fresco);
+    const f2 = vi.fn(async () => tokenResponse());
+    expect(await getValidShopifyAccessToken(base(db2, fresco, f2, { skewMs: Number.POSITIVE_INFINITY }))).toBe('shpat_nuevo');
+    expect(f2).toHaveBeenCalledTimes(1);
+  });
+
+  it('sin secret y margen de job: con 30 min de vida devuelve el access SIN avisar (no hay riesgo real); con 2 min avisa una vez', async () => {
+    const treinta = encrypt(serializeShopifyCredential(envelope({ exp: NOW + 30 * 60 * 1000 })));
+    const { db: db1 } = fakeDb(treinta);
+    const fetchImpl = vi.fn();
+    const sinSecret = { clientId: undefined, secret: undefined, skewMs: SHOPIFY_TOKEN_JOB_SKEW_MS };
+    expect(await getValidShopifyAccessToken(base(db1, treinta, fetchImpl, sinSecret))).toBe('shpat_viejo');
+    expect(logs.filter((l) => l.includes('SHOPIFY_API_KEY'))).toHaveLength(0);
+
+    const dos = encrypt(serializeShopifyCredential(envelope({ exp: NOW + 2 * 60 * 1000 })));
+    const { db: db2 } = fakeDb(dos);
+    expect(await getValidShopifyAccessToken(base(db2, dos, fetchImpl, sinSecret))).toBe('shpat_viejo');
+    expect(await getValidShopifyAccessToken(base(db2, dos, fetchImpl, sinSecret))).toBe('shpat_viejo');
+    expect(logs.filter((l) => l.includes('SHOPIFY_API_KEY'))).toHaveLength(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('la resolución dice si el token es legacy (string fijo) o expirable (hay que re-resolver)', async () => {
+    const legacy = encrypt('shpat_custom_app');
+    const { db: db1 } = fakeDb(legacy);
+    const r1 = await resolveShopifyAccessToken(base(db1, legacy));
+    expect(r1.reason === null && r1.legacy).toBe(true);
+
+    const env = encrypt(serializeShopifyCredential(envelope({ exp: NOW + HORA })));
+    const { db: db2 } = fakeDb(env);
+    const r2 = await resolveShopifyAccessToken(base(db2, env));
+    expect(r2.reason === null && r2.legacy).toBe(false);
   });
 
   it('fallo transitorio: si el access todavía sirve se devuelve; si ya venció, null con motivo reintentable', async () => {

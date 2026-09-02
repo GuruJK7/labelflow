@@ -29,11 +29,36 @@ import { encrypt, decryptIfPresent } from '@/lib/encryption';
  * Shopify rotó, o revocado): NO se borra el token, se loguea "la tienda tiene
  * que reinstalar la app" y se devuelve null.
  *
+ * CARRERA ENTRE PROCESOS (revisión de D29): dos procesos que no comparten
+ * memoria (dos invocaciones de Vercel, o web + worker) pueden leer el mismo
+ * envelope por vencer y pedirle el refresh a Shopify con el mismo `shprt`.
+ * Shopify rota para uno; el otro recibe `invalid_grant`, y suele recibirlo
+ * ANTES de que el ganador haga su UPDATE. Por eso `invalid_grant` no declara
+ * "reinstalar" con una sola relectura inmediata: si la base no cambió se
+ * espera `SHOPIFY_TOKEN_RACE_GRACE_MS` y se relee UNA vez más. Si sigue
+ * igual y el access que ya teníamos todavía no venció, se usa ese (la próxima
+ * llamada reintenta); "reinstalar" queda reservado para access vencido + dos
+ * relecturas estables.
+ *
+ * MARGEN POR LLAMADOR: `skewMs` es parámetro. El default (5 min) sirve para
+ * una ruta web que usa el token una vez. Un job del worker que va a estar
+ * horas creando guías arranca con `SHOPIFY_TOKEN_JOB_SKEW_MS` (55 min): si
+ * el access no tiene casi la hora entera por delante se rota antes de
+ * empezar. Lo mismo hace `warmShopifyToken` en la web antes de encolar.
+ *
  * NINGUNA función de este módulo loguea tokens, ni completos ni truncados.
  */
 
 export const SHOPIFY_TOKEN_ENVELOPE_VERSION = 1;
 export const SHOPIFY_TOKEN_EXPIRY_SKEW_MS = 5 * 60 * 1000;
+/**
+ * Margen para quien va a usar el token durante mucho tiempo seguido (los jobs
+ * del worker, el warm-up previo a encolar): con menos de 55 min de vida se
+ * rota antes de arrancar, así cada corrida empieza con ~1 h entera.
+ */
+export const SHOPIFY_TOKEN_JOB_SKEW_MS = 55 * 60 * 1000;
+/** Espera antes de la segunda relectura cuando `invalid_grant` puede ser una carrera con otro proceso. */
+export const SHOPIFY_TOKEN_RACE_GRACE_MS = 1_500;
 export const SHOPIFY_REFRESH_TIMEOUT_MS = 15_000;
 
 /** Mensaje accionable para el operador cuando el par guardado ya no se puede renovar. */
@@ -229,7 +254,12 @@ export interface ShopifyTokenTenant {
 }
 
 export type ShopifyAccessResolution =
-  | { access: string; reason: null }
+  | {
+      access: string;
+      reason: null;
+      /** true = token de custom app (no vence): el llamador puede usarlo como string fijo sin re-resolver. */
+      legacy: boolean;
+    }
   | {
       access: null;
       /** `no-token`: columna vacía · `unreadable`: no descifra o envelope corrupto · `reinstall`: el refresh ya no sirve · `refresh-failed`: fallo transitorio con el access ya vencido. */
@@ -254,14 +284,28 @@ export function __resetShopifyTokenState(): void {
  * Es la versión de `getValidShopifyAccessToken` para quien tiene que escribir
  * el motivo en un runlog (los jobs del worker).
  */
-export async function resolveShopifyAccessToken(input: {
+export interface ResolveShopifyAccessInput {
   db: ShopifyTokenDb;
   tenant: ShopifyTokenTenant;
   clientId?: string | null;
   secret?: string | null;
   now?: number;
   fetchImpl?: FetchLike;
-}): Promise<ShopifyAccessResolution> {
+  /**
+   * Con menos de este margen de vida el access se renueva antes de devolverlo.
+   * Default `SHOPIFY_TOKEN_EXPIRY_SKEW_MS` (5 min); los jobs largos pasan
+   * `SHOPIFY_TOKEN_JOB_SKEW_MS`; `Infinity` fuerza la rotación.
+   */
+  skewMs?: number;
+  /** Inyectable para tests: reemplaza `setTimeout` en la espera de la carrera. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function resolveShopifyAccessToken(input: ResolveShopifyAccessInput): Promise<ShopifyAccessResolution> {
   const { tenant } = input;
   const cipher = tenant.shopifyToken;
   if (!cipher) return { access: null, reason: 'no-token', message: 'Shopify no está conectado en esta tienda' };
@@ -271,25 +315,38 @@ export async function resolveShopifyAccessToken(input: {
     console.error(`${LOG_PREFIX} token ilegible`, { tenantId: tenant.id });
     return { access: null, reason: 'unreadable', message: 'El token de Shopify guardado no se puede leer: reconectar la tienda' };
   }
-  if (cred.legacy) return { access: cred.access, reason: null };
+  if (cred.legacy) return { access: cred.access, reason: null, legacy: true };
 
   const now = input.now ?? Date.now();
-  if (!isExpiringSoon(cred, now)) return { access: cred.access, reason: null };
+  const skewMs = input.skewMs ?? SHOPIFY_TOKEN_EXPIRY_SKEW_MS;
+  if (!isExpiringSoon(cred, now, skewMs)) return { access: cred.access, reason: null, legacy: false };
 
   if (!input.clientId || !input.secret) {
-    if (!warnedWithoutSecret.has(tenant.id)) {
+    // Sin secret no hay renovación posible. El aviso (uno por tenant por
+    // proceso) sólo cuando el riesgo es real —vence dentro del margen
+    // corto—, no cada vez que un job pide el margen largo con un access que
+    // todavía tiene media hora por delante.
+    if (isExpiringSoon(cred, now) && !warnedWithoutSecret.has(tenant.id)) {
       warnedWithoutSecret.add(tenant.id);
       console.warn(
         `${LOG_PREFIX} SHOPIFY_API_KEY/SHOPIFY_API_SECRET no están en el entorno: no se puede renovar el token de Shopify, se usa el guardado (puede estar vencido)`,
         { tenantId: tenant.id },
       );
     }
-    return { access: cred.access, reason: null };
+    return { access: cred.access, reason: null, legacy: false };
   }
 
   const pending = inflight.get(tenant.id);
   if (pending) return pending;
-  const p = renovar({ ...input, cred, cipher, now, clientId: input.clientId, secret: input.secret }).finally(() => {
+  const p = renovar({
+    ...input,
+    cred,
+    cipher,
+    now,
+    clientId: input.clientId,
+    secret: input.secret,
+    sleep: input.sleep ?? defaultSleep,
+  }).finally(() => {
     inflight.delete(tenant.id);
   });
   inflight.set(tenant.id, p);
@@ -305,6 +362,7 @@ async function renovar(input: {
   secret: string;
   now: number;
   fetchImpl?: FetchLike;
+  sleep: (ms: number) => Promise<void>;
 }): Promise<ShopifyAccessResolution> {
   const { db, tenant, cred, cipher, now } = input;
   const vencido = cred.exp !== undefined && cred.exp <= now;
@@ -312,7 +370,7 @@ async function renovar(input: {
   if (!tenant.shopifyStoreUrl || !cred.refresh) {
     // Sin tienda o sin refresh no hay forma de renovar. Si el access todavía
     // sirve se usa; si no, es un reinstall.
-    if (!vencido) return { access: cred.access, reason: null };
+    if (!vencido) return { access: cred.access, reason: null, legacy: false };
     console.error(`${LOG_PREFIX} access vencido y sin refresh token: ${SHOPIFY_TOKEN_REINSTALL_MESSAGE}`, {
       tenantId: tenant.id,
       shop: tenant.shopifyStoreUrl,
@@ -333,13 +391,28 @@ async function renovar(input: {
   } catch (err) {
     if (err instanceof ShopifyRefreshInvalidGrant) {
       // Alguien más pudo haber rotado (Shopify invalida el refresh viejo en
-      // el acto). Si la base cambió, ese par es el bueno; si no, el guardado
-      // quedó huérfano y sólo un reinstall lo arregla. Nunca se borra.
-      const releido = await releer(db, tenant.id);
-      if (releido && releido.cipher !== cipher && releido.cred) {
-        return { access: releido.cred.access, reason: null };
+      // el acto) y su UPDATE puede llegar DESPUÉS de este error: una
+      // relectura inmediata, una espera corta y una segunda relectura. Si la
+      // base cambió, ese par es el bueno.
+      let releido = await releer(db, tenant.id);
+      if (!(releido && releido.cipher !== cipher)) {
+        await input.sleep(SHOPIFY_TOKEN_RACE_GRACE_MS);
+        releido = await releer(db, tenant.id);
       }
-      console.error(`${LOG_PREFIX} refresh rechazado (invalid_grant): ${SHOPIFY_TOKEN_REINSTALL_MESSAGE}`, {
+      if (releido && releido.cipher !== cipher && releido.cred) {
+        return { access: releido.cred.access, reason: null, legacy: releido.cred.legacy };
+      }
+      // Base estable. Si el access que ya teníamos todavía no venció, sirve
+      // para esta llamada (la próxima reintenta); "reinstalar" sólo cuando
+      // no queda nada usable. Nunca se borra.
+      if (!vencido) {
+        console.warn(
+          `${LOG_PREFIX} refresh rechazado (invalid_grant) con la base sin cambios; el access guardado todavía no venció y se usa. Si se repite con el access vencido: ${SHOPIFY_TOKEN_REINSTALL_MESSAGE}`,
+          { tenantId: tenant.id, shop: tenant.shopifyStoreUrl, status: err.status },
+        );
+        return { access: cred.access, reason: null, legacy: false };
+      }
+      console.error(`${LOG_PREFIX} refresh rechazado (invalid_grant) y access vencido: ${SHOPIFY_TOKEN_REINSTALL_MESSAGE}`, {
         tenantId: tenant.id,
         shop: tenant.shopifyStoreUrl,
         status: err.status,
@@ -353,7 +426,7 @@ async function renovar(input: {
       status: e.status,
       accessVencido: vencido,
     });
-    if (!vencido) return { access: cred.access, reason: null };
+    if (!vencido) return { access: cred.access, reason: null, legacy: false };
     return {
       access: null,
       reason: 'refresh-failed',
@@ -370,15 +443,15 @@ async function renovar(input: {
     console.error(`${LOG_PREFIX} el token se renovó pero no se pudo persistir (dos intentos); la próxima renovación va a fallar`, {
       tenantId: tenant.id,
     });
-    return { access: nuevo.access, reason: null };
+    return { access: nuevo.access, reason: null, legacy: false };
   }
-  if (r.count === 1) return { access: nuevo.access, reason: null };
+  if (r.count === 1) return { access: nuevo.access, reason: null, legacy: false };
 
   // 0 filas: el cifrado que leí ya no está (otro proceso rotó, un reinstall
   // escribió un par nuevo, o uninstalled lo puso en null). Lo que haya en la
   // base manda; no se pisa.
   const releido = await releer(db, tenant.id);
-  if (releido?.cred) return { access: releido.cred.access, reason: null };
+  if (releido?.cred) return { access: releido.cred.access, reason: null, legacy: releido.cred.legacy };
   if (releido && releido.cipher === null) {
     return { access: null, reason: 'no-token', message: 'Shopify se desconectó de esta tienda durante la renovación' };
   }
@@ -387,7 +460,7 @@ async function renovar(input: {
   console.error(`${LOG_PREFIX} la base cambió durante la renovación y lo nuevo no se puede leer; se usa el par recién emitido`, {
     tenantId: tenant.id,
   });
-  return { access: nuevo.access, reason: null };
+  return { access: nuevo.access, reason: null, legacy: false };
 }
 
 async function updateConReintento(
@@ -427,13 +500,6 @@ async function releer(
  * `decryptIfPresent(tenant.shopifyToken)`; para uno del App Store renueva
  * bajo demanda (ver cabecera).
  */
-export async function getValidShopifyAccessToken(input: {
-  db: ShopifyTokenDb;
-  tenant: ShopifyTokenTenant;
-  clientId?: string | null;
-  secret?: string | null;
-  now?: number;
-  fetchImpl?: FetchLike;
-}): Promise<string | null> {
+export async function getValidShopifyAccessToken(input: ResolveShopifyAccessInput): Promise<string | null> {
   return (await resolveShopifyAccessToken(input)).access;
 }
