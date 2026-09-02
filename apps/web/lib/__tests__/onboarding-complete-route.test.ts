@@ -23,6 +23,9 @@ import { POST } from '@/app/api/v1/onboarding/complete/route';
 const TENANT_LISTO = {
   shopifyStoreUrl: 'mitienda.myshopify.com',
   shopifyToken: 'enc:token',
+  dashboardSourceEnabled: false,
+  dashboardUrl: null,
+  dashboardToken: null,
   dacUsername: 'enc:user',
   dacPassword: 'enc:pass',
   onboardingComplete: false,
@@ -107,6 +110,43 @@ describe('POST /api/v1/onboarding/complete', () => {
     const res = await POST();
     expect(res.status).toBe(200);
     expect((await res.json()).data).toEqual({ ok: true, alreadyComplete: true });
+    expect(mocks.tenantUpdate).not.toHaveBeenCalled();
+  });
+
+  it('Dashboard con Excel + DAC + email (sin Shopify) → 200 y activa (D33)', async () => {
+    mocks.tenantFindUnique.mockResolvedValueOnce({
+      ...TENANT_LISTO,
+      shopifyStoreUrl: null,
+      shopifyToken: null,
+      dashboardSourceEnabled: true,
+      dashboardUrl: 'https://autoenvia-dash.vercel.app',
+      dashboardToken: 'enc:dash',
+    });
+    const res = await POST();
+    expect(res.status).toBe(200);
+    expect(mocks.tenantUpdate.mock.calls[0][0].data).toMatchObject({ onboardingComplete: true, isActive: true });
+  });
+
+  it('dashboard con URL y token pero fuente APAGADA no cuenta como tienda → 422', async () => {
+    mocks.tenantFindUnique.mockResolvedValueOnce({
+      ...TENANT_LISTO,
+      shopifyStoreUrl: null,
+      shopifyToken: null,
+      dashboardSourceEnabled: false,
+      dashboardUrl: 'https://autoenvia-dash.vercel.app',
+      dashboardToken: 'enc:dash',
+    });
+    const res = await POST();
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toMatch(/Falta conectar una tienda/);
+    expect(mocks.tenantUpdate).not.toHaveBeenCalled();
+  });
+
+  it('sin ninguna tienda → 422 "Falta conectar una tienda (Shopify o Dashboard con Excel)"', async () => {
+    mocks.tenantFindUnique.mockResolvedValueOnce({ ...TENANT_LISTO, shopifyStoreUrl: null, shopifyToken: null });
+    const res = await POST();
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe('Falta conectar una tienda (Shopify o Dashboard con Excel)');
     expect(mocks.tenantUpdate).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { listPacks } from '@/lib/credit-packs';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
+import { getWhopCheckoutUrls } from '@/lib/whop';
 
 /**
  * Devuelve el estado actual de créditos del tenant + historial reciente +
@@ -36,6 +37,7 @@ export async function GET() {
         creditsPurchased: true,
         creditsConsumed: true,
         referralCreditsEarned: true,
+        referralBonusCredits: true,
       },
     }),
     db.creditPurchase.findMany({
@@ -62,8 +64,14 @@ export async function GET() {
       creditsPurchased: holderWallet.creditsPurchased,
       creditsConsumed: holderWallet.creditsConsumed,
       referralCreditsEarned: holderWallet.referralCreditsEarned,
+      referralBonusCredits: holderWallet.referralBonusCredits,
+      // Lo que realmente puede gastar: saldo pago + bonus por ser referido.
+      total: holderWallet.shipmentCredits + holderWallet.referralBonusCredits,
     },
     packs: listPacks(),
+    // Ids de pack con link de Whop configurado (D34). Las URLs quedan en el
+    // server: el botón manda a /api/credit-packs/whop-checkout?pack=.
+    whopPacks: Object.keys(getWhopCheckoutUrls()),
     recentPurchases,
   });
 }

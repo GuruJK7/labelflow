@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { RoleProvider } from '@/components/layout/RoleProvider';
 import { ChatWidget } from '@/components/chat/ChatWidget';
 import { TopBar } from '@/components/layout/TopBar';
 import { AhaMomentModal } from '@/components/onboarding/AhaMomentModal';
@@ -8,6 +9,8 @@ import { CreditExhaustedModal } from '@/components/onboarding/CreditExhaustedMod
 import { getAuthenticatedTenant } from '@/lib/api-utils';
 import { db } from '@/lib/db';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
+import { isAdminEmail } from '@/lib/admin';
+import { isConnected } from '@/lib/onboarding-state';
 
 /**
  * Server-component dashboard layout.
@@ -45,8 +48,15 @@ export default async function DashboardLayout({
       firstJobCompletedAt: true,
       shopifyStoreUrl: true,
       shopifyToken: true,
+      // Dashboard con Excel cuenta como tienda conectada (D33): sin estos
+      // tres campos el gate mandaba al wizard a todo tenant que no usa Shopify.
+      dashboardSourceEnabled: true,
+      dashboardUrl: true,
+      dashboardToken: true,
       dacUsername: true,
       dacPassword: true,
+      cronSchedule: true,
+      isActive: true,
       // Email verification gate — only checked when EMAIL_VERIFICATION_REQUIRED
       // is on. Selecting this field always is cheap (one extra timestamp on
       // a row we already fetch) and lets us flip the flag without a
@@ -83,26 +93,23 @@ export default async function DashboardLayout({
     redirect(`/verify-email?email=${email}`);
   }
 
-  // Onboarding gate: if the user hasn't finished the wizard yet, force them
-  // through it. We also re-check the underlying credentials are still set —
-  // if they cleared one in /settings without re-doing onboarding, treat the
-  // tenant as un-onboarded so the activation funnel rebuilds them properly.
-  const hasShopify = !!tenant.shopifyStoreUrl && !!tenant.shopifyToken;
-  const hasDac = !!tenant.dacUsername && !!tenant.dacPassword;
-
-  // Missing credentials → always force the wizard. Nothing else matters.
-  if (!hasShopify || !hasDac) {
+  // Gate de onboarding (D33). "Conectado" = tienda (Shopify O Dashboard con
+  // Excel) + cuenta de DAC, con la misma definición que usan `complete`,
+  // `state` y `jobs` (lib/onboarding-state.ts). Si el usuario borró un token
+  // desde Configuración, vuelve al wizard para rehacer ese paso.
+  if (!isConnected(tenant)) {
     redirect('/onboarding');
   }
 
-  // Legacy backfill: tenants that existed before the `onboardingComplete`
-  // column was added all default to `false`, even though they may have been
-  // fully configured (manually preloaded creds, internal/test accounts, users
-  // who finished setup before this PLG funnel shipped). If both credentials
-  // are present we treat that as proof of completed onboarding and flip the
-  // flag in-place — one fire-and-forget UPDATE the first time they hit the
-  // dashboard post-deploy. Subsequent renders skip this branch entirely.
+  // Legacy backfill: tenants anteriores a la columna `onboardingComplete`
+  // (credenciales precargadas a mano, cuentas internas) nacieron con `false`
+  // aunque ya estaban configurados y ACTIVOS. A esos se les prende el flag
+  // acá, una vez. Pero un tenant conectado e INACTIVO no se backfillea (H4):
+  // con el wizard obligatorio, marcarlo completo lo dejaría "completo pero
+  // pausado" para siempre; la única puerta que prende `isActive` es el paso
+  // final del wizard (`onboarding/complete`), así que va para allá.
   if (!tenant.onboardingComplete) {
+    if (!tenant.isActive) redirect('/onboarding');
     await db.tenant.update({
       where: { id: auth.tenantId },
       data: {
@@ -137,16 +144,21 @@ export default async function DashboardLayout({
   const bonusCredits = sharedReferralBonusCredits;
   const totalCredits = paidCredits + bonusCredits;
 
+  // Rol (D32): el select de arriba ya trae `user.email`, así que decidir el
+  // menú no cuesta una query más. El menú es sólo UI; las páginas sólo-admin
+  // se protegen aparte con requireAdminOrNotFound() en su layout.
+  const isAdmin = isAdminEmail(tenant.user?.email);
+
   return (
     <div className="min-h-screen bg-[#050505]">
-      <Sidebar />
+      <Sidebar isAdmin={isAdmin} />
       <main className="lg:ml-60 min-h-screen">
         <TopBar credits={paidCredits} bonusCredits={bonusCredits} />
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
           {totalCredits > 0 && totalCredits <= 2 && (
             <LowCreditsBanner credits={totalCredits} />
           )}
-          {children}
+          <RoleProvider isAdmin={isAdmin}>{children}</RoleProvider>
         </div>
       </main>
       <ChatWidget />

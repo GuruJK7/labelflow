@@ -11,6 +11,7 @@ import {
   TENANT_COOKIE,
   FLOW_COOKIE,
   FLOW_APPSTORE,
+  NEXT_COOKIE,
   PENDING_INSTALL_COOKIE,
   PENDING_INSTALL_PATH,
   PENDING_INSTALL_TTL_SECONDS,
@@ -20,6 +21,7 @@ import { sealPendingInstall } from '@/lib/shopify-pending-install';
 import { credentialFromTokenResponse, serializeShopifyCredential } from '@/lib/shopify-token';
 import { issueAndSendPasswordResetEmail } from '@/lib/password-reset';
 import { registerShopifyWebhooks } from '@/lib/shopify-register-webhooks';
+import { safeRelativePath } from '@/lib/safe-next';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,7 +72,10 @@ export async function GET(req: NextRequest) {
   // Se lee primero porque decide a dónde van los errores. Es sólo una cookie:
   // ninguna de las validaciones de abajo depende de ella.
   const esAppStore = req.cookies.get(FLOW_COOKIE)?.value === FLOW_APPSTORE;
-  const landing = esAppStore ? '/login' : '/settings';
+  // Rama dashboard: /install pudo pedir volver a otro lado (el wizard de
+  // /onboarding, D33). Se re-valida acá porque es una cookie, no un secreto.
+  const nextCookie = esAppStore ? null : safeRelativePath(req.cookies.get(NEXT_COOKIE)?.value);
+  const landing = esAppStore ? '/login' : nextCookie ?? '/settings';
 
   const limpiar = (r: NextResponse) => {
     // Las cookies se borran también al fallar: si no, un `state` ya expuesto
@@ -78,6 +83,7 @@ export async function GET(req: NextRequest) {
     r.cookies.delete(STATE_COOKIE);
     r.cookies.delete(TENANT_COOKIE);
     r.cookies.delete(FLOW_COOKIE);
+    r.cookies.delete(NEXT_COOKIE);
     return r;
   };
   const fail = (motivo: string) =>
@@ -273,7 +279,7 @@ export async function GET(req: NextRequest) {
 
   const webhookWarning = await registrarWebhooks(shop, accessToken, origin);
 
-  return limpiar(NextResponse.redirect(new URL(`/settings?shopify=connected${webhookWarning}`, origin)));
+  return limpiar(NextResponse.redirect(new URL(`${landing}?shopify=connected${webhookWarning}`, origin)));
 }
 
 /**

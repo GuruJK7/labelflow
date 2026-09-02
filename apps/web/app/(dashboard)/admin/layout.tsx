@@ -1,5 +1,4 @@
-import { notFound } from 'next/navigation';
-import { getAdminSession } from '@/lib/admin';
+import { requireAdminOrNotFound } from '@/lib/admin';
 
 /**
  * Server-side gate for /admin/*. Non-admins (and unauthenticated requests)
@@ -9,7 +8,6 @@ import { getAdminSession } from '@/lib/admin';
  * else in the app if they need to sign in.
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const admin = await getAdminSession();
-  if (!admin) notFound();
-  return <>{children}</>;
+  await requireAdminOrNotFound();
+  return children;
 }

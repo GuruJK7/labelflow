@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { encrypt } from '@/lib/encryption';
 import { nuevoTenantBase } from '@/lib/tenant-provision';
 import { shopifyGraphql, SHOPIFY_GRAPHQL_API_VERSION } from '@/lib/shopify-graphql';
+import { TRIAL_SHIPMENTS } from './trial';
 
 /**
  * Alta de cuenta a partir de una instalación desde el Shopify App Store.
@@ -199,6 +200,9 @@ export async function provisionFromShopify(
                 shopifyToken: encrypt(credentialPlain),
                 apiKey: base.apiKey,
                 referralCode: base.referralCode,
+                // D31: cuenta nueva → trial explícito (5), no el default (10).
+                // Sólo acá: `existing` no crea, `claim` y `conflict` tampoco.
+                shipmentCredits: TRIAL_SHIPMENTS,
               },
             ],
           },

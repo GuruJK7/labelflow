@@ -11,13 +11,14 @@
  */
 
 import { db } from '@/lib/db';
-import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
+import { apiError, apiSuccess } from '@/lib/api-utils';
+import { getControlActor, controlTenantWhere } from '@/lib/control-scope';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { runRetryForTenant } from '@/lib/retry-runner';
 
 export async function POST(req: Request) {
-  const auth = await getAuthenticatedUser();
-  if (!auth) return apiError('No autorizado', 401);
+  const actor = await getControlActor();
+  if (!actor) return apiError('No autorizado', 401);
 
   let tenantId = '';
   let count = 5;
@@ -32,9 +33,10 @@ export async function POST(req: Request) {
   }
   if (!tenantId) return apiError('Falta tenantId', 422);
 
-  // Ownership — same 403 whether someone else's or nonexistent.
+  // Alcance — same 403 whether someone else's or nonexistent. El admin
+  // (ADMIN_EMAILS) alcanza además cualquier tenant activo (lib/control-scope).
   const owned = await db.tenant.findFirst({
-    where: { id: tenantId, userId: auth.userId },
+    where: { id: tenantId, ...controlTenantWhere(actor) },
     select: { id: true },
   });
   if (!owned) return apiError('Tienda no encontrada', 403);

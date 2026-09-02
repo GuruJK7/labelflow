@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar, Printer, FlaskConical, Play } from 'lucide-react';
 import { PrinterSetup } from '@/components/printing/PrinterSetup';
+import { SettingsNav } from './_components/SettingsNav';
+import { WizardShortcuts } from './_components/WizardShortcuts';
 import {
   SHOPIFY_OAUTH_MESSAGES,
   shopHandleFromParam,
@@ -321,12 +323,15 @@ export default function SettingsPage() {
     <div>
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-white">Configuración</h1>
-        <p className="text-zinc-500 text-sm mt-1">Conecta tus servicios</p>
+        <p className="text-zinc-500 text-sm mt-1">Tiendas, cuenta DAC, reglas y parámetros de envío, y compra de envíos</p>
       </div>
 
+      <SettingsNav />
+
       <div className="space-y-6 max-w-2xl">
+        <WizardShortcuts />
         {/* Shopify */}
-        <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
+        <div id="tiendas" className="scroll-mt-24 bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-white">Shopify</h2>
             {settings?.shopifyTokenSet && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Conectado</span>}
@@ -406,7 +411,7 @@ export default function SettingsPage() {
         </div>
 
         {/* DAC */}
-        <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
+        <div id="dac" className="scroll-mt-24 bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-white">DAC Uruguay</h2>
             {settings?.dacPasswordSet && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Conectado</span>}
@@ -448,7 +453,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Reglas de pago */}
-        <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
+        <div id="parametros" className="scroll-mt-24 bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
           <h2 className="text-sm font-semibold text-white mb-4">Regla de pago</h2>
 
           <div className="mb-4 p-3 rounded-lg bg-cyan-500/5 border border-cyan-500/20 text-[11px] text-cyan-100/80 leading-relaxed">

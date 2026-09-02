@@ -37,6 +37,7 @@ import {
   TENANT_COOKIE,
   FLOW_COOKIE,
   FLOW_APPSTORE,
+  NEXT_COOKIE,
   PENDING_INSTALL_COOKIE,
   SCOPES_PARAM,
 } from '../shopify-oauth';
@@ -381,5 +382,54 @@ describe('callback — tokens offline expirables (D29)', () => {
     expect(cookie).not.toContain('shpat_');
     expect(cookie).not.toContain('shprt_');
     expect(openPendingInstall(cookie)?.token).toBe(credencial);
+  });
+});
+
+describe('callback — rama B con cookie NEXT (D33: volver al wizard)', () => {
+  it('cookie next=/onboarding → conecta y vuelve a /onboarding?shopify=connected, borrando la cookie', async () => {
+    mocks.getAuthenticatedUser.mockResolvedValue({ userId: 'u1' });
+    mocks.tenantFindFirst
+      .mockResolvedValueOnce({ id: 'tenant-1', shopifyStoreUrl: null })
+      .mockResolvedValueOnce(null);
+    mocks.tenantUpdate.mockResolvedValue({});
+    const res = await GET(
+      makeRequest('/api/shopify/callback', signedQuery(), { ...dashboardCookies, [NEXT_COOKIE]: '/onboarding' }),
+    );
+    const loc = location(res);
+    expect(loc.pathname).toBe('/onboarding');
+    expect(loc.searchParams.get('shopify')).toBe('connected');
+    expect(cookieDeleted(res, NEXT_COOKIE)).toBe(true);
+    expect(mocks.tenantUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('los errores de la rama B también vuelven al next', async () => {
+    mocks.getAuthenticatedUser.mockResolvedValue(null);
+    const res = await GET(
+      makeRequest('/api/shopify/callback', signedQuery(), { ...dashboardCookies, [NEXT_COOKIE]: '/onboarding' }),
+    );
+    const loc = location(res);
+    expect(loc.pathname).toBe('/onboarding');
+    expect(loc.searchParams.get('shopify')).toBe('no_session');
+    expect(exchangeCalls()).toBe(0);
+  });
+
+  it('cookie NEXT con una URL absoluta se ignora: vuelve a /settings', async () => {
+    mocks.getAuthenticatedUser.mockResolvedValue({ userId: 'u1' });
+    mocks.tenantFindFirst
+      .mockResolvedValueOnce({ id: 'tenant-1', shopifyStoreUrl: null })
+      .mockResolvedValueOnce(null);
+    mocks.tenantUpdate.mockResolvedValue({});
+    const res = await GET(
+      makeRequest('/api/shopify/callback', signedQuery(), { ...dashboardCookies, [NEXT_COOKIE]: 'https://evil.com' }),
+    );
+    expect(location(res).pathname).toBe('/settings');
+  });
+
+  it('rama App Store ignora la cookie NEXT: sigue en /login', async () => {
+    mocks.provisionFromShopify.mockResolvedValue({ kind: 'created', userId: 'u9', email: 'dueno@acme.com', tenantId: 't9' });
+    const res = await GET(
+      makeRequest('/api/shopify/callback', signedQuery(), { ...appStoreCookies, [NEXT_COOKIE]: '/onboarding' }),
+    );
+    expect(location(res).pathname).toBe('/login');
   });
 });

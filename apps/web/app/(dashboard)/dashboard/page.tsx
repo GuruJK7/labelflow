@@ -38,6 +38,9 @@ interface StatsData {
   scheduleSlots: ScheduleSlot[] | null;
   cronSchedule: string | null;
   isActive: boolean;
+  // Misma regla que `storeConnection` (lib/onboarding-state.ts): Shopify manda
+  // si está conectada; si no, Dashboard con Excel; si no, nada.
+  storeKind: 'shopify' | 'dashboard' | null;
 }
 
 interface JobSummary {
@@ -147,6 +150,12 @@ export default function DashboardPage() {
         scheduleSlots: (settingsData?.scheduleSlots as ScheduleSlot[] | null) ?? null,
         cronSchedule: (settingsData?.cronSchedule as string | null) ?? null,
         isActive: !!(settingsData?.isActive),
+        storeKind:
+          !!settingsData?.shopifyStoreUrl && !!settingsData?.shopifyTokenSet
+            ? 'shopify'
+            : !!settingsData?.dashboardSourceEnabled && !!settingsData?.dashboardUrl && !!settingsData?.dashboardTokenSet
+              ? 'dashboard'
+              : null,
       });
 
       // Order processing settings
@@ -199,6 +208,11 @@ export default function DashboardPage() {
     }
   }, [jobs, activeJobId]);
 
+  // Dashboard con Excel: el job del worker no lee el límite de pedidos (procesa
+  // todos los confirmados, recortando sólo por saldo) y POST /api/v1/jobs
+  // rechaza el límite con 422 para no despachar de más. Acá no se ofrece.
+  const esDashboardExcel = stats?.storeKind === 'dashboard';
+
   async function handleTrigger() {
     setTriggering(true);
     setError('');
@@ -206,7 +220,7 @@ export default function DashboardPage() {
       const res = await fetch('/api/v1/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ maxOrders: orderCount }),
+        body: JSON.stringify(esDashboardExcel ? {} : { maxOrders: orderCount }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -301,6 +315,9 @@ export default function DashboardPage() {
             segunda fila debajo del botón "Ejecutar" en pantallas <640px en
             vez de overflowear horizontalmente. */}
         <div className="flex flex-wrap items-center gap-3 animate-fade-in delay-150">
+          {esDashboardExcel ? (
+            <span className="text-[11px] text-zinc-500">Se procesan todos los pedidos confirmados del Dashboard (hasta donde alcance el saldo).</span>
+          ) : (
           <div className="flex items-center gap-1.5">
             {[1, 3, 5, 10, 20].map((n) => (
               <button
@@ -318,6 +335,7 @@ export default function DashboardPage() {
               </button>
             ))}
           </div>
+          )}
           <button
             onClick={handleTrigger}
             disabled={triggering}
@@ -333,7 +351,7 @@ export default function DashboardPage() {
             ) : (
               <Play className="w-4 h-4" />
             )}
-            Ejecutar {orderCount === 1 ? '1 pedido' : `${orderCount} pedidos`}
+            {esDashboardExcel ? 'Ejecutar pedidos confirmados' : `Ejecutar ${orderCount === 1 ? '1 pedido' : `${orderCount} pedidos`}`}
           </button>
         </div>
       </div>

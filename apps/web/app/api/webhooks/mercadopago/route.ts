@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getPreApprovalClient, getPaymentClient, PLANS, type PlanId } from '@/lib/mercadopago';
 import { db } from '@/lib/db';
-import { calcReferralKickback } from '@/lib/credit-packs';
-import { trackServer } from '@/lib/analytics.server';
-import { getCreditHolderTenantId } from '@/lib/credit-holder';
+import {
+  settlePaidPurchase,
+  failPendingPurchase,
+  refundPaidPurchase,
+} from '@/lib/credit-accrual';
 
 /**
  * Verify MercadoPago webhook signature (x-signature header).
@@ -290,243 +292,31 @@ async function handlePaymentNotification(paymentId: string) {
 }
 
 /**
- * Acredita un pack de envíos al tenant cuando MP confirma el pago.
+ * Router de estados de un pago de pack. La acreditación en sí vive en
+ * `lib/credit-accrual.ts` (D34): es la MISMA función que usa el webhook de
+ * Whop, así los dos rieles comparten idempotencia, holder y kickback.
  *
- * Idempotencia: el update inicial es condicional a `status: 'PENDING'`. Si
- * el row ya está PAID (webhook duplicado), `updateMany` devuelve count=0 y
- * salimos sin re-acreditar. Esta es la primitiva atómica más sencilla en
- * Prisma sin transacciones interactivas explícitas — la unicidad de
- * mpPaymentId es una segunda red de seguridad por si el primer update se
- * coló a la mitad.
- *
- * Acreditación al referidor: si el tenant que compró tiene referredById,
- * después de marcar PAID:
- *   1. Crear fila ReferralCreditAccrual (sourcePurchaseId @unique evita
- *      doble-acreditación si volvemos a entrar acá).
- *   2. Sumar floor(20% * shipments) a referrer.shipmentCredits.
- *
- * Refunded: status === 'refunded' o 'cancelled' después de PAID → marcamos
- * refundedAt y *intentamos* debitar. Si shipmentCredits ya se gastó en
- * envíos reales, debitamos lo que se pueda y registramos en log. No es
- * perfecto pero es honesto: el tenant ya consumió el servicio.
+ *   approved                         → settlePaidPurchase (PENDING → PAID)
+ *   rejected                         → failPendingPurchase (PENDING → FAILED)
+ *   refunded/cancelled/charged_back  → refundPaidPurchase (PAID → REFUNDED + débito clamp)
+ *   pending/in_process/authorized    → nada hasta approved
  */
 async function handleCreditPackPayment(
   purchaseId: string,
   paymentId: string,
   status: string | undefined,
 ) {
-  const purchase = await db.creditPurchase.findUnique({
-    where: { id: purchaseId },
-    select: {
-      id: true,
-      tenantId: true,
-      packId: true,
-      shipments: true,
-      totalPriceUyu: true,
-      status: true,
-      mpPaymentId: true,
-    },
-  });
-
-  if (!purchase) {
-    console.error(`MercadoPago: credit purchase ${purchaseId} not found`);
-    return;
-  }
-
   if (status === 'approved') {
-    // Detect FIRST paid pack BEFORE we transition this purchase to PAID.
-    // The conditional updateMany below makes this idempotent: even if the
-    // webhook fires twice for the same payment, only the first call moves
-    // the row from PENDING → PAID, and only that call gets a non-zero
-    // `priorPaidCount` reading.
-    const priorPaidCount = await db.creditPurchase.count({
-      where: {
-        tenantId: purchase.tenantId,
-        status: 'PAID',
-        // Exclude THIS purchase (it's still PENDING here, but defensive
-        // against any future race where it's already PAID).
-        id: { not: purchase.id },
-      },
-    });
-
-    // Idempotente: solo transiciona si está PENDING.
-    const updated = await db.creditPurchase.updateMany({
-      where: { id: purchaseId, status: 'PENDING' },
-      data: {
-        status: 'PAID',
-        mpPaymentId: paymentId,
-        paidAt: new Date(),
-      },
-    });
-
-    if (updated.count === 0) {
-      console.info(
-        `MercadoPago: credit purchase ${purchaseId} already processed (idempotent skip)`,
-      );
-      return;
-    }
-
-    // Audit 2026-05-08 — multi-store credit pool. The user's wallet
-    // lives on their CREDIT-HOLDER tenant (oldest one). When they
-    // bought the pack from a non-holder tenant, we still credit the
-    // holder so the wallet is unified across all their stores.
-    const purchaseHolderId = await getCreditHolderTenantId(purchase.tenantId);
-    await db.tenant.update({
-      where: { id: purchaseHolderId },
-      data: {
-        shipmentCredits: { increment: purchase.shipments },
-        creditsPurchased: { increment: purchase.shipments },
-      },
-    });
-
-    console.info(
-      `MercadoPago: credit pack PAID — purchaseTenant=${purchase.tenantId}, holderTenant=${purchaseHolderId}, shipments=${purchase.shipments}`,
-    );
-
-    // Fire #12 subscription_activated — only on the FIRST paid pack per
-    // tenant lifetime. Subsequent purchases generate `pack_purchased`
-    // events (not yet wired) but never re-fire this funnel-step event.
-    // Idempotency: priorPaidCount was read BEFORE the conditional update
-    // succeeded, so a duplicate webhook (whose updateMany returns 0)
-    // never reaches this branch.
-    if (priorPaidCount === 0) {
-      await trackServer(purchase.tenantId, 'subscription_activated', {
-        plan: purchase.packId, // 'pack_10' | ... | 'pack_1000' (enum-safe)
-        amount_uyu: purchase.totalPriceUyu,
-      });
-    }
-
-    // Acreditar 20% al referidor (si lo hay).
-    await accrueReferralKickback(purchase.tenantId, purchase.id, purchase.shipments);
+    await settlePaidPurchase({ purchaseId, externalPaymentId: paymentId, rail: 'mercadopago' });
     return;
   }
-
   if (status === 'rejected') {
-    await db.creditPurchase.updateMany({
-      where: { id: purchaseId, status: 'PENDING' },
-      data: { status: 'FAILED' },
-    });
-    console.info(`MercadoPago: credit purchase ${purchaseId} rejected`);
+    await failPendingPurchase(purchaseId, 'mercadopago');
     return;
   }
-
   if (status === 'refunded' || status === 'cancelled' || status === 'charged_back') {
-    // Marcamos como REFUNDED y tratamos de debitar lo no gastado.
-    const wasUpdated = await db.creditPurchase.updateMany({
-      where: { id: purchaseId, status: 'PAID' },
-      data: { status: 'REFUNDED', refundedAt: new Date() },
-    });
-    if (wasUpdated.count === 0) return; // ya estaba refunded o nunca estuvo PAID
-
-    // Debitar el saldo restante (clamp a 0 si ya consumió todo).
-    //
-    // Audit 2026-05-08 — multi-store credit pool: the credit was added
-    // to the user's HOLDER tenant (oldest one) on the original PAID
-    // event, so the refund debit must also target the holder.
-    const refundHolderId = await getCreditHolderTenantId(purchase.tenantId);
-    const holderTenant = await db.tenant.findUnique({
-      where: { id: refundHolderId },
-      select: { shipmentCredits: true },
-    });
-    if (holderTenant) {
-      const debit = Math.min(holderTenant.shipmentCredits, purchase.shipments);
-      if (debit > 0) {
-        await db.tenant.update({
-          where: { id: refundHolderId },
-          data: { shipmentCredits: { decrement: debit } },
-        });
-      }
-      if (debit < purchase.shipments) {
-        console.warn(
-          `MercadoPago: refund of ${purchase.shipments} shipments but only ${debit} available on holder ${refundHolderId} — ${purchase.shipments - debit} shipments unrecoverable for purchase tenant ${purchase.tenantId}`,
-        );
-      }
-    }
-    return;
+    await refundPaidPurchase(purchaseId, 'mercadopago');
   }
-
-  // pending / in_process / authorized: nada que hacer hasta approved.
-}
-
-/**
- * Crea la acreditación al referidor si el tenant que compró fue referido.
- * Idempotencia: ReferralCreditAccrual.sourcePurchaseId es @unique, así que
- * un segundo intento dispara P2002 — atrapamos y salimos.
- */
-async function accrueReferralKickback(
-  refereeTenantId: string,
-  sourcePurchaseId: string,
-  shipmentsPurchased: number,
-) {
-  const referee = await db.tenant.findUnique({
-    where: { id: refereeTenantId },
-    select: { referredById: true, userId: true },
-  });
-  if (!referee?.referredById) return;
-  if (referee.referredById === refereeTenantId) return; // tenant-level self-ref
-
-  // self-referral guard a nivel User: si el referrer y el referee comparten
-  // el mismo dueño (userId), saltamos. Cubre el caso de un usuario que abre
-  // dos tenants y se refiere a sí mismo.
-  const referrer = await db.tenant.findUnique({
-    where: { id: referee.referredById },
-    select: { userId: true },
-  });
-  if (referrer?.userId && referrer.userId === referee.userId) {
-    console.warn(
-      `MercadoPago: self-referral detected (userId=${referrer.userId}) — skipping kickback for purchase ${sourcePurchaseId}`,
-    );
-    return;
-  }
-
-  const accrued = calcReferralKickback(shipmentsPurchased);
-  if (accrued <= 0) return;
-
-  // Atómico: crear el accrual y acreditar al referrer en la MISMA txn. Si
-  // el process crashea entre crear el accrual y actualizar al tenant, el
-  // sourcePurchaseId @unique queda bloqueando el retry y el referrer
-  // quedaba sin sus créditos. La txn elimina ese hueco TOCTOU.
-  //
-  // Audit 2026-05-08 — multi-store credit pool: kickback goes to the
-  // referrer's HOLDER tenant (oldest one) so it lands in the unified
-  // wallet rather than getting stuck on a non-active store.
-  const referrerHolderId = await getCreditHolderTenantId(referee.referredById);
-  try {
-    await db.$transaction([
-      db.referralCreditAccrual.create({
-        data: {
-          // Keep the original referredBy linkage as the accrual record —
-          // this is for audit ("which referrer earned this kickback?").
-          // The actual credit lands on referrerHolderId below.
-          referrerTenantId: referee.referredById,
-          refereeTenantId,
-          sourcePurchaseId,
-          shipmentsAccrued: accrued,
-        },
-      }),
-      db.tenant.update({
-        where: { id: referrerHolderId },
-        data: {
-          shipmentCredits: { increment: accrued },
-          referralCreditsEarned: { increment: accrued },
-        },
-      }),
-    ]);
-  } catch (err) {
-    // P2002 (unique violation) = ya acreditado por un webhook previo —
-    // ambas operaciones se rollbackean atómicamente.
-    if ((err as { code?: string }).code === 'P2002') {
-      console.info(
-        `MercadoPago: referral accrual already exists for purchase ${sourcePurchaseId} (idempotent skip)`,
-      );
-      return;
-    }
-    throw err;
-  }
-
-  console.info(
-    `MercadoPago: referral kickback +${accrued} shipments → referrer=${referee.referredById} (referee=${refereeTenantId}, purchase=${sourcePurchaseId})`,
-  );
 }
 
 /**

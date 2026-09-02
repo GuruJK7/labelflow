@@ -1,5 +1,18 @@
 import { db } from './db';
 
+export type ProcessOrdersJobType = 'PROCESS_ORDERS' | 'PROCESS_DASHBOARD_ORDERS';
+
+export interface EnqueueProcessOrdersOptions {
+  /**
+   * `PROCESS_ORDERS` (default): pedidos de Shopify, va también a BullMQ.
+   * `PROCESS_DASHBOARD_ORDERS`: pedidos del Dashboard con Excel. Sólo se
+   * crea en la base — la cola `labelflow:process-orders` es del procesador
+   * de Shopify; el poller de DB del worker rutea por `type`
+   * (apps/worker/src/index.ts), igual que hace el scheduler con el cron.
+   */
+  type?: ProcessOrdersJobType;
+}
+
 /**
  * Enqueues a process-orders job for a tenant.
  * Creates a Job record in the database.
@@ -8,22 +21,27 @@ import { db } from './db';
  */
 export async function enqueueProcessOrders(
   tenantId: string,
-  trigger: 'CRON' | 'WEBHOOK' | 'MANUAL' | 'MCP'
+  trigger: 'CRON' | 'WEBHOOK' | 'MANUAL' | 'MCP',
+  opts: EnqueueProcessOrdersOptions = {},
 ): Promise<string> {
+  const type: ProcessOrdersJobType = opts.type ?? 'PROCESS_ORDERS';
+
   // Create job record in DB first (always works)
   const dbJob = await db.job.create({
     data: {
       tenantId,
       trigger,
-      type: 'PROCESS_ORDERS',
+      type,
       status: 'PENDING',
     },
   });
 
-  // Try to enqueue in BullMQ (best-effort)
+  // Try to enqueue in BullMQ (best-effort). Sólo para Shopify: el worker de
+  // BullMQ procesa Shopify y un job de Dashboard ahí correría con la fuente
+  // equivocada.
   try {
     const redisUrl = process.env.REDIS_URL;
-    if (redisUrl) {
+    if (redisUrl && type === 'PROCESS_ORDERS') {
       const IORedis = (await import('ioredis')).default;
       const { Queue } = await import('bullmq');
 
