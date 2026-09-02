@@ -2,7 +2,10 @@
 --
 -- Fecha: 2026-09-01
 --
--- ⚠️ NO APLICADO. Lo corre Adrian:
+-- ✅ APLICADO EN PROD — verificado 2026-09-02 (lectura de information_schema
+-- sobre DIRECT_URL): Label.codAmount integer nullable y Tenant.codEnabled
+-- boolean NOT NULL DEFAULT false existen. Se deja el archivo por si hay que
+-- reproducir la base (es idempotente). Lo corrió/corre Adrian:
 --
 --   psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f scripts/sql/cod-contrarreembolso.sql
 --
