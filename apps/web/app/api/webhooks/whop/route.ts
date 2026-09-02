@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { settlePaidPurchase, refundPaidPurchase } from '@/lib/credit-accrual';
-import { verifyStandardWebhookSignature, getWhopPlanRules, checkWhopPlanForPack } from '@/lib/whop';
+import {
+  verifyStandardWebhookSignature,
+  getWhopPlanRules,
+  checkWhopPlanForPack,
+  WHOP_PENDING_REUSE_MINUTES,
+} from '@/lib/whop';
 
 /**
  * Webhook de Whop (D34). Contrato: docs/SELFSERVE-SPEC.md §7.5.
@@ -248,8 +253,17 @@ async function resolvePurchase(data: Json, webhookId: string, paymentId: string)
     return null;
   }
 
-  // 3. Única PENDING de Whop de ese usuario en las últimas 24 h.
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  // 3. Única PENDING de Whop de ese usuario dentro de la ventana.
+  //
+  // 🔴 LA VENTANA ES LA MISMA QUE LA DEL CHECKOUT, y tiene que seguir siéndolo.
+  // `whop-checkout` reutiliza una PENDING mientras esté dentro de
+  // `WHOP_PENDING_REUSE_MINUTES`; si acá la ventana fuera MÁS ANCHA, la primera
+  // compra que el checkout ya dio por vieja seguiría siendo candidata y todo
+  // pago quedaría ambiguo (dos candidatas → no acredita). Si fuera más
+  // ANGOSTA, habría PENDINGs vivas para el checkout que el webhook no ve.
+  // Estaba escrita como `24 * 60 * 60 * 1000` a mano y quedó igualada por
+  // casualidad: ahora sale de la constante.
+  const since = new Date(Date.now() - WHOP_PENDING_REUSE_MINUTES * 60 * 1000);
   const packId = asString(metadata.packId);
   const candidates = await db.creditPurchase.findMany({
     where: {

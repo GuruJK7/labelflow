@@ -163,11 +163,21 @@ describe('dos clics → una PENDING → el pago acredita', () => {
     });
   });
 
-  it('control: con dos PENDING (como quedaban antes) el mismo pago NO acredita', async () => {
-    await click();
-    // La primera quedó fuera de la ventana de reutilización → el segundo clic crea otra.
-    state.purchases[0].createdAt = new Date(Date.now() - 31 * 60 * 1000);
-    await click();
+  it('control: con dos PENDING el mismo pago NO acredita, queda para revisar', async () => {
+    // POR QUÉ DOS PACKS Y NO UNA COMPRA ENVEJECIDA. La versión anterior de este
+    // control envejecía la primera compra 31 minutos para forzar la segunda
+    // PENDING. Dejó de servir por dos motivos encadenados: la ventana de
+    // reutilización pasó a 24 h (31 minutos ya no envejecen nada) y, sobre
+    // todo, el webhook mira la MISMA ventana — así que cualquier compra vieja
+    // para el checkout también es invisible para el webhook y nunca puede ser
+    // la segunda candidata. Hoy la ambigüedad real es otra: dos PENDING vivas
+    // de packs distintos y un pago que no dice de qué pack es.
+    process.env.WHOP_CHECKOUT_URLS = JSON.stringify({
+      pack_100: 'https://whop.com/checkout/plan_100',
+      pack_500: 'https://whop.com/checkout/plan_500',
+    });
+    await click('pack_100');
+    await click('pack_500');
     expect(state.purchases.filter((p) => p.status === 'PENDING')).toHaveLength(2);
 
     const res = await pay('msg_2', {
@@ -176,6 +186,36 @@ describe('dos clics → una PENDING → el pago acredita', () => {
     });
     expect(await res.json()).toEqual({ ok: true, flagged: true });
     expect(mocks.settle).not.toHaveBeenCalled();
+  });
+
+  it('con metadata.packId la ambigüedad se resuelve y acredita el pack pagado', async () => {
+    // El otro lado del control: la misma situación deja de ser ambigua apenas
+    // el pago dice de qué pack es. Sin este caso, el de arriba pasaría igual si
+    // el webhook dejara de acreditar SIEMPRE.
+    process.env.WHOP_CHECKOUT_URLS = JSON.stringify({
+      pack_100: 'https://whop.com/checkout/plan_100',
+      pack_500: 'https://whop.com/checkout/plan_500',
+    });
+    await click('pack_100');
+    await click('pack_500');
+
+    const res = await pay('msg_3', {
+      type: 'payment.succeeded',
+      data: {
+        id: 'pay_3',
+        plan_id: 'plan_100',
+        user: { email: 'juana@tienda.uy' },
+        metadata: { packId: 'pack_100' },
+      },
+    });
+    expect(await res.json()).toEqual({ received: true, credited: true });
+    expect(mocks.settle).toHaveBeenCalledTimes(1);
+    const pagada = state.purchases.find((p) => p.packId === 'pack_100');
+    expect(mocks.settle).toHaveBeenCalledWith({
+      purchaseId: pagada!.id,
+      externalPaymentId: 'whop:pay_3',
+      rail: 'whop',
+    });
   });
 
   it('un pack distinto no se reutiliza: cada pack tiene su PENDING', async () => {
