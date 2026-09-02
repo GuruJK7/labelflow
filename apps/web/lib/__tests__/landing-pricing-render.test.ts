@@ -103,22 +103,30 @@ describe('PricingSelector: los estados de volumen alto', () => {
     );
   }
 
-  it('el "escribinos" del precio a medida es un enlace de verdad', () => {
+  it('el volumen alto entra por el alta, no por WhatsApp', () => {
     const html = conVolumen(2500);
     expect(html).toContain('el precio se arma a medida');
-    expect(html).toMatch(/<a[^>]+href="https:\/\/wa\.me\/59898943949[^"]*"[^>]*>\s*escribinos\s*<\/a>/);
+    expect(html).toMatch(/<a[^>]+href="\/signup"[^>]*>creá tu cuenta<\/a>/);
+    // El WhatsApp es soporte: no puede aparecer como canal de venta.
+    expect(html).not.toContain('wa.me');
   });
 
   it('en el techo del autoservicio el empujón aclara que ese escalón es a medida', () => {
     const html = conVolumen(1000);
     expect(html).toContain('escalón de 2.500');
-    expect(html).toContain('lo cerramos a medida');
-    expect(html).toContain('wa.me/59898943949');
+    expect(html).toContain('se ajusta a medida, desde tu cuenta');
+    expect(html).not.toContain('wa.me');
   });
 
   it('un escalón comprable no arrastra la salvedad de "a medida"', () => {
     const html = conVolumen(250);
     expect(html).toContain('escalón de 500');
-    expect(html).not.toContain('lo cerramos a medida');
+    expect(html).not.toContain('se ajusta a medida');
+  });
+
+  it('el simulador no ofrece ningún canal de contacto: la puerta es el alta', () => {
+    for (const v of [50, 250, 1000, 2500, 5000]) {
+      expect(conVolumen(v)).not.toContain('wa.me');
+    }
   });
 });

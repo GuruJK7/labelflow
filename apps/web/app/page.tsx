@@ -78,10 +78,15 @@ const LOWEST_PRICE_USD = formatUsdUnitMilli(
  *  asistente (lib/onboarding-state.ts) da 8,5 → "menos de 10 minutos". */
 const SETUP_STEPS = ONBOARDING_STEPS.length;
 
-/** Contacto discreto del pie. NO es el camino de conversión: el alta es
- *  self-serve, así que el mensaje pre-armado ya no habla de coordinar llamadas
- *  ni de evaluar implementaciones. */
-const WHATSAPP_URL = whatsappUrl(`Hola, tengo una consulta sobre ${BRAND}.`);
+/**
+ * Contacto del pie: es SOPORTE, no el camino de conversión.
+ *
+ * El alta es self-serve y esa es la única puerta al servicio: quien quiere
+ * contratar se crea la cuenta. Por eso el mensaje pre-armado habla de una
+ * consulta de alguien que ya usa AutoEnvía, y el rótulo dice "Soporte" — un
+ * "consultas" genérico invitaba a preguntar por el servicio por acá.
+ */
+const WHATSAPP_URL = whatsappUrl(`Hola, necesito ayuda con mi cuenta de ${BRAND}.`);
 
 export const metadata = {
   title: `${BRAND} — Despachá con DAC sin cargar una guía a mano`,
@@ -554,7 +559,7 @@ export default function LandingPage() {
                   className="inline-flex items-center gap-1.5 text-[13px] text-zinc-400 transition-colors hover:text-zinc-200"
                 >
                   <MessageCircle className="h-3.5 w-3.5" aria-hidden />
-                  Consultas por WhatsApp
+                  Soporte por WhatsApp
                 </a>
               </li>
             </FooterCol>
