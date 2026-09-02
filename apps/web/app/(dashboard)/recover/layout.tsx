@@ -5,7 +5,7 @@ export default function RecoverLayout({ children }: { children: React.ReactNode 
     <FeatureGate
       flag="recover"
       title="WhatsApp Cart Recovery"
-      description="Recupera carritos abandonados automaticamente via WhatsApp. Envia mensajes personalizados y aumenta tus ventas."
+      description="Recuperá carritos abandonados automáticamente vía WhatsApp. Enviá mensajes personalizados y aumentá tus ventas."
     >
       {children}
     </FeatureGate>

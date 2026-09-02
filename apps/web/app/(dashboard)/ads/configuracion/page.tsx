@@ -287,7 +287,7 @@ export default function ConfiguracionPage() {
         </div>
 
         {rules.length === 0 ? (
-          <p className="text-sm text-zinc-600">Sin reglas configuradas. Los anuncios no se pausaran automaticamente.</p>
+          <p className="text-sm text-zinc-600">Sin reglas configuradas. Los anuncios no se pausarán automáticamente.</p>
         ) : (
           <div className="space-y-3">
             {rules.map((rule, i) => (
@@ -380,7 +380,7 @@ export default function ConfiguracionPage() {
 
       {/* Schedules */}
       <div className="bg-zinc-900/50 border border-white/[0.06] rounded-xl p-6">
-        <h2 className="text-sm font-semibold text-white mb-4">Programacion</h2>
+        <h2 className="text-sm font-semibold text-white mb-4">Programación</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className={labelClass}>Escaneo de Drive (cron)</label>
@@ -393,7 +393,7 @@ export default function ConfiguracionPage() {
             <p className="text-[11px] text-zinc-600 mt-1">Default: L-V a las 8am</p>
           </div>
           <div>
-            <label className={labelClass}>Monitor de metricas (cron)</label>
+            <label className={labelClass}>Monitor de métricas (cron)</label>
             <input
               type="text"
               value={monitorSchedule}
@@ -424,7 +424,7 @@ export default function ConfiguracionPage() {
           className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white px-6 py-2.5 rounded-lg text-sm font-medium transition-colors"
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          Guardar Configuracion
+          Guardar Configuración
         </button>
       </div>
     </div>

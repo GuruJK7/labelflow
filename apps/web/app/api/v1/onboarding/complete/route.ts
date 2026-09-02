@@ -1,3 +1,4 @@
+import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import {
   getAuthenticatedTenant,
@@ -17,6 +18,14 @@ import {
  * scheduler picks them up on the next cron run. Pre-existing isActive=true
  * tenants are unchanged.
  *
+ * Email verificado (D26): activar exige `User.emailVerified`, sin importar
+ * `EMAIL_VERIFICATION_REQUIRED`. Es la única puerta que prende `isActive`, y
+ * con ella el cron del worker (cada 15 min por tenant activo con saldo) y el
+ * botón manual. Sin esto, un script podía crear N cuentas sin abrir jamás
+ * el mail, cargar Shopify + un DAC cualquiera (test-dac no lo verifica) y
+ * poner N jobs contra el bridge. Los tenants que ya estaban completos no
+ * se tocan (early return de arriba).
+ *
  * Idempotent — calling twice is a no-op.
  */
 export async function POST() {
@@ -31,6 +40,7 @@ export async function POST() {
       dacUsername: true,
       dacPassword: true,
       onboardingComplete: true,
+      user: { select: { email: true, emailVerified: true } },
     },
   });
 
@@ -47,6 +57,16 @@ export async function POST() {
   }
   if (!tenant.dacUsername || !tenant.dacPassword) {
     return apiError('Falta conectar DAC', 422);
+  }
+  if (!tenant.user?.emailVerified) {
+    return NextResponse.json(
+      {
+        error: 'Confirmá tu email antes de activar la cuenta. Te mandamos un link al registrarte.',
+        code: 'email_not_verified',
+        email: tenant.user?.email ?? null,
+      },
+      { status: 422 },
+    );
   }
 
   await db.tenant.update({

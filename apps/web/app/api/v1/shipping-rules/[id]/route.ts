@@ -37,7 +37,7 @@ export async function PUT(
   const parsed = updateRuleSchema.safeParse(body);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
-    return apiError(first ? `${first.path.join('.') || 'body'}: ${first.message}` : 'Datos invalidos', 400);
+    return apiError(first ? `${first.path.join('.') || 'body'}: ${first.message}` : 'Datos inválidos', 400);
   }
 
   const existing = await db.shippingRule.findFirst({

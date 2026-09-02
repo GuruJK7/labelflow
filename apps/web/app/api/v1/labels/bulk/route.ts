@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = bulkSchema.safeParse(body);
     if (!parsed.success) {
-      return apiError(`Datos invalidos: ${parsed.error.message}`, 400);
+      return apiError(`Datos inválidos: ${parsed.error.message}`, 400);
     }
 
     const { ids } = parsed.data;

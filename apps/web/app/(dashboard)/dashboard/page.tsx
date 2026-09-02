@@ -216,7 +216,7 @@ export default function DashboardPage() {
       }
       await fetchData();
     } catch {
-      setError('Error de conexion');
+      setError('Error de conexión');
     }
     setTriggering(false);
   }
@@ -224,7 +224,7 @@ export default function DashboardPage() {
   async function handleRetry() {
     if (!failedCount || failedCount <= 0) return;
     const n = Math.min(retryCount, failedCount);
-    if (!confirm(`Reintentar ${n} envio(s) sin completar? Se vuelven a procesar en DAC.`)) return;
+    if (!confirm(`¿Reintentar ${n} envío(s) sin completar? Se vuelven a procesar en DAC.`)) return;
     setRetrying(true);
     setError('');
     try {
@@ -235,13 +235,13 @@ export default function DashboardPage() {
       });
       const json = await res.json();
       if (!res.ok) {
-        setError(json.error ?? 'Error al reintentar envios');
+        setError(json.error ?? 'Error al reintentar envíos');
       } else if (json.data?.jobId) {
         setActiveJobId(json.data.jobId);
       }
       await fetchData();
     } catch {
-      setError('Error de conexion');
+      setError('Error de conexión');
     }
     setRetrying(false);
   }
@@ -270,14 +270,14 @@ export default function DashboardPage() {
       iconColor: 'text-emerald-400',
     },
     {
-      title: 'Tasa de exito',
+      title: 'Tasa de éxito',
       value: `${stats?.successRate ?? 0}%`,
       icon: TrendingUp,
       color: 'from-violet-500/20 to-violet-500/5',
       iconColor: 'text-violet-400',
     },
     {
-      title: 'Ultimo run',
+      title: 'Último run',
       value: stats?.lastRunAt ? timeAgo(stats.lastRunAt) : 'Nunca',
       icon: Clock,
       color: 'from-amber-500/20 to-amber-500/5',
@@ -392,7 +392,7 @@ export default function DashboardPage() {
             <span className="text-xs text-zinc-500">Preparado:</span>
             <div className="flex rounded-lg overflow-hidden border border-white/[0.06]">
               {([
-                { value: 'off' as const, label: 'No', title: 'No marcar como Preparado — solo crea el envio en DAC' },
+                { value: 'off' as const, label: 'No', title: 'No marcar como Preparado — solo crea el envío en DAC' },
                 { value: 'on' as const, label: 'Si', title: 'Marcar como Preparado si el pedido tiene fulfillment abierto' },
                 { value: 'always' as const, label: 'Siempre', title: 'Forzar Preparado siempre, sin importar el producto o estado del pedido' },
               ]).map((opt) => (
@@ -455,7 +455,7 @@ export default function DashboardPage() {
                       setError(json.error ?? 'Error escaneando productos');
                     }
                   } catch {
-                    setError('Error de conexion al escanear');
+                    setError('Error de conexión al escanear');
                   }
                   setScanning(false);
                 }}
@@ -554,15 +554,15 @@ export default function DashboardPage() {
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-medium text-white">
-                  Recuperar envios — {stuck.total} sin completar
+                  Recuperar envíos — {stuck.total} sin completar
                 </p>
                 <p className="text-xs text-zinc-500">
                   {[
                     stuck.retryable > 0
                       ? `${stuck.retryable} reintentable${stuck.retryable === 1 ? '' : 's'}`
                       : null,
-                    stuck.orphan > 0 ? `${stuck.orphan} con guia a verificar` : null,
-                    stuck.needsAddress > 0 ? `${stuck.needsAddress} corregir direccion` : null,
+                    stuck.orphan > 0 ? `${stuck.orphan} con guía a verificar` : null,
+                    stuck.needsAddress > 0 ? `${stuck.needsAddress} corregir dirección` : null,
                     stuck.remitente > 0 ? `${stuck.remitente} carga manual (REMITENTE)` : null,
                   ]
                     .filter(Boolean)
@@ -600,7 +600,7 @@ export default function DashboardPage() {
                 )}
               >
                 {retrying ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
-                Reintentar {retryCount === 1 ? '1 envio' : `${retryCount} envios`}
+                Reintentar {retryCount === 1 ? '1 envío' : `${retryCount} envíos`}
               </button>
             </div>
             )}
@@ -692,7 +692,7 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-cyan-400" />
-              <h3 className="text-sm font-semibold text-white">Horarios automaticos</h3>
+              <h3 className="text-sm font-semibold text-white">Horarios automáticos</h3>
             </div>
             <span className={cn(
               'text-[10px] font-medium px-2 py-0.5 rounded-full',
@@ -773,7 +773,7 @@ export default function DashboardPage() {
             <div className="w-12 h-12 rounded-2xl bg-white/[0.03] flex items-center justify-center mx-auto mb-3">
               <Zap className="w-5 h-5 text-zinc-700" />
             </div>
-            <p className="text-zinc-500 text-sm">Sin ejecuciones todavia</p>
+            <p className="text-zinc-500 text-sm">Sin ejecuciones todavía</p>
             <p className="text-zinc-700 text-xs mt-1">Hace click en &quot;Ejecutar ahora&quot; para comenzar</p>
           </div>
         ) : (
@@ -782,7 +782,7 @@ export default function DashboardPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-white/[0.04]">
-                  {['Estado', 'Origen', 'Escaneados', 'Exitosos', 'Errores', 'Omitidos', 'Duracion', 'Fecha'].map((h) => (
+                  {['Estado', 'Origen', 'Escaneados', 'Exitosos', 'Errores', 'Omitidos', 'Duración', 'Fecha'].map((h) => (
                     <th key={h} className="text-left px-6 py-3 text-[11px] font-medium text-zinc-600 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -830,8 +830,8 @@ export default function DashboardPage() {
           <div className="px-6 py-3 border-t border-white/[0.04]">
             <p className="text-[11px] text-zinc-600 leading-relaxed">
               <span className="text-zinc-400 font-medium">Escaneados</span> = pedidos elegibles revisados en el run = Exitosos + Errores + Omitidos.{' '}
-              <span className="text-emerald-400 font-medium">Exitosos</span>: con guia DAC generada.{' '}
-              <span className="text-red-400 font-medium">Errores</span>: intentados sin guia (incluye los que quedaron para revision manual).{' '}
+              <span className="text-emerald-400 font-medium">Exitosos</span>: con guía DAC generada.{' '}
+              <span className="text-red-400 font-medium">Errores</span>: intentados sin guía (incluye los que quedaron para revisión manual).{' '}
               <span className="text-zinc-400 font-medium">Omitidos</span>: no procesados en este run (p. ej. aplazados por saldo insuficiente o pago en origen para carga manual).
             </p>
           </div>

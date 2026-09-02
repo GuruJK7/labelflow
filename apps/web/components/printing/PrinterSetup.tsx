@@ -11,7 +11,7 @@ export function PrinterSetup({
 }) {
   return (
     <div className="text-xs text-zinc-500 py-2">
-      Configuracion de impresion no disponible todavia.
+      Configuración de impresión no disponible todavía.
     </div>
   );
 }

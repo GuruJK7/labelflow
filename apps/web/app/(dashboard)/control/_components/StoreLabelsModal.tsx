@@ -52,7 +52,7 @@ export function StoreLabelsModal({
         }
         setRows(json.data as LabelRow[]);
       } catch {
-        setError('Error de conexion');
+        setError('Error de conexión');
         setRows([]);
       }
     },
@@ -83,7 +83,7 @@ export function StoreLabelsModal({
           <FileText className="w-4 h-4 text-cyan-400 flex-shrink-0" />
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-white truncate">Pedidos ejecutados — {tenantName}</h2>
-            <p className="text-[11px] text-zinc-500">Etiquetas mas recientes</p>
+            <p className="text-[11px] text-zinc-500">Etiquetas más recientes</p>
           </div>
           <button
             onClick={onClose}
@@ -139,7 +139,7 @@ export function StoreLabelsModal({
                         {r.city ? ` · ${r.city}` : ''}
                       </span>
                       {r.dacGuia && (
-                        <span className="ml-auto flex-shrink-0 font-mono text-emerald-300/90">guia {r.dacGuia}</span>
+                        <span className="ml-auto flex-shrink-0 font-mono text-emerald-300/90">guía {r.dacGuia}</span>
                       )}
                     </div>
                     {r.errorMessage && !isDone && (

@@ -48,7 +48,7 @@ export function RecentShipments() {
       setRows(json.data as Row[]);
       setError('');
     } catch {
-      setError('Error de conexion');
+      setError('Error de conexión');
     } finally {
       setLoading(false);
     }
@@ -69,7 +69,7 @@ export function RecentShipments() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
           <ListChecks className="w-4 h-4 text-cyan-400" />
-          <h2 className="text-sm font-semibold text-white">Ultimos envios</h2>
+          <h2 className="text-sm font-semibold text-white">Últimos envíos</h2>
           <span className="text-xs text-zinc-500">todas las tiendas{rows ? ` · ${rows.length}` : ''}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -119,7 +119,7 @@ export function RecentShipments() {
           <Loader2 className="w-5 h-5 animate-spin" />
         </div>
       ) : rows.length === 0 ? (
-        <p className="text-sm text-zinc-500 py-10 text-center">Sin envios para mostrar.</p>
+        <p className="text-sm text-zinc-500 py-10 text-center">Sin envíos para mostrar.</p>
       ) : (
         <div className="max-h-[560px] overflow-y-auto -mx-1 px-1">
           <div className="space-y-1.5">
@@ -140,7 +140,7 @@ export function RecentShipments() {
                       {meta.label}
                     </span>
                     {r.dacGuia && (
-                      <span className="font-mono text-[11px] text-emerald-300/90 truncate hidden sm:inline">guia {r.dacGuia}</span>
+                      <span className="font-mono text-[11px] text-emerald-300/90 truncate hidden sm:inline">guía {r.dacGuia}</span>
                     )}
                     <span className="ml-auto text-[10px] text-zinc-500 flex-shrink-0">{timeAgo(r.createdAt)}</span>
                   </div>

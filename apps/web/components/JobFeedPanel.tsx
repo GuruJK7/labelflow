@@ -155,7 +155,7 @@ function OrderRow({
                 {[
                   order.amount && `$${order.amount}`,
                   order.paymentType,
-                  order.guia && `Guia: ${order.guia}`,
+                  order.guia && `Guía: ${order.guia}`,
                 ]
                   .filter(Boolean)
                   .join(' · ')}
@@ -163,12 +163,12 @@ function OrderRow({
             )}
             {isProcessing && !order.guia && (
               <span className="text-[11px] text-cyan-700">
-                Esperando guia DAC...
+                Esperando guía DAC...
               </span>
             )}
             {isProcessing && order.guia && (
               <span className="text-[11px] text-cyan-600">
-                Guia: {order.guia}
+                Guía: {order.guia}
               </span>
             )}
             {isFailed && order.errorMessage && (

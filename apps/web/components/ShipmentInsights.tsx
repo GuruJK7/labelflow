@@ -78,7 +78,7 @@ function getStepFromLog(log: LogEntry): { emoji: string; text: string } | null {
   if (step === 'shopify' && msg.includes('Fetched')) return { emoji: '\u{1F6CD}\uFE0F', text: msg };
   if (step === 'order-start') return { emoji: '\u{1F4E6}', text: `Procesando ${meta?.orderName ?? ''} - ${meta?.customer ?? ''}` };
   if (step === 'order-payment') return { emoji: '\u{1F4B3}', text: `Pago: ${meta?.orderName ?? ''} -> ${msg.split(': ')[1] ?? ''}` };
-  if (step === 'order-shipment') return { emoji: '\u2705', text: `DAC guia creada: ${meta?.guia ?? ''}` };
+  if (step === 'order-shipment') return { emoji: '\u2705', text: `DAC guía creada: ${meta?.guia ?? ''}` };
   if (step === 'order-db') return { emoji: '\u{1F4BE}', text: 'Guardado en base de datos' };
   if (step === 'order-pdf') return { emoji: '\u{1F4C4}', text: msg.includes('Downloading') ? 'Descargando PDF...' : msg };
   if (step === 'order-fulfill' && msg.includes('fulfilled')) return { emoji: '\u{1F680}', text: `RASTREO ENVIADO - ${meta?.guia ?? ''}` };
@@ -89,11 +89,11 @@ function getStepFromLog(log: LogEntry): { emoji: string; text: string } | null {
   if (step === 'filter') return { emoji: '\u{1F50D}', text: msg };
   if (step === 'limit') return { emoji: '\u26A0\uFE0F', text: msg };
   if (step?.startsWith('nav:')) return { emoji: '\u{1F310}', text: 'Navegando formulario DAC...' };
-  if (step?.startsWith('step1:') && msg.includes('complete')) return { emoji: '\u2705', text: 'Paso 1: tipo de envio OK' };
+  if (step?.startsWith('step1:') && msg.includes('complete')) return { emoji: '\u2705', text: 'Paso 1: tipo de envío OK' };
   if (step?.startsWith('step2:') && msg.includes('complete')) return { emoji: '\u2705', text: 'Paso 2: origen OK' };
   if (step?.startsWith('step3:') && msg.includes('complete')) return { emoji: '\u2705', text: 'Paso 3: destinatario OK' };
   if (step?.startsWith('step4:') && msg.includes('added')) return { emoji: '\u2705', text: 'Paso 4: paquete OK' };
-  if (step?.startsWith('submit:') && msg.includes('Guia found')) return { emoji: '\u{1F4CB}', text: `Guia: ${meta?.guia ?? ''}` };
+  if (step?.startsWith('submit:') && msg.includes('Guia found')) return { emoji: '\u{1F4CB}', text: `Guía: ${meta?.guia ?? ''}` };
   if (log.level === 'ERROR') return { emoji: '\u274C', text: msg };
   if (log.level === 'WARN' && step) return { emoji: '\u26A0\uFE0F', text: msg.substring(0, 120) };
 
@@ -178,7 +178,7 @@ export function ShipmentInsights() {
           </div>
           <div className="text-left">
             <h2 className="text-sm font-semibold text-white">
-              {isRunning ? 'Envio en progreso...' : 'Seguimiento de envios'}
+              {isRunning ? 'Envío en progreso...' : 'Seguimiento de envíos'}
             </h2>
             <p className="text-[11px] text-zinc-500">
               {data.todayCount} hoy &middot; {data.weekCount} esta semana &middot; Auto-refresh 3s
@@ -215,7 +215,7 @@ export function ShipmentInsights() {
                   'text-[11px] font-medium uppercase tracking-wider',
                   isRunning ? 'text-cyan-400' : 'text-emerald-400'
                 )}>
-                  {isRunning ? 'En vivo' : 'Ultimo procesamiento'}
+                  {isRunning ? 'En vivo' : 'Último procesamiento'}
                 </span>
               </div>
               <div className="max-h-[260px] overflow-y-auto space-y-1 scrollbar-thin pr-1">
@@ -252,7 +252,7 @@ export function ShipmentInsights() {
           {data.recentLabels.length > 0 && (
             <div className="px-6 py-4">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Envios recientes</span>
+                <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Envíos recientes</span>
                 <a href="/labels" className="text-[11px] text-cyan-400/70 hover:text-cyan-400 transition-colors">
                   Ver todos &rarr;
                 </a>
@@ -312,8 +312,8 @@ export function ShipmentInsights() {
           {data.recentLabels.length === 0 && !isRunning && (
             <div className="px-6 py-10 text-center">
               <Package className="w-8 h-8 text-zinc-700 mx-auto mb-2" />
-              <p className="text-sm text-zinc-500">Sin envios recientes</p>
-              <p className="text-[11px] text-zinc-700 mt-1">Los envios apareceran aqui al ejecutar pedidos</p>
+              <p className="text-sm text-zinc-500">Sin envíos recientes</p>
+              <p className="text-[11px] text-zinc-700 mt-1">Los envíos aparecerán aquí al ejecutar pedidos</p>
             </div>
           )}
         </div>

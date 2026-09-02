@@ -48,7 +48,7 @@ export function ShipmentsByStore() {
       }
       setData(json.data as ShipmentsData);
     } catch {
-      setError('Error de conexion');
+      setError('Error de conexión');
     } finally {
       setLoading(false);
     }
@@ -73,7 +73,7 @@ export function ShipmentsByStore() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
         <div className="flex items-center gap-2">
           <BarChart3 className="w-4 h-4 text-cyan-400" />
-          <h2 className="text-sm font-semibold text-white">Envios por tienda</h2>
+          <h2 className="text-sm font-semibold text-white">Envíos por tienda</h2>
           {data && <span className="text-xs text-zinc-500">{data.window} · {data.total} total</span>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -150,7 +150,7 @@ export function ShipmentsByStore() {
                   fontSize: 12,
                   color: '#fff',
                 }}
-                formatter={(v) => [`${v} envios`, '']}
+                formatter={(v) => [`${v} envíos`, '']}
                 labelStyle={{ color: '#a1a1aa' }}
               />
               <Bar dataKey="count" radius={[0, 6, 6, 0]} maxBarSize={26}>
@@ -162,7 +162,7 @@ export function ShipmentsByStore() {
           </ResponsiveContainer>
         </div>
       ) : (
-        <div className="py-10 text-center text-sm text-zinc-500">Sin envios en este periodo.</div>
+        <div className="py-10 text-center text-sm text-zinc-500">Sin envíos en este período.</div>
       )}
     </div>
   );

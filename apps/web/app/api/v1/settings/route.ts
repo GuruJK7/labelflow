@@ -225,7 +225,7 @@ export async function PUT(req: NextRequest) {
   const body = await req.json();
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
-    return apiError('Datos invalidos', 400);
+    return apiError('Datos inválidos', 400);
   }
 
   const data: Record<string, unknown> = {};

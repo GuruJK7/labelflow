@@ -13,7 +13,7 @@ interface Message {
 const WELCOME_MESSAGE: Message = {
   id: 'welcome',
   role: 'assistant',
-  content: 'Hola! Soy el asistente de LabelFlow. Puedo ayudarte con soporte tecnico, resolver dudas sobre la plataforma, o recibir tu feedback. En que te puedo ayudar?',
+  content: 'Hola. Soy el asistente de LabelFlow. Puedo ayudarte con soporte técnico, resolver dudas sobre la plataforma o recibir tu feedback. ¿En qué te puedo ayudar?',
 };
 
 export function ChatWidget() {
@@ -81,7 +81,7 @@ export function ChatWidget() {
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Error de conexion' }));
+        const err = await res.json().catch(() => ({ error: 'Error de conexión' }));
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId ? { ...m, content: err.error || 'Error al conectar con el asistente.' } : m
@@ -133,7 +133,7 @@ export function ChatWidget() {
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
         setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, content: 'Error de conexion. Intenta de nuevo.' } : m))
+          prev.map((m) => (m.id === assistantId ? { ...m, content: 'Error de conexión. Intentá de nuevo.' } : m))
         );
       }
     }

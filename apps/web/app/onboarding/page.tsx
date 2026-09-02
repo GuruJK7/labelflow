@@ -50,6 +50,7 @@ export default function OnboardingPage() {
   const [step, setStep] = useState<Step>(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [verifyEmailHref, setVerifyEmailHref] = useState('');
 
   // Step 1 — Shopify
   const [shopifyUrl, setShopifyUrl] = useState('');
@@ -204,6 +205,13 @@ export default function OnboardingPage() {
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? 'No se pudo completar el setup');
+        // Sin email confirmado no se activa (D26): mostramos el camino para
+        // reenviar el mail en vez de dejar al usuario con un error seco.
+        setVerifyEmailHref(
+          data.code === 'email_not_verified'
+            ? `/verify-email?email=${encodeURIComponent(data.email ?? '')}`
+            : '',
+        );
         setBusy(false);
         return;
       }
@@ -306,7 +314,17 @@ export default function OnboardingPage() {
           {error && (
             <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm flex items-start gap-2">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <span>{error}</span>
+              <span>
+                {error}
+                {verifyEmailHref && (
+                  <>
+                    {' '}
+                    <a href={verifyEmailHref} className="underline text-red-200 hover:text-white">
+                      Reenviar el mail de confirmación
+                    </a>
+                  </>
+                )}
+              </span>
             </div>
           )}
 

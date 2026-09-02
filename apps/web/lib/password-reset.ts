@@ -124,16 +124,30 @@ export async function issueAndSendPasswordResetEmail(opts: {
 export async function findUserByResetToken(plaintext: string): Promise<{
   userId: string;
   tokenId: string;
+  /** Estado actual del usuario: el confirm lo conserva si ya estaba (D26). */
+  emailVerified: Date | null;
 } | null> {
   if (!plaintext || plaintext.length < 16) return null;
 
   const tokenHash = crypto.createHash('sha256').update(plaintext).digest('hex');
 
-  let row: { id: string; userId: string; expiresAt: Date; usedAt: Date | null } | null;
+  let row: {
+    id: string;
+    userId: string;
+    expiresAt: Date;
+    usedAt: Date | null;
+    user: { emailVerified: Date | null };
+  } | null;
   try {
     row = await db.passwordResetToken.findUnique({
       where: { tokenHash },
-      select: { id: true, userId: true, expiresAt: true, usedAt: true },
+      select: {
+        id: true,
+        userId: true,
+        expiresAt: true,
+        usedAt: true,
+        user: { select: { emailVerified: true } },
+      },
     });
   } catch {
     return null;
@@ -142,5 +156,5 @@ export async function findUserByResetToken(plaintext: string): Promise<{
   if (!row) return null;
   if (row.usedAt) return null;            // single-use
   if (row.expiresAt < new Date()) return null; // expired
-  return { userId: row.userId, tokenId: row.id };
+  return { userId: row.userId, tokenId: row.id, emailVerified: row.user.emailVerified };
 }

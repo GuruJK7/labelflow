@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => null);
     const parsed = bulkSchema.safeParse(body);
     if (!parsed.success) {
-      return apiError('Datos invalidos', 400);
+      return apiError('Datos inválidos', 400);
     }
 
     const targets = await getClientViewLabelPdfPaths(parsed.data.ids, tenantIds);

@@ -20,7 +20,7 @@ export function ComingSoon({ title, description }: ComingSoonProps) {
       </div>
       <h2 className="text-xl font-semibold text-white mb-2">{title}</h2>
       <p className="text-sm text-zinc-500 text-center max-w-md mb-6">
-        {description ?? 'Esta funcionalidad esta en desarrollo y estara disponible pronto.'}
+        {description ?? 'Esta funcionalidad está en desarrollo y estará disponible pronto.'}
       </p>
       <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-medium">
         <Clock className="w-3.5 h-3.5" />

@@ -80,8 +80,8 @@ const navSections: Array<{
     label: 'Sistema',
     items: [
       { href: '/reports', label: 'Reportes', icon: Flag },
-      { href: '/settings', label: 'Configuracion', icon: Settings },
-      { href: '/settings/shipping-rules', label: 'Reglas de envio', icon: Truck },
+      { href: '/settings', label: 'Configuración', icon: Settings },
+      { href: '/settings/shipping-rules', label: 'Reglas de envío', icon: Truck },
       { href: '/settings/billing', label: 'Envíos', icon: CreditCard },
       { href: '/settings/referrals', label: 'Referidos', icon: Gift },
     ],
@@ -305,7 +305,7 @@ export function Sidebar() {
           )}
         >
           <LogOut className="w-[18px] h-[18px]" />
-          {!collapsed && <span>Cerrar sesion</span>}
+          {!collapsed && <span>Cerrar sesión</span>}
         </button>
       </div>
     </>
