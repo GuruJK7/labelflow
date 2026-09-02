@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { CheckCircle2, AlertCircle, Mail, RefreshCw } from 'lucide-react';
+import { whatsappUrl } from '@/lib/contacto';
 
 /**
  * /verify-email
@@ -66,13 +67,19 @@ function VerifyEmailContent() {
           {status === 'used' && <UsedState />}
         </div>
 
+        {/* 🔴 Acá el canal NO puede ser un mail, y menos que menos: esta
+            pantalla la ve justamente quien NO está recibiendo nuestros mails.
+            Mandarlo a escribir a una casilla —que además hoy no recibe, ver
+            lib/contacto.ts— lo deja trabado afuera del producto. */}
         <p className="text-center text-xs text-zinc-600 mt-6">
           ¿Problemas?{' '}
           <a
-            href="mailto:soporte@autoenvia.com"
+            href={whatsappUrl('Hola, no me llega el mail de verificación de AutoEnvía.')}
+            target="_blank"
+            rel="noopener noreferrer"
             className="text-cyan-400 hover:text-cyan-300"
           >
-            soporte@autoenvia.com
+            Escribinos por WhatsApp
           </a>
         </p>
       </div>

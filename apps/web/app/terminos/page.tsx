@@ -1,5 +1,21 @@
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
+import { whatsappUrl, WHATSAPP_LEGIBLE } from '@/lib/contacto';
+import { TRIAL_SHIPMENTS } from '@/lib/trial';
+import { SELF_SERVE_PACK_SHIPMENTS } from '@/lib/credit-packs';
+import { PRICING_TIERS, formatUsdUnitMilli, unitPriceUsdMilliFor } from '@/lib/pricing';
+
+/**
+ * Los precios del documento salen de la MISMA tabla que cobra el checkout.
+ * Escritos a mano se desactualizan en silencio, que es exactamente lo que pasó
+ * con los planes mensuales de USD 15/35/69 que este documento describió hasta
+ * el 2026-09-02: un producto que la plataforma nunca vendió.
+ */
+const LIST_PRICE_USD = formatUsdUnitMilli(PRICING_TIERS[0].unitPriceUsdMilli);
+const LOWEST_PRICE_USD = formatUsdUnitMilli(
+  unitPriceUsdMilliFor(SELF_SERVE_PACK_SHIPMENTS[SELF_SERVE_PACK_SHIPMENTS.length - 1]),
+);
+const WHATSAPP_URL = whatsappUrl('Hola, tengo una consulta sobre los Términos de AutoEnvía.');
 
 export const metadata = {
   title: 'Términos de Servicio — AutoEnvía',
@@ -18,7 +34,7 @@ export default function TerminosPage() {
 
         <h1 className="text-3xl font-bold text-white mb-2">Términos de Servicio</h1>
         <p className="text-zinc-500 text-sm mb-10">
-          Última actualización: 27 de marzo de 2026
+          Última actualización: 2 de setiembre de 2026
         </p>
 
         <div className="space-y-8 text-sm leading-relaxed">
@@ -33,19 +49,30 @@ export default function TerminosPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-white mb-3">2. Planes y precios</h2>
+            <h2 className="text-lg font-semibold text-white mb-3">2. Precios y forma de pago</h2>
             <p className="mb-2">
-              AutoEnvía ofrece los siguientes planes con precios en dólares estadounidenses (USD),
-              facturados mensualmente a través de MercadoPago:
+              AutoEnvía <strong className="text-zinc-300">no cobra una mensualidad</strong>. El
+              usuario compra packs de envíos con un pago único, y se descuenta un envío por cada
+              guía emitida con éxito. Los envíos comprados no vencen.
             </p>
-            <ul className="list-disc list-inside space-y-1 text-zinc-400">
-              <li><strong className="text-zinc-300">Starter</strong> — USD 15/mes — Hasta 100 etiquetas/mes</li>
-              <li><strong className="text-zinc-300">Growth</strong> — USD 35/mes — Hasta 500 etiquetas/mes</li>
-              <li><strong className="text-zinc-300">Pro</strong> — USD 69/mes — Etiquetas ilimitadas</li>
-            </ul>
-            <p className="mt-2">
-              Los precios pueden ser modificados con un aviso previo de 30 días naturales. Todos
-              los nuevos usuarios reciben un período de prueba gratuito de 14 días.
+            <p className="mb-2">
+              El precio de lista está denominado en dólares estadounidenses (USD) por envío y baja
+              según el volumen mensual: desde {LIST_PRICE_USD} USD por envío hasta{' '}
+              {LOWEST_PRICE_USD} USD en el escalón más alto disponible en autoservicio. El
+              tarifario vigente, con el precio de cada escalón, está publicado en{' '}
+              <Link href="/#precios" className="text-cyan-400 hover:underline">la página de precios</Link>.
+            </p>
+            <p className="mb-2">
+              El cobro se realiza en pesos uruguayos a través de MercadoPago, convertido desde el
+              precio de lista en dólares al tipo de cambio de referencia que AutoEnvía publica en
+              su tarifario. No es la cotización del día y puede cambiar; el monto exacto en pesos
+              se muestra antes de confirmar el pago.
+            </p>
+            <p>
+              Al crear la cuenta, el usuario recibe {TRIAL_SHIPMENTS} envíos de prueba sin costo y
+              sin necesidad de registrar una tarjeta. Los precios pueden ser modificados con un
+              aviso previo de 30 días naturales; la modificación no afecta a los envíos ya
+              comprados.
             </p>
           </section>
 
@@ -107,17 +134,20 @@ export default function TerminosPage() {
           <section>
             <h2 className="text-lg font-semibold text-white mb-3">7. Cancelación y reembolsos</h2>
             <p>
-              El usuario puede cancelar su suscripción en cualquier momento desde la sección de
-              configuración. Al cancelar:
+              No hay suscripción que cancelar ni cargos automáticos: cada compra es un pago único.
+              El usuario puede dejar de usar el servicio cuando quiera, sin aviso previo y sin
+              penalidad. Al dejar de usarlo:
             </p>
             <ul className="list-disc list-inside space-y-1 text-zinc-400 mt-2">
-              <li>El servicio permanecerá activo hasta el final del período ya pagado</li>
-              <li>No se generaran cargos adicionales</li>
-              <li>Se otorgará un reembolso proporcional a los días no utilizados del período en curso, siempre que la solicitud se realice dentro de los primeros 7 días del ciclo de facturación</li>
+              <li>No se generan cargos adicionales de ningún tipo</li>
+              <li>Los envíos ya comprados y no utilizados permanecen disponibles en la cuenta, sin fecha de vencimiento</li>
+              <li>El usuario puede solicitar el reembolso de los envíos comprados y no utilizados dentro de los 30 días corridos desde la compra</li>
             </ul>
             <p className="mt-2">
-              Para solicitar un reembolso, contacte a soporte@labelflow.uy. Los reembolsos se
-              procesarán a través de MercadoPago en un plazo de 10 días hábiles.
+              Los envíos ya consumidos no se reembolsan, porque corresponden a guías efectivamente
+              emitidas ante DAC. Para solicitar un reembolso, escribinos por los canales de la
+              cláusula 11. Los reembolsos se procesan por el mismo medio de pago en un plazo de 10
+              días hábiles.
             </p>
           </section>
 
@@ -154,10 +184,16 @@ export default function TerminosPage() {
           <section>
             <h2 className="text-lg font-semibold text-white mb-3">11. Contacto</h2>
             <p>
-              Para consultas sobre estos términos o el servicio, contacte a:
+              Para consultas sobre estos términos o el servicio, y para las solicitudes previstas
+              en la cláusula 7, el canal de atención es:
             </p>
             <ul className="list-none space-y-1 text-zinc-400 mt-2">
-              <li>Email: soporte@labelflow.uy</li>
+              <li>
+                WhatsApp:{' '}
+                <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">
+                  {WHATSAPP_LEGIBLE}
+                </a>
+              </li>
               <li>Dirección: Montevideo, Uruguay</li>
             </ul>
           </section>

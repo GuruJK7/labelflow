@@ -35,6 +35,7 @@ import {
   unitPriceUsdMilliFor,
 } from '@/lib/pricing';
 import { ONBOARDING_STEPS } from '@/lib/onboarding-state';
+import { whatsappUrl } from '@/lib/contacto';
 import type { ReactNode } from 'react';
 
 /** Public brand for the site (autoenvia.com). Internally the platform is LabelFlow;
@@ -53,9 +54,24 @@ const BRAND = 'AutoEnvía';
  * elegir la moneda y el tipo viaja con ellos (el simulador).
  */
 const LIST_PRICE_USD = formatUsdUnitMilli(PRICING_TIERS[0].unitPriceUsdMilli);
-/** El escalón más barato que se puede comprar solo (arriba de eso es a medida). */
-const LOWEST_PRICE_USD = formatUsdUnitMilli(
+/**
+ * DOS PISOS DISTINTOS, y la diferencia importa: decir uno solo hace que la
+ * página se contradiga sola.
+ *
+ *   - `SELF_SERVE_PRICE_USD` es el escalón más barato que alguien puede comprar
+ *     hoy apretando un botón (el techo del autoservicio).
+ *   - `LOWEST_PRICE_USD` es el último escalón del tarifario, que existe y se
+ *     cotiza a medida.
+ *
+ * El simulador deja elegir volúmenes que caen en el segundo, así que si el hero
+ * llamara "el más barato" al primero, el visitante vería dos números distintos
+ * presentados los dos como el piso de precio, con 37 % de diferencia entre sí.
+ */
+const SELF_SERVE_PRICE_USD = formatUsdUnitMilli(
   unitPriceUsdMilliFor(SELF_SERVE_PACK_SHIPMENTS[SELF_SERVE_PACK_SHIPMENTS.length - 1]),
+);
+const LOWEST_PRICE_USD = formatUsdUnitMilli(
+  PRICING_TIERS[PRICING_TIERS.length - 1].unitPriceUsdMilli,
 );
 
 /** Minutos de configuración: la suma de las estimaciones que ve el usuario en el
@@ -65,9 +81,7 @@ const SETUP_STEPS = ONBOARDING_STEPS.length;
 /** Contacto discreto del pie. NO es el camino de conversión: el alta es
  *  self-serve, así que el mensaje pre-armado ya no habla de coordinar llamadas
  *  ni de evaluar implementaciones. */
-const WHATSAPP_URL =
-  'https://wa.me/59898943949?text=' +
-  encodeURIComponent(`Hola, tengo una consulta sobre ${BRAND}.`);
+const WHATSAPP_URL = whatsappUrl(`Hola, tengo una consulta sobre ${BRAND}.`);
 
 export const metadata = {
   title: `${BRAND} — Despachá con DAC sin cargar una guía a mano`,
@@ -270,9 +284,9 @@ export default function LandingPage() {
               detail="El asistente te lleva por todos. Menos de 10 minutos."
             />
             <BigStat
-              value={`USD ${LOWEST_PRICE_USD}`}
-              label="por envío, el más barato"
-              detail={`Baja de USD ${LIST_PRICE_USD} a USD ${LOWEST_PRICE_USD} según el volumen.`}
+              value={`USD ${SELF_SERVE_PRICE_USD}`}
+              label="por envío comprando solo"
+              detail={`Baja de USD ${LIST_PRICE_USD} a USD ${SELF_SERVE_PRICE_USD} según el volumen, y hasta USD ${LOWEST_PRICE_USD} con precio a medida.`}
             />
           </div>
         </ScrollReveal>
@@ -632,7 +646,7 @@ const FOUNDATIONS: { title: string; body: string; icon: ReactNode }[] = [
   },
   {
     title: 'Registro de cada corrida',
-    body: 'Queda anotado qué se procesó, qué salió y qué falló, con fecha y detalle, para que puedas reconstruir cualquier día.',
+    body: 'Queda anotado qué se procesó, qué salió y qué falló, con fecha y detalle. En tu panel ves las últimas corridas; si necesitás una más vieja, la buscamos nosotros.',
     icon: <ScrollText className="h-4 w-4" aria-hidden />,
   },
   {
@@ -688,7 +702,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: '¿Puedo tener varias tiendas?',
-    a: 'Sí. Todas las tiendas de tu usuario comparten el mismo saldo de envíos, y cada una mantiene sus pedidos, sus etiquetas y sus métricas por separado. Hay un panel para verlas juntas.',
+    a: 'Sí. Todas las tiendas de tu usuario comparten el mismo saldo de envíos, y cada una mantiene sus pedidos, sus etiquetas y sus métricas por separado. Cambiás de tienda con un selector, arriba; todavía no hay una pantalla que muestre las métricas de todas juntas.',
   },
   {
     q: '¿Mis datos están seguros?',
