@@ -44,6 +44,7 @@ import {
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { downloadLabel } from '../dac/label';
 import { createShopifyClient } from '../shopify';
+import { resolveShopifyAccessForTenant } from '../shopify/access';
 import { markOrderProcessed, addOrderNote } from '../shopify';
 import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify';
 import { sendShipmentNotification } from '../notifier/email';
@@ -139,9 +140,16 @@ export async function agentBulkUploadJob(job: {
 
     const dacUsername = tenant.dacUsername;
     const dacPassword = decryptIfPresent(tenant.dacPassword);
-    const shopifyToken = decryptIfPresent(tenant.shopifyToken);
+    // Renueva bajo demanda si es un token del App Store (D29); legacy → el
+    // mismo string que decryptIfPresent. El motivo accionable va al error.
+    const shopifyAccess = await resolveShopifyAccessForTenant(tenant);
+    const shopifyToken = shopifyAccess.access;
     if (!dacUsername || !dacPassword) throw new Error('Missing DAC credentials');
-    if (!tenant.shopifyStoreUrl || !shopifyToken) throw new Error('Missing Shopify credentials');
+    if (!tenant.shopifyStoreUrl || !shopifyToken) {
+      throw new Error(
+        shopifyAccess.reason && shopifyAccess.reason !== 'no-token' ? shopifyAccess.message : 'Missing Shopify credentials',
+      );
+    }
 
     // 2. Download payload JSON
     slog.info('agent-download', `Downloading agent payload from ${job.xlsxStoragePath}`);

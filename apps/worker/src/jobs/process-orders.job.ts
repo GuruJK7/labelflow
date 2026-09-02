@@ -4,6 +4,7 @@ import { getCreditHolderTenantId } from '../credit-holder';
 import { decryptIfPresent, decryptOrRaw } from '../encryption';
 import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify';
+import { resolveShopifyAccessForTenant } from '../shopify/access';
 import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify';
 import { resolveOrderPhone } from '../shopify/phone';
 import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify';
@@ -203,13 +204,18 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     }
 
     const shopifyUrl = tenant.shopifyStoreUrl;
-    const shopifyToken = decryptIfPresent(tenant.shopifyToken);
+    // Renueva bajo demanda si es un token del App Store (D29); legacy → el
+    // mismo string que decryptIfPresent. Si no hay token usable, el motivo
+    // (reinstalar / renovación fallida) va al runlog en vez de un genérico.
+    const shopifyAccess = await resolveShopifyAccessForTenant(tenant);
+    const shopifyToken = shopifyAccess.access;
     const dacUsername = decryptOrRaw(tenant.dacUsername);
     const dacPassword = decryptIfPresent(tenant.dacPassword);
 
     if (!shopifyUrl || !shopifyToken) {
-      slog.error('config', 'Shopify credentials not configured');
-      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Missing Shopify config' } });
+      const motivo = shopifyAccess.reason && shopifyAccess.reason !== 'no-token' ? shopifyAccess.message : 'Missing Shopify config';
+      slog.error('config', `Shopify credentials not configured: ${motivo}`);
+      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: motivo } });
       return;
     }
 

@@ -26,8 +26,9 @@
  */
 
 import { db } from '../db';
-import { decryptIfPresent } from '../encryption';
+
 import { createShopifyClient } from '../shopify';
+import { resolveShopifyAccessForTenant } from '../shopify/access';
 import { getUnfulfilledOrders } from '../shopify';
 import { uploadOrdersJsonToStorage } from '../storage/upload';
 import { createStepLogger } from '../logger';
@@ -92,13 +93,18 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
     }
 
     const shopifyUrl = tenant.shopifyStoreUrl;
-    const shopifyToken = decryptIfPresent(tenant.shopifyToken);
+    // Renueva bajo demanda si es un token del App Store (D29); legacy → el
+    // mismo string que decryptIfPresent. El motivo accionable va al runlog.
+    const shopifyAccess = await resolveShopifyAccessForTenant(tenant);
+    const shopifyToken = shopifyAccess.access;
 
     if (!shopifyUrl || !shopifyToken) {
-      slog.error('config', 'Missing Shopify credentials');
+      const motivo =
+        shopifyAccess.reason && shopifyAccess.reason !== 'no-token' ? shopifyAccess.message : 'Missing Shopify credentials';
+      slog.error('config', motivo);
       await db.job.update({
         where: { id: jobId },
-        data: { status: 'FAILED', errorMessage: 'Missing Shopify credentials', finishedAt: new Date() },
+        data: { status: 'FAILED', errorMessage: motivo, finishedAt: new Date() },
       });
       return;
     }
