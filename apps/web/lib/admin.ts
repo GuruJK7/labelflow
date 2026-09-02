@@ -1,4 +1,5 @@
 import { getServerSession } from 'next-auth';
+import { notFound } from 'next/navigation';
 import { authOptions } from './auth';
 import { db } from './db';
 
@@ -21,6 +22,19 @@ function getAdminEmails(): Set<string> {
       .map((e) => e.trim().toLowerCase())
       .filter(Boolean),
   );
+}
+
+/**
+ * ¿Este email es admin? Puro (sin sesión ni base): lo usa el layout del
+ * dashboard, que ya trae `tenant.user.email`, para decidir el menú por rol
+ * (D32) sin una query extra. Lista vacía = nadie es admin. Insensible a
+ * mayúsculas y espacios en los bordes.
+ */
+export function isAdminEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const allowed = getAdminEmails();
+  if (allowed.size === 0) return false;
+  return allowed.has(email.trim().toLowerCase());
 }
 
 export interface AdminSession {
@@ -49,11 +63,19 @@ export async function getAdminSession(): Promise<AdminSession | null> {
     select: { email: true },
   });
   if (!user?.email) return null;
+  if (!isAdminEmail(user.email)) return null;
 
-  const email = user.email.toLowerCase();
-  const allowed = getAdminEmails();
-  if (allowed.size === 0) return null; // No admin configured → block.
-  if (!allowed.has(email)) return null;
+  return { userId, email: user.email.toLowerCase() };
+}
 
-  return { userId, email };
+/**
+ * Gate server-side para páginas sólo-admin (D32): Control, Pedidos, Reportes,
+ * Meta Ads, Recover y /admin. Un usuario normal recibe 404 — no se le revela
+ * que la ruta existe — aunque escriba la URL a mano: ocultar el link del menú
+ * no alcanza. Mismo criterio que tenía /admin.
+ */
+export async function requireAdminOrNotFound(): Promise<AdminSession> {
+  const admin = await getAdminSession();
+  if (!admin) notFound();
+  return admin;
 }

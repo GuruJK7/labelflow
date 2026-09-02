@@ -1,10 +1,13 @@
 import { FeatureGate } from '@/components/ui/FeatureGate';
+import { requireAdminOrNotFound } from '@/lib/admin';
 
-export default function AdsLayout({
+// Sólo admin (D32): el usuario normal recibe 404 aunque escriba la URL.
+export default async function AdsLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  await requireAdminOrNotFound();
   return (
     <FeatureGate
       flag="ads"
