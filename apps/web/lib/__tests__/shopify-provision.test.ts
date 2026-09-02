@@ -98,6 +98,8 @@ describe('provisionFromShopify', () => {
     expect(tenant.tosAcceptedAt).toBeUndefined(); // no aceptó nuestros términos
     expect(decrypt(tenant.shopifyToken)).toBe('shpat_token');
     expect(tenant.shopifyStoreUrl).toBe(info.domain);
+    // D31: cuenta nueva → 5 envíos explícitos, no el default del schema (10).
+    expect(tenant.shipmentCredits).toBe(5);
   });
 
   it("tienda nueva + email CON cuenta → 'claim' y NO escribe nada", async () => {
@@ -148,6 +150,20 @@ describe('provisionFromShopify', () => {
     expect(out).toEqual({ kind: 'conflict', reason: 'shop_taken' });
     expect(tx.tenant.update).not.toHaveBeenCalled();
     expect(tx.user.create).not.toHaveBeenCalled();
+    expect(tx.tenant.create).not.toHaveBeenCalled();
+  });
+
+  it("dominio ya vinculado escrito con MAYÚSCULAS y otro user → 'conflict', nunca acredita (D31)", async () => {
+    tx.user.findUnique.mockResolvedValue({ id: 'u-nuevo' });
+    tx.tenant.findFirst.mockImplementation(
+      fakeTenantFindFirst([{ id: 't1', shopifyStoreUrl: 'MI-TIENDA.MYSHOPIFY.COM', userId: 'u-dueno' }]),
+    );
+
+    const out = await provisionFromShopify(info, 'shpat_token');
+    expect(out).toEqual({ kind: 'conflict', reason: 'shop_taken' });
+    expect(tx.user.create).not.toHaveBeenCalled();
+    expect(tx.tenant.create).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
   });
 
   it("tienda vinculada y el email de la tienda no tiene cuenta → 'conflict'", async () => {
@@ -157,6 +173,7 @@ describe('provisionFromShopify', () => {
     const out = await provisionFromShopify(info, 'shpat_token');
     expect(out).toEqual({ kind: 'conflict', reason: 'shop_taken' });
     expect(tx.user.create).not.toHaveBeenCalled();
+    expect(tx.tenant.create).not.toHaveBeenCalled();
   });
 
   it('el chequeo de tienda tomada corre ADENTRO de la transacción', async () => {

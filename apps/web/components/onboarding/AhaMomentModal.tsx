@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { CheckCircle2, Sparkles, X } from 'lucide-react';
+import { TRIAL_SHIPMENTS } from '@/lib/trial';
 
 /**
  * Celebrates the user's first successfully completed shipment — the moment
@@ -11,7 +12,7 @@ import { CheckCircle2, Sparkles, X } from 'lucide-react';
  * those who don't. We use the modal to:
  *   1. Reinforce success ("¡Tu primer envío ya está en camino!").
  *   2. Show the immediately-relevant next step (Etiquetas vs Pedidos).
- *   3. Anchor the credits-pack pitch ("ya gastaste 1 de tus 10 envíos gratis").
+ *   3. Anchor the credits-pack pitch ("ya gastaste 1 de tus 5 envíos gratis").
  *
  * On dismiss we POST to /api/v1/onboarding/aha-seen which sets
  * Tenant.firstJobCompletedAt. Once set, the layout never re-renders this
@@ -78,7 +79,7 @@ export function AhaMomentModal() {
         <div className="bg-zinc-900/60 border border-white/[0.06] rounded-lg p-3 mb-5">
           <p className="text-xs text-zinc-400 leading-relaxed">
             <span className="text-zinc-200 font-medium">Tip:</span> tenés{' '}
-            <span className="text-cyan-300 font-semibold">10 envíos gratis</span> de
+            <span className="text-cyan-300 font-semibold">{TRIAL_SHIPMENTS} envíos gratis</span> de
             bienvenida. Cuando los uses, comprá un pack y nunca más se te corta.
           </p>
         </div>

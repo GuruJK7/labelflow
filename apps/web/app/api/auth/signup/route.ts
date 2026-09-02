@@ -13,6 +13,7 @@ import { nuevoTenantBase } from '@/lib/tenant-provision';
 import { issueAndSendVerificationEmail, resolveAppOrigin } from '@/lib/verify-email';
 import { trackServer } from '@/lib/analytics.server';
 import { getRequestIp, rateLimitBucketForIp } from '@/lib/rate-limit-ip';
+import { TRIAL_SHIPMENTS, REFEREE_BONUS_CREDITS } from '@/lib/trial';
 
 export const runtime = 'nodejs';
 
@@ -243,13 +244,13 @@ export async function POST(req: Request) {
     const base = await nuevoTenantBase(db, baseSlug);
 
     // Bono de referido para el referee: si entró con un código válido (cookie
-    // firmada, no body), arranca con 10 envíos GRATIS extra en un pool
-    // separado (`referralBonusCredits`). El worker drena ese pool primero al
-    // despachar — el saldo pago (`shipmentCredits`, que ya viene con 10 por
-    // signup universal) queda intacto hasta que el bonus se agote. Pareo con
-    // el kickback del 20% al referrer (mercadopago/route.ts:415-481).
-    // Sin bono si el referidor tiene la misma IP de alta (D26).
-    const REFEREE_BONUS_CREDITS = 10;
+    // firmada, no body), arranca con REFEREE_BONUS_CREDITS envíos GRATIS extra
+    // en un pool separado (`referralBonusCredits`). El worker drena ese pool
+    // primero al despachar — el saldo pago (`shipmentCredits`, que arranca en
+    // TRIAL_SHIPMENTS por cuenta nueva, D31) queda intacto hasta que el bonus
+    // se agote. Pareo con el kickback del 20% al referrer
+    // (mercadopago/route.ts:415-481). Sin bono si el referidor tiene la misma
+    // IP de alta (D26).
     const refereeBonus = referredById && !mismaIpQueElReferidor ? REFEREE_BONUS_CREDITS : 0;
 
     // Create user + tenant in transaction (Prisma maneja la atomicidad
@@ -276,8 +277,9 @@ export async function POST(req: Request) {
                 referralCode: base.referralCode,
                 referredByCode,
                 referredById,
-                // shipmentCredits arranca en 10 por el @default del schema
-                // (bonus universal de signup, no específico de referidos).
+                // D31: el trial va explícito (5), NO por el @default del
+                // schema (10). Es el primer tenant del user → holder.
+                shipmentCredits: TRIAL_SHIPMENTS,
                 // referralBonusCredits SÓLO se setea si el signup vino vía
                 // referral válido — defaults a 0 para signups directos.
                 referralBonusCredits: refereeBonus,

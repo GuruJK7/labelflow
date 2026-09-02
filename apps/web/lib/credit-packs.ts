@@ -5,8 +5,8 @@
  * al saldo Tenant.shipmentCredits, que el worker decrementa por cada
  * Finalizar exitoso en DAC.
  *
- * Welcome bonus: schema.prisma define `Tenant.shipmentCredits @default(10)`,
- * por lo que cada cuenta nueva arranca con 10 envíos sin código adicional.
+ * Welcome bonus: ver lib/trial.ts (`TRIAL_SHIPMENTS`, D31). Cada alta de
+ * cuenta nueva lo pasa explícito; el @default del schema no rige.
  *
  * Referidos: 20% de los envíos comprados se acreditan al referidor cuando
  * la compra pasa a PAID. Por ejemplo, si un referido compra pack_100, su
@@ -95,10 +95,3 @@ export function calcReferralKickback(shipmentsPurchased: number): number {
   if (!Number.isFinite(shipmentsPurchased) || shipmentsPurchased <= 0) return 0;
   return Math.floor(shipmentsPurchased * REFERRAL_KICKBACK_RATE);
 }
-
-/**
- * Welcome bonus que se aplica a tenants nuevos. El default ya está en el
- * schema, este número se exporta para que la UI pueda mostrarlo en el
- * mensaje de bienvenida sin hardcodearlo.
- */
-export const WELCOME_BONUS_SHIPMENTS = 10;

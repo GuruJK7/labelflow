@@ -20,6 +20,7 @@ import { cn } from '@/lib/cn';
 import { ShopifyTutorial } from './_components/ShopifyTutorial';
 import { DacTutorial } from './_components/DacTutorial';
 import { track } from '@/lib/analytics';
+import { TRIAL_SHIPMENTS } from '@/lib/trial';
 
 /**
  * Onboarding wizard — 2 mandatory connection steps + 1 celebration step.
@@ -546,10 +547,10 @@ export default function OnboardingPage() {
                 <div className="bg-cyan-500/[0.06] border border-cyan-500/20 rounded-xl p-4 mb-6 text-left max-w-md mx-auto">
                   <div className="flex items-center gap-2 mb-2">
                     <Zap className="w-4 h-4 text-cyan-400" />
-                    <span className="text-sm font-semibold text-white">10 envíos gratis</span>
+                    <span className="text-sm font-semibold text-white">{TRIAL_SHIPMENTS} envíos gratis</span>
                   </div>
                   <p className="text-xs text-zinc-400 leading-relaxed">
-                    Te regalamos 10 envíos para que pruebes el flujo completo. No se
+                    Te regalamos {TRIAL_SHIPMENTS} envíos para que pruebes el flujo completo. No se
                     vencen. Cuando los uses, comprás un pack y seguís sin pausas.
                   </p>
                 </div>
