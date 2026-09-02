@@ -19,6 +19,13 @@ import { ModoProcesamiento, saveProcessingMode, type SelectableMode } from './Mo
  * key) no vive acá.
  *
  * `compact`: dentro del wizard no se muestra el bloque de modo (es el paso 5).
+ *
+ * Dashboard con Excel: el job `PROCESS_DASHBOARD_ORDERS` sólo lee la fuente
+ * (URL + token) y las credenciales de DAC; cada guía sale DESTINATARIO sin
+ * contrareembolso, sin SKU, sin aviso por email y sin filtro de productos.
+ * Ofrecer esos parámetros con "Guardado" en verde era mentirle al usuario, así
+ * que con `storeKind === 'dashboard'` se muestran sólo el modo (Configuración)
+ * y un aviso único. Dar soporte en el worker es otro turno (PENDIENTES.md).
  */
 interface SettingsDTO {
   paymentThreshold: number;
@@ -243,6 +250,35 @@ export function ParametrosForm({
   }
 
   const esShopify = storeKind === 'shopify';
+
+  if (storeKind === 'dashboard') {
+    return (
+      <div className={cn('space-y-5', compact && 'space-y-4')}>
+        {!compact && (
+          <Bloque
+            id="modo"
+            title="Cómo se procesan"
+            que="Cada cuánto miramos tu Dashboard y generamos las guías."
+            paraQuien="Para todas las tiendas. Inmediato revisa cada 15 minutos; Cada hora sirve si querés revisar antes de que salgan."
+            ejemplo="Con Inmediato, un pedido cargado a las 10:03 sale a las 10:15 como mucho. Con Cada hora, sale a las 11:00."
+            footer={
+              <SaveRow
+                label="Guardar modo"
+                busy={saving === 'modo'}
+                disabled={!modeChoice || modeChoice === currentMode}
+                onClick={saveMode}
+                msg={msgs.modo}
+              />
+            }
+          >
+            <ModoProcesamiento value={modeChoice} currentMode={currentMode} storeKind={storeKind} onChange={setModeChoice} />
+          </Bloque>
+        )}
+        <AvisoDashboard />
+      </div>
+    );
+  }
+
   const avisoRemitente =
     'Los envíos que te tocan pagar a vos no se cargan solos: te dejamos una nota en el pedido de Shopify con el monto y lo cargás vos en DAC. Los que paga el cliente salen automáticos.';
 
@@ -588,6 +624,23 @@ export function ParametrosForm({
 }
 
 /* ─── Piezas ───────────────────────────────────────────────────────────── */
+
+/** Texto único del paso 4 / Configuración para Dashboard con Excel. */
+export const AVISO_DASHBOARD_TITULO = 'Con Dashboard con Excel no hay parámetros para ajustar';
+export const AVISO_DASHBOARD_TEXTO =
+  'Todas las guías salen pagas por el cliente al recibir, con la dirección que cargaste en el Dashboard. Quién paga el envío, envío gratis por reglas, filtro de productos, SKU en la guía, contrareembolso y aviso por email aplican sólo a tiendas Shopify.';
+
+export function AvisoDashboard() {
+  return (
+    <section id="param-dashboard" className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
+      <h3 className="text-sm font-semibold text-white">{AVISO_DASHBOARD_TITULO}</h3>
+      <p className="mt-2 text-xs text-zinc-300 leading-relaxed">{AVISO_DASHBOARD_TEXTO}</p>
+      <p className="mt-3 px-3 py-2 rounded-lg bg-cyan-500/[0.05] border border-cyan-500/20 text-[11px] text-cyan-100/80 leading-relaxed">
+        Ejemplo: un pedido de $2.500 cargado en el Dashboard sale como una guía normal y DAC le cobra el envío al cliente en la puerta. Si más adelante conectás Shopify, estos parámetros se habilitan solos.
+      </p>
+    </section>
+  );
+}
 
 const inputClass =
   'w-full px-3.5 py-2.5 bg-white/[0.03] border border-white/[0.08] rounded-lg text-white text-sm placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 transition-colors';

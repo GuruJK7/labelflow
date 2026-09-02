@@ -95,6 +95,41 @@ describe('<OnboardingWizard>', () => {
     expect(html).not.toContain('App Store de Shopify');
   });
 
+  it('paso 4 con Dashboard con Excel: un solo aviso, sin los parámetros que el job de Dashboard ignora', () => {
+    const html = render(
+      {
+        ...BASE,
+        currentStep: 4,
+        store: { kind: 'dashboard', shopifyConnected: false, shopifyStoreUrl: null, dashboardConnected: true, dashboardUrl: 'https://d.uy' },
+        dac: { connected: true, username: '12345678' },
+      },
+      4,
+    );
+    expect(html).toContain('Con Dashboard con Excel no hay parámetros para ajustar');
+    expect(html).toContain('aplican sólo a tiendas Shopify');
+    // Ninguno de los 8 bloques (por id de sección) ni el bloque de modo (paso 5).
+    for (const id of ['quien-paga', 'envio-gratis', 'pedidos-seguidos', 'productos', 'preparado', 'sku', 'contrareembolso', 'email', 'orden', 'modo']) {
+      expect(html).not.toContain(`id="param-${id}"`);
+    }
+    expect(html).toContain('id="param-dashboard"');
+    expect(html).not.toContain('Cargando tus parámetros');
+    expect(html).toContain('Continuar');
+  });
+
+  it('paso 4 con Shopify: carga los parámetros (SSR muestra el estado de carga, no el aviso de Excel)', () => {
+    const html = render(
+      {
+        ...BASE,
+        currentStep: 4,
+        store: { kind: 'shopify', shopifyConnected: true, shopifyStoreUrl: 'acme.myshopify.com', dashboardConnected: false, dashboardUrl: null },
+        dac: { connected: true, username: '12345678' },
+      },
+      4,
+    );
+    expect(html).toContain('Cargando tus parámetros');
+    expect(html).not.toContain('Con Dashboard con Excel no hay parámetros para ajustar');
+  });
+
   it('paso 5 con tienda Excel avisa que no hay aviso instantáneo y muestra los dos modos', () => {
     const html = render(
       {
