@@ -14,13 +14,19 @@
  *     "destinatario": "Juan Pérez", "direccion": "Av. Italia 1234 apto 5",
  *     "ciudad": "Montevideo", "items": [ { "sku": "REM-001", "qty": 2 } ] }
  *
- * Además de esas 7 claves mandamos 3 informativas —`departamento`,
- * `reparto_propio` y `printedAt`— que el consumidor YA declara como opcionales
- * (`PedidoAutoenvia` en wms-mvp/src/app/(app)/picking/actions.ts:278, verificado
- * el 2026-09-01) y que el RPC ignora: `importar_tanda` lee clave por clave con
- * `v_pedido->>'...'` sobre `jsonb_array_elements`, así que una clave de más
- * nunca rompe la importación. DEPO usa `reparto_propio` sólo para contar
+ * Además de esas 7 claves mandamos 4 informativas —`departamento`,
+ * `reparto_propio`, `printedAt` y `pdf_url`— que el consumidor declara
+ * opcionales (`PedidoAutoenvia` en wms-mvp/src/app/(app)/picking/actions.ts:278,
+ * verificado el 2026-09-01) y que el RPC ignora: `importar_tanda` lee clave por
+ * clave con `v_pedido->>'...'` sobre `jsonb_array_elements`, así que una clave
+ * de más nunca rompe la importación. DEPO usa `reparto_propio` sólo para contar
  * cuántos pedidos de la tanda son de logística propia y avisarlo en pantalla.
+ *
+ * `pdf_url` (2026-09-01) es la URL FIRMADA del PDF de la etiqueta, para que DEPO
+ * imprima la tanda sin pasar por el portal. Es aditiva: los consumidores que ya
+ * existen la ignoran y siguen andando igual. Vive UNA hora — el `meta.expira_en`
+ * de la respuesta dice hasta cuándo, así que un JSON guardado y abierto al día
+ * siguiente tiene los links muertos y hay que volver a pedir el export.
  *
  * Detalles del contrato que NO se pueden cambiar de este lado:
  *   - `cliente` se matchea por nombre EXACTO (btrim) contra la tabla `clients`
@@ -88,6 +94,12 @@ export interface WmsExportLabelRow {
   packSeq: number | null;
   /** Cuándo el portal sirvió el PDF por primera vez. Null = sin imprimir. */
   printedAt: Date | null;
+  /**
+   * Ruta del PDF en el bucket de Supabase, o null si la etiqueta no tiene PDF
+   * (histórica, o vencida por retención del bucket). Este archivo NO firma nada
+   * —es puro—: la firma la hace lib/wms-export-pdf.ts y entra por `pdfUrls`.
+   */
+  pdfPath: string | null;
   items: WmsExportItemRow[];
 }
 
@@ -123,6 +135,13 @@ export interface DepoPedido {
   reparto_propio: boolean;
   /** ISO 8601 de la primera impresión desde el portal, o null. */
   printedAt: string | null;
+  /**
+   * URL FIRMADA y de vida corta del PDF de la etiqueta, para que DEPO la baje e
+   * imprima. Null cuando la etiqueta no tiene `pdfPath` o cuando la firma falló:
+   * nunca rompe el export. Vence a la hora — el `meta.expira_en` de la respuesta
+   * dice el instante exacto. Ver lib/wms-export-pdf.ts.
+   */
+  pdf_url: string | null;
 }
 
 export interface WmsExportPayload {
@@ -207,8 +226,18 @@ export function toDepoItems(items: WmsExportItemRow[]): DepoItem[] {
   return order.map((sku) => ({ sku, qty: qtyBySku.get(sku) as number }));
 }
 
-/** Mapea una Label al pedido de DEPO (sin decidir todavía en qué lista va). */
-export function toDepoPedido(row: WmsExportLabelRow, cliente: string): DepoPedido {
+/**
+ * Mapea una Label al pedido de DEPO (sin decidir todavía en qué lista va).
+ *
+ * `pdfUrls` es el mapa labelId → URL firmada que arma lib/wms-export-pdf.ts. Se
+ * pasa como parámetro y no se firma acá a propósito: este archivo es puro y
+ * testeable sin red. Una entrada ausente vale lo mismo que una en null.
+ */
+export function toDepoPedido(
+  row: WmsExportLabelRow,
+  cliente: string,
+  pdfUrls?: ReadonlyMap<string, string | null>,
+): DepoPedido {
   return {
     cliente,
     external_ref: clean(row.shopifyOrderName),
@@ -220,6 +249,7 @@ export function toDepoPedido(row: WmsExportLabelRow, cliente: string): DepoPedid
     departamento: normalizarDepartamento(row.department),
     reparto_propio: esRepartoPropio(row),
     printedAt: row.printedAt ? row.printedAt.toISOString() : null,
+    pdf_url: pdfUrls?.get(row.id) ?? null,
   };
 }
 
@@ -272,14 +302,20 @@ export function filtrarZona<T extends Pick<WmsExportLabelRow, 'dacGuia' | 'depar
  */
 export function buildWmsExportPayload(
   rows: WmsExportLabelRow[],
-  opts: { fecha: string; cliente: string; zona?: WmsExportZona },
+  opts: {
+    fecha: string;
+    cliente: string;
+    zona?: WmsExportZona;
+    /** labelId → URL firmada del PDF. Sin esto, todos los `pdf_url` salen null. */
+    pdfUrls?: ReadonlyMap<string, string | null>;
+  },
 ): WmsExportPayload {
   const zona = opts.zona ?? 'todas';
   const pedidos: DepoPedido[] = [];
   const sinItems: DepoPedido[] = [];
 
   for (const row of ordenarPila(filtrarZona(rows, zona))) {
-    const pedido = toDepoPedido(row, opts.cliente);
+    const pedido = toDepoPedido(row, opts.cliente, opts.pdfUrls);
     if (pedido.items.length === 0) sinItems.push(pedido);
     else pedidos.push(pedido);
   }
