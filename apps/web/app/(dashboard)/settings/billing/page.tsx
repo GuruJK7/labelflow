@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { SettingsNav } from '../_components/SettingsNav';
 import {
   Check,
   AlertCircle,
@@ -91,6 +92,7 @@ function BillingContent() {
 
   return (
     <div className="max-w-7xl mx-auto">
+      <SettingsNav />
       {/* Header */}
       <div className="mb-10">
         <div className="flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-widest mb-3">

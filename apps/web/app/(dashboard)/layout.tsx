@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { RoleProvider } from '@/components/layout/RoleProvider';
 import { ChatWidget } from '@/components/chat/ChatWidget';
 import { TopBar } from '@/components/layout/TopBar';
 import { AhaMomentModal } from '@/components/onboarding/AhaMomentModal';
@@ -8,6 +9,7 @@ import { CreditExhaustedModal } from '@/components/onboarding/CreditExhaustedMod
 import { getAuthenticatedTenant } from '@/lib/api-utils';
 import { db } from '@/lib/db';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
+import { isAdminEmail } from '@/lib/admin';
 
 /**
  * Server-component dashboard layout.
@@ -137,16 +139,21 @@ export default async function DashboardLayout({
   const bonusCredits = sharedReferralBonusCredits;
   const totalCredits = paidCredits + bonusCredits;
 
+  // Rol (D32): el select de arriba ya trae `user.email`, así que decidir el
+  // menú no cuesta una query más. El menú es sólo UI; las páginas sólo-admin
+  // se protegen aparte con requireAdminOrNotFound() en su layout.
+  const isAdmin = isAdminEmail(tenant.user?.email);
+
   return (
     <div className="min-h-screen bg-[#050505]">
-      <Sidebar />
+      <Sidebar isAdmin={isAdmin} />
       <main className="lg:ml-60 min-h-screen">
         <TopBar credits={paidCredits} bonusCredits={bonusCredits} />
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
           {totalCredits > 0 && totalCredits <= 2 && (
             <LowCreditsBanner credits={totalCredits} />
           )}
-          {children}
+          <RoleProvider isAdmin={isAdmin}>{children}</RoleProvider>
         </div>
       </main>
       <ChatWidget />
