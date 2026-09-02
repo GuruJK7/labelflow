@@ -235,6 +235,19 @@ describe('missingScopes', () => {
     expect(missingScopes(null)).toHaveLength(10);
     expect(missingScopes('')).toHaveLength(10);
   });
+
+  it('write_* implica read_*: el token real de Shopify sólo lista los write', () => {
+    // Scope string tal cual volvió del canje en el primer install en autoenvia-qa.
+    const tokenReal =
+      'write_orders,write_fulfillments,write_products,write_assigned_fulfillment_orders,write_merchant_managed_fulfillment_orders';
+    expect(missingScopes(tokenReal)).toEqual([]);
+  });
+
+  it('read_* NO implica write_*', () => {
+    const soloLectura = REQUIRED_SCOPES.filter((s) => s.startsWith('read_'));
+    const faltan = missingScopes(soloLectura);
+    expect(faltan).toEqual(REQUIRED_SCOPES.filter((s) => s.startsWith('write_')));
+  });
 });
 
 describe('callbackUrl', () => {

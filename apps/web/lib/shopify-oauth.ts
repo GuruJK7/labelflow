@@ -220,7 +220,18 @@ export function missingScopes(granted: string | string[] | null | undefined): st
   const set = new Set(
     (typeof granted === 'string' ? granted.split(',') : (granted ?? [])).map((s) => s.trim()).filter(Boolean),
   );
-  return REQUIRED_SCOPES.filter((s) => !set.has(s));
+  // En Shopify, el permiso de escritura incluye el de lectura ("Any permission
+  // to write a resource includes permission to read it"), y el token que
+  // devuelve el canje lista SOLO los write_*: el primer install real de la app
+  // pública (autoenvia-qa, 2026-09-01) volvió con
+  // "write_orders,write_fulfillments,write_products,..." y sin ningún read_*.
+  // Comparar literalmente hacía fallar toda instalación con missing_scopes.
+  const concedido = (scope: string): boolean => {
+    if (set.has(scope)) return true;
+    if (scope.startsWith('read_')) return set.has(`write_${scope.slice('read_'.length)}`);
+    return false;
+  };
+  return REQUIRED_SCOPES.filter((s) => !concedido(s));
 }
 
 /** La URL a la que Shopify devuelve tras autorizar. Debe estar declarada en el Partner Dashboard. */
