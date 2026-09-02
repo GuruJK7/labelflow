@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Zap, X, Gift } from 'lucide-react';
-import { CREDIT_PACKS } from '@/lib/credit-packs';
+import { PRICING_TIERS, periodTotalUsdMilli, formatUsdMilli } from '@/lib/pricing';
 
 const STORAGE_KEY = 'lf_exhausted_dismissed_at';
 const DISMISS_TTL_MS = 1000 * 60 * 30; // 30 min — re-show frequently when at 0
@@ -113,17 +113,18 @@ export function CreditExhaustedModal() {
  * número de la UI sigue verdadero.
  */
 function PackTeaser({ onCtaClick }: { onCtaClick: () => void }) {
-  const popular = CREDIT_PACKS.pack_100;
-  const baseline = CREDIT_PACKS.pack_10;
-  if (!popular || !baseline) return null;
+  // Es un componente de cliente: no puede leer USD_UYU_RATE (env de servidor),
+  // así que el teaser habla en dólares — la moneda en la que está denominado
+  // el precio desde D35. El monto en pesos aparece en /settings/billing, que
+  // sí lo pide al server.
+  const shipments = 100;
+  const baseUnitMilli = Number(PRICING_TIERS[0].unitPriceUsdMilli);
+  const totalUsdMilli = periodTotalUsdMilli(shipments);
+  const unitUsdMilli = Number(totalUsdMilli) / shipments;
 
-  const savingsPct = Math.round(
-    ((baseline.pricePerShipmentUyu - popular.pricePerShipmentUyu) /
-      baseline.pricePerShipmentUyu) *
-      100,
-  );
-  const totalUyu = popular.totalPriceUyu.toLocaleString('es-UY');
-  const perShipmentUyu = popular.pricePerShipmentUyu;
+  const savingsPct = Math.round(((baseUnitMilli - unitUsdMilli) / baseUnitMilli) * 100);
+  const totalUsd = formatUsdMilli(totalUsdMilli);
+  const perShipmentUsd = formatUsdMilli(BigInt(Math.round(unitUsdMilli)));
 
   return (
     <Link
@@ -141,17 +142,13 @@ function PackTeaser({ onCtaClick }: { onCtaClick: () => void }) {
       </div>
       <div className="flex items-baseline justify-between gap-3">
         <div className="flex items-baseline gap-1.5">
-          <span className="text-2xl font-bold text-white tabular-nums">
-            {popular.shipments}
-          </span>
+          <span className="text-2xl font-bold text-white tabular-nums">{shipments}</span>
           <span className="text-xs text-zinc-400">envíos</span>
         </div>
         <div className="text-right">
-          <div className="text-base font-bold text-white tabular-nums">
-            ${totalUyu} UYU
-          </div>
+          <div className="text-base font-bold text-white tabular-nums">USD {totalUsd}</div>
           <div className="text-[11px] text-zinc-500 tabular-nums">
-            ${perShipmentUyu} c/u
+            USD {perShipmentUsd} c/u
           </div>
         </div>
       </div>

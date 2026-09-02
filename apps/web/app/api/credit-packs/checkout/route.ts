@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getPreferenceClient } from '@/lib/mercadopago';
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError } from '@/lib/api-utils';
-import { getPack, type CreditPackId } from '@/lib/credit-packs';
+import { getPack, packIdList } from '@/lib/credit-packs';
+import { formatRate, formatUsdMilli, getUsdUyuRateMilli } from '@/lib/pricing';
 
 /**
  * Inicia un checkout de pack de envíos. Diseño:
@@ -17,6 +18,11 @@ import { getPack, type CreditPackId } from '@/lib/credit-packs';
  * Diferencia clave con el flow viejo (`/api/mercadopago/checkout`):
  *   - PreApproval (recurring) → Preference (pago único). MercadoPago no
  *     intentará cobrar de nuevo automáticamente al mes siguiente.
+ *
+ * PRECIO (D35): el pack se denomina en DÓLARES (`lib/pricing.ts`) y acá se
+ * convierte a pesos enteros con `USD_UYU_RATE` (default 40 UYU/USD). El monto
+ * cobrado y el tipo de cambio usado quedan congelados en la fila del
+ * `CreditPurchase`: si mañana cambia la env, esta compra no se revalúa.
  *
  * Idempotencia: este endpoint puede crear múltiples PENDING para el mismo
  * tenant si el usuario clickea varias veces. Eso es aceptable porque
@@ -33,10 +39,7 @@ export async function GET(req: NextRequest) {
 
   const pack = getPack(packParam);
   if (!pack) {
-    return apiError(
-      'Pack inválido. Opciones: pack_10, pack_50, pack_100, pack_250, pack_500, pack_1000',
-      400,
-    );
+    return apiError(`Pack inválido. Opciones: ${packIdList()}`, 400);
   }
 
   const tenant = await db.tenant.findUnique({
@@ -51,6 +54,7 @@ export async function GET(req: NextRequest) {
   });
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  const rateMilli = getUsdUyuRateMilli();
 
   // Crear PENDING purchase ANTES de hablar con MP. Si MP falla, el row
   // queda en PENDING y nunca pasa a PAID — no es deuda.
@@ -83,8 +87,17 @@ export async function GET(req: NextRequest) {
         items: [
           {
             id: pack.id,
+            // Marca: adentro de la app el producto se llama AutoEnvía (PR #12);
+            // el comerciante ve ese nombre en el checkout de MercadoPago.
             title: `AutoEnvía - Pack ${pack.shipments} envíos`,
-            description: `${pack.shipments} envíos a ${pack.pricePerShipmentUyu} UYU c/u`,
+            // El precio está denominado en dólares (D35); MercadoPago cobra en
+            // pesos, así que la descripción deja constancia del tipo de cambio
+            // con el que se convirtió ESTE cobro. `unit_price` va en pesos
+            // enteros: el redondeo ya lo hizo `usdMilliToUyuWhole`.
+            description:
+              `${pack.shipments} envíos a USD ${formatUsdMilli(BigInt(pack.pricePerShipmentUsdMilli))} c/u ` +
+              `— USD ${formatUsdMilli(BigInt(pack.totalPriceUsdMilli))} al tipo de cambio ` +
+              `${formatRate(rateMilli)} UYU/USD`,
             quantity: 1,
             currency_id: 'UYU',
             unit_price: pack.totalPriceUyu,

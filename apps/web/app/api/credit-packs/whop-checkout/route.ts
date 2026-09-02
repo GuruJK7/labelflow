@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError } from '@/lib/api-utils';
-import { getPack } from '@/lib/credit-packs';
+import { getPack, packIdList } from '@/lib/credit-packs';
 import { getWhopCheckoutUrls, WHOP_PENDING_REUSE_MINUTES } from '@/lib/whop';
 
 /**
@@ -22,6 +22,12 @@ import { getWhopCheckoutUrls, WHOP_PENDING_REUSE_MINUTES } from '@/lib/whop';
  *      metadata, por el usuario + la única PENDING de Whop reciente.
  *   5. 302 a la URL tal cual. No se le agregan parámetros: no está
  *      verificado que los links estáticos de Whop acepten metadata (PENDIENTES).
+ *
+ * D35: el precio del pack está en dólares y Whop cobra en dólares, así que acá
+ * no hay conversión. Los pesos que se guardan en la fila son sólo para que el
+ * historial y los reportes hablen una sola moneda; el importe real que cobra
+ * Whop lo fija el plan que Adrian creó allá (por eso `WHOP_PLAN_IDS` con
+ * `minUsd` es la defensa: ver PENDIENTES para los dos planes nuevos).
  */
 export async function GET(req: NextRequest) {
   const auth = await getAuthenticatedTenant();
@@ -32,10 +38,7 @@ export async function GET(req: NextRequest) {
 
   const pack = getPack(packParam);
   if (!pack) {
-    return apiError(
-      'Pack inválido. Opciones: pack_10, pack_50, pack_100, pack_250, pack_500, pack_1000',
-      400,
-    );
+    return apiError(`Pack inválido. Opciones: ${packIdList()}`, 400);
   }
 
   const url = getWhopCheckoutUrls()[pack.id];

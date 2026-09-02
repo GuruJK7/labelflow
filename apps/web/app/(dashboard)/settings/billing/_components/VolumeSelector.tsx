@@ -1,28 +1,38 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Calculator, TrendingDown, ArrowRight, Info } from 'lucide-react';
+import { Calculator, TrendingDown, ArrowRight, Info, Check } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import {
   VOLUME_PRESETS,
   MAX_MONTHLY_SHIPMENTS,
   quoteForVolume,
+  listPricingSteps,
   type VolumeQuote,
 } from '@/lib/credit-packs';
+import { formatUsdMilli } from '@/lib/pricing';
 
 /**
- * Selector "¿Cuántos envíos hacés por mes?" (D34).
+ * Selector "¿Cuántos envíos hacés por mes?" (D34, reexpresado en dólares por D35).
  *
- * El usuario dice un número; se le muestra el pack más chico que lo cubre,
- * el precio por envío de ese pack, el total, el ahorro frente a comprar de a
- * 10 y cuánto le falta para el tramo siguiente. Los precios salen de
- * `lib/credit-packs.ts` (los mismos tramos que cobra el worker): acá no se
- * calcula nada con floats ni se inventa un precio.
+ * El usuario dice un número; se le muestra el escalón en el que cae, el precio
+ * por envío en dólares, el total del mes, el pack que le conviene comprar y
+ * cuánto le falta para el escalón siguiente. Todo sale de `lib/pricing.ts` vía
+ * `lib/credit-packs.ts`: acá no se calcula nada con floats ni se inventa un precio.
  *
- * Los dos botones de pago los maneja la página: MercadoPago es el flujo de
- * packs existente; Whop aparece sólo si el pack tiene link configurado.
+ * EL TIPO DE CAMBIO LLEGA POR PROP, no de `process.env`: `USD_UYU_RATE` es una
+ * env de servidor y este componente corre en el navegador. Sin la prop se
+ * mostrarían pesos calculados al tipo base, distintos de los que cobra el
+ * checkout.
+ *
+ * Los dos botones de pago los maneja la página: MercadoPago cobra en pesos al
+ * tipo del día; Whop cobra en dólares.
  */
 export interface VolumeSelectorProps {
+  /** Tipo de cambio en milésimos de UYU por USD, tal como lo devuelve /api/credit-packs/me. */
+  usdUyuRateMilli: number;
+  /** El mismo tipo, ya formateado para mostrar ("40", "41,5"). */
+  usdUyuRateLabel: string;
   whopPacks: string[];
   loadingPackId: string | null;
   onPayMercadoPago: (packId: string) => void;
@@ -30,16 +40,30 @@ export interface VolumeSelectorProps {
 }
 
 const fmt = (n: number) => n.toLocaleString('es-UY');
+const usd = (milli: number) => formatUsdMilli(BigInt(Math.round(milli)));
 
-export function VolumeSelector({ whopPacks, loadingPackId, onPayMercadoPago, onPayWhop }: VolumeSelectorProps) {
+export function VolumeSelector({
+  usdUyuRateMilli,
+  usdUyuRateLabel,
+  whopPacks,
+  loadingPackId,
+  onPayMercadoPago,
+  onPayWhop,
+}: VolumeSelectorProps) {
   const [volume, setVolume] = useState<number>(100);
   const [custom, setCustom] = useState<string>('');
   const [customError, setCustomError] = useState<string | null>(null);
 
-  const quote: VolumeQuote = useMemo(() => quoteForVolume(volume), [volume]);
+  const rateMilli = BigInt(usdUyuRateMilli);
+  const quote: VolumeQuote = useMemo(
+    () => quoteForVolume(volume, rateMilli),
+    [volume, usdUyuRateMilli],
+  );
+  const steps = useMemo(() => listPricingSteps(rateMilli), [usdUyuRateMilli]);
   const isPreset = (VOLUME_PRESETS as readonly number[]).includes(volume) && custom === '';
   const whopAvailable = whopPacks.includes(quote.pack.id);
   const busy = loadingPackId === quote.pack.id;
+  const currentStep = quote.tierLabel;
 
   function applyCustom(raw: string) {
     setCustom(raw);
@@ -78,8 +102,8 @@ export function VolumeSelector({ whopPacks, loadingPackId, onPayMercadoPago, onP
           ¿Cuántos envíos hacés por mes?
         </h2>
         <p className="text-zinc-400 text-sm mt-2 max-w-2xl">
-          Elegí un número aproximado. Te mostramos el pack que te conviene, cuánto pagás por cada
-          envío y cuánto te falta para el tramo siguiente.
+          Elegí un número aproximado. Te mostramos en qué escalón caés, cuánto pagás por cada envío
+          y cuánto te falta para el escalón siguiente.
         </p>
 
         {/* Presets + campo libre */}
@@ -127,81 +151,100 @@ export function VolumeSelector({ whopPacks, loadingPackId, onPayMercadoPago, onP
         {/* Resultado */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-6 mt-8">
           <div className="rounded-2xl border border-cyan-500/20 bg-zinc-950/60 p-5 md:p-6">
-            <p className="text-sm text-zinc-300">
-              Con <span className="font-semibold text-white tabular-nums">{fmt(quote.monthlyShipments)}</span>{' '}
-              envíos por mes te conviene el{' '}
-              <span className="font-semibold text-white">
-                pack de {fmt(quote.pack.shipments)} envíos
-                {quote.quantity > 1 ? ` × ${quote.quantity}` : ''}
-              </span>
-              {quote.pack.shipments * quote.quantity !== quote.monthlyShipments && (
-                <span className="text-zinc-500">
-                  {' '}
-                  (es el más chico que te cubre; lo que sobra queda para el mes siguiente)
-                </span>
-              )}
-              .
-            </p>
-
-            <div className="grid grid-cols-2 gap-4 mt-5">
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Precio por envío</p>
-                <p className="text-3xl font-bold text-white tabular-nums">
-                  ${fmt(quote.pricePerShipmentUyu)}{' '}
-                  <span className="text-sm font-medium text-zinc-500">UYU</span>
+                <p className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
+                  Precio por envío
                 </p>
-                <p className="text-xs text-cyan-400/90 mt-1">{quote.tierLabel}</p>
+                <p className="text-3xl font-bold text-white tabular-nums">
+                  USD {usd(quote.effectiveUnitUsdMilli)}
+                </p>
+                <p className="text-xs text-cyan-400/90 mt-1">{currentStep}</p>
               </div>
               <div>
-                <p className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Total a pagar</p>
-                <p className="text-3xl font-bold text-white tabular-nums">
-                  ${fmt(quote.totalPriceUyu)}{' '}
-                  <span className="text-sm font-medium text-zinc-500">UYU</span>
+                <p className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
+                  Tu mes con {fmt(quote.monthlyShipments)} envíos
                 </p>
-                <p className="text-xs text-zinc-500 mt-1">
-                  {fmt(quote.pack.shipments * quote.quantity)} envíos, pago único
+                <p className="text-3xl font-bold text-white tabular-nums">
+                  USD {usd(quote.monthlyTotalUsdMilli)}
+                </p>
+                <p className="text-xs text-zinc-500 mt-1 tabular-nums">
+                  ≈ ${fmt(quote.monthlyTotalUyu)} UYU
                 </p>
               </div>
             </div>
 
-            {quote.savingsVsBaseUyu > 0 && (
+            {quote.cappedByBetterTier && (
               <p className="mt-4 inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2.5 py-1">
-                <TrendingDown className="w-3 h-3" />
-                Ahorrás ${fmt(quote.savingsVsBaseUyu)} UYU frente a comprar de a 10
+                <Check className="w-3 h-3" />
+                Ya estás pagando el precio del escalón de arriba: nunca se cobra más que su total.
               </p>
             )}
 
-            {quote.nextTier && (
+            {quote.savingsVsBaseUsdMilli > 0 && (
+              <p className="mt-4 inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2.5 py-1">
+                <TrendingDown className="w-3 h-3" />
+                Ahorrás USD {usd(quote.savingsVsBaseUsdMilli)} por mes frente al precio de entrada
+              </p>
+            )}
+
+            {/* El empujón al escalón siguiente. Si el ahorro real es 0 no se
+                muestra: en la zona de tope el cliente ya paga ese precio, y un
+                cartel diciendo "ahorrás" ahí sería mentira. */}
+            {quote.nextStep && quote.nextStep.savesPerShipmentUsdMilli > 0 && (
               <div className="mt-5 flex items-start gap-2 text-xs text-zinc-400 border-t border-white/[0.06] pt-4">
                 <Info className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0 mt-0.5" />
                 <p>
                   Con{' '}
                   <span className="text-white font-semibold tabular-nums">
-                    {fmt(quote.nextTier.shipmentsMore)} envíos más
+                    {fmt(quote.nextStep.shipmentsMore)}{' '}
+                    {quote.nextStep.shipmentsMore === 1 ? 'envío más' : 'envíos más'}
                   </span>{' '}
-                  (pack de {fmt(quote.nextTier.pack.shipments)}) pagás{' '}
-                  <span className="text-white font-semibold">${fmt(quote.nextTier.pricePerShipmentUyu)} UYU</span>{' '}
-                  por envío: ${fmt(quote.nextTier.totalPriceUyu)} UYU en total.{' '}
+                  pagás{' '}
+                  <span className="text-white font-semibold tabular-nums">
+                    USD {usd(quote.nextStep.savesPerShipmentUsdMilli)} menos por envío
+                  </span>
+                  : {quote.nextStep.label.toLowerCase()}, USD{' '}
+                  {usd(quote.nextStep.unitPriceUsdMilli)} cada uno.{' '}
                   <button
                     type="button"
-                    onClick={() => pickPreset(quote.nextTier!.pack.shipments)}
+                    onClick={() => pickPreset(quote.nextStep!.minShipments)}
                     className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2"
                   >
-                    Ver ese pack
+                    Ver ese escalón
                   </button>
                 </p>
               </div>
             )}
 
-            {quote.quantity > 1 && (
-              <div className="mt-5 flex items-start gap-2 text-xs text-amber-300/90 border-t border-white/[0.06] pt-4">
-                <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                <p>
-                  Se compra de a un pack por vez: repetí la compra {quote.quantity} veces o escribinos
-                  por WhatsApp para armar un pack a medida.
+            {/* Qué se compra realmente */}
+            <div className="mt-5 border-t border-white/[0.06] pt-4 text-xs text-zinc-400">
+              <p>
+                Se compra por paquete:{' '}
+                <span className="text-white font-semibold">
+                  {fmt(quote.pack.shipments)} envíos
+                  {quote.quantity > 1 ? ` × ${quote.quantity}` : ''}
+                </span>{' '}
+                por{' '}
+                <span className="text-white font-semibold tabular-nums">
+                  USD {usd(quote.totalPriceUsdMilli)}
+                </span>{' '}
+                <span className="tabular-nums">(${fmt(quote.totalPriceUyu)} UYU)</span>
+                {quote.pack.shipments * quote.quantity !== quote.monthlyShipments && (
+                  <span className="text-zinc-500">
+                    {' '}
+                    — es el más chico que te cubre; lo que sobra queda para el mes siguiente
+                  </span>
+                )}
+                .
+              </p>
+              {quote.quantity > 1 && (
+                <p className="mt-2 text-amber-300/90">
+                  Se compra de a un paquete por vez: repetí la compra {quote.quantity} veces o
+                  escribinos por WhatsApp para armar uno a medida.
                 </p>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Botones de pago */}
@@ -227,16 +270,86 @@ export function VolumeSelector({ whopPacks, loadingPackId, onPayMercadoPago, onP
               </button>
             )}
             <p className="text-[11px] text-zinc-500 leading-snug">
-              {whopAvailable
-                ? 'MercadoPago cobra en pesos uruguayos. Whop cobra con tarjeta internacional en dólares.'
-                : 'Pago único en pesos uruguayos, con tarjeta o dinero en cuenta de MercadoPago.'}
+              Los precios están en dólares. MercadoPago los cobra en pesos al tipo de cambio del día
+              ({usdUyuRateLabel} UYU/USD hoy)
+              {whopAvailable ? '; Whop cobra en dólares con tarjeta internacional' : ''}.
             </p>
           </div>
         </div>
 
+        {/* La escalera completa */}
+        <div className="mt-8">
+          <h3 className="text-sm font-semibold text-white mb-3">La escalera completa</h3>
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-sm min-w-[520px]">
+              <caption className="sr-only">
+                Precio por envío en dólares según los envíos que hagas en el mes
+              </caption>
+              <thead>
+                <tr className="text-zinc-500 text-[11px] uppercase tracking-wider">
+                  <th scope="col" className="text-left pb-2 px-2 font-medium">
+                    Envíos por mes
+                  </th>
+                  <th scope="col" className="text-right pb-2 px-2 font-medium">
+                    Por envío
+                  </th>
+                  <th scope="col" className="text-right pb-2 px-2 font-medium">
+                    Mes completo
+                  </th>
+                  <th scope="col" className="text-right pb-2 px-2 font-medium">
+                    En pesos
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="text-zinc-300">
+                {steps.map((step, i) => {
+                  const active = step.label === currentStep;
+                  const next = steps[i + 1];
+                  const range = next
+                    ? `${fmt(Math.max(step.minShipments, 1))} – ${fmt(next.minShipments - 1)}`
+                    : `${fmt(step.minShipments)} o más`;
+                  return (
+                    <tr
+                      key={step.minShipments}
+                      aria-current={active ? 'true' : undefined}
+                      className={cn(
+                        'border-t border-white/[0.04]',
+                        active ? 'bg-cyan-500/[0.08] text-white' : 'hover:bg-white/[0.02]',
+                      )}
+                    >
+                      <td className="py-2.5 px-2 tabular-nums">
+                        {range}
+                        {active && (
+                          <span className="ml-2 text-[10px] font-semibold uppercase tracking-wider text-cyan-400">
+                            Tu escalón
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-2 text-right tabular-nums font-semibold">
+                        USD {usd(step.unitPriceUsdMilli)}
+                      </td>
+                      <td className="py-2.5 px-2 text-right tabular-nums">
+                        USD {usd(step.totalAtStepUsdMilli)}
+                      </td>
+                      <td className="py-2.5 px-2 text-right tabular-nums text-zinc-500">
+                        ${fmt(step.totalAtStepUyu)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-zinc-500 mt-3">
+            &quot;Mes completo&quot; es lo que cuesta el mes al entrar en el escalón. Nunca se cobra
+            más que el total del escalón siguiente: hacer un envío más jamás te sube la factura.
+          </p>
+        </div>
+
         <p className="text-xs text-zinc-500 mt-6">
           Los envíos no vencen y se comparten entre todas tus tiendas. Cada guía creada en DAC
-          descuenta un envío.
+          descuenta un envío. Los montos en pesos son al tipo de cambio de hoy ({usdUyuRateLabel}{' '}
+          UYU/USD) y pueden cambiar.
         </p>
       </div>
     </section>
