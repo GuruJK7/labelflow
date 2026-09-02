@@ -515,6 +515,7 @@ Agrega `balance.referralBonusCredits`, `balance.total` (holder: `shipmentCredits
     1. `data.metadata.purchaseId` → `creditPurchase.findFirst({ id, mpExternalRef: { startsWith: 'whop|' }, status: 'PENDING' })`.
     2. si no: usuario por `data.metadata.userId` → `user.findUnique({ id })`; si no: email = `(data.user?.email ?? data.user_email ?? data.email)` en minúsculas → `user.findUnique({ email })`.
     3. con usuario: `pending = creditPurchase.findMany({ tenant: { userId }, mpExternalRef: { startsWith: 'whop|' }, status: 'PENDING', createdAt: { gte: now − 24h } })`; si `data.metadata.packId` está → filtrar por `packId`; si queda **exactamente uno** → ése; si 0 o >1 → **no se acredita**: 200 `{ ok: true, flagged: true }` + `console.warn('[whop] compra no resuelta', { webhookId, paymentId, candidates: n })` (queda para acreditar a mano).
+11b. **Producto, fail-closed** (revisión 2026-09-02): los links de checkout son públicos, así que el pack NO lo decide la compra PENDING sino el evento. `rules = getWhopPlanRules()` (`WHOP_PLAN_IDS`, JSON `{packId: plan_id}` o `{packId: {planId, minUsd}}`); `payloadPlanIds = [data.plan_id, data.plan.id, data.product_id, data.product.id]` (los que existan); `checkWhopPlanForPack({ packId: purchase.packId, payloadPlanIds, amount: data.final_amount ?? data.amount ?? data.total, currency: data.currency, rules })`. Falla (`no_rules` · `pack_not_mapped` · `plan_missing` · `plan_mismatch` · con `minUsd`: `amount_missing` · `currency_mismatch` (≠ USD) · `amount_below_min`) → 200 `{ ok: true, flagged: true, reason }` + `console.warn('[whop] plan no coincide con la compra — no se acredita', { webhookId, paymentId, purchaseId, packId, reason, payloadPlanIds })`. Aplica también cuando la compra vino por `metadata.purchaseId`.
 12. `settlePaidPurchase({ purchaseId, externalPaymentId: 'whop:' + paymentId, rail: 'whop' })` → 200 `{ received: true, credited, reason? }`.
 13. Logs: sólo `webhookId`, `eventType`, `paymentId`, `purchaseId`, `holderTenantId`, `shipments`. **Nunca** `rawBody`, ni email, ni headers.
 14. `GET` → 200 `{ ok: true }` (paridad con MP).
@@ -527,6 +528,7 @@ Agrega `balance.referralBonusCredits`, `balance.total` (holder: `shipmentCredits
 |---|---|---|
 | `WHOP_CHECKOUT_URLS` | JSON `{packId: url}` | botones Whop ocultos; endpoint 404 |
 | `WHOP_WEBHOOK_SECRET` | firma | webhook 503 (fail-closed) |
+| `WHOP_PLAN_IDS` | JSON `{packId: plan_id}` o `{packId: {planId, minUsd}}` | ningún pago de Whop acredita (200 `flagged`, `reason: no_rules`) |
 | `ADMIN_EMAILS` | roles | nadie es admin (menú de usuario para todos, /control /orders /reports /admin → 404) |
 | `NEXT_PUBLIC_SHOPIFY_APP_STORE_URL` (opcional) | link "instalar desde el App Store" | link oculto |
 
@@ -591,7 +593,7 @@ Ver el archivo. D30 lleva la nota de riesgo de Shopify Billing (Adrian lo asume)
 | `provisioning/dac-tenant` sigue regalando 10 | Fuera de D31 (alta manual de Adrian). Decidir si pasa a 5. |
 | Whop: metadata en links de checkout | **No verificado** que un link estático acepte `metadata` o `?params`. Por eso el webhook resuelve por `purchaseId` → `userId` → email + único PENDING de 24 h, y **no acredita** si hay ambigüedad (log `[whop] compra no resuelta`). Camino para cerrarlo: crear checkout configurations por API con `metadata { purchaseId }` (PAGOS.md §3.1). |
 | Whop: shape del payload (`type`, `data.id`, `data.user.email`) | Inferido de docs de memoria; los tests fijan el contrato que asumimos. Antes de prender el riel: un pago de prueba y comparar con el log (sin body). Ajustar los `??` de §7.5 pasos 9-11 al shape real. |
-| Whop: moneda | Los packs son UYU; Whop cobra en USD. El precio del checkout en Whop lo fija Adrian a mano por pack; el webhook **no** compara montos (no hay FX). Riesgo aceptado en D30/D34. |
+| Whop: moneda | Los packs son UYU; Whop cobra en USD. El precio del checkout en Whop lo fija Adrian a mano por pack; no hay FX. Desde la revisión 2026-09-02 el webhook **sí** exige que el plan pagado sea el del pack (`WHOP_PLAN_IDS`, §7.5 paso 11b) y, si la regla trae `minUsd`, monto en USD ≥ piso. La unidad de `final_amount` (dólares vs centavos) no está verificada: poner `minUsd` después del primer pago real. |
 | Shopify Billing API | D30: la app es gratis en el App Store y se cobra afuera. Shopify exige Billing API para cobros de apps; Adrian lo asume. |
 | Tenants legacy con `onboardingComplete=false` e `isActive=false` | Con H4 van al wizard (2 clicks) y al completar quedan `isActive=true`. Si alguno estaba pausado a propósito, se reactiva. Listar antes del deploy: `SELECT id, slug FROM "Tenant" WHERE "onboardingComplete"=false AND "isActive"=false AND "dacUsername" IS NOT NULL;` |
 | Webhook instantáneo con token manual (H9) | No hay registro de webhooks fuera de OAuth/claim. El copy lo dice. Camino: botón "Reconectar con Shopify". |
