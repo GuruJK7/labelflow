@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
+import { checkRunGate } from '@/lib/can-run';
 
 /**
  * MCP endpoint — simplified Streamable HTTP transport.
@@ -91,11 +92,19 @@ export async function POST(req: NextRequest) {
         const holderId = await getCreditHolderTenantId(tenant.id);
         const holder = await db.tenant.findUnique({
           where: { id: holderId },
-          select: { isActive: true, subscriptionStatus: true },
+          select: {
+            isActive: true,
+            subscriptionStatus: true,
+            shipmentCredits: true,
+            referralBonusCredits: true,
+          },
         });
-        if (!holder?.isActive || holder.subscriptionStatus !== 'ACTIVE') {
-          return mcpResult({ error: 'Plan inactivo. Activa tu suscripcion.' });
-        }
+        // Mismo gate que el botón y que el cron (lib/can-run.ts). El chequeo
+        // viejo pedía suscripción legacy y dejaba afuera a los clientes de
+        // packs, que son todos los nuevos.
+        if (!holder) return mcpResult({ error: 'Tenant no encontrado' });
+        const gate = checkRunGate(holder);
+        if (!gate.ok) return mcpResult({ error: gate.message });
         const running = await isJobRunning(tenant.id);
         if (running) {
           return mcpResult({ status: 'already_running', message: 'Ya hay un job en ejecucion.' });

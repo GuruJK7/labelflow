@@ -1,5 +1,6 @@
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
+import { checkRunGate } from '@/lib/can-run';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { maybeReconcileStuck } from '@/lib/shopify-reconcile';
 import { getStuckBreakdown } from '@/lib/stuck-labels';
@@ -60,12 +61,20 @@ export async function POST(req: Request) {
   const holderId = await getCreditHolderTenantId(tenantId);
   const holder = await db.tenant.findUnique({
     where: { id: holderId },
-    select: { isActive: true, subscriptionStatus: true },
+    select: {
+      isActive: true,
+      subscriptionStatus: true,
+      shipmentCredits: true,
+      referralBonusCredits: true,
+    },
   });
   if (!holder) return apiError('Tenant no encontrado', 404);
-  if (!holder.isActive || holder.subscriptionStatus !== 'ACTIVE') {
-    return apiError('Tu plan no esta activo. Activa una suscripcion para reintentar envios.', 403);
-  }
+  // Mismo gate que el disparo manual y que el cron (lib/can-run.ts). Antes
+  // exigía `subscriptionStatus === 'ACTIVE'`, que sólo escribe el flujo legacy
+  // de suscripción de MercadoPago: todo cliente de packs —con saldo y activo—
+  // recibía 403 "Activá una suscripción" al reintentar un envío fallido.
+  const gate = checkRunGate(holder);
+  if (!gate.ok) return apiError(gate.message, gate.status);
 
   const result = await runRetryForTenant(tenantId, count);
   return apiSuccess(result);
