@@ -100,19 +100,24 @@ export function OnboardingWizard({
     const next = await refresh();
     // Un respiro para que se vea la confirmación verde antes de avanzar.
     await new Promise((r) => setTimeout(r, 900));
-    if (next && !next.onboardingComplete) {
+    if (next) {
       // Si la base dice que ya está listo el paso, avanzamos al derivado
-      // (2 → 3 → 4); nunca retrocedemos a alguien que está en 4/5/6.
+      // (2 → 3 → 4; para un tenant ya completo que reconectó, 6); nunca
+      // retrocedemos a alguien que está en 4/5/6.
       const target = next.currentStep > n ? next.currentStep : n;
       goTo(target);
     }
   }
 
+  // Tienda y DAC se marcan hechos por lo que hay en la base, incluso para un
+  // tenant completo: si desinstaló la app, el paso 2 tiene que verse pendiente.
+  const conectado = state.store.kind !== null && state.dac.connected;
+
   function done(n: OnboardingStep): boolean {
-    if (state.onboardingComplete) return true;
-    if (n === 1) return step > 1 || state.store.kind !== null || state.dac.connected;
     if (n === 2) return state.store.kind !== null;
     if (n === 3) return state.dac.connected;
+    if (state.onboardingComplete) return true;
+    if (n === 1) return step > 1 || state.store.kind !== null || state.dac.connected;
     if (n === 4) return maxVisited > 4;
     if (n === 5) return maxVisited > 5;
     return false;
@@ -131,10 +136,12 @@ export function OnboardingWizard({
             </span>
           </div>
           <span className="text-[11px] text-zinc-600 hidden sm:block">
-            {state.onboardingComplete ? (
+            {state.onboardingComplete && conectado ? (
               <a href="/settings" className="hover:text-zinc-400">
                 Volver a Configuración
               </a>
+            ) : state.onboardingComplete ? (
+              'Falta un dato para volver a procesar; completá este paso'
             ) : (
               'Configuración inicial: unos 9 minutos en total'
             )}

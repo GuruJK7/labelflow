@@ -90,12 +90,19 @@ export interface DerivedOnboarding {
 
 /**
  * Paso al que hay que llevar al usuario cuando abre /onboarding:
- *   completo            → 6
- *   ni tienda ni DAC    → 1 (bienvenida)
- *   sin tienda          → 2
- *   sin DAC             → 3
- *   tienda + DAC        → 4 (parámetros: no tiene estado propio, es revisión;
- *                            5 y 6 se alcanzan avanzando)
+ *   completo y conectado → 6
+ *   ni tienda ni DAC     → 1 (bienvenida); si ya había completado, 2:
+ *                          la bienvenida no le aporta nada, le falta la tienda
+ *   sin tienda           → 2
+ *   sin DAC              → 3
+ *   tienda + DAC         → 4 (parámetros: no tiene estado propio, es revisión;
+ *                             5 y 6 se alcanzan avanzando)
+ *
+ * Un tenant COMPLETO puede perder la tienda o DAC después (desinstaló la app
+ * desde Shopify: `uninstalled` deja `shopifyToken = null`; borró un token
+ * desde Configuración). El gate del dashboard lo manda al wizard, y el wizard
+ * tiene que abrir en el paso roto, no en "Listo": si abriera en 6 y la página
+ * lo devolviera al dashboard, quedaría rebotando (ERR_TOO_MANY_REDIRECTS).
  */
 export function deriveOnboarding(r: OnboardingRow): DerivedOnboarding {
   const store = storeConnection(r);
@@ -103,12 +110,24 @@ export function deriveOnboarding(r: OnboardingRow): DerivedOnboarding {
   const mode = processingModeFromCron(r.cronSchedule);
   const complete = !!r.onboardingComplete;
   let currentStep: OnboardingStep;
-  if (complete) currentStep = 6;
-  else if (!store.kind && !dac) currentStep = 1;
-  else if (!store.kind) currentStep = 2;
+  if (!store.kind) currentStep = complete || dac ? 2 : 1;
   else if (!dac) currentStep = 3;
-  else currentStep = 4;
+  else currentStep = complete ? 6 : 4;
   return { store, dac, mode, complete, currentStep };
+}
+
+/**
+ * Regla de la página /onboarding para devolver al dashboard: sólo si completó
+ * Y sigue conectado (tienda + DAC). Con un paso pedido (`?step=N`) o con el
+ * retorno del OAuth (`?shopify=…`) nunca se redirige: el usuario vino a ver
+ * algo del wizard.
+ */
+export function shouldRedirectToDashboard(
+  state: Pick<OnboardingState, 'onboardingComplete' | 'store' | 'dac'>,
+  opts: { requestedStep: OnboardingStep | null; shopifyReturn: boolean },
+): boolean {
+  if (opts.requestedStep || opts.shopifyReturn) return false;
+  return state.onboardingComplete && state.store.kind !== null && state.dac.connected;
 }
 
 /* ─── Metadatos de los pasos (título, tiempo estimado) ─────────────────── */

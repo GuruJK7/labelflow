@@ -143,10 +143,39 @@ describe('<OnboardingWizard>', () => {
   });
 
   it('ya completo y vuelve desde Configuración: "Procesar ahora" en vez de activar, y link a Configuración', () => {
-    const html = render({ ...BASE, currentStep: 6, onboardingComplete: true, isActive: true, dac: { connected: true, username: 'u' } }, 6);
+    const html = render(
+      {
+        ...BASE,
+        currentStep: 6,
+        onboardingComplete: true,
+        isActive: true,
+        store: { kind: 'shopify', shopifyConnected: true, shopifyStoreUrl: 'acme.myshopify.com', dashboardConnected: false, dashboardUrl: null },
+        dac: { connected: true, username: 'u' },
+      },
+      6,
+    );
     expect(html).toContain('Procesar ahora');
     expect(html).not.toContain('Activar y procesar ahora');
     expect(html).toContain('Volver a Configuración');
+  });
+
+  it('ya completo pero desinstaló la app: abre en el paso 2, la tienda NO figura hecha y no ofrece volver a Configuración', () => {
+    const html = render({
+      ...BASE,
+      currentStep: 2,
+      onboardingComplete: true,
+      isActive: true,
+      store: { kind: null, shopifyConnected: false, shopifyStoreUrl: 'acme.myshopify.com', dashboardConnected: false, dashboardUrl: null },
+      dac: { connected: true, username: 'u' },
+    });
+    expect(html).toContain('Falta un dato para volver a procesar');
+    expect(html).not.toContain('Volver a Configuración');
+    expect(html).not.toContain('Vamos a dejar tus envíos');
+    // En la barra, 5 de los 6 pasos llevan tilde: todos menos el 2 (activo,
+    // tienda perdida). Si la tienda contara como hecha por `onboardingComplete`,
+    // el usuario no vería qué le falta.
+    const checks = (html.match(/lucide-check\b/g) ?? []).length;
+    expect(checks).toBe(5);
   });
 
   it('el pie de confianza no usa el candado como emoji', () => {

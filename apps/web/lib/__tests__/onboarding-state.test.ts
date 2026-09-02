@@ -7,6 +7,7 @@ import {
   cronForMode,
   deriveOnboarding,
   parseRequestedStep,
+  shouldRedirectToDashboard,
   ONBOARDING_STEPS,
   CRON_INMEDIATO,
   CRON_CADA_HORA,
@@ -121,13 +122,47 @@ describe('deriveOnboarding', () => {
     expect(d.mode).toBe('personalizado');
     expect(d.complete).toBe(false);
   });
-  it('completo → paso 6 aunque falte algo (el gate del dashboard decide aparte)', () => {
+  it('completo y conectado → paso 6', () => {
     const d = deriveOnboarding({ ...VACIO, ...SHOPIFY, ...DAC, onboardingComplete: true, cronSchedule: CRON_INMEDIATO });
     expect(d.currentStep).toBe(6);
     expect(d.complete).toBe(true);
     expect(d.mode).toBe('inmediato');
     expect(d.store.kind).toBe('shopify');
     expect(d.dac).toBe(true);
+  });
+  it('completo pero desinstaló la app (shopifyToken null, como deja `uninstalled`) → paso 2, no 6', () => {
+    // Si devolviera 6, la página mandaría al dashboard y el gate del dashboard
+    // devolvería al wizard: ERR_TOO_MANY_REDIRECTS. Revisión 2026-09-02.
+    const d = deriveOnboarding({ ...VACIO, ...SHOPIFY, ...DAC, onboardingComplete: true, shopifyToken: null });
+    expect(d.currentStep).toBe(2);
+    expect(d.complete).toBe(true);
+    expect(d.store.kind).toBeNull();
+  });
+  it('completo pero borró DAC desde Configuración → paso 3', () => {
+    expect(deriveOnboarding({ ...VACIO, ...SHOPIFY, onboardingComplete: true }).currentStep).toBe(3);
+    expect(deriveOnboarding({ ...VACIO, ...DASHBOARD, dacUsername: 'u', dacPassword: null, onboardingComplete: true }).currentStep).toBe(3);
+  });
+  it('completo sin tienda ni DAC → paso 2 (la bienvenida no le aporta nada)', () => {
+    expect(deriveOnboarding({ ...VACIO, onboardingComplete: true }).currentStep).toBe(2);
+  });
+});
+
+describe('shouldRedirectToDashboard (regla de /onboarding)', () => {
+  const ok = { onboardingComplete: true, store: { kind: 'shopify' as const, shopifyConnected: true, shopifyStoreUrl: 'a', dashboardConnected: false, dashboardUrl: null }, dac: { connected: true, username: 'u' } };
+  const sinParams = { requestedStep: null, shopifyReturn: false };
+  it('completo y conectado, sin params → al dashboard', () => {
+    expect(shouldRedirectToDashboard(ok, sinParams)).toBe(true);
+  });
+  it('completo pero sin tienda o sin DAC → se queda en el wizard (evita el loop con el gate del dashboard)', () => {
+    expect(shouldRedirectToDashboard({ ...ok, store: { ...ok.store, kind: null, shopifyConnected: false } }, sinParams)).toBe(false);
+    expect(shouldRedirectToDashboard({ ...ok, dac: { connected: false, username: null } }, sinParams)).toBe(false);
+  });
+  it('no completo → wizard', () => {
+    expect(shouldRedirectToDashboard({ ...ok, onboardingComplete: false }, sinParams)).toBe(false);
+  });
+  it('?step=N o retorno del OAuth (?shopify=connected) → wizard aunque esté completo y conectado', () => {
+    expect(shouldRedirectToDashboard(ok, { requestedStep: 4, shopifyReturn: false })).toBe(false);
+    expect(shouldRedirectToDashboard(ok, { requestedStep: null, shopifyReturn: true })).toBe(false);
   });
 });
 
