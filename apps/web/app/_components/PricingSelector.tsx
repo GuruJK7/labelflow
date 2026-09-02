@@ -13,7 +13,6 @@ import {
 } from '@/lib/pricing';
 import { CurrencyToggle, useCurrency } from './CurrencyToggle';
 import { TRIAL_SHIPMENTS } from '@/lib/trial';
-import { whatsappUrl } from '@/lib/contacto';
 
 /**
  * Simulador de precios de la landing.
@@ -50,8 +49,16 @@ const STEP = 10;
  */
 const TECHO_AUTOSERVICIO = SELF_SERVE_PACK_SHIPMENTS[SELF_SERVE_PACK_SHIPMENTS.length - 1];
 
-const WHATSAPP_COTIZACION = (envios: number) =>
-  whatsappUrl(`Hola, hago alrededor de ${envios} envíos por mes y quiero cotizar AutoEnvía.`);
+/**
+ * 🔴 EL VOLUMEN ALTO TAMBIÉN ENTRA POR EL ALTA, no por WhatsApp.
+ *
+ * El WhatsApp es SOPORTE, no un canal de venta: quien quiere el servicio se
+ * crea la cuenta, empieza con los envíos de prueba y, si hace más volumen del
+ * que se compra en autoservicio, el precio se ajusta desde adentro. Poner un
+ * "escribinos" acá reabría un embudo de venta asistida que el producto dejó
+ * atrás a propósito cuando se volvió self-serve.
+ */
+const ALTA = '/signup';
 
 export interface PricingSelectorProps {
   /** `getUsdUyuRateMilli()` leído en el server, como número. */
@@ -186,15 +193,13 @@ export function PricingSelector({
         {quote.needsCustomQuote ? (
           <>
             Arriba de {fmt(quote.pack.shipments)} envíos por mes el precio se arma a medida:{' '}
-            <a
-              href={WHATSAPP_COTIZACION(volume)}
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              href={ALTA}
               className="font-semibold text-cyan-300 underline underline-offset-2 hover:text-cyan-200"
             >
-              escribinos
-            </a>{' '}
-            y lo cerramos con vos.
+              creá tu cuenta
+            </Link>{' '}
+            y lo ajustamos con vos desde adentro.
           </>
         ) : quote.nextStep && quote.nextStep.savesPerShipmentUsdMilli > 0 ? (
           <>
@@ -206,23 +211,9 @@ export function PricingSelector({
             {/* El descuento es real, pero arriba del techo del autoservicio no se
                 compra apretando un botón: decirlo acá evita prometer un precio
                 que el cliente después no encuentra en la pantalla de compra. */}
-            {quote.nextStep.minShipments > TECHO_AUTOSERVICIO ? (
-              <>
-                {' '}
-                —ese escalón lo cerramos a medida,{' '}
-                <a
-                  href={WHATSAPP_COTIZACION(quote.nextStep.minShipments)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-cyan-300 underline underline-offset-2 hover:text-cyan-200"
-                >
-                  escribinos
-                </a>
-                .
-              </>
-            ) : (
-              '.'
-            )}
+            {quote.nextStep.minShipments > TECHO_AUTOSERVICIO
+              ? ' —ese escalón se ajusta a medida, desde tu cuenta.'
+              : '.'}
           </>
         ) : (
           <>Ya estás en el mejor precio por envío del tarifario.</>
