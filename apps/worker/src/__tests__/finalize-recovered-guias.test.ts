@@ -22,11 +22,13 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../dac/label', () => ({ downloadLabel: vi.fn() }));
 vi.mock('../storage/upload', () => ({ uploadLabelPdf: vi.fn() }));
-vi.mock('../shopify/fulfillment', () => ({
+// D27: finalize-recovered-guias.ts importa de la fachada '../shopify'.
+vi.mock('../shopify', () => ({
   fulfillOrderWithTracking: vi.fn().mockResolvedValue(undefined),
   ShopifyAlreadyFulfilledError: class ShopifyAlreadyFulfilledError extends Error {},
+  ShopifyMissingScopesError: class ShopifyMissingScopesError extends Error {},
+  markOrderProcessed: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('../shopify/orders', () => ({ markOrderProcessed: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -39,8 +41,7 @@ import { finalizeRecoveredGuiaLabels } from '../dac/finalize-recovered-guias';
 import { db } from '../db';
 import { downloadLabel } from '../dac/label';
 import { uploadLabelPdf } from '../storage/upload';
-import { fulfillOrderWithTracking } from '../shopify/fulfillment';
-import { markOrderProcessed } from '../shopify/orders';
+import { fulfillOrderWithTracking, markOrderProcessed } from '../shopify';
 import fs from 'fs';
 
 const TENANT = 'cmpvjrj8j000112ak1fp6fm09';

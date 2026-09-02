@@ -27,8 +27,8 @@
 
 import { db } from '../db';
 import { decryptIfPresent } from '../encryption';
-import { createShopifyClient } from '../shopify/client';
-import { getUnfulfilledOrders } from '../shopify/orders';
+import { createShopifyClient } from '../shopify';
+import { getUnfulfilledOrders } from '../shopify';
 import { uploadOrdersJsonToStorage } from '../storage/upload';
 import { createStepLogger } from '../logger';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
@@ -118,7 +118,7 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
 
     // 1. Fetch Shopify orders
     slog.info('shopify', 'Fetching unfulfilled orders from Shopify');
-    const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken);
+    const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken, { tenantId: tenant.id, slug: tenant.slug });
     const orders = await getUnfulfilledOrders(
       shopifyClient,
       (tenant.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first',

@@ -32,12 +32,11 @@ vi.mock('../db', () => ({
     },
   },
 }));
-vi.mock('../shopify/fulfillment', () => ({
+// D27: process.ts importa de la fachada '../shopify', no de los modulos REST.
+vi.mock('../shopify', () => ({
   fulfillOrderWithTracking: (...a: unknown[]) => fulfill(...a),
   ShopifyAlreadyFulfilledError: class extends Error {},
   ShopifyMissingScopesError: class extends Error {},
-}));
-vi.mock('../shopify/orders', () => ({
   markOrderProcessed: (...a: unknown[]) => marcar(...a),
   addOrderNote: (...a: unknown[]) => nota(...a),
 }));

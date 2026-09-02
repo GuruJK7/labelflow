@@ -1,7 +1,7 @@
 import { db } from '../db';
 import { decrypt, decryptIfPresent } from '../encryption';
-import { createShopifyClient } from '../shopify/client';
-import { getRecentOrders } from '../shopify/orders';
+import { createShopifyClient } from '../shopify';
+import { getRecentOrders } from '../shopify';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress } from '../dac/shipment';
@@ -104,7 +104,7 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
     // The fix: when orderIds is provided, fetch up to 250 (Shopify's max per call)
     // recent orders, then filter. The maxOrders cap is also bypassed in this mode
     // so all matched IDs are processed, not just the first N.
-    const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken);
+    const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken, { tenantId: tenant.id, slug: tenant.slug });
     const hasSpecificIds = !!(specificOrderIds && specificOrderIds.length > 0);
     const fetchLimit = hasSpecificIds ? 250 : maxOrders;
     let orders = await getRecentOrders(shopifyClient, fetchLimit);

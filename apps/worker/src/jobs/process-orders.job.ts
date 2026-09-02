@@ -3,10 +3,10 @@ import { deductCreditsAndStamp } from '../credits';
 import { getCreditHolderTenantId } from '../credit-holder';
 import { decryptIfPresent, decryptOrRaw } from '../encryption';
 import { getConfig } from '../config';
-import { createShopifyClient } from '../shopify/client';
-import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify/orders';
+import { createShopifyClient } from '../shopify';
+import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify';
 import { resolveOrderPhone } from '../shopify/phone';
-import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify/fulfillment';
+import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
 import { createShipment, mergeAddress, DuplicateSubmitError, DacAddressRejectedError } from '../dac/shipment';
@@ -222,7 +222,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     slog.info('start', 'Starting order processing cycle');
 
     // STEP 2: Get Shopify orders (with sort direction from tenant settings)
-    const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken);
+    const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken, { tenantId: tenant.id, slug: tenant.slug });
     const orderSortDirection = (tenant.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first';
     let orders = await getUnfulfilledOrders(shopifyClient, orderSortDirection);
 
