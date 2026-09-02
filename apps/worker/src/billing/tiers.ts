@@ -46,6 +46,19 @@ export function uyu(pesos: number): bigint {
  * invariante explotaría en producción sin que nadie haya tocado un envío.
  * `USD_UYU_RATE` mueve sólo lo que se COBRA en el checkout de MercadoPago
  * (`apps/web/lib/pricing.ts`); acá se convierte al base y punto.
+ *
+ * 🔴 LA OTRA MITAD NO ESTÁ RESUELTA. Que el worker no lea la env es correcto,
+ * pero deja DOS tipos de cambio en el mismo producto. Hoy no hay fuga: el saldo
+ * vivo se cuenta en ENVÍOS (`Tenant.shipmentCredits`, 1:1) y este ledger está
+ * en sombra sin ningún camino de depósito. El día que se cablee el depósito
+ * —el modelo destino que declara el docblock de arriba— un pack comprado a un
+ * tipo distinto de 40 compra una cantidad de envíos distinta de la que se
+ * vendió: a 36, `pack_5000` deposita 19.800 y compra 3.535 envíos (-29,3 %),
+ * porque el depósito queda justo debajo del techo de la meseta 3.930-5.000.
+ * Antes de escribir ese depósito hay que elegir: el asiento guarda el tipo de
+ * SU compra, o el ledger se denomina en USD y convierte sólo al mostrar.
+ * Medido y con alambre de tropiezo en
+ * `src/__tests__/billing-fx-deposit-tripwire.test.ts`.
  */
 export const BASE_USD_UYU_RATE_MILLI = 40_000n;
 
