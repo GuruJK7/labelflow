@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { codFeatureEnabled } from '@/lib/cod-feature';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { encryptIfPresent, decryptOrRaw } from '@/lib/encryption';
+import { shopDomainChangeConflicts, SHOP_DOMAIN_TAKEN_MESSAGE } from '@/lib/shop-domain-taken';
 import { startOfDayUy, startOfMonthUy } from '@/lib/uy-time';
 
 const updateSchema = z.object({
@@ -239,31 +240,16 @@ export async function PUT(req: NextRequest) {
   const data: Record<string, unknown> = {};
   const input = parsed.data;
 
-  // Un dominio de Shopify pertenece a UN tenant. Mismo chequeo que hace
-  // /api/shopify/install: sin él, dos cuentas podían apuntar a la misma
-  // tienda cargando el token a mano, y el worker despachaba cada pedido dos
-  // veces. Insensible a mayúsculas por los dominios viejos guardados así (D18).
-  //
-  // Sólo cuando el dominio CAMBIA. "Guardar token" manda siempre el dominio
-  // que cargó del GET, y hay tenants que comparten tienda a propósito (el
-  // worker lo contempla con `sharedTenantIds`; incidente Aura 2026-05-08):
-  // chequear también cuando no se tocó el dominio les cerraba la única forma
-  // de rotar el token, porque /install y /callback ya les dan already_linked (D21).
+  // Un dominio de Shopify pertenece a UN tenant. Mismo chequeo que hacen
+  // /api/shopify/install, /claim y onboarding/test-shopify (lib/shop-domain-taken):
+  // sin él, dos cuentas podían apuntar a la misma tienda cargando el token a
+  // mano, y el worker despachaba cada pedido dos veces. Insensible a mayúsculas
+  // (D18) y sólo cuando el dominio CAMBIA: "Guardar token" manda siempre el
+  // dominio que cargó del GET, y los tenants que comparten tienda a propósito
+  // tienen que poder rotar el token (D21).
   if (input.shopifyStoreUrl !== undefined) {
-    const actual = await db.tenant.findUnique({
-      where: { id: auth.tenantId },
-      select: { shopifyStoreUrl: true },
-    });
-    const sinCambio = actual?.shopifyStoreUrl?.toLowerCase() === input.shopifyStoreUrl;
-    const tomada = sinCambio ? null : await db.tenant.findFirst({
-      where: {
-        shopifyStoreUrl: { equals: input.shopifyStoreUrl, mode: 'insensitive' },
-        id: { not: auth.tenantId },
-      },
-      select: { id: true },
-    });
-    if (tomada) {
-      return apiError('Esa tienda ya está conectada a otra cuenta. Escribinos y lo resolvemos.', 409);
+    if (await shopDomainChangeConflicts(input.shopifyStoreUrl, auth.tenantId)) {
+      return apiError(SHOP_DOMAIN_TAKEN_MESSAGE, 409);
     }
   }
 

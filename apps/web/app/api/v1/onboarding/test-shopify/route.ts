@@ -6,6 +6,7 @@ import {
   apiSuccess,
 } from '@/lib/api-utils';
 import { encrypt } from '@/lib/encryption';
+import { shopDomainChangeConflicts, SHOP_DOMAIN_TAKEN_MESSAGE } from '@/lib/shop-domain-taken';
 
 /**
  * POST /api/v1/onboarding/test-shopify
@@ -20,6 +21,11 @@ import { encrypt } from '@/lib/encryption';
  * place to update — but we run it as a separate endpoint so the onboarding
  * UI can call it without triggering the full settings PUT side-effects
  * (DAC cookie invalidation, isActive cascades).
+ *
+ * Antes de hablar con Shopify rechaza (409) un dominio que ya es de OTRO
+ * tenant, igual que /install, /claim y settings PUT (lib/shop-domain-taken):
+ * si no, una cuenta nueva podía pegar el token de una tienda ajena, cobrarse
+ * el trial otra vez sobre la misma tienda y duplicar despachos.
  */
 const bodySchema = z.object({
   shopifyStoreUrl: z
@@ -54,6 +60,13 @@ export async function POST(request: Request) {
   }
 
   const { shopifyStoreUrl, shopifyToken } = parsed.data;
+
+  // Dominio ya vinculado a otro tenant → 409 sin llamar a Shopify. Sólo si el
+  // dominio cambia respecto del guardado (D21: los tenants que comparten
+  // tienda a propósito pueden volver a cargar el token).
+  if (await shopDomainChangeConflicts(shopifyStoreUrl, auth.tenantId)) {
+    return apiError(SHOP_DOMAIN_TAKEN_MESSAGE, 409);
+  }
 
   // Verify against Shopify Admin API. shop.json is the canonical "is the
   // token valid + has read_products" probe — cheap, no side-effects.
