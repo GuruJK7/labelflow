@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   shopifyAccessForTenant: vi.fn(),
   createOneTimeCharge: vi.fn(),
   isDevelopmentStore: vi.fn(),
+  registerShopifyWebhooks: vi.fn(),
 }));
 
 vi.mock('@/lib/api-utils', async (importOriginal) => ({
@@ -34,6 +35,9 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 vi.mock('@/lib/shopify-access', () => ({ shopifyAccessForTenant: mocks.shopifyAccessForTenant }));
+vi.mock('@/lib/shopify-register-webhooks', () => ({
+  registerShopifyWebhooks: mocks.registerShopifyWebhooks,
+}));
 vi.mock('@/lib/shopify-billing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/shopify-billing')>()),
   createOneTimeCharge: mocks.createOneTimeCharge,
@@ -65,6 +69,7 @@ beforeEach(() => {
   mocks.purchaseCreate.mockResolvedValue({ id: 'cp_1' });
   mocks.purchaseUpdate.mockResolvedValue({});
   mocks.isDevelopmentStore.mockResolvedValue(false);
+  mocks.registerShopifyWebhooks.mockResolvedValue({ registered: [], alreadyPresent: [], failed: [] });
   mocks.createOneTimeCharge.mockResolvedValue({
     chargeId: 'gid://shopify/AppPurchaseOneTime/1',
     confirmationUrl: 'https://kaia-store.myshopify.com/admin/charges/1/confirm',
@@ -157,5 +162,38 @@ describe('la vuelta del comerciante', () => {
       where: { id: 'cp_1' },
       data: { mpPreferenceId: 'gid://shopify/AppPurchaseOneTime/1', mpExternalRef: 'shopify|cp_1' },
     });
+  });
+});
+
+
+describe('el webhook de cobro se asegura antes de cobrar', () => {
+  it('se registra el topic de cobro, y sólo ese', async () => {
+    // Los webhooks son por tienda y se registran al instalar: una tienda
+    // conectada antes de que existiera este riel no lo tiene, y el modo de
+    // fallo es el peor — paga y no se le acredita.
+    await pedir('pack_250');
+    expect(mocks.registerShopifyWebhooks).toHaveBeenCalledWith(
+      'kaia-store.myshopify.com',
+      'shpat_token',
+      'https://autoenvia.com',
+      ['app_purchases_one_time/update'],
+    );
+  });
+
+  it('si el registro falla, la compra sigue: el retorno acredita igual', async () => {
+    mocks.registerShopifyWebhooks.mockRejectedValue(new Error('shopify caído'));
+    const res = await pedir('pack_250');
+    expect(res.status).toBe(307);
+    expect(mocks.createOneTimeCharge).toHaveBeenCalledTimes(1);
+  });
+
+  it('un userError en el registro tampoco frena el cobro', async () => {
+    mocks.registerShopifyWebhooks.mockResolvedValue({
+      registered: [],
+      alreadyPresent: [],
+      failed: [{ topic: 'app_purchases_one_time/update', status: 200, body: 'ACCESS_DENIED' }],
+    });
+    expect((await pedir('pack_250')).status).toBe(307);
+    expect(mocks.createOneTimeCharge).toHaveBeenCalledTimes(1);
   });
 });
