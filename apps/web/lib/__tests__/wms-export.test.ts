@@ -35,6 +35,7 @@ function label(over: Partial<WmsExportLabelRow> = {}): WmsExportLabelRow {
     createdAt: new Date('2026-09-01T15:00:00.000Z'),
     packSeq: null,
     printedAt: null,
+    pdfPath: 'kinevia/2026-09-01/lbl_1.pdf',
     items: [{ sku: 'REM-001', title: 'Remera', quantity: 2 }],
     ...over,
   };
@@ -45,13 +46,14 @@ describe('shape del pedido — contrato importar_tanda', () => {
     const { pedidos } = buildWmsExportPayload([label()], { fecha: '2026-09-01', cliente: 'Alba Textil' });
 
     expect(pedidos).toHaveLength(1);
-    // Las 7 del RPC + las 3 informativas que el consumidor declara opcionales
-    // (departamento, reparto_propio, printedAt). Ninguna más: cualquier clave
-    // nueva acá se está mandando a DEPO sin que nadie la haya pedido.
+    // Las 7 del RPC + las 4 informativas que el consumidor declara opcionales
+    // (departamento, reparto_propio, printedAt, pdf_url). Ninguna más:
+    // cualquier clave nueva acá se está mandando a DEPO sin que nadie la haya
+    // pedido.
     expect(Object.keys(pedidos[0]).sort()).toEqual(
       [
         'ciudad', 'cliente', 'destinatario', 'direccion', 'external_ref', 'guia', 'items',
-        'departamento', 'reparto_propio', 'printedAt',
+        'departamento', 'reparto_propio', 'printedAt', 'pdf_url',
       ].sort(),
     );
     expect(Object.keys(pedidos[0].items[0]).sort()).toEqual(['qty', 'sku']);
@@ -71,6 +73,9 @@ describe('shape del pedido — contrato importar_tanda', () => {
       departamento: 'Montevideo',
       reparto_propio: false,
       printedAt: null,
+      // Sin el mapa de firmas, `pdf_url` es null aunque la Label tenga
+      // pdfPath: este módulo es puro y no firma nada por su cuenta.
+      pdf_url: null,
     });
   });
 
@@ -190,6 +195,7 @@ describe('sin_items — los históricos no van a la tanda', () => {
       departamento: 'Montevideo',
       reparto_propio: false,
       printedAt: null,
+      pdf_url: null,
     });
   });
 
@@ -433,5 +439,101 @@ describe('zona — partir la tanda en reparto propio / resto', () => {
       expect(parseZona('maldonado ')).toBe('maldonado');
       expect(parseZona('mal')).toBeNull();
     });
+  });
+});
+
+describe('pdf_url — la URL firmada del PDF que imprime DEPO', () => {
+  const URL_A = 'https://xyz.supabase.co/storage/v1/object/sign/labels/a.pdf?token=aaa';
+  const URL_B = 'https://xyz.supabase.co/storage/v1/object/sign/labels/b.pdf?token=bbb';
+
+  it('pega la URL firmada al pedido que le corresponde, por id', () => {
+    const rows = [
+      label({ id: 'a', shopifyOrderName: '#1', pdfPath: 'a.pdf' }),
+      label({ id: 'b', shopifyOrderName: '#2', pdfPath: 'b.pdf' }),
+    ];
+    const { pedidos } = buildWmsExportPayload(rows, {
+      fecha: '2026-09-01',
+      cliente: 'T',
+      pdfUrls: new Map([
+        ['a', URL_A],
+        ['b', URL_B],
+      ]),
+    });
+    // El cruce es por id, NO por posición: el orden de la pila reordena las
+    // filas y una URL pegada por índice terminaría en la etiqueta equivocada
+    // (el operador imprimiría el papel de otro pedido).
+    expect(pedidos.map((p) => [p.external_ref, p.pdf_url])).toEqual([
+      ['#1', URL_A],
+      ['#2', URL_B],
+    ]);
+  });
+
+  it('sigue al pedido correcto cuando la pila reordena las filas', () => {
+    const rows = [
+      label({ id: 'a', shopifyOrderName: '#1', pdfPath: 'a.pdf', packSeq: 9 }),
+      label({ id: 'b', shopifyOrderName: '#2', pdfPath: 'b.pdf', packSeq: 1 }),
+    ];
+    const { pedidos } = buildWmsExportPayload(rows, {
+      fecha: '2026-09-01',
+      cliente: 'T',
+      pdfUrls: new Map([
+        ['a', URL_A],
+        ['b', URL_B],
+      ]),
+    });
+    expect(pedidos.map((p) => p.external_ref)).toEqual(['#2', '#1']);
+    expect(pedidos.map((p) => p.pdf_url)).toEqual([URL_B, URL_A]);
+  });
+
+  it('etiqueta SIN pdfPath sale con pdf_url null y no rompe el export', () => {
+    const { pedidos } = buildWmsExportPayload([label({ id: 'a', pdfPath: null })], {
+      fecha: '2026-09-01',
+      cliente: 'T',
+      pdfUrls: new Map(),
+    });
+    expect(pedidos).toHaveLength(1);
+    expect(pedidos[0].pdf_url).toBeNull();
+  });
+
+  it('una firma fallida (null en el mapa) sale null, no undefined', () => {
+    const { pedidos } = buildWmsExportPayload([label({ id: 'a', pdfPath: 'a.pdf' })], {
+      fecha: '2026-09-01',
+      cliente: 'T',
+      pdfUrls: new Map([['a', null]]),
+    });
+    // JSON.stringify BORRA las claves undefined: si esto se colara, DEPO
+    // recibiría un pedido sin la clave `pdf_url` en vez de con null y el
+    // consumidor tendría que distinguir dos casos que valen lo mismo.
+    expect(pedidos[0].pdf_url).toBeNull();
+    expect(JSON.parse(JSON.stringify(pedidos[0]))).toHaveProperty('pdf_url', null);
+  });
+
+  it('una etiqueta que no está en el mapa sale null, no undefined', () => {
+    const { pedidos } = buildWmsExportPayload([label({ id: 'huerfana', pdfPath: 'x.pdf' })], {
+      fecha: '2026-09-01',
+      cliente: 'T',
+      pdfUrls: new Map([['otra', URL_A]]),
+    });
+    expect(pedidos[0].pdf_url).toBeNull();
+    expect(JSON.parse(JSON.stringify(pedidos[0]))).toHaveProperty('pdf_url', null);
+  });
+
+  it('sin_items también lleva pdf_url (esas etiquetas se imprimen igual)', () => {
+    const { pedidos, sin_items } = buildWmsExportPayload(
+      [label({ id: 'a', items: [], pdfPath: 'a.pdf' })],
+      { fecha: '2026-09-01', cliente: 'T', pdfUrls: new Map([['a', URL_A]]) },
+    );
+    // El pedido no se puede armar (no sabemos qué va adentro) pero el papel
+    // existe y hay que poder imprimirlo.
+    expect(pedidos).toHaveLength(0);
+    expect(sin_items[0].pdf_url).toBe(URL_A);
+  });
+
+  it('sin el mapa, el payload entero sale con pdf_url null (nada explota)', () => {
+    const { pedidos } = buildWmsExportPayload([label({ pdfPath: 'a.pdf' })], {
+      fecha: '2026-09-01',
+      cliente: 'T',
+    });
+    expect(pedidos[0].pdf_url).toBeNull();
   });
 });

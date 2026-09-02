@@ -34,6 +34,14 @@
  * deploy paga ese costo una vez; los siguientes salen del snapshot. Si Shopify
  * no responde, esas etiquetas caen a `sin_items` como antes: nunca un 500.
  *
+ * ── pdf_url: el papel, no sólo los datos ────────────────────────────────────
+ * Cada pedido (en `pedidos` y en `sin_items`) trae `pdf_url`: la URL FIRMADA
+ * del PDF de la etiqueta, para que DEPO imprima la tanda sin entrar al portal.
+ * Se firma con el mismo helper que el portal (lib/label-pdf.ts) y vive UNA
+ * hora; `meta.expira_en` dice hasta cuándo. Es null cuando la etiqueta no tiene
+ * `pdfPath` o cuando la firma falló — ver lib/wms-export-pdf.ts. Clave ADITIVA:
+ * los consumidores que ya existen la ignoran y siguen andando igual.
+ *
  * Estados incluidos: CREATED y COMPLETED. Son los que tienen envío real emitido
  * (CREATED = guía de DAC ya emitida; COMPLETED = además con PDF subido). Las
  * PENDING todavía no tienen guía, y FAILED/SKIPPED/NEEDS_REVIEW no se despachan.
@@ -50,6 +58,7 @@ import {
   type WmsExportLabelRow,
 } from '@/lib/wms-export';
 import { applyBackfilledItems, backfillMissingItems } from '@/lib/wms-items-backfill';
+import { signWmsExportPdfUrls } from '@/lib/wms-export-pdf';
 
 export const dynamic = 'force-dynamic';
 
@@ -143,6 +152,8 @@ export async function GET(req: NextRequest) {
       createdAt: true,
       packSeq: true,
       printedAt: true,
+      // Ruta del PDF en el bucket: la firma para `pdf_url` sale de acá.
+      pdfPath: true,
       items: {
         // Mismo desempate: los LabelItem se escriben con un createMany dentro
         // de una transacción, así que TODOS comparten el createdAt al ms.
@@ -164,15 +175,27 @@ export async function GET(req: NextRequest) {
   // Nunca tira: si Shopify falla, `recuperados` viene vacío y esas etiquetas
   // caen a `sin_items` exactamente como antes de este cambio.
   const rows = labels as ExportRow[];
-  const backfill = await backfillMissingItems(filtrarZona(rows, zona), {
+  // Se calcula UNA vez y se reusa: tanto el backfill de ítems como la firma de
+  // PDFs trabajan sólo sobre lo que realmente se va a exportar.
+  const enZona = filtrarZona(rows, zona);
+
+  const backfill = await backfillMissingItems(enZona, {
     shopifyStoreUrl: tenant.shopifyStoreUrl,
     shopifyToken: tenant.shopifyToken,
   });
+
+  // ── URLs firmadas de los PDFs ───────────────────────────────────────────
+  // Para que DEPO imprima la tanda sin pasar por el portal. Va DESPUÉS del
+  // backfill a propósito: si Shopify se comió el presupuesto de tiempo, la
+  // firma se recorta sola (SIGN_BUDGET_MS) y esas etiquetas salen con
+  // `pdf_url: null` en vez de tumbar el export con un timeout.
+  const pdfs = await signWmsExportPdfUrls(enZona);
 
   const payload = buildWmsExportPayload(applyBackfilledItems(rows, backfill.items), {
     fecha: dateParam,
     cliente: tenant.name,
     zona,
+    pdfUrls: pdfs.urls,
   });
 
   return apiSuccess(payload, {
@@ -193,5 +216,14 @@ export async function GET(req: NextRequest) {
       persistidas: backfill.persistidas,
       ...(backfill.skipped ? { skipped: backfill.skipped } : {}),
     },
+    // Hasta cuándo sirven los `pdf_url` de ESTA respuesta. Null = no se firmó
+    // ninguna (ninguna etiqueta tenía PDF, o el storage no está configurado).
+    // Un export guardado y reabierto después de esta hora tiene los links
+    // muertos: hay que volver a pedirlo, no hay forma de renovarlos sueltos.
+    expira_en: pdfs.expiraEn,
+    // Observabilidad de la firma: `con_pdf` son las etiquetas de la zona que
+    // tienen PDF y `firmadas` las que quedaron con URL usable. Si firmadas <
+    // con_pdf de forma sostenida, mirar el bucket o la service role key.
+    pdf: { con_pdf: pdfs.conPdf, firmadas: pdfs.firmadas },
   });
 }
