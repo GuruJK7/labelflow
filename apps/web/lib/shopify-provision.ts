@@ -81,10 +81,14 @@ export async function fetchShopInfo(
     );
     if (res.status !== 200 || !res.data?.shop) {
       // Sin token en el log: sólo tienda, status y códigos de error.
+      // El cuerpo (300 chars, sin token: Shopify no lo devuelve) es lo único
+      // que distingue "token inválido" de "app no instalada" de "REST/GraphQL
+      // no permitido": el tercer install en autoenvia-qa dio 403 sin códigos.
       console.warn('[shopify/provision] shop info failed', {
         shop,
         status: res.status,
         codes: res.errors.map((e) => e.extensions?.code ?? 'unknown'),
+        body: res.bodyText,
       });
       return null;
     }
