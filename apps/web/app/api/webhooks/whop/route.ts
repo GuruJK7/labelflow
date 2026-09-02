@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { settlePaidPurchase, refundPaidPurchase } from '@/lib/credit-accrual';
-import { verifyStandardWebhookSignature } from '@/lib/whop';
+import { verifyStandardWebhookSignature, getWhopPlanRules, checkWhopPlanForPack } from '@/lib/whop';
 
 /**
  * Webhook de Whop (D34). Contrato: docs/SELFSERVE-SPEC.md §7.5.
@@ -15,6 +15,12 @@ import { verifyStandardWebhookSignature } from '@/lib/whop';
  *   6. La compra se resuelve por metadata.purchaseId → metadata.userId → email del
  *      pago + única PENDING de Whop en 24 h. Cualquier ambigüedad = NO se acredita
  *      (200 `flagged`, queda en el log para acreditar a mano).
+ *   6b. PRODUCTO: los links de checkout de Whop son públicos, así que "qué pagó"
+ *      no lo dice la compra PENDING sino el evento. El plan/producto del payload
+ *      tiene que ser el que `WHOP_PLAN_IDS` asigna al `packId` de la compra (y,
+ *      si la regla trae `minUsd`, el monto en USD tiene que llegar al piso).
+ *      Sin `WHOP_PLAN_IDS`, sin plan en el payload o con plan distinto →
+ *      `flagged`, nunca se acredita. Ver `checkWhopPlanForPack`.
  *   7. Acreditación por `settlePaidPurchase` (la misma de MP), con
  *      `mpPaymentId = whop:<pay_id>` como idempotencia por pago. El 200 se
  *      devuelve DESPUÉS de acreditar.
@@ -39,6 +45,25 @@ function asObject(v: unknown): Json | null {
 }
 function asString(v: unknown): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+function asNumber(v: unknown): number | null {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim())) return Number(v.trim());
+  return null;
+}
+/**
+ * Todos los ids de plan/producto que trae el evento. El nombre exacto del campo
+ * no está verificado contra un evento real (PENDIENTES): se aceptan `plan_id`,
+ * `plan.id`, `product_id` y `product.id`; el configurado tiene que ser uno.
+ */
+function payloadPlanIds(data: Json): string[] {
+  const ids = [
+    asString(data.plan_id),
+    asString(asObject(data.plan)?.id),
+    asString(data.product_id),
+    asString(asObject(data.product)?.id),
+  ];
+  return ids.filter((x): x is string => x !== null);
 }
 function isUniqueViolation(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === 'P2002';
@@ -115,9 +140,30 @@ async function handlePaymentSucceeded(data: Json, webhookId: string, eventType: 
     return NextResponse.json({ ok: true, flagged: true });
   }
 
-  const purchaseId = await resolvePurchaseId(data, webhookId, paymentId);
-  if (!purchaseId) {
+  const purchase = await resolvePurchase(data, webhookId, paymentId);
+  if (!purchase) {
     return NextResponse.json({ ok: true, flagged: true });
+  }
+  const purchaseId = purchase.id;
+
+  // Defensa sobre el producto (6b): el plan pagado tiene que ser el del pack.
+  const planCheck = checkWhopPlanForPack({
+    packId: purchase.packId,
+    payloadPlanIds: payloadPlanIds(data),
+    amount: asNumber(data.final_amount) ?? asNumber(data.amount) ?? asNumber(data.total),
+    currency: asString(data.currency),
+    rules: getWhopPlanRules(),
+  });
+  if (!planCheck.ok) {
+    console.warn('[whop] plan no coincide con la compra — no se acredita', {
+      webhookId,
+      paymentId,
+      purchaseId,
+      packId: purchase.packId,
+      reason: planCheck.reason,
+      payloadPlanIds: payloadPlanIds(data),
+    });
+    return NextResponse.json({ ok: true, flagged: true, reason: planCheck.reason });
   }
 
   const result = await settlePaidPurchase({
@@ -160,11 +206,14 @@ async function handleRefund(data: Json, webhookId: string, eventType: string) {
   return NextResponse.json({ received: true, refunded: r.refunded });
 }
 
+type ResolvedPurchase = { id: string; packId: string };
+
 /**
  * Encuentra la compra PENDING que corresponde al pago. Fail-closed: si hay
- * cero o más de una candidata, devuelve null y NO se acredita.
+ * cero o más de una candidata, devuelve null y NO se acredita. Devuelve el
+ * `packId` porque el llamador todavía tiene que verificar el plan pagado.
  */
-async function resolvePurchaseId(data: Json, webhookId: string, paymentId: string): Promise<string | null> {
+async function resolvePurchase(data: Json, webhookId: string, paymentId: string): Promise<ResolvedPurchase | null> {
   const metadata = asObject(data.metadata) ?? {};
 
   // 1. metadata.purchaseId (si algún día el checkout lo manda).
@@ -172,9 +221,9 @@ async function resolvePurchaseId(data: Json, webhookId: string, paymentId: strin
   if (metaPurchaseId) {
     const p = await db.creditPurchase.findFirst({
       where: { id: metaPurchaseId, mpExternalRef: { startsWith: 'whop|' } },
-      select: { id: true },
+      select: { id: true, packId: true },
     });
-    if (p) return p.id;
+    if (p) return p;
     console.warn('[whop] metadata.purchaseId no corresponde a una compra de Whop', { webhookId, paymentId });
     return null;
   }
@@ -210,14 +259,14 @@ async function resolvePurchaseId(data: Json, webhookId: string, paymentId: strin
       createdAt: { gte: since },
       ...(packId ? { packId } : {}),
     },
-    select: { id: true },
+    select: { id: true, packId: true },
     orderBy: { createdAt: 'desc' },
   });
   if (candidates.length !== 1) {
     console.warn('[whop] compra no resuelta', { webhookId, paymentId, candidates: candidates.length });
     return null;
   }
-  return candidates[0].id;
+  return candidates[0];
 }
 
 /** Paridad con MP: Whop puede pegarle un GET para ver si la URL responde. */

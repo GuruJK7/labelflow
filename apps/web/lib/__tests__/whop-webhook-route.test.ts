@@ -5,6 +5,7 @@ import { NextRequest } from 'next/server';
 /**
  * POST /api/webhooks/whop (D34). Firma Standard Webhooks fail-closed,
  * dedupe por entrega, resolución de la compra sin acreditar en ambigüedad,
+ * verificación del plan pagado contra el pack de la compra (WHOP_PLAN_IDS),
  * y la MISMA acreditación que MP (`settlePaidPurchase`). Y ninguna línea de
  * log con el cuerpo ni el email.
  */
@@ -41,9 +42,15 @@ const RAW_SECRET = crypto.randomBytes(24);
 const SECRET_WHSEC = `whsec_${RAW_SECRET.toString('base64')}`;
 const EMAIL = 'juana@tienda.uy';
 
+const PLAN_RULES = {
+  pack_100: 'plan_100',
+  pack_1000: 'plan_1000',
+  pack_10: { planId: 'plan_10', minUsd: 5 },
+};
+
 const PAYMENT_OK = {
   type: 'payment.succeeded',
-  data: { id: 'pay_x', user: { email: EMAIL }, metadata: {} },
+  data: { id: 'pay_x', plan_id: 'plan_100', user: { email: EMAIL }, metadata: {} },
 };
 
 interface PostOpts {
@@ -78,6 +85,7 @@ let logged: unknown[][];
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.WHOP_WEBHOOK_SECRET = SECRET_WHSEC;
+  process.env.WHOP_PLAN_IDS = JSON.stringify(PLAN_RULES);
   logged = [];
   for (const m of ['info', 'warn', 'error', 'log'] as const) {
     vi.spyOn(console, m).mockImplementation((...args: unknown[]) => {
@@ -87,7 +95,7 @@ beforeEach(() => {
   mocks.receiptCreate.mockResolvedValue({});
   mocks.receiptDeleteMany.mockResolvedValue({ count: 1 });
   mocks.purchaseFindFirst.mockResolvedValue(null);
-  mocks.purchaseFindMany.mockResolvedValue([{ id: 'cp-1' }]);
+  mocks.purchaseFindMany.mockResolvedValue([{ id: 'cp-1', packId: 'pack_100' }]);
   mocks.purchaseFindUnique.mockResolvedValue(null);
   mocks.userFindUnique.mockResolvedValue({ id: 'u1' });
   mocks.settle.mockResolvedValue({ credited: true, holderTenantId: 't-holder', shipments: 100, firstPaidPack: true });
@@ -96,6 +104,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.WHOP_WEBHOOK_SECRET;
+  delete process.env.WHOP_PLAN_IDS;
 });
 
 function nothingLoggedContains(needle: string) {
@@ -209,7 +218,10 @@ describe('cuerpo y dedupe', () => {
   });
 
   it('payment_succeeded (con guion bajo) también acredita', async () => {
-    const res = await post({ action: 'payment_succeeded', data: { id: 'pay_x', user: { email: EMAIL } } });
+    const res = await post({
+      action: 'payment_succeeded',
+      data: { id: 'pay_x', plan_id: 'plan_100', user: { email: EMAIL } },
+    });
     expect(await res.json()).toEqual({ received: true, credited: true });
   });
 
@@ -226,8 +238,11 @@ describe('resolución de la compra (fail-closed)', () => {
   });
 
   it('metadata.purchaseId de una compra de Whop → se usa directo, sin mirar el email', async () => {
-    mocks.purchaseFindFirst.mockResolvedValueOnce({ id: 'cp-meta' });
-    await post({ type: 'payment.succeeded', data: { id: 'pay_x', metadata: { purchaseId: 'cp-meta' } } });
+    mocks.purchaseFindFirst.mockResolvedValueOnce({ id: 'cp-meta', packId: 'pack_100' });
+    await post({
+      type: 'payment.succeeded',
+      data: { id: 'pay_x', plan_id: 'plan_100', metadata: { purchaseId: 'cp-meta' } },
+    });
     expect(mocks.purchaseFindFirst.mock.calls[0][0].where).toEqual({
       id: 'cp-meta',
       mpExternalRef: { startsWith: 'whop|' },
@@ -249,7 +264,7 @@ describe('resolución de la compra (fail-closed)', () => {
   it('metadata.userId gana sobre el email', async () => {
     await post({
       type: 'payment.succeeded',
-      data: { id: 'pay_x', user: { email: 'otra@x.uy' }, metadata: { userId: 'u1' } },
+      data: { id: 'pay_x', plan_id: 'plan_100', user: { email: 'otra@x.uy' }, metadata: { userId: 'u1' } },
     });
     expect(mocks.userFindUnique).toHaveBeenCalledTimes(1);
     expect(mocks.userFindUnique.mock.calls[0][0].where).toEqual({ id: 'u1' });
@@ -257,7 +272,10 @@ describe('resolución de la compra (fail-closed)', () => {
   });
 
   it('email se busca en minúsculas y la PENDING se filtra por usuario, whop|, 24 h', async () => {
-    await post({ type: 'payment.succeeded', data: { id: 'pay_x', user: { email: 'Juana@Tienda.UY' } } });
+    await post({
+      type: 'payment.succeeded',
+      data: { id: 'pay_x', plan_id: 'plan_100', user: { email: 'Juana@Tienda.UY' } },
+    });
     expect(mocks.userFindUnique.mock.calls[0][0].where).toEqual({ email: EMAIL });
     const where = mocks.purchaseFindMany.mock.calls[0][0].where;
     expect(where).toMatchObject({
@@ -273,7 +291,7 @@ describe('resolución de la compra (fail-closed)', () => {
   it('metadata.packId filtra las candidatas', async () => {
     await post({
       type: 'payment.succeeded',
-      data: { id: 'pay_x', user: { email: EMAIL }, metadata: { packId: 'pack_100' } },
+      data: { id: 'pay_x', plan_id: 'plan_100', user: { email: EMAIL }, metadata: { packId: 'pack_100' } },
     });
     expect(mocks.purchaseFindMany.mock.calls[0][0].where.packId).toBe('pack_100');
   });
@@ -288,7 +306,10 @@ describe('resolución de la compra (fail-closed)', () => {
   it('cero PENDING → flagged; dos PENDING → flagged (nunca se adivina)', async () => {
     mocks.purchaseFindMany.mockResolvedValueOnce([]);
     expect(await (await post(PAYMENT_OK)).json()).toEqual({ ok: true, flagged: true });
-    mocks.purchaseFindMany.mockResolvedValueOnce([{ id: 'cp-1' }, { id: 'cp-2' }]);
+    mocks.purchaseFindMany.mockResolvedValueOnce([
+      { id: 'cp-1', packId: 'pack_100' },
+      { id: 'cp-2', packId: 'pack_100' },
+    ]);
     expect(await (await post(PAYMENT_OK, { webhookId: 'msg_2' })).json()).toEqual({ ok: true, flagged: true });
     expect(mocks.settle).not.toHaveBeenCalled();
   });
@@ -297,6 +318,81 @@ describe('resolución de la compra (fail-closed)', () => {
     mocks.settle.mockResolvedValueOnce({ credited: false, reason: 'already_processed' });
     const res = await post(PAYMENT_OK);
     expect(await res.json()).toEqual({ received: true, credited: false, reason: 'already_processed' });
+  });
+});
+
+describe('plan pagado vs pack de la compra (fail-closed sobre el producto)', () => {
+  function flaggedWith(reason: string) {
+    return { ok: true, flagged: true, reason };
+  }
+
+  it('escenario de la revisión: paga el link de pack_10 con una PENDING de pack_1000 → flagged, 0 envíos', async () => {
+    mocks.purchaseFindMany.mockResolvedValueOnce([{ id: 'cp-1000', packId: 'pack_1000' }]);
+    const res = await post({
+      type: 'payment.succeeded',
+      data: { id: 'pay_x', plan_id: 'plan_10', final_amount: 5, currency: 'usd', user: { email: EMAIL } },
+    });
+    expect(await res.json()).toEqual(flaggedWith('plan_mismatch'));
+    expect(mocks.settle).not.toHaveBeenCalled();
+    const warn = logged.find((l) => String(l[0]).includes('plan no coincide'));
+    expect(warn?.[1]).toMatchObject({ purchaseId: 'cp-1000', packId: 'pack_1000', reason: 'plan_mismatch' });
+  });
+
+  it('sin WHOP_PLAN_IDS no se acredita NADA aunque todo lo demás cuadre', async () => {
+    delete process.env.WHOP_PLAN_IDS;
+    expect(await (await post(PAYMENT_OK)).json()).toEqual(flaggedWith('no_rules'));
+    process.env.WHOP_PLAN_IDS = '{rota';
+    expect(await (await post(PAYMENT_OK, { webhookId: 'msg_2' })).json()).toEqual(flaggedWith('no_rules'));
+    expect(mocks.settle).not.toHaveBeenCalled();
+  });
+
+  it('el pack de la compra no está en el mapa → flagged (nunca se adivina)', async () => {
+    mocks.purchaseFindMany.mockResolvedValueOnce([{ id: 'cp-500', packId: 'pack_500' }]);
+    const res = await post({ type: 'payment.succeeded', data: { id: 'pay_x', plan_id: 'plan_500', user: { email: EMAIL } } });
+    expect(await res.json()).toEqual(flaggedWith('pack_not_mapped'));
+    expect(mocks.settle).not.toHaveBeenCalled();
+  });
+
+  it('payload sin plan ni producto → flagged', async () => {
+    const res = await post({ type: 'payment.succeeded', data: { id: 'pay_x', user: { email: EMAIL } } });
+    expect(await res.json()).toEqual(flaggedWith('plan_missing'));
+    expect(mocks.settle).not.toHaveBeenCalled();
+  });
+
+  it('el plan también se chequea cuando la compra viene por metadata.purchaseId', async () => {
+    mocks.purchaseFindFirst.mockResolvedValueOnce({ id: 'cp-meta', packId: 'pack_1000' });
+    const res = await post({
+      type: 'payment.succeeded',
+      data: { id: 'pay_x', plan_id: 'plan_10', metadata: { purchaseId: 'cp-meta' } },
+    });
+    expect(await res.json()).toEqual(flaggedWith('plan_mismatch'));
+    expect(mocks.settle).not.toHaveBeenCalled();
+  });
+
+  it('el id puede venir en plan.id, product_id o product.id', async () => {
+    for (const [i, data] of [
+      { id: 'pay_a', plan: { id: 'plan_100' }, user: { email: EMAIL } },
+      { id: 'pay_b', product_id: 'plan_100', user: { email: EMAIL } },
+      { id: 'pay_c', product: { id: 'plan_100' }, plan_id: 'plan_otro', user: { email: EMAIL } },
+    ].entries()) {
+      const res = await post({ type: 'payment.succeeded', data }, { webhookId: `msg_${i}` });
+      expect(await res.json()).toEqual({ received: true, credited: true });
+    }
+    expect(mocks.settle).toHaveBeenCalledTimes(3);
+  });
+
+  it('regla con minUsd: monto < piso, moneda distinta o sin monto → flagged; monto ≥ piso en USD → acredita', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([{ id: 'cp-10', packId: 'pack_10' }]);
+    const pay = (extra: object, webhookId: string) =>
+      post({ type: 'payment.succeeded', data: { id: 'pay_x', plan_id: 'plan_10', user: { email: EMAIL }, ...extra } }, { webhookId });
+
+    expect(await (await pay({ final_amount: 4.99, currency: 'usd' }, 'm1')).json()).toEqual(flaggedWith('amount_below_min'));
+    expect(await (await pay({ final_amount: 5, currency: 'uyu' }, 'm2')).json()).toEqual(flaggedWith('currency_mismatch'));
+    expect(await (await pay({}, 'm3')).json()).toEqual(flaggedWith('amount_missing'));
+    expect(mocks.settle).not.toHaveBeenCalled();
+
+    expect(await (await pay({ final_amount: '5.00', currency: 'USD' }, 'm4')).json()).toEqual({ received: true, credited: true });
+    expect(mocks.settle).toHaveBeenCalledWith(expect.objectContaining({ purchaseId: 'cp-10' }));
   });
 });
 
