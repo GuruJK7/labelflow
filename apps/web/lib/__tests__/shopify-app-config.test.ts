@@ -49,12 +49,15 @@ describe('shopify.app.toml — coherencia con el código', () => {
     expect(TOML).toContain('[webhooks.privacy_compliance]');
   });
 
-  it('apunta cada webhook al endpoint que existe de verdad', () => {
-    expect(TOML).toContain('uri = "/api/webhooks/shopify"');
-    expect(TOML).toContain('uri = "/api/shopify/uninstalled"');
+  it('los endpoints que registra la app por tienda existen de verdad', () => {
+    // Las suscripciones ya no viven en el toml (ver el test anterior): la fuente
+    // es lib/shopify-register-webhooks.ts, así que se verifica ESE módulo.
+    const mod = fs.readFileSync(path.join(__dirname, '..', 'shopify-register-webhooks.ts'), 'utf8');
+    expect(mod).toContain('/api/webhooks/shopify');
+    expect(mod).toContain('/api/shopify/uninstalled');
     for (const f of ['api/webhooks/shopify/route.ts', 'api/shopify/uninstalled/route.ts']) {
       const p = path.join(__dirname, '..', '..', 'app', f);
-      expect(fs.existsSync(p), `el toml apunta a un endpoint que no existe: ${f}`).toBe(true);
+      expect(fs.existsSync(p), `la app registra un webhook hacia un endpoint que no existe: ${f}`).toBe(true);
     }
   });
 
