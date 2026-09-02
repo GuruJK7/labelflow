@@ -5,6 +5,7 @@ import { getPack, packIdList } from '@/lib/credit-packs';
 import { getUsdUyuRateMilli, usdMilliToUyuWhole } from '@/lib/pricing';
 import { shopifyAccessForTenant } from '@/lib/shopify-access';
 import { createOneTimeCharge, isDevelopmentStore, ShopifyBillingError } from '@/lib/shopify-billing';
+import { registerShopifyWebhooks } from '@/lib/shopify-register-webhooks';
 
 /**
  * Compra de un pack cobrada POR SHOPIFY (requisito 1.2 del App Store).
@@ -76,6 +77,23 @@ export async function GET(req: NextRequest) {
   });
 
   try {
+    // 🔴 RED DE SEGURIDAD, antes de cobrar. Los webhooks se registran al
+    // instalar y son por tienda: una tienda conectada ANTES de que existiera
+    // este riel no tiene `app_purchases_one_time/update`, y el modo de fallo
+    // es el peor posible —el comerciante paga y no se le acredita nada—.
+    // `registerShopifyWebhooks` es idempotente: si ya está, es una consulta y
+    // ninguna mutación. Va best-effort porque una falla acá no debe impedir
+    // la compra: el retorno del comerciante acredita igual.
+    await registerShopifyWebhooks(shop, accessToken, appUrl, ['app_purchases_one_time/update'])
+      .then((r) => {
+        if (r.failed.length) {
+          console.warn(
+            `[shopify-billing] no se pudo asegurar el webhook de cobro shop=${shop}: ${JSON.stringify(r.failed).slice(0, 200)}`,
+          );
+        }
+      })
+      .catch((e) => console.warn(`[shopify-billing] registro de webhook falló: ${(e as Error).message}`));
+
     // Tienda de desarrollo → cargo de prueba. El revisor de Shopify prueba en
     // una dev store: sin esto tendría que aprobar un cobro real para testear.
     const test = await isDevelopmentStore(shop, accessToken);
