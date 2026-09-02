@@ -8,7 +8,7 @@ import {
   isBillableGuia,
   type LedgerTx,
 } from '../billing/ledger';
-import { periodTotalMilli, uyu } from '../billing/tiers';
+import { periodTotalMilli, unitPriceFor, uyu } from '../billing/tiers';
 import { periodOf, shipmentIdemKey } from '../billing/settle';
 import { FakeLedgerDb } from './helpers/fake-ledger-db';
 
@@ -91,11 +91,15 @@ describe('ledger — asiento por envío (modo sombra)', () => {
   it('cruzar un tramo re-liquida el mes entero (nunca más que el techo del tramo siguiente)', async () => {
     for (let i = 1; i <= 49; i++) await ship('t-aura', `G-${i}`);
     const w = await getOrCreateWalletForTenant(db, 't-aura');
-    expect(db.netOf(w.id, YM_SEP)).toBe(-uyu(850)); // 49×20=980 > 50×17=850 → techo
+    // 49 envíos al precio de su propio tramo salen más que el total del tramo
+    // de 50, así que se cobra el techo. Los montos se derivan del tarifario a
+    // propósito: el test verifica el COMPORTAMIENTO, no una tabla de precios.
+    expect(db.netOf(w.id, YM_SEP)).toBe(-periodTotalMilli(50));
     await ship('t-aura', 'G-50');
-    expect(db.netOf(w.id, YM_SEP)).toBe(-uyu(850));
+    expect(db.netOf(w.id, YM_SEP)).toBe(-periodTotalMilli(50));
     await ship('t-aura', 'G-51');
-    expect(db.netOf(w.id, YM_SEP)).toBe(-uyu(51 * 17));
+    expect(db.netOf(w.id, YM_SEP)).toBe(-periodTotalMilli(51));
+    expect(periodTotalMilli(51)).toBe(51n * unitPriceFor(51)); // ya no está en el techo
     await assertWalletInvariant(db, w.id, YM_SEP);
   });
 
