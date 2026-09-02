@@ -21,7 +21,12 @@ import { getCreditHolderTenantId } from '@/lib/credit-holder';
  * webhook ni datos del pagador.
  */
 
-export type PaymentRail = 'mercadopago' | 'whop';
+/**
+ * Rieles de cobro. `shopify` es el cargo único de la Billing API, obligatorio
+ * para el comerciante que instala desde el App Store (requisito 1.2); los
+ * otros dos siguen sirviendo al que entra por el Excel/Dashboard.
+ */
+export type PaymentRail = 'mercadopago' | 'whop' | 'shopify';
 
 export interface SettleInput {
   purchaseId: string;

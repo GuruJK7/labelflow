@@ -76,6 +76,12 @@ interface CreditState {
   whopPacks: string[];
   /** Si los paquetes de 2.500 y 5.000 están habilitados para autoservicio. */
   largePacks?: boolean;
+  /**
+   * La tienda entró por la app de Shopify → el cobro va por la Billing API.
+   * Ver `lib/shopify-billing.ts`: es el requisito 1.2 del App Store, no una
+   * preferencia. Con esto en `true` no se ofrece MercadoPago ni Whop.
+   */
+  shopifyBilling?: boolean;
   recentPurchases: Array<{
     id: string;
     packId: string;
@@ -125,10 +131,18 @@ function BillingContent() {
     window.location.href = `/api/credit-packs/whop-checkout?pack=${packId}`;
   }
 
+  function handleBuyShopify(packId: string) {
+    setLoading(packId);
+    window.location.href = `/api/credit-packs/shopify-checkout?pack=${packId}`;
+  }
+
   const balance = state?.balance;
   const packs = state?.packs ?? [];
   const recentPurchases = state?.recentPurchases ?? [];
-  const whopPacks = state?.whopPacks ?? [];
+  const shopifyBilling = state?.shopifyBilling === true;
+  // Con cobro por Shopify no se ofrecen los otros rieles: mostrarlos sería
+  // justamente lo que el requisito 1.2 prohíbe.
+  const whopPacks = shopifyBilling ? [] : (state?.whopPacks ?? []);
   const whopEnabled = whopPacks.length > 0;
 
   // Precio de referencia (escalón de entrada) para el "ahorrás N%", en USD:
@@ -288,6 +302,8 @@ function BillingContent() {
           loadingPackId={loading}
           onPayMercadoPago={handleBuy}
           onPayWhop={handleBuyWhop}
+          shopifyBilling={shopifyBilling}
+          onPayShopify={handleBuyShopify}
         />
       )}
 
@@ -296,7 +312,8 @@ function BillingContent() {
         <div>
           <h2 className="text-xl font-bold text-white">Todos los paquetes</h2>
           <p className="text-zinc-500 text-sm mt-1">
-            Sin caducidad. Pago único con MercadoPago{whopEnabled ? ' o Whop' : ''}. Precio en
+            Sin caducidad. Pago único{' '}
+            {shopifyBilling ? 'en la factura de tu tienda de Shopify' : `con MercadoPago${whopEnabled ? ' o Whop' : ''}`}. Precio en
             dólares, cobro en pesos al tipo de referencia
             {fx ? ` (${fx.usdUyuRateLabel} UYU/USD)` : ''}.
           </p>
@@ -504,7 +521,7 @@ function BillingContent() {
 
                 {/* CTA */}
                 <button
-                  onClick={() => handleBuy(pack.id)}
+                  onClick={() => (shopifyBilling ? handleBuyShopify(pack.id) : handleBuy(pack.id))}
                   disabled={isLoading}
                   className={`block w-full text-center py-3 rounded-xl text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-wait mt-auto ${
                     isBest
@@ -520,7 +537,11 @@ function BillingContent() {
                       Redirigiendo...
                     </span>
                   ) : (
-                    whopPacks.includes(pack.id) ? 'Pagar con MercadoPago' : 'Comprar pack'
+                    shopifyBilling
+                      ? 'Pagar con Shopify'
+                      : whopPacks.includes(pack.id)
+                        ? 'Pagar con MercadoPago'
+                        : 'Comprar pack'
                   )}
                 </button>
                 {whopPacks.includes(pack.id) && (

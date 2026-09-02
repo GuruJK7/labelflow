@@ -56,6 +56,18 @@ export interface VolumeSelectorProps {
   onPayMercadoPago: (packId: string) => void;
   onPayWhop: (packId: string) => void;
   /**
+   * La tienda está conectada por la app de Shopify.
+   *
+   * 🔴 CUANDO ES `true`, EL ÚNICO BOTÓN ES SHOPIFY. No es una preferencia de
+   * diseño: el requisito 1.2 del App Store prohíbe que una app distribuida
+   * ahí cobre por fuera de la Billing API. Ofrecerle MercadoPago a un
+   * comerciante que instaló la app es exactamente lo que hace que la ficha se
+   * rechace. El que entra por el Excel/Dashboard no usa la app y sigue viendo
+   * MercadoPago y Whop.
+   */
+  shopifyBilling?: boolean;
+  onPayShopify?: (packId: string) => void;
+  /**
    * Moneda de lectura CONTROLADA desde afuera. Van de a dos: si se pasa
    * `currency` sin `onCurrencyChange`, el toggle queda mudo a propósito (es lo
    * que quiere un test de render, no una pantalla).
@@ -81,6 +93,8 @@ export function VolumeSelector({
   loadingPackId,
   onPayMercadoPago,
   onPayWhop,
+  shopifyBilling = false,
+  onPayShopify,
   currency: currencyProp,
   onCurrencyChange,
 }: VolumeSelectorProps) {
@@ -103,7 +117,16 @@ export function VolumeSelector({
     formatUnitPrice(BigInt(Math.round(milli)), { currency: c, rateMilli });
   const total = (milli: number, c: Currency = currency) =>
     formatTotalPrice(BigInt(Math.round(milli)), { currency: c, rateMilli });
-  const nota = currencyNote(currency, usdUyuRateLabel);
+  /**
+   * El aviso de conversión a pesos. Con cobro por Shopify NO aplica: ahí se
+   * cobra en dólares y no hay tipo de cambio de por medio. Dejarlo puesto
+   * decía "MercadoPago cobra en pesos" en una pantalla donde MercadoPago no
+   * participa, que además es exactamente el nombre que el requisito 1.2 no
+   * quiere ver ofrecido a un comerciante que instaló la app.
+   */
+  const nota = shopifyBilling
+    ? 'El cargo va a la factura de tu tienda de Shopify, en dólares y por única vez.'
+    : currencyNote(currency, usdUyuRateLabel);
   const quote: VolumeQuote = useMemo(
     () => quoteForVolume(volume, rateMilli, { largePacks }),
     [volume, usdUyuRateMilli, largePacks],
@@ -313,30 +336,50 @@ export function VolumeSelector({
 
           {/* Botones de pago */}
           <div className="flex flex-col gap-3 lg:w-64 lg:justify-center">
-            <button
-              type="button"
-              onClick={() => onPayMercadoPago(quote.pack.id)}
-              disabled={busy}
-              className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-zinc-950 text-sm font-semibold transition-all shadow-lg shadow-cyan-500/30 disabled:opacity-50 disabled:cursor-wait"
-            >
-              {busy ? 'Redirigiendo...' : 'Pagar con MercadoPago'}
-              {!busy && <ArrowRight className="w-4 h-4" />}
-            </button>
-            {whopAvailable && (
-              <button
-                type="button"
-                onClick={() => onPayWhop(quote.pack.id)}
-                disabled={busy}
-                className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-white text-sm font-semibold border border-white/[0.1] hover:border-cyan-500/30 transition-all disabled:opacity-50 disabled:cursor-wait"
-              >
-                Pagar con Whop
-                <ArrowRight className="w-4 h-4" />
-              </button>
+            {shopifyBilling ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onPayShopify?.(quote.pack.id)}
+                  disabled={busy}
+                  className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-zinc-950 text-sm font-semibold transition-all shadow-lg shadow-cyan-500/30 disabled:opacity-50 disabled:cursor-wait"
+                >
+                  {busy ? 'Redirigiendo...' : 'Pagar con Shopify'}
+                  {!busy && <ArrowRight className="w-4 h-4" />}
+                </button>
+                <p className="text-[11px] text-zinc-500 leading-snug">
+                  Se cobra en dólares en la factura de tu tienda de Shopify, en un pago único.
+                  Aprobás el cargo en Shopify y los envíos se acreditan al volver.
+                </p>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onPayMercadoPago(quote.pack.id)}
+                  disabled={busy}
+                  className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-zinc-950 text-sm font-semibold transition-all shadow-lg shadow-cyan-500/30 disabled:opacity-50 disabled:cursor-wait"
+                >
+                  {busy ? 'Redirigiendo...' : 'Pagar con MercadoPago'}
+                  {!busy && <ArrowRight className="w-4 h-4" />}
+                </button>
+                {whopAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => onPayWhop(quote.pack.id)}
+                    disabled={busy}
+                    className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-white text-sm font-semibold border border-white/[0.1] hover:border-cyan-500/30 transition-all disabled:opacity-50 disabled:cursor-wait"
+                  >
+                    Pagar con Whop
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
+                <p className="text-[11px] text-zinc-500 leading-snug">
+                  {nota}
+                  {whopAvailable ? ' Whop cobra en dólares con tarjeta internacional.' : ''}
+                </p>
+              </>
             )}
-            <p className="text-[11px] text-zinc-500 leading-snug">
-              {nota}
-              {whopAvailable ? ' Whop cobra en dólares con tarjeta internacional.' : ''}
-            </p>
           </div>
         </div>
 

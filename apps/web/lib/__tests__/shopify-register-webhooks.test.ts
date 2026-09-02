@@ -61,15 +61,23 @@ describe('registerShopifyWebhooks', () => {
     });
 
     const r = await registerShopifyWebhooks(SHOP, TOKEN, ORIGIN);
-    expect(r).toEqual({ registered: ['orders/paid', 'app/uninstalled'], alreadyPresent: [], failed: [] });
+    // Tres topics desde que el cobro va por la Billing API de Shopify: sin
+    // `app_purchases_one_time/update` el comerciante paga y no se le acredita.
+    expect(r).toEqual({
+      registered: ['orders/paid', 'app/uninstalled', 'app_purchases_one_time/update'],
+      alreadyPresent: [],
+      failed: [],
+    });
 
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4); // 1 consulta + 3 creaciones
     for (const c of calls) {
       expect(c.url).toBe(`https://${SHOP}/admin/api/2026-07/graphql.json`);
       expect(c.headers['X-Shopify-Access-Token']).toBe(TOKEN);
     }
     expect(calls[0].body.query).toContain('webhookSubscriptions(first: 50, topics: $topics)');
-    expect(calls[0].body.variables).toEqual({ topics: ['ORDERS_PAID', 'APP_UNINSTALLED'] });
+    expect(calls[0].body.variables).toEqual({
+      topics: ['ORDERS_PAID', 'APP_UNINSTALLED', 'APP_PURCHASES_ONE_TIME_UPDATE'],
+    });
 
     expect(calls[1].body.query).toBe(WEBHOOK_SUBSCRIPTION_CREATE_MUTATION);
     expect(calls[1].body.query).toContain('webhookSubscriptionCreate(topic: $topic, webhookSubscription: $webhookSubscription)');
@@ -94,9 +102,17 @@ describe('registerShopifyWebhooks', () => {
       return created(v.topic, v.webhookSubscription.uri);
     });
     const r = await registerShopifyWebhooks(SHOP, TOKEN, ORIGIN);
-    expect(r).toEqual({ registered: ['app/uninstalled'], alreadyPresent: ['orders/paid'], failed: [] });
-    expect(calls).toHaveLength(2);
+    expect(r).toEqual({
+      registered: ['app/uninstalled', 'app_purchases_one_time/update'],
+      alreadyPresent: ['orders/paid'],
+      failed: [],
+    });
+    expect(calls).toHaveLength(3); // 1 consulta + los 2 que faltaban
     expect(calls[1].body.variables).toMatchObject({ topic: 'APP_UNINSTALLED' });
+    expect(calls[2].body.variables).toMatchObject({
+      topic: 'APP_PURCHASES_ONE_TIME_UPDATE',
+      webhookSubscription: { uri: 'https://autoenvia.com/api/webhooks/shopify/app-purchases' },
+    });
   });
 
   it('misma topic pero otra uri (otro entorno) NO cuenta como presente', async () => {
@@ -143,8 +159,15 @@ describe('registerShopifyWebhooks', () => {
     });
     const r = await registerShopifyWebhooks(SHOP, TOKEN, ORIGIN);
     expect(r.registered).toEqual([]);
-    expect(r.failed.map((f) => [f.topic, f.status])).toEqual([['orders/paid', 401], ['app/uninstalled', 200]]);
+    expect(r.failed.map((f) => [f.topic, f.status])).toEqual([
+      ['orders/paid', 401],
+      ['app/uninstalled', 200],
+      ['app_purchases_one_time/update', 200],
+    ]);
     expect(r.failed[1].body).toContain('ACCESS_DENIED');
+    // El del cobro también tiene que reportarse: un fallo silencioso ahí
+    // significa comerciantes que pagan y no ven el saldo.
+    expect(r.failed[2].body).toContain('ACCESS_DENIED');
   });
 
   it('si la consulta previa falla, igual intenta crear (no pierde suscripciones en silencio)', async () => {
