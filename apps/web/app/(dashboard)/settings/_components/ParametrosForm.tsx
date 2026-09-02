@@ -562,63 +562,72 @@ export function ParametrosForm({
         )}
       </Bloque>
 
-      <Bloque
-        id="email"
-        title="Aviso al cliente por email"
-        que="Cuando sale la guía, le mandamos un email a tu cliente con el número de seguimiento, desde tu propia casilla."
-        paraQuien="Tiendas que quieren avisar sin depender de Shopify."
-        ejemplo="Gmail: servidor smtp.gmail.com, puerto 587, tu usuario y una contraseña de aplicación."
-        // Lo que hace el worker (process-orders.job.ts, "Send email notification"):
-        // manda sólo si emailHost, emailUser y emailPass están los tres guardados.
-        // Y PUT /api/v1/settings no acepta vacíos para esos campos: guardar con
-        // los inputs en blanco NO borra lo guardado, así que no se promete un
-        // "apagar" que no existe.
-        aviso={EMAIL_AVISO}
-        footer={
-          <SaveRow
-            label="Guardar"
-            busy={saving === 'email'}
-            onClick={() =>
-              save('email', {
-                ...(emailHost ? { emailHost } : {}),
-                emailPort,
-                ...(emailUser ? { emailUser } : {}),
-                ...(emailPass ? { emailPass } : {}),
-                ...(emailFrom ? { emailFrom } : {}),
-                storeName,
-              })
-            }
-            msg={msgs.email}
-          />
-        }
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className={labelClass}>Servidor SMTP</label>
-            <input value={emailHost} onChange={(e) => setEmailHost(e.target.value)} className={inputClass} placeholder="smtp.gmail.com" />
+      {/* 🔴 EL AVISO POR EMAIL NO VA EN EL ASISTENTE (`compact`).
+          Pedía servidor SMTP, usuario y una contraseña de aplicación: seis
+          campos y una credencial de una cuenta de correo ajena, en el medio
+          de un alta que promete tres minutos. Es la fricción más cara del
+          onboarding y no hace falta para despachar — Shopify ya le avisa al
+          comprador. Sigue disponible en Configuración para quien lo quiera,
+          y lo ya guardado se sigue usando: esto es sólo dónde se muestra. */}
+      {!compact && (
+        <Bloque
+          id="email"
+          title="Aviso al cliente por email"
+          que="Cuando sale la guía, le mandamos un email a tu cliente con el número de seguimiento, desde tu propia casilla."
+          paraQuien="Tiendas que quieren avisar sin depender de Shopify."
+          ejemplo="Gmail: servidor smtp.gmail.com, puerto 587, tu usuario y una contraseña de aplicación."
+          // Lo que hace el worker (process-orders.job.ts, "Send email notification"):
+          // manda sólo si emailHost, emailUser y emailPass están los tres guardados.
+          // Y PUT /api/v1/settings no acepta vacíos para esos campos: guardar con
+          // los inputs en blanco NO borra lo guardado, así que no se promete un
+          // "apagar" que no existe.
+          aviso={EMAIL_AVISO}
+          footer={
+            <SaveRow
+              label="Guardar"
+              busy={saving === 'email'}
+              onClick={() =>
+                save('email', {
+                  ...(emailHost ? { emailHost } : {}),
+                  emailPort,
+                  ...(emailUser ? { emailUser } : {}),
+                  ...(emailPass ? { emailPass } : {}),
+                  ...(emailFrom ? { emailFrom } : {}),
+                  storeName,
+                })
+              }
+              msg={msgs.email}
+            />
+          }
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className={labelClass}>Servidor SMTP</label>
+              <input value={emailHost} onChange={(e) => setEmailHost(e.target.value)} className={inputClass} placeholder="smtp.gmail.com" />
+            </div>
+            <div>
+              <label className={labelClass}>Puerto</label>
+              <input type="number" value={emailPort} onChange={(e) => setEmailPort(Number(e.target.value))} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Usuario</label>
+              <input value={emailUser} onChange={(e) => setEmailUser(e.target.value)} className={inputClass} placeholder="tienda@gmail.com" autoComplete="off" />
+            </div>
+            <div>
+              <label className={labelClass}>Contraseña</label>
+              <input type="password" value={emailPass} onChange={(e) => setEmailPass(e.target.value)} className={inputClass} placeholder={emailPassSet ? '********' : 'Contraseña de aplicación'} autoComplete="new-password" />
+            </div>
+            <div>
+              <label className={labelClass}>Remitente (De)</label>
+              <input value={emailFrom} onChange={(e) => setEmailFrom(e.target.value)} className={inputClass} placeholder="Mi Tienda <hola@mitienda.uy>" />
+            </div>
+            <div>
+              <label className={labelClass}>Nombre de la tienda</label>
+              <input value={storeName} onChange={(e) => setStoreName(e.target.value)} className={inputClass} placeholder="Mi Tienda" />
+            </div>
           </div>
-          <div>
-            <label className={labelClass}>Puerto</label>
-            <input type="number" value={emailPort} onChange={(e) => setEmailPort(Number(e.target.value))} className={inputClass} />
-          </div>
-          <div>
-            <label className={labelClass}>Usuario</label>
-            <input value={emailUser} onChange={(e) => setEmailUser(e.target.value)} className={inputClass} placeholder="tienda@gmail.com" autoComplete="off" />
-          </div>
-          <div>
-            <label className={labelClass}>Contraseña</label>
-            <input type="password" value={emailPass} onChange={(e) => setEmailPass(e.target.value)} className={inputClass} placeholder={emailPassSet ? '********' : 'Contraseña de aplicación'} autoComplete="new-password" />
-          </div>
-          <div>
-            <label className={labelClass}>Remitente (De)</label>
-            <input value={emailFrom} onChange={(e) => setEmailFrom(e.target.value)} className={inputClass} placeholder="Mi Tienda <hola@mitienda.uy>" />
-          </div>
-          <div>
-            <label className={labelClass}>Nombre de la tienda</label>
-            <input value={storeName} onChange={(e) => setStoreName(e.target.value)} className={inputClass} placeholder="Mi Tienda" />
-          </div>
-        </div>
-      </Bloque>
+        </Bloque>
+      )}
 
       <Bloque
         id="orden"
