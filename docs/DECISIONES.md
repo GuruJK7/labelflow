@@ -220,3 +220,28 @@ que ya está construido y verificado, gana lo verificado y se explica.
 - **Producto (revisión 2026-09-02):** los links de checkout de Whop son públicos y no llevan metadata, así que la compra PENDING no prueba QUÉ se pagó. Env `WHOP_PLAN_IDS` (JSON `{packId: plan_id}` o `{packId: {planId, minUsd}}`, no es secreto): el webhook acredita sólo si el plan/producto del evento es el del `packId` de la compra y, con `minUsd`, si el monto es en USD y ≥ el piso. Sin la var, sin plan en el payload o con plan distinto → `flagged` y 0 envíos. `WHOP_CHECKOUT_URLS` no se prende sin `WHOP_PLAN_IDS`.
 - **Misma función:** la acreditación de MP (`webhooks/mercadopago/route.ts:373-380` + kickback) se extrae a `lib/credit-accrual.ts` (`settlePaidPurchase`, `failPendingPurchase`, `refundPaidPurchase`, `accrueReferralKickback`) sin cambiar semántica, y MP y Whop la llaman.
 - **Spec:** `docs/SELFSERVE-SPEC.md` §7.
+
+## D35 · El precio pasa a estar denominado en DÓLARES por envío según el volumen mensual
+- **Decidido (Adrian):** ocho escalones, precio por envío en USD a partir de N envíos en el mes:
+
+  | Envíos/mes | USD por envío | Mes completo (USD) | En pesos a 40 UYU/USD |
+  |---|---|---|---|
+  | 0 – 49 | 0,50 | — | — |
+  | 50 – 99 | 0,42 | 21,00 | 840 |
+  | 100 – 249 | 0,37 | 37,00 | 1.480 |
+  | 250 – 499 | 0,30 | 75,00 | 3.000 |
+  | 500 – 999 | 0,25 | 125,00 | 5.000 |
+  | 1000 – 2499 | 0,18 | 180,00 | 7.200 |
+  | 2500 – 4999 | 0,14 | 350,00 | 14.000 |
+  | 5000 o más | 0,11 | 550,00 | 22.000 |
+
+- **Por qué en dólares:** los costos que sostienen el producto se pagan en dólares y el precio en pesos se licuaba solo con cada devaluación. Denominado en USD, el tipo de cambio deja de ser una decisión implícita del calendario y pasa a ser una variable explícita.
+- **Ingreso creciente y total monótono:** el total del mes es `min` sobre los escalones de `max(n, minShipments) × unitPrice` — la misma función ya probada en `apps/worker/src/billing/tiers.ts`, no se escribió otra. Sin ese mínimo la escalera tiene **siete zonas muertas** donde hacer más envíos sale menos plata (43–49, 89–99, 203–249, 417–499, 721–999, 1945–2499, 3929–4999). Con él: hacer un envío más nunca baja la factura y nunca se cobra más que el total del escalón siguiente. Barrido de 0 a 6.000 en `lib/__tests__/pricing.test.ts`.
+- 🔴 **La promesa "ningún cliente actual paga más" tiene UNA excepción, y es de la propia escalera, no del código.** Los seis escalones viejos (20/17/15/12/10/7 UYU) salen de dividir por 40, pero 7/40 = **0,175** y D35 fija **0,18**: a tipo 40 ese cliente pasa de 7,00 a **7,20** UYU por envío (**+2,86 %**). Los otros cinco bajan o quedan igual. Está medido por `legacyPriceRegressions()` y fijado por un test que falla si la excepción crece. **Si Adrian quiere la promesa sin asterisco, el cambio es una línea:** `180n` → `175n` en `apps/web/lib/pricing.ts` y en `apps/worker/src/billing/tiers.ts`. El tipo de cambio más alto al que ningún precio viejo sube es **38,888** (`maxRateWithoutIncreaseMilli()`).
+- **Fuente única:** `apps/web/lib/pricing.ts`. Exporta los ocho escalones en **milésimos de USD como `bigint`** (nunca float), `periodTotalUsdMilli`, `effectiveUnitUsdMilli`, `nextTierHint` y la conversión a pesos. `lib/credit-packs.ts` sólo arma el catálogo comprable sobre eso; la landing consume `PRICING_TIERS` + `quoteUsd()`.
+- **Duplicada en el worker, con test que lo vigila:** `apps/worker` compila a CommonJS con `rootDir: "./src"` y no puede importar fuera de su árbol, así que la escalera está en los dos lados. `apps/web/lib/__tests__/pricing-worker-sync.test.ts` compara escalón por escalón **y** los dos `periodTotal` envío por envío de 0 a 6.000: si alguien mueve un precio de un solo lado, la web cobraría una cosa y el ledger facturaría otra, en silencio.
+- **Tipo de cambio configurable:** `USD_UYU_RATE` (hasta 3 decimales, rango 1–1000), default **40**. Sólo afecta lo que **se cobra** en el checkout de MercadoPago. El ledger del worker usa un tipo **fijo** (`BASE_USD_UYU_RATE_MILLI`) a propósito: si se moviera con una env var, cambiarla reescribiría el valor de períodos ya liquidados y `assertPeriodInvariant` explotaría en producción sin que nadie haya tocado un envío. Conversión con redondeo half-up explícito a **peso entero** para el monto que ve MercadoPago.
+- **Compatibilidad de lo ya vendido:** `CreditPurchase.packId` está persistido. Los seis ids viejos (`pack_10` … `pack_1000`) siguen existiendo con la misma cantidad de envíos; se suman `pack_2500` y `pack_5000`. Las filas viejas guardan su propio `pricePerShipmentUyu`/`totalPriceUyu` y **no se recalculan**: el historial sigue mostrando lo que se pagó. `getPack` exige el id canónico (`pack_010` ya no resuelve).
+- **UI:** `/settings/billing` muestra la escalera completa con el escalón actual marcado, el precio efectivo (no el de lista: con 800 envíos el efectivo es 0,225, no 0,25), el total del mes en USD y en pesos, y el empujón al escalón siguiente con el ahorro **real** por envío. En la zona de tope ese ahorro es 0 y el empujón no se muestra: decir "ahorrás" ahí sería mentira. El copy dice que el precio es en dólares y que MercadoPago cobra en pesos al tipo del día.
+- **Efecto colateral de build:** `apps/web/tsconfig.json` pasa de `target: ES2017` a `ES2020` — los literales `bigint` no compilan por debajo de eso. Es el único cambio de configuración.
+- **Revertir:** la escalera vive en dos archivos (`pricing.ts`, `tiers.ts`) y el catálogo se deriva; volver a pesos es reescribir esas dos tablas y el test de sincronía. Ninguna migración, ninguna columna nueva, ningún dato tocado.

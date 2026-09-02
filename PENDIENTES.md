@@ -20,7 +20,7 @@ pudo verificar y lo que sigue faltando. Nada de esto se inventó.
 | ¿Shopify le paga a una entidad uruguaya? | **NO DETERMINADO** — decide si se puede cobrar con Shopify Billing (0 % hasta USD 1M) | Partners → Pagos → Configurar método de pago (ver qué rieles ofrece a UY) |
 | Costo real por guía DAC | **NO DOCUMENTADO en ningún repo** — cada cliente usa su propia cuenta DAC; el flete no pasa por LabelFlow | Contrato/cuenta DAC del cliente |
 | Costo mensual real Render/Supabase(x2)/Vercel | **NO DOCUMENTADO** | Facturas de cada servicio |
-| Tipo de cambio UYU/USD | Hardcodeado `44` en dos repos; no verificado | Decisión de Adrian; mover a `FxRate` editable |
+| Tipo de cambio UYU/USD | **PARCIAL (D35)** — en LabelFlow ya no está hardcodeado: es la env `USD_UYU_RATE` (default 40, el tipo del que salió la escalera). Sigue **sin verificar cuál es el real**, y el `44` sigue hardcodeado en los otros dos repos. 🔴 Subirlo sube en pesos lo que paga TODO cliente actual: a 44 suben los seis escalones viejos. | Cotización real → `npx vercel env add USD_UYU_RATE production --scope gurujk7s-projects`. Sólo Adrian. Si se quiere que cambie sin deploy, mover a una fila editable (otro turno). |
 | Migraciones `0001–0003` de autoenvia-dash aplicadas en Supabase `zgptruicwqswtodgzfkp` | **NO VERIFICADO** (sin acceso a esa base) | `select indexname from pg_indexes where indexname in ('ae_coin_ledger_mp_payment_uk','ae_coin_ledger_spend_order_uk','ab_tx_mp_uniq')` |
 | Misma cuenta de MercadoPago en LabelFlow / AE / AB | **NO DETERMINADO** — decide si los payment ids pueden colisionar | `GET https://api.mercadopago.com/users/me` con cada token (no pasar tokens) |
 | Login de DAC: ¿cédula, mail o usuario? | **NO DETERMINADO** — `DAC_INTEGRATION_PLAN.md` lo marca bloqueante | Sólo Adrian |
@@ -74,7 +74,7 @@ Lo que el código ya hace: `GET /api/credit-packs/whop-checkout?pack=` crea la c
 | Ítem | Estado | Dónde / cómo |
 |---|---|---|
 | Company en Whop | **FALTA** — la cuenta es personal, saldo USD 0, sin negocio (visto 2026-09-01, `docs/PAGOS.md` §1) | whop.com → crear company. Sin esto no hay producto ni webhooks. |
-| Un **producto** con **un plan (one-time) por pack** que se quiera vender por Whop | **FALTA** — el precio lo fija Adrian a mano en USD por plan (los packs son UYU; no hay FX). El webhook **sí** exige que el plan pagado sea el del pack (`WHOP_PLAN_IDS`) y, opcionalmente, un piso en USD por plan (`minUsd`). Sugerido: `pack_100`, `pack_250`, `pack_500`, `pack_1000`; `pack_10`/`pack_50` no valen la comisión (breakeven ~USD 14–34, PAGOS.md §1). | Whop dashboard → Products → Pricing → "One-time". Copiar el **link de checkout** de cada plan. |
+| Un **producto** con **un plan (one-time) por pack** que se quiera vender por Whop | **FALTA — y desde D35 los precios en USD ya están decididos, ver la sección "Planes de Whop" más abajo.** El webhook exige que el plan pagado sea el del pack (`WHOP_PLAN_IDS`) y, opcionalmente, un piso en USD por plan (`minUsd`). | Whop dashboard → Products → Pricing → "One-time". Copiar el **link de checkout** de cada plan. |
 | URL de retorno de cada plan | **FALTA** — poner `https://autoenvia.com/settings/billing?whop=return`. Whop le agrega `?payment_id=pay_…&checkout_status=success` (PAGOS.md §2); la página muestra "volviste de Whop" y **no acredita**: acredita el webhook. | En la config del plan (redirect / "after purchase" URL). |
 | Env `WHOP_CHECKOUT_URLS` en Vercel (producción) | **FALTA** — JSON `{packId: url}` con los links del punto anterior. Sin la var los botones de Whop no existen y el endpoint da 404. JSON inválido = igual que ausente (un `console.error`). Sólo se aceptan URLs `https://`. | `npx vercel env add WHOP_CHECKOUT_URLS production --scope gurujk7s-projects`. No es secreto pero no es `NEXT_PUBLIC_`: las URLs no viajan al cliente. |
 | Env `WHOP_PLAN_IDS` en Vercel (producción) | **FALTA y es OBLIGATORIA para acreditar** (revisión 2026-09-02) — JSON `{packId: plan_id}` o `{packId: {"planId": "plan_…", "minUsd": N}}`. Los links de checkout de Whop son públicos y no llevan metadata: sin esto, cualquiera podía pagar el plan barato (pack_10) teniendo una compra PENDING de pack_1000 y el webhook acreditaba 1.000 envíos. Ahora el webhook exige que el plan/producto del evento sea el asignado al `packId` de la compra; con `minUsd` además exige moneda USD y monto ≥ piso. Sin la var, con JSON roto, sin plan en el payload o con plan distinto → 200 `flagged` + `[whop] plan no coincide con la compra` (con `reason`), **0 envíos**. | `npx vercel env add WHOP_PLAN_IDS production --scope gurujk7s-projects` con los `plan_…` de cada plan creado. Setearla ANTES o junto con `WHOP_CHECKOUT_URLS`. |
@@ -84,4 +84,36 @@ Lo que el código ya hace: `GET /api/credit-packs/whop-checkout?pack=` crea la c
 | **Shape del payload de Whop** (`type`/`action`, `data.id = pay_…`, `data.user.email`, `data.metadata`) | **INFERIDO de memoria, no verificado contra un evento real**. El webhook acepta `type`, `action` o `event`, `payment.succeeded` y `payment_succeeded`, y busca el email en `data.user.email` / `data.user_email` / `data.email`. Los tests fijan ese supuesto. | Primer pago de prueba (plan de USD 1 o cupón 100%): mirar el log de Vercel (`[whop] …`, sin cuerpo) y, si algo no cuadra, ajustar los `??` de `app/api/webhooks/whop/route.ts` (`handlePaymentSucceeded` / `resolvePurchaseId`). |
 | Metadata en links estáticos de checkout | **NO VERIFICADO** que un link acepte `?metadata[purchaseId]=`. Por eso la compra se resuelve por `metadata.purchaseId` → `metadata.userId` → **email del pago + única compra PENDING de Whop del usuario en 24 h**. Si el email de Whop no es el de AutoEnvía, o hay 0 ó 2+ PENDING, el webhook responde 200 `flagged` y **no acredita**: queda `[whop] compra no resuelta {webhookId, paymentId, candidates}` en el log para acreditar a mano. | Camino para cerrarlo: checkout configurations por API con `metadata { purchaseId }` (PAGOS.md §3.1) en vez de links fijos. Otro turno. |
 | Acreditación manual de un pago `flagged` | Procedimiento: buscar el `CreditPurchase` PENDING con `mpExternalRef LIKE 'whop|%'` del usuario, y llamar `settlePaidPurchase({ purchaseId, externalPaymentId: 'whop:<pay_id>', rail: 'whop' })` (script o SQL equivalente: `status='PAID'`, `mpPaymentId='whop:<pay_id>'`, `paidAt=now()` + `shipmentCredits`/`creditsPurchased` del **holder**). El `mpPaymentId @unique` impide acreditar dos veces el mismo pago. | Sólo Adrian, con el `paymentId` del log. |
-| Copy de moneda en la UI | La página dice "Whop cobra con tarjeta internacional en dólares". Si Adrian decide otra cosa (por ejemplo, mostrar el precio en USD del plan), es un cambio de copy en `settings/billing/_components/VolumeSelector.tsx`. | Decisión de Adrian. |
+| Copy de moneda en la UI | **RESUELTO por D35** — la página muestra el precio en dólares (que es la denominación) y aclara que MercadoPago cobra en pesos al tipo del día, con el tipo a la vista. | — |
+
+### Planes de Whop con los precios de D35 (para que Adrian los cree)
+
+Un plan **one-time** por paquete. El precio es exactamente el total del paquete en dólares —
+no hay FX que aplicar, Whop cobra en USD. `minUsd` se pone recién después de confirmar si
+`final_amount` viene en dólares o en centavos (fila de arriba); mientras tanto, dejarlo sin `minUsd`.
+
+| Plan (para `WHOP_PLAN_IDS`) | Envíos | Precio del plan (USD) | USD por envío | ¿Vale la comisión? |
+|---|---|---|---|---|
+| `pack_10` | 10 | **5,00** | 0,50 | **No** — breakeven ~USD 14 (PAGOS.md §1). No crearlo. |
+| `pack_50` | 50 | **21,00** | 0,42 | Justo en el límite. Opcional. |
+| `pack_100` | 100 | **37,00** | 0,37 | Sí |
+| `pack_250` | 250 | **75,00** | 0,30 | Sí |
+| `pack_500` | 500 | **125,00** | 0,25 | Sí |
+| `pack_1000` | 1000 | **180,00** | 0,18 | Sí |
+| `pack_2500` | 2500 | **350,00** | 0,14 | Sí — **nuevo en D35** |
+| `pack_5000` | 5000 | **550,00** | 0,11 | Sí — **nuevo en D35** |
+
+🔴 Si algún día cambia un precio de la escalera, estos planes quedan desactualizados **en Whop, no en
+el código**: ningún test puede verificar lo que hay del otro lado. El `minUsd` de `WHOP_PLAN_IDS` es
+la única defensa contra cobrar de menos, y sólo funciona si Adrian lo actualiza junto con el plan.
+
+## Precios en dólares (D35)
+
+| Ítem | Estado | Dónde / cómo |
+|---|---|---|
+| 🔴 El escalón de 1.000 envíos SUBE de 7,00 a 7,20 UYU por envío (+2,86 %) | **DECISIÓN de Adrian, asumida** — D35 fija USD 0,18 y 7/40 = 0,175. Es el único de los seis escalones viejos que sube; los otros cinco bajan o quedan igual. Hay un test que fija la excepción y falla si crece (`pricing.test.ts`, "al tipo base (40) sube UN solo escalón"). | Para que la promesa "ningún cliente actual paga más" valga sin asterisco: `180n` → `175n` en `apps/web/lib/pricing.ts` **y** en `apps/worker/src/billing/tiers.ts` (el test de sincronía obliga a tocar los dos). Alternativa: dejar `USD_UYU_RATE` ≤ 38,888. |
+| Valor real de `USD_UYU_RATE` en Vercel | **FALTA** — sin la var se cobra al tipo base 40. Ver la fila "Tipo de cambio UYU/USD" arriba. | Sólo Adrian. |
+| Avisar a los clientes actuales del cambio de moneda | **NO HECHO** — el precio pasa a estar en dólares: si el peso se devalúa, lo que pagan en pesos sube sin que cambie la escalera. Es un cambio de condiciones comercial, no técnico. | Decisión y comunicación de Adrian (WhatsApp / mail). |
+| Landing con la calculadora de precios | **OTRA RAMA** (`feat/landing-v2`) — no se tocó. La fuente única quedó exportada y lista para consumir: `PRICING_TIERS`, `quoteUsd()`, `periodTotalUsdMilli()`, `nextTierHint()` y `formatUsdMilli()` de `apps/web/lib/pricing.ts`. Todas puras, sin env ni DB, usables en un componente de cliente. Para mostrar pesos hace falta pasarles el tipo de cambio desde el server (`USD_UYU_RATE` no existe en el bundle del navegador). | Quien trabaje esa rama. |
+| Planes de Whop para los dos escalones nuevos | **FALTA** — `pack_2500` (USD 350) y `pack_5000` (USD 550) no tienen plan. Ver la tabla de arriba. | Adrian, en Whop. |
+| Precio de los bots / AutoBoost en la nueva denominación | **NO REVISADO** — D35 sólo tocó el precio de los envíos. Si AutoBoost cobra en pesos contra el mismo saldo, queda un tarifario en pesos conviviendo con uno en dólares. | Fuera del alcance de esta rama; revisar con Adrian. |
