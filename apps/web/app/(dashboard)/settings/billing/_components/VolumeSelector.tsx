@@ -26,7 +26,8 @@ import { formatUsdMilli } from '@/lib/pricing';
  * checkout.
  *
  * Los dos botones de pago los maneja la página: MercadoPago cobra en pesos al
- * tipo del día; Whop cobra en dólares.
+ * tipo de cambio de referencia (`USD_UYU_RATE`, no la cotización del día);
+ * Whop cobra en dólares.
  */
 export interface VolumeSelectorProps {
   /** Tipo de cambio en milésimos de UYU por USD, tal como lo devuelve /api/credit-packs/me. */
@@ -270,8 +271,9 @@ export function VolumeSelector({
               </button>
             )}
             <p className="text-[11px] text-zinc-500 leading-snug">
-              Los precios están en dólares. MercadoPago los cobra en pesos al tipo de cambio del día
-              ({usdUyuRateLabel} UYU/USD hoy)
+              Los precios están en dólares. MercadoPago los cobra en pesos al tipo de cambio de
+              referencia que usamos ({usdUyuRateLabel} UYU/USD, lo actualizamos cada tanto; no es la
+              cotización del día)
               {whopAvailable ? '; Whop cobra en dólares con tarjeta internacional' : ''}.
             </p>
           </div>
@@ -348,8 +350,8 @@ export function VolumeSelector({
 
         <p className="text-xs text-zinc-500 mt-6">
           Los envíos no vencen y se comparten entre todas tus tiendas. Cada guía creada en DAC
-          descuenta un envío. Los montos en pesos son al tipo de cambio de hoy ({usdUyuRateLabel}{' '}
-          UYU/USD) y pueden cambiar.
+          descuenta un envío. Los montos en pesos salen del tipo de cambio de referencia que usamos
+          ({usdUyuRateLabel} UYU/USD) y pueden cambiar.
         </p>
       </div>
     </section>

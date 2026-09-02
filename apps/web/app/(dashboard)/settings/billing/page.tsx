@@ -24,7 +24,7 @@ interface Pack {
   /** Precio autoritativo (D35), en milésimos de USD. */
   pricePerShipmentUsdMilli: number;
   totalPriceUsdMilli: number;
-  /** Derivados del anterior al tipo de cambio del día; sólo para mostrar y cobrar. */
+  /** Derivados del anterior al tipo de cambio de referencia; sólo para mostrar y cobrar. */
   pricePerShipmentUyu: number;
   totalPriceUyu: number;
   label: string;
@@ -144,8 +144,8 @@ function BillingContent() {
         </h1>
         <p className="text-zinc-400 text-sm mt-2 max-w-2xl">
           Sin suscripciones, sin caducidad. Cuanto más envíos hacés en el mes, menos pagás por
-          envío. Los precios están en dólares y MercadoPago los cobra en pesos al tipo de cambio
-          del día{fx ? ` (${fx.usdUyuRateLabel} UYU/USD)` : ''}.
+          envío. Los precios están en dólares y MercadoPago los cobra en pesos al tipo de cambio de
+          referencia que usamos{fx ? ` (${fx.usdUyuRateLabel} UYU/USD)` : ''}.
         </p>
       </div>
 
@@ -287,7 +287,8 @@ function BillingContent() {
           <h2 className="text-xl font-bold text-white">Todos los paquetes</h2>
           <p className="text-zinc-500 text-sm mt-1">
             Sin caducidad. Pago único con MercadoPago{whopEnabled ? ' o Whop' : ''}. Precio en
-            dólares, cobro en pesos{fx ? ` a ${fx.usdUyuRateLabel} UYU/USD` : ''}.
+            dólares, cobro en pesos al tipo de referencia
+            {fx ? ` (${fx.usdUyuRateLabel} UYU/USD)` : ''}.
           </p>
         </div>
         <div className="hidden md:flex items-center gap-2 text-xs text-zinc-500">
