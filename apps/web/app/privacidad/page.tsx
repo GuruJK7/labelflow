@@ -1,5 +1,9 @@
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
+import { whatsappUrl, WHATSAPP_LEGIBLE } from '@/lib/contacto';
+
+/** Ver `lib/contacto.ts`: por qué el canal es WhatsApp y no una casilla de mail. */
+const WHATSAPP_URL = whatsappUrl('Hola, quiero ejercer un derecho sobre mis datos en AutoEnvía.');
 
 export const metadata = {
   title: 'Política de Privacidad — AutoEnvía',
@@ -18,7 +22,7 @@ export default function PrivacidadPage() {
 
         <h1 className="text-3xl font-bold text-white mb-2">Política de Privacidad</h1>
         <p className="text-zinc-500 text-sm mb-10">
-          Última actualización: 27 de marzo de 2026
+          Última actualización: 2 de setiembre de 2026
         </p>
 
         <div className="space-y-8 text-sm leading-relaxed">
@@ -122,10 +126,13 @@ export default function PrivacidadPage() {
               <li><strong className="text-zinc-300">Oposicion:</strong> Oponerse al tratamiento de sus datos para fines especificos</li>
             </ul>
             <p className="mt-3">
-              Para ejercer estos derechos, envie un email a <strong className="text-cyan-400">soporte@labelflow.uy</strong> indicando
-              su nombre, email de cuenta y el derecho que desea ejercer. La solicitud sera
-              procesada dentro de los 5 días hábiles siguientes, conforme al artículo 14 de la
-              Ley 18.331.
+              Para ejercer estos derechos, escribinos por WhatsApp al{' '}
+              <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">
+                {WHATSAPP_LEGIBLE}
+              </a>{' '}
+              indicando su nombre, el email de la cuenta y el derecho que desea ejercer. La
+              solicitud será procesada dentro de los 5 días hábiles siguientes, conforme al
+              artículo 14 de la Ley 18.331.
             </p>
           </section>
 
@@ -185,7 +192,12 @@ export default function PrivacidadPage() {
               Para consultas sobre esta política de privacidad o el tratamiento de sus datos:
             </p>
             <ul className="list-none space-y-1 text-zinc-400 mt-2">
-              <li>Email: soporte@labelflow.uy</li>
+              <li>
+                WhatsApp:{' '}
+                <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">
+                  {WHATSAPP_LEGIBLE}
+                </a>
+              </li>
               <li>Dirección: Montevideo, Uruguay</li>
             </ul>
           </section>

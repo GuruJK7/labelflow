@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState, type CSSProperties } from 'react';
 import { ArrowRight } from 'lucide-react';
-import { quoteForVolume, VOLUME_PRESETS } from '@/lib/credit-packs';
+import { quoteForVolume, VOLUME_PRESETS, SELF_SERVE_PACK_SHIPMENTS } from '@/lib/credit-packs';
 import {
   formatTotalPrice,
   formatUnitPrice,
@@ -13,6 +13,7 @@ import {
 } from '@/lib/pricing';
 import { CurrencyToggle, useCurrency } from './CurrencyToggle';
 import { TRIAL_SHIPMENTS } from '@/lib/trial';
+import { whatsappUrl } from '@/lib/contacto';
 
 /**
  * Simulador de precios de la landing.
@@ -41,6 +42,17 @@ const MIN = 10;
 const MAX = 1000;
 const STEP = 10;
 
+/**
+ * El volumen más alto que se compra apretando un botón. Los escalones de 2.500
+ * y 5.000 existen en el tarifario pero están detrás de `ENABLE_LARGE_CREDIT_PACKS`:
+ * prometer su descuento sin decir que se cotiza a medida es prometer un precio
+ * que hoy nadie puede pagar solo.
+ */
+const TECHO_AUTOSERVICIO = SELF_SERVE_PACK_SHIPMENTS[SELF_SERVE_PACK_SHIPMENTS.length - 1];
+
+const WHATSAPP_COTIZACION = (envios: number) =>
+  whatsappUrl(`Hola, hago alrededor de ${envios} envíos por mes y quiero cotizar AutoEnvía.`);
+
 export interface PricingSelectorProps {
   /** `getUsdUyuRateMilli()` leído en el server, como número. */
   rateMilliValue: number;
@@ -56,6 +68,11 @@ export interface PricingSelectorProps {
    */
   currency?: Currency;
   onCurrencyChange?: (next: Currency) => void;
+  /**
+   * Volumen de arranque. Existe para poder probar los estados de volumen alto:
+   * al slider se llega con eventos, y `renderToStaticMarkup` no dispara ninguno.
+   */
+  initialVolume?: number;
 }
 
 const NOOP = () => {};
@@ -66,8 +83,9 @@ export function PricingSelector({
   largePacks,
   currency: currencyProp,
   onCurrencyChange,
+  initialVolume = 250,
 }: PricingSelectorProps) {
-  const [volume, setVolume] = useState(250);
+  const [volume, setVolume] = useState(initialVolume);
   // El hook se llama siempre (regla de hooks); su valor se ignora cuando la
   // moneda viene por prop.
   const [propiaCurrency, setPropiaCurrency] = useCurrency();
@@ -168,7 +186,15 @@ export function PricingSelector({
         {quote.needsCustomQuote ? (
           <>
             Arriba de {fmt(quote.pack.shipments)} envíos por mes el precio se arma a medida:{' '}
-            <span className="font-semibold text-white">escribinos</span> y lo cerramos con vos.
+            <a
+              href={WHATSAPP_COTIZACION(volume)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-cyan-300 underline underline-offset-2 hover:text-cyan-200"
+            >
+              escribinos
+            </a>{' '}
+            y lo cerramos con vos.
           </>
         ) : quote.nextStep && quote.nextStep.savesPerShipmentUsdMilli > 0 ? (
           <>
@@ -177,7 +203,26 @@ export function PricingSelector({
             <span className="font-semibold text-white">
               {formatUnitPrice(BigInt(quote.nextStep.savesPerShipmentUsdMilli), money)} menos
             </span>
-            .
+            {/* El descuento es real, pero arriba del techo del autoservicio no se
+                compra apretando un botón: decirlo acá evita prometer un precio
+                que el cliente después no encuentra en la pantalla de compra. */}
+            {quote.nextStep.minShipments > TECHO_AUTOSERVICIO ? (
+              <>
+                {' '}
+                —ese escalón lo cerramos a medida,{' '}
+                <a
+                  href={WHATSAPP_COTIZACION(quote.nextStep.minShipments)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-cyan-300 underline underline-offset-2 hover:text-cyan-200"
+                >
+                  escribinos
+                </a>
+                .
+              </>
+            ) : (
+              '.'
+            )}
           </>
         ) : (
           <>Ya estás en el mejor precio por envío del tarifario.</>

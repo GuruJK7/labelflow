@@ -80,3 +80,45 @@ describe('PricingSelector (landing)', () => {
     expect(html).toContain('45 UYU/USD');
   });
 });
+
+/**
+ * Los dos estados que la auditoría del 2026-09-02 encontró rotos en producción:
+ * el "escribinos" del precio a medida era texto muerto, y el empujón al escalón
+ * siguiente prometía sin salvedad el descuento de un escalón que no se puede
+ * comprar en autoservicio.
+ */
+describe('PricingSelector: los estados de volumen alto', () => {
+  function conVolumen(v: number, currency: Currency = 'USD') {
+    // El estado del slider es interno; se llega al volumen alto por los presets,
+    // así que se renderiza y se busca en el markup el estado que corresponde.
+    return renderToStaticMarkup(
+      createElement(PricingSelector, {
+        rateMilliValue: RATE_MILLI,
+        rateLabel: '40',
+        largePacks: false,
+        currency,
+        onCurrencyChange: vi.fn(),
+        initialVolume: v,
+      } as never),
+    );
+  }
+
+  it('el "escribinos" del precio a medida es un enlace de verdad', () => {
+    const html = conVolumen(2500);
+    expect(html).toContain('el precio se arma a medida');
+    expect(html).toMatch(/<a[^>]+href="https:\/\/wa\.me\/59898943949[^"]*"[^>]*>\s*escribinos\s*<\/a>/);
+  });
+
+  it('en el techo del autoservicio el empujón aclara que ese escalón es a medida', () => {
+    const html = conVolumen(1000);
+    expect(html).toContain('escalón de 2.500');
+    expect(html).toContain('lo cerramos a medida');
+    expect(html).toContain('wa.me/59898943949');
+  });
+
+  it('un escalón comprable no arrastra la salvedad de "a medida"', () => {
+    const html = conVolumen(250);
+    expect(html).toContain('escalón de 500');
+    expect(html).not.toContain('lo cerramos a medida');
+  });
+});
