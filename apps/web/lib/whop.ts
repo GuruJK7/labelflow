@@ -21,6 +21,15 @@ import crypto from 'crypto';
 
 export const WHOP_SIGNATURE_TOLERANCE_SECONDS = 300;
 
+/**
+ * Ventana en la que un segundo clic en "Pagar con Whop" reutiliza la compra
+ * PENDING anterior del mismo usuario y pack en vez de crear otra (revisión
+ * 2026-09-02): el webhook exige UNA sola PENDING reciente para acreditar.
+ * Vive acá y no en la ruta porque Next no permite exportar constantes desde
+ * un `route.ts`.
+ */
+export const WHOP_PENDING_REUSE_MINUTES = 30;
+
 let warnedInvalidJson = false;
 
 export function getWhopCheckoutUrls(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
