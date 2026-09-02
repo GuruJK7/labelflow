@@ -37,6 +37,7 @@ interface SettingsDTO {
   fulfillMode: 'off' | 'on' | 'always' | string;
   skuInObservations: boolean;
   codEnabled?: boolean;
+  codAvailable?: boolean;
   emailHost: string | null;
   emailPort: number | null;
   emailUser: string | null;
@@ -94,6 +95,9 @@ export function ParametrosForm({
   const [skuInObservations, setSkuInObservations] = useState(false);
   // 8. Contrareembolso
   const [codEnabled, setCodEnabled] = useState(false);
+  // Revisión 2026-09-02: el server dice si el worker desplegado honra el
+  // toggle (COD_FEATURE_ENABLED). Sin eso se muestra como "Próximamente".
+  const [codAvailable, setCodAvailable] = useState(false);
   // 9. Email
   const [emailHost, setEmailHost] = useState('');
   const [emailPort, setEmailPort] = useState(587);
@@ -137,6 +141,7 @@ export function ParametrosForm({
         setFulfillMode(data.fulfillMode === 'off' || data.fulfillMode === 'always' ? data.fulfillMode : 'on');
         setSkuInObservations(!!data.skuInObservations);
         setCodEnabled(!!data.codEnabled);
+        setCodAvailable(data.codAvailable === true);
         setEmailHost(data.emailHost ?? '');
         setEmailPort(data.emailPort ?? 587);
         setEmailUser(data.emailUser ?? '');
@@ -547,10 +552,14 @@ export function ParametrosForm({
         que="DAC le cobra al cliente el valor de la compra al entregar y te lo gira. La guía sale como 'Contrareembolso' con el total del pedido."
         paraQuien="Tiendas que venden contra entrega."
         ejemplo="Pedido de $2.500: DAC cobra $2.500 en la puerta y te los transfiere."
-        aviso="Se aplica a todos los pedidos de la tienda mientras esté prendido; no hay selección por pedido. El monto es el total del pedido, redondeado."
-        footer={<SaveRow label="Guardar" busy={saving === 'contrareembolso'} onClick={() => save('contrareembolso', { codEnabled })} msg={msgs.contrareembolso} />}
+        aviso={codAvailable ? 'Se aplica a todos los pedidos de la tienda mientras esté prendido; no hay selección por pedido. El monto es el total del pedido, redondeado.' : COD_PROXIMAMENTE}
+        footer={codAvailable ? <SaveRow label="Guardar" busy={saving === 'contrareembolso'} onClick={() => save('contrareembolso', { codEnabled })} msg={msgs.contrareembolso} /> : undefined}
       >
-        <Toggle checked={codEnabled} onChange={setCodEnabled} label="Cobrar el pedido al entregar (contrareembolso)" hint={codEnabled ? 'Todas las guías salen como contrareembolso.' : 'Apagado: las guías salen sin cobro en la entrega.'} />
+        {codAvailable ? (
+          <Toggle checked={codEnabled} onChange={setCodEnabled} label="Cobrar el pedido al entregar (contrareembolso)" hint={codEnabled ? 'Todas las guías salen como contrareembolso.' : 'Apagado: las guías salen sin cobro en la entrega.'} />
+        ) : (
+          <p className="text-xs text-zinc-500">Próximamente. No hay nada que configurar por ahora: tus guías salen sin cobro en la entrega.</p>
+        )}
       </Bloque>
 
       <Bloque
@@ -624,6 +633,13 @@ export function ParametrosForm({
 }
 
 /* ─── Piezas ───────────────────────────────────────────────────────────── */
+
+/** Contrareembolso mientras `COD_FEATURE_ENABLED` está apagada (revisión
+ *  2026-09-02): la columna existe en prod, pero no está confirmado que el worker
+ *  desplegado la lea. Se muestra el bloque para que el usuario sepa que viene,
+ *  sin un toggle que prometa lo que hoy no se cumple. */
+export const COD_PROXIMAMENTE =
+  'Todavía no se puede prender. Cuando esté disponible vas a poder activarlo desde este mismo lugar; hasta entonces todas las guías salen sin cobro en la entrega.';
 
 /** Texto único del paso 4 / Configuración para Dashboard con Excel. */
 export const AVISO_DASHBOARD_TITULO = 'Con Dashboard con Excel no hay parámetros para ajustar';

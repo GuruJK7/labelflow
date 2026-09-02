@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
+import { codFeatureEnabled } from '@/lib/cod-feature';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { encryptIfPresent, decryptOrRaw } from '@/lib/encryption';
 import { startOfDayUy, startOfMonthUy } from '@/lib/uy-time';
@@ -214,6 +215,9 @@ export async function GET() {
     consolidateConsecutiveOrders: tenant.consolidateConsecutiveOrders,
     consolidationWindowMinutes: tenant.consolidationWindowMinutes,
     codEnabled: tenant.codEnabled,
+    // Revisión 2026-09-02: el toggle sólo se ofrece si el worker desplegado lo
+    // honra (COD_FEATURE_ENABLED). Ver lib/cod-feature.ts.
+    codAvailable: codFeatureEnabled(),
     // Auto-payment config — never leak CVC, return boolean "set" instead
     paymentAutoEnabled: tenant.paymentAutoEnabled,
     paymentCardBrand: tenant.paymentCardBrand,
@@ -292,7 +296,15 @@ export async function PUT(req: NextRequest) {
   if (input.allowedProductTypes !== undefined) data.allowedProductTypes = input.allowedProductTypes;
   if (input.consolidateConsecutiveOrders !== undefined) data.consolidateConsecutiveOrders = input.consolidateConsecutiveOrders;
   if (input.consolidationWindowMinutes !== undefined) data.consolidationWindowMinutes = input.consolidationWindowMinutes;
-  if (input.codEnabled !== undefined) data.codEnabled = input.codEnabled;
+  if (input.codEnabled !== undefined) {
+    // Prender el contrareembolso promete algo que sólo cumple el worker
+    // desplegado con df13204; hasta que Adrian lo confirme (COD_FEATURE_ENABLED)
+    // no se persiste un `true`. Apagarlo siempre se puede.
+    if (input.codEnabled && !codFeatureEnabled()) {
+      return apiError('El contrareembolso todavía no está disponible. Avisamos cuando se pueda prender.', 422);
+    }
+    data.codEnabled = input.codEnabled;
+  }
 
   // Auto-payment (plain fields)
   if (input.paymentAutoEnabled !== undefined) data.paymentAutoEnabled = input.paymentAutoEnabled;
