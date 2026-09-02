@@ -41,9 +41,12 @@ describe('shopify.app.toml — coherencia con el código', () => {
     expect(new URL(appUrl as string).pathname).toBe('/api/shopify/entry');
   });
 
-  it('suscribe los dos webhooks que el sistema necesita', () => {
-    expect(TOML).toContain('"orders/paid"');
-    expect(TOML).toContain('"app/uninstalled"');
+  it('NO declara suscripciones de webhooks en el toml: las registra la app por tienda', () => {
+    // Declararlas en el toml (app-scoped) además de la mutación (shop-scoped)
+    // entrega cada orders/paid dos veces, y `webhookSubscriptions` no puede
+    // ver las app-scoped para deduplicar. Fuente única: lib/shopify-register-webhooks.ts.
+    expect(TOML).not.toContain('[[webhooks.subscriptions]]');
+    expect(TOML).toContain('[webhooks.privacy_compliance]');
   });
 
   it('apunta cada webhook al endpoint que existe de verdad', () => {
