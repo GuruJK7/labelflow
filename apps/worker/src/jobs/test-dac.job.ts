@@ -1,7 +1,7 @@
 import { db } from '../db';
 import { decrypt } from '../encryption';
 import { createShopifyClient } from '../shopify';
-import { resolveShopifyAccessForTenant } from '../shopify/access';
+import { resolveShopifyAccessForJob, shopifyTokenSourceForTenant } from '../shopify/access';
 import { getRecentOrders } from '../shopify';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
@@ -87,7 +87,7 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
     const shopifyUrl = tenant.shopifyStoreUrl;
     // Renueva bajo demanda si es un token del App Store (D29); legacy → el
     // mismo string que decryptIfPresent. El motivo accionable va al runlog.
-    const shopifyAccess = await resolveShopifyAccessForTenant(tenant);
+    const shopifyAccess = await resolveShopifyAccessForJob(tenant);
     const shopifyToken = shopifyAccess.access;
 
     if (!shopifyUrl || !shopifyToken) {
@@ -109,7 +109,10 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
     // The fix: when orderIds is provided, fetch up to 250 (Shopify's max per call)
     // recent orders, then filter. The maxOrders cap is also bypassed in this mode
     // so all matched IDs are processed, not just the first N.
-    const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken, { tenantId: tenant.id, slug: tenant.slug });
+    const shopifyClient = createShopifyClient(shopifyUrl, shopifyTokenSourceForTenant(tenant.id, shopifyAccess), {
+      tenantId: tenant.id,
+      slug: tenant.slug,
+    });
     const hasSpecificIds = !!(specificOrderIds && specificOrderIds.length > 0);
     const fetchLimit = hasSpecificIds ? 250 : maxOrders;
     let orders = await getRecentOrders(shopifyClient, fetchLimit);

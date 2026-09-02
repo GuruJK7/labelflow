@@ -44,7 +44,7 @@ import {
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { downloadLabel } from '../dac/label';
 import { createShopifyClient } from '../shopify';
-import { resolveShopifyAccessForTenant } from '../shopify/access';
+import { resolveShopifyAccessForJob, shopifyTokenSourceForTenant } from '../shopify/access';
 import { markOrderProcessed, addOrderNote } from '../shopify';
 import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify';
 import { sendShipmentNotification } from '../notifier/email';
@@ -142,7 +142,7 @@ export async function agentBulkUploadJob(job: {
     const dacPassword = decryptIfPresent(tenant.dacPassword);
     // Renueva bajo demanda si es un token del App Store (D29); legacy → el
     // mismo string que decryptIfPresent. El motivo accionable va al error.
-    const shopifyAccess = await resolveShopifyAccessForTenant(tenant);
+    const shopifyAccess = await resolveShopifyAccessForJob(tenant);
     const shopifyToken = shopifyAccess.access;
     if (!dacUsername || !dacPassword) throw new Error('Missing DAC credentials');
     if (!tenant.shopifyStoreUrl || !shopifyToken) {
@@ -192,7 +192,10 @@ export async function agentBulkUploadJob(job: {
     }
 
     // 3. Launch browser + login (skipped in dry-run)
-    const shopifyClient = createShopifyClient(tenant.shopifyStoreUrl, shopifyToken, { tenantId: tenant.id, slug: tenant.slug });
+    const shopifyClient = createShopifyClient(tenant.shopifyStoreUrl, shopifyTokenSourceForTenant(tenant.id, shopifyAccess), {
+      tenantId: tenant.id,
+      slug: tenant.slug,
+    });
     // `page` is unused in dry-run but createShipment needs a Playwright Page
     // in the live path — we only start the browser when we'll actually touch DAC.
     // Use `any` locally to avoid a cascade of nullable types below.

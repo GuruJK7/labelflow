@@ -28,7 +28,7 @@
 import { db } from '../db';
 
 import { createShopifyClient } from '../shopify';
-import { resolveShopifyAccessForTenant } from '../shopify/access';
+import { resolveShopifyAccessForJob, shopifyTokenSourceForTenant } from '../shopify/access';
 import { getUnfulfilledOrders } from '../shopify';
 import { uploadOrdersJsonToStorage } from '../storage/upload';
 import { createStepLogger } from '../logger';
@@ -95,7 +95,7 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
     const shopifyUrl = tenant.shopifyStoreUrl;
     // Renueva bajo demanda si es un token del App Store (D29); legacy → el
     // mismo string que decryptIfPresent. El motivo accionable va al runlog.
-    const shopifyAccess = await resolveShopifyAccessForTenant(tenant);
+    const shopifyAccess = await resolveShopifyAccessForJob(tenant);
     const shopifyToken = shopifyAccess.access;
 
     if (!shopifyUrl || !shopifyToken) {
@@ -124,7 +124,10 @@ export async function processOrdersBulkJob(tenantId: string, jobId: string): Pro
 
     // 1. Fetch Shopify orders
     slog.info('shopify', 'Fetching unfulfilled orders from Shopify');
-    const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken, { tenantId: tenant.id, slug: tenant.slug });
+    const shopifyClient = createShopifyClient(shopifyUrl, shopifyTokenSourceForTenant(tenant.id, shopifyAccess), {
+      tenantId: tenant.id,
+      slug: tenant.slug,
+    });
     const orders = await getUnfulfilledOrders(
       shopifyClient,
       (tenant.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first',
