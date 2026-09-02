@@ -7,6 +7,13 @@
  * today + this month, last run, and live running/queued state. Plus the shared
  * credit wallet and a global queue (the order the single worker drains them).
  *
+ * Admin (ADMIN_EMAILS, D32 revisión 2026-09-02): además de las propias, lista
+ * TODOS los tenants activos de todos los usuarios (lib/control-scope), cada
+ * uno etiquetado con el email del dueño (`owner`), y responde `adminView: true`
+ * para que la UI agrupe por dueño. El wallet sigue siendo el del que mira
+ * (su propio credit-holder): el saldo de cada cliente no se mezcla. Para un
+ * usuario normal la respuesta es exactamente la de siempre.
+ *
  * All DB-only (cheap, indexed) so the dashboard can poll it ~every 10s. The
  * "sin completar" counts here are the PRE-reconcile DB numbers (no Shopify call
  * on the fast loop); the throttled /api/v1/control/pending endpoint reconciles
@@ -14,13 +21,13 @@
  * widget within one throttle window. The expensive live-Shopify "pendientes"
  * backlog is also that separate endpoint.
  *
- * Cross-store, so it uses getAuthenticatedUser() (not the single active tenant).
  * Privacy: never returns secrets — only boolean connection flags.
  */
 
 import { db } from '@/lib/db';
 import { LabelStatus, JobStatus } from '@prisma/client';
-import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
+import { apiError, apiSuccess } from '@/lib/api-utils';
+import { getControlActor, controlTenantWhere } from '@/lib/control-scope';
 import { getStuckBreakdown } from '@/lib/stuck-labels';
 import { startOfDayUy, startOfMonthUy } from '@/lib/uy-time';
 
@@ -35,18 +42,21 @@ const RUNNING_STATUSES: JobStatus[] = [
 // Statuses that count as a real, dispatched shipment.
 const DONE_STATUSES: LabelStatus[] = [LabelStatus.CREATED, LabelStatus.COMPLETED];
 
+const EMPTY_WALLET = { availableCredits: 0, isActive: false, subscriptionStatus: 'INACTIVE' };
+
 export async function GET() {
-  const auth = await getAuthenticatedUser();
-  if (!auth) return apiError('No autorizado', 401);
+  const actor = await getControlActor();
+  if (!actor) return apiError('No autorizado', 401);
 
   const tenants = await db.tenant.findMany({
-    where: { userId: auth.userId },
-    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], // tenants[0] = credit holder
+    where: controlTenantWhere(actor),
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], // primer tenant PROPIO = credit holder
     // shopifyToken / dacPassword are encrypted ciphertext, pulled ONLY to derive
     // the *Connected booleans below. NEVER spread `t` into the response, return
     // these fields, or log `tenants` — that would exfiltrate the secrets.
     select: {
       id: true,
+      userId: true,
       name: true,
       slug: true,
       shopifyStoreUrl: true,
@@ -65,9 +75,22 @@ export async function GET() {
   if (tenants.length === 0) {
     return apiSuccess({
       stores: [],
-      wallet: { availableCredits: 0, isActive: false, subscriptionStatus: 'INACTIVE' },
+      wallet: EMPTY_WALLET,
       queue: [],
+      ...(actor.isAdmin ? { adminView: true } : {}),
     });
+  }
+
+  // Email del dueño de cada tienda, sólo en la vista admin (para un usuario
+  // normal todas son suyas y el campo no existe: la respuesta no cambia).
+  const ownerEmailByUserId = new Map<string, string>();
+  if (actor.isAdmin) {
+    const userIds = Array.from(new Set(tenants.map((t) => t.userId)));
+    const owners = await db.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, email: true },
+    });
+    for (const u of owners) ownerEmailByUserId.set(u.id, u.email);
   }
 
   const tenantIds = tenants.map((t) => t.id);
@@ -158,10 +181,18 @@ export async function GET() {
             leaseActive: leaseJobIds.has(active.id),
           }
         : null,
+      ...(actor.isAdmin
+        ? {
+            owner: {
+              email: ownerEmailByUserId.get(t.userId) ?? '—',
+              own: t.userId === actor.userId,
+            },
+          }
+        : {}),
     };
   });
 
-  // Global queue across the user's stores, in the order the single shared
+  // Global queue across the listed stores, in the order the single shared
   // worker will drain them (Job.createdAt asc). Only a RUNNING job is "running";
   // PENDING/WAITING/UPLOADING are queued. NOTE: the worker also interleaves
   // other users' jobs, so position is order-among-your-stores, not a hard ETA.
@@ -175,13 +206,23 @@ export async function GET() {
     running: j.status === JobStatus.RUNNING,
   }));
 
-  // Shared wallet — lives on the credit-holder = oldest tenant = tenants[0].
-  const holder = tenants[0];
-  const wallet = {
-    availableCredits: (holder.shipmentCredits ?? 0) + (holder.referralBonusCredits ?? 0),
-    isActive: holder.isActive,
-    subscriptionStatus: holder.subscriptionStatus,
-  };
+  // Shared wallet — lives on the credit-holder = oldest tenant OF THE VIEWER.
+  // The list is createdAt asc and always includes the viewer's own tenants, so
+  // the first one with their userId is their holder; for a user it is
+  // tenants[0] (unchanged). An admin who owns no tenant at all has no wallet.
+  const holder = tenants.find((t) => t.userId === actor.userId);
+  const wallet = holder
+    ? {
+        availableCredits: (holder.shipmentCredits ?? 0) + (holder.referralBonusCredits ?? 0),
+        isActive: holder.isActive,
+        subscriptionStatus: holder.subscriptionStatus,
+      }
+    : EMPTY_WALLET;
 
-  return apiSuccess({ stores, wallet, queue });
+  return apiSuccess({
+    stores,
+    wallet,
+    queue,
+    ...(actor.isAdmin ? { adminView: true } : {}),
+  });
 }

@@ -4,6 +4,7 @@ import { getCreditHolderTenantId } from '../credit-holder';
 import { decryptIfPresent, decryptOrRaw } from '../encryption';
 import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify';
+import { resolveShopifyAccessForJob, shopifyTokenSourceForTenant } from '../shopify/access';
 import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify';
 import { resolveOrderPhone } from '../shopify/phone';
 import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify';
@@ -203,13 +204,19 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     }
 
     const shopifyUrl = tenant.shopifyStoreUrl;
-    const shopifyToken = decryptIfPresent(tenant.shopifyToken);
+    // Renueva bajo demanda si es un token del App Store (D29); legacy → el
+    // mismo string que decryptIfPresent. Si no hay token usable, el motivo
+    // (reinstalar / renovación fallida) va al runlog en vez de un genérico.
+    // Margen de job (55 min): la corrida arranca con ~1 h entera de token.
+    const shopifyAccess = await resolveShopifyAccessForJob(tenant);
+    const shopifyToken = shopifyAccess.access;
     const dacUsername = decryptOrRaw(tenant.dacUsername);
     const dacPassword = decryptIfPresent(tenant.dacPassword);
 
     if (!shopifyUrl || !shopifyToken) {
-      slog.error('config', 'Shopify credentials not configured');
-      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Missing Shopify config' } });
+      const motivo = shopifyAccess.reason && shopifyAccess.reason !== 'no-token' ? shopifyAccess.message : 'Missing Shopify config';
+      slog.error('config', `Shopify credentials not configured: ${motivo}`);
+      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: motivo } });
       return;
     }
 
@@ -222,7 +229,12 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     slog.info('start', 'Starting order processing cycle');
 
     // STEP 2: Get Shopify orders (with sort direction from tenant settings)
-    const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken, { tenantId: tenant.id, slug: tenant.slug });
+    // Legacy → string fijo (como siempre). Expirable → proveedor por request:
+    // un job de horas no se queda con un access vencido a mitad de camino.
+    const shopifyClient = createShopifyClient(shopifyUrl, shopifyTokenSourceForTenant(tenant.id, shopifyAccess), {
+      tenantId: tenant.id,
+      slug: tenant.slug,
+    });
     const orderSortDirection = (tenant.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first';
     let orders = await getUnfulfilledOrders(shopifyClient, orderSortDirection);
 
@@ -788,6 +800,15 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         //
         // If a tenant has no rules (or none match), the legacy fields still apply
         // unchanged, so pre-existing behavior is preserved.
+        // [01-sep-2026] CONTRAREEMBOLSO. El monto que DAC le cobra al destinatario sale
+        // del total del pedido de Shopify, y SOLO si la tienda lo tiene prendido
+        // (tenant.codEnabled, false por default). Sin ese flag queda null y todo el
+        // flujo se comporta exactamente como antes. Se declara en el mismo scope que
+        // paymentType porque lo usan los dos: el llenado del form y el upsert del Label.
+        const codAmount: number | null = tenant.codEnabled
+          ? Math.round(parseFloat(order.total_price) || 0) || null
+          : null;
+
         let paymentType: 'REMITENTE' | 'DESTINATARIO';
 
         const ruleResult = await evaluateShippingRules(
@@ -935,7 +956,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             usedGuias,
             undefined, // addressOverride
             undefined, // autoPay
-            { skuInObservations: tenant.skuInObservations },
+            { skuInObservations: tenant.skuInObservations, codAmount },
           );
 
           // Track this guia so it won't be assigned to another order in this batch
@@ -984,6 +1005,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             department: resolvedDept,
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType,
+            codAmount,
             paymentStatus: resolvedPaymentStatus,
             paymentFailureReason: resolvedPaymentFailureReason,
             paymentAttemptedAt,

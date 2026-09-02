@@ -19,8 +19,8 @@
  *   - Al 201 se navega a /verify-email?email=<email>, que explica el paso
  *     siguiente y permite reenviar el mail.
  *
- * Copy: el bono de 10 envíos coincide con `Tenant.shipmentCredits
- * @default(10)` del schema. No se promete un valor en pesos: ese número
+ * Copy: el bono sale de lib/trial.ts (TRIAL_SHIPMENTS = 5, D31); el default
+ * del schema (10) ya no rige. No se promete un valor en pesos: ese número
  * lo tiene que confirmar el dueño (ver PENDIENTES.md).
  */
 
@@ -30,6 +30,7 @@ import Link from 'next/link';
 import { Zap, Gift, Check, ArrowRight, Loader2, MessageCircle } from 'lucide-react';
 import { GoogleSignInButton, OrDivider } from '../_components/GoogleSignInButton';
 import { track } from '@/lib/analytics';
+import { TRIAL_SHIPMENTS, REFEREE_BONUS_CREDITS } from '@/lib/trial';
 
 const MIN_PASSWORD = 8;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -167,7 +168,7 @@ function SignupContent({
                 Bono de bienvenida
               </div>
               <h2 className="text-lg font-bold text-white leading-tight">
-                10 envíos gratis para empezar
+                {TRIAL_SHIPMENTS} envíos gratis para empezar
               </h2>
               <p className="text-xs text-zinc-400 mt-1">
                 Sin tarjeta. Conectás tu tienda Shopify y tu cuenta DAC, y despachás.
@@ -177,7 +178,7 @@ function SignupContent({
           {refCode && (
             <div className="relative mt-4 pt-4 border-t border-cyan-400/15 text-xs">
               <span className="inline-flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 px-2.5 py-1 rounded-full font-medium">
-                Te invitó <strong className="font-bold">{refCode}</strong> · +10 envíos extra
+                Te invitó <strong className="font-bold">{refCode}</strong> · +{REFEREE_BONUS_CREDITS} envíos extra
               </span>
             </div>
           )}
@@ -343,7 +344,7 @@ function SignupContent({
             </span>
             <span className="inline-flex items-center gap-1">
               <Check className="w-3 h-3 text-emerald-400" />
-              10 envíos gratis
+              {TRIAL_SHIPMENTS} envíos gratis
             </span>
             <span className="inline-flex items-center gap-1">
               <Check className="w-3 h-3 text-emerald-400" />

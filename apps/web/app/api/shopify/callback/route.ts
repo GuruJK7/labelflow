@@ -11,14 +11,17 @@ import {
   TENANT_COOKIE,
   FLOW_COOKIE,
   FLOW_APPSTORE,
+  NEXT_COOKIE,
   PENDING_INSTALL_COOKIE,
   PENDING_INSTALL_PATH,
   PENDING_INSTALL_TTL_SECONDS,
 } from '@/lib/shopify-oauth';
 import { fetchShopInfo, provisionFromShopify } from '@/lib/shopify-provision';
 import { sealPendingInstall } from '@/lib/shopify-pending-install';
+import { credentialFromTokenResponse, serializeShopifyCredential } from '@/lib/shopify-token';
 import { issueAndSendPasswordResetEmail } from '@/lib/password-reset';
 import { registerShopifyWebhooks } from '@/lib/shopify-register-webhooks';
+import { safeRelativePath } from '@/lib/safe-next';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,7 +72,10 @@ export async function GET(req: NextRequest) {
   // Se lee primero porque decide a dónde van los errores. Es sólo una cookie:
   // ninguna de las validaciones de abajo depende de ella.
   const esAppStore = req.cookies.get(FLOW_COOKIE)?.value === FLOW_APPSTORE;
-  const landing = esAppStore ? '/login' : '/settings';
+  // Rama dashboard: /install pudo pedir volver a otro lado (el wizard de
+  // /onboarding, D33). Se re-valida acá porque es una cookie, no un secreto.
+  const nextCookie = esAppStore ? null : safeRelativePath(req.cookies.get(NEXT_COOKIE)?.value);
+  const landing = esAppStore ? '/login' : nextCookie ?? '/settings';
 
   const limpiar = (r: NextResponse) => {
     // Las cookies se borran también al fallar: si no, un `state` ya expuesto
@@ -77,6 +83,7 @@ export async function GET(req: NextRequest) {
     r.cookies.delete(STATE_COOKIE);
     r.cookies.delete(TENANT_COOKIE);
     r.cookies.delete(FLOW_COOKIE);
+    r.cookies.delete(NEXT_COOKIE);
     return r;
   };
   const fail = (motivo: string) =>
@@ -150,20 +157,41 @@ export async function GET(req: NextRequest) {
     if (tomadaPorOtro) return fail('already_linked');
   }
 
-  // Canje del code por el token de acceso offline.
+  // Canje del code por el token de acceso offline EXPIRABLE (D29):
+  // `expiring: '1'` pide el par access (1 h) + refresh (90 días). La app
+  // pública ya no acepta tokens sin vencimiento. Si Shopify igual no manda
+  // `refresh_token`, el access se guarda pelado (legacy) y nunca se renueva.
+  //
+  // `accessToken` es lo que se usa AHORA (shop info, webhooks);
+  // `credencialPlana` es lo que se GUARDA (el envelope entero, cifrado).
   let accessToken: string;
+  let credencialPlana: string;
   let grantedScopes: string;
   try {
     const resp = await fetch(`https://${shop}/admin/oauth/access_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ client_id: clientId, client_secret: secret, code }),
+      body: JSON.stringify({ client_id: clientId, client_secret: secret, code, expiring: '1' }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!resp.ok) return fail('exchange_failed');
-    const json = (await resp.json()) as { access_token?: string; scope?: string };
+    const json = (await resp.json()) as {
+      access_token?: string;
+      scope?: string;
+      expires_in?: number;
+      refresh_token?: string;
+      refresh_token_expires_in?: number;
+    };
     if (!json.access_token) return fail('exchange_failed');
     accessToken = json.access_token;
+    credencialPlana = serializeShopifyCredential(
+      credentialFromTokenResponse({
+        access_token: json.access_token,
+        expires_in: json.expires_in,
+        refresh_token: json.refresh_token,
+        refresh_token_expires_in: json.refresh_token_expires_in,
+      }),
+    );
     grantedScopes = json.scope ?? '';
   } catch {
     return fail('exchange_failed');
@@ -185,19 +213,21 @@ export async function GET(req: NextRequest) {
     const info = await fetchShopInfo(shop, accessToken);
     if (!info) return fail('shop_info_failed');
 
-    const alta = await provisionFromShopify(info, accessToken);
+    const alta = await provisionFromShopify(info, credencialPlana);
 
     if (alta.kind === 'conflict') return fail('already_linked');
 
     if (alta.kind === 'claim') {
       // Ya hay cuenta con ese email: no le colgamos nada. El token viaja
       // cifrado en una cookie corta y el dueño lo reclama logueado (D11).
+      // Viaja el envelope ENTERO (access + refresh, D29): /claim lo persiste
+      // tal cual y sin el refresh la tienda quedaría muerta en una hora.
       // Se va DIRECTO a /claim, no al login: si el comerciante ya tiene
       // sesión (caso común: instala desde el mismo navegador donde usa
       // AutoEnvía) reclama en el acto. Sin sesión, /claim es el que manda a
       // /login?shopify=claim&next=/api/shopify/claim conservando la cookie.
       const r = limpiar(NextResponse.redirect(new URL('/api/shopify/claim', origin)));
-      r.cookies.set(PENDING_INSTALL_COOKIE, sealPendingInstall({ shop, token: accessToken }), {
+      r.cookies.set(PENDING_INSTALL_COOKIE, sealPendingInstall({ shop, token: credencialPlana }), {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
@@ -243,13 +273,13 @@ export async function GET(req: NextRequest) {
     where: { id: tenantDashboard.id },
     data: {
       shopifyStoreUrl: shop,
-      shopifyToken: encrypt(accessToken),
+      shopifyToken: encrypt(credencialPlana),
     },
   });
 
   const webhookWarning = await registrarWebhooks(shop, accessToken, origin);
 
-  return limpiar(NextResponse.redirect(new URL(`/settings?shopify=connected${webhookWarning}`, origin)));
+  return limpiar(NextResponse.redirect(new URL(`${landing}?shopify=connected${webhookWarning}`, origin)));
 }
 
 /**

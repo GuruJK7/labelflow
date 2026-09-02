@@ -42,12 +42,14 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-// El token del tenant viaja cifrado con ENCRYPTION_KEY. Acá no interesa la
-// criptografía (ya está testeada en su módulo), interesa que el backfill use el
-// texto plano y que un token ilegible no explote.
-vi.mock('@/lib/encryption', () => ({
-  decryptIfPresent: (v: string | null | undefined) =>
-    !v ? null : v === 'ILEGIBLE' ? null : v.replace(/^enc:/, ''),
+// El token del tenant viaja cifrado con ENCRYPTION_KEY y desde D29 se
+// resuelve por `shopifyAccessForTenant` (renueva si es del App Store). Acá no
+// interesa ni la criptografía ni la renovación (testeadas en sus módulos),
+// interesa que el backfill use el access resuelto y que un token ilegible
+// (resuelto a null) no explote.
+vi.mock('@/lib/shopify-access', () => ({
+  shopifyAccessForTenant: async (t: { shopifyToken: string | null }) =>
+    !t.shopifyToken ? null : t.shopifyToken === 'ILEGIBLE' ? null : t.shopifyToken.replace(/^enc:/, ''),
 }));
 
 import {
@@ -60,7 +62,7 @@ import {
 } from '../wms-items-backfill';
 import { buildWmsExportPayload, type WmsExportLabelRow } from '../wms-export';
 
-const CREDS = { shopifyStoreUrl: 'kinevia.myshopify.com', shopifyToken: 'enc:shpat_123' };
+const CREDS = { id: 't-kinevia', shopifyStoreUrl: 'kinevia.myshopify.com', shopifyToken: 'enc:shpat_123' };
 
 function row(over: Partial<BackfillLabelRow> = {}): BackfillLabelRow {
   return { id: 'lbl_1', shopifyOrderId: '5001', items: [], ...over };
@@ -312,7 +314,7 @@ describe('(d) lotes — el fetch se parte en 250', () => {
 
 describe('(e) tenant sin credenciales — sin fallback y sin excepción', () => {
   it('sin shopifyStoreUrl no intenta nada', async () => {
-    const res = await backfillMissingItems([row()], { shopifyStoreUrl: null, shopifyToken: 'enc:x' });
+    const res = await backfillMissingItems([row()], { id: 't', shopifyStoreUrl: null, shopifyToken: 'enc:x' });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(res.skipped).toBe('sin-credenciales');
     expect(res.items.size).toBe(0);
@@ -320,6 +322,7 @@ describe('(e) tenant sin credenciales — sin fallback y sin excepción', () => 
 
   it('sin shopifyToken no intenta nada', async () => {
     const res = await backfillMissingItems([row()], {
+      id: 't',
       shopifyStoreUrl: 'x.myshopify.com',
       shopifyToken: null,
     });

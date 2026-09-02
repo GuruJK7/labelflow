@@ -2,6 +2,8 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { SettingsNav } from '../_components/SettingsNav';
+import { VolumeSelector } from './_components/VolumeSelector';
 import {
   Check,
   AlertCircle,
@@ -40,8 +42,12 @@ interface CreditState {
     creditsPurchased: number;
     creditsConsumed: number;
     referralCreditsEarned: number;
+    referralBonusCredits: number;
+    total: number;
   };
   packs: Pack[];
+  /** Ids de pack con link de Whop configurado (las URLs quedan en el server). */
+  whopPacks: string[];
   recentPurchases: Array<{
     id: string;
     packId: string;
@@ -69,6 +75,10 @@ function BillingContent() {
   const success = searchParams.get('success') === 'true';
   const error = searchParams.get('error') === 'true';
   const pending = searchParams.get('pending') === 'true';
+  // Whop vuelve a la URL de retorno con ?checkout_status=success&payment_id=…
+  // (docs/PAGOS.md §2). Acá no se acredita nada: eso lo hace el webhook.
+  const whopReturn =
+    searchParams.get('whop') === 'return' || searchParams.get('checkout_status') === 'success';
 
   useEffect(() => {
     fetch('/api/credit-packs/me')
@@ -82,15 +92,23 @@ function BillingContent() {
     window.location.href = `/api/credit-packs/checkout?pack=${packId}`;
   }
 
+  function handleBuyWhop(packId: string) {
+    setLoading(packId);
+    window.location.href = `/api/credit-packs/whop-checkout?pack=${packId}`;
+  }
+
   const balance = state?.balance;
   const packs = state?.packs ?? [];
   const recentPurchases = state?.recentPurchases ?? [];
+  const whopPacks = state?.whopPacks ?? [];
+  const whopEnabled = whopPacks.length > 0;
 
   // Reference price (smallest pack) for "you save" calculations
   const refPrice = packs.find((p) => p.id === 'pack_10')?.pricePerShipmentUyu ?? 20;
 
   return (
     <div className="max-w-7xl mx-auto">
+      <SettingsNav />
       {/* Header */}
       <div className="mb-10">
         <div className="flex items-center gap-2 text-cyan-400 text-xs font-medium uppercase tracking-widest mb-3">
@@ -132,6 +150,20 @@ function BillingContent() {
           </div>
         </div>
       )}
+      {whopReturn && (
+        <div className="bg-gradient-to-r from-cyan-500/10 to-cyan-500/5 border border-cyan-500/20 rounded-2xl p-4 mb-6 flex items-center gap-3 backdrop-blur-sm">
+          <div className="w-9 h-9 rounded-xl bg-cyan-500/20 flex items-center justify-center flex-shrink-0">
+            <Clock className="w-5 h-5 text-cyan-400" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-cyan-300">Volviste de Whop</p>
+            <p className="text-xs text-cyan-400/70 mt-0.5">
+              Los envíos se acreditan en cuanto Whop nos confirma el pago, normalmente en menos de un
+              minuto. Recargá la página para ver el saldo actualizado.
+            </p>
+          </div>
+        </div>
+      )}
       {pending && (
         <div className="bg-gradient-to-r from-yellow-500/10 to-yellow-500/5 border border-yellow-500/20 rounded-2xl p-4 mb-6 flex items-center gap-3 backdrop-blur-sm">
           <div className="w-9 h-9 rounded-xl bg-yellow-500/20 flex items-center justify-center flex-shrink-0">
@@ -167,11 +199,18 @@ function BillingContent() {
               </div>
               <p className="text-xs text-zinc-500 mt-2">
                 Disponibles para procesar pedidos automáticamente
+                {(balance?.referralBonusCredits ?? 0) > 0 && (
+                  <>
+                    {' '}
+                    · más {balance!.referralBonusCredits.toLocaleString('es-UY')} de bonus por
+                    referido
+                  </>
+                )}
               </p>
             </div>
             <div className="flex items-center gap-3">
               <a
-                href="#packs"
+                href="#volumen"
                 className="group/btn relative inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-zinc-950 text-sm font-semibold transition-all shadow-lg shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:-translate-y-0.5"
               >
                 <Sparkles className="w-4 h-4" />
@@ -202,12 +241,20 @@ function BillingContent() {
         </div>
       </div>
 
+      {/* Selector por volumen (D34) */}
+      <VolumeSelector
+        whopPacks={whopPacks}
+        loadingPackId={loading}
+        onPayMercadoPago={handleBuy}
+        onPayWhop={handleBuyWhop}
+      />
+
       {/* Packs section title */}
       <div id="packs" className="flex items-end justify-between mb-5 mt-12">
         <div>
-          <h2 className="text-xl font-bold text-white">Elegí tu pack</h2>
+          <h2 className="text-xl font-bold text-white">Todos los packs</h2>
           <p className="text-zinc-500 text-sm mt-1">
-            Sin caducidad. Pago único con MercadoPago.
+            Sin caducidad. Pago único con MercadoPago{whopEnabled ? ' o Whop' : ''}.
           </p>
         </div>
         <div className="hidden md:flex items-center gap-2 text-xs text-zinc-500">
@@ -229,7 +276,7 @@ function BillingContent() {
               Pago seguro
             </p>
             <p className="text-[10px] sm:text-[11px] text-zinc-500 leading-tight truncate">
-              Vía MercadoPago
+              {whopEnabled ? 'MercadoPago o Whop' : 'Vía MercadoPago'}
             </p>
           </div>
         </div>
@@ -425,9 +472,18 @@ function BillingContent() {
                       Redirigiendo...
                     </span>
                   ) : (
-                    'Comprar pack'
+                    whopPacks.includes(pack.id) ? 'Pagar con MercadoPago' : 'Comprar pack'
                   )}
                 </button>
+                {whopPacks.includes(pack.id) && (
+                  <button
+                    onClick={() => handleBuyWhop(pack.id)}
+                    disabled={isLoading}
+                    className="block w-full text-center py-2.5 rounded-xl text-xs font-semibold mt-2 bg-transparent hover:bg-white/[0.04] text-zinc-300 border border-white/[0.08] hover:border-cyan-500/30 transition-all disabled:opacity-50 disabled:cursor-wait"
+                  >
+                    Pagar con Whop
+                  </button>
+                )}
               </div>
             </div>
           );

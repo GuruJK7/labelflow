@@ -5,14 +5,17 @@ import {
   apiError,
   apiSuccess,
 } from '@/lib/api-utils';
+import { storeConnection, hasDac } from '@/lib/onboarding-state';
 
 /**
  * POST /api/v1/onboarding/complete
  *
- * Marks the wizard as finished. Validates that both Shopify and DAC creds
- * are actually saved before flipping the flag — otherwise the dashboard
- * gate in (dashboard)/layout.tsx would just bounce the user right back
- * here, which is worse UX than failing loudly.
+ * Marks the wizard as finished. Validates that a store (Shopify OR the
+ * Excel dashboard source, D33) and DAC creds are actually saved before
+ * flipping the flag — otherwise the dashboard gate in (dashboard)/layout.tsx
+ * would just bounce the user right back here, which is worse UX than
+ * failing loudly. Same definition of "connected" as the gate
+ * (lib/onboarding-state.ts).
  *
  * We also opportunistically activate the tenant (isActive = true) so the
  * scheduler picks them up on the next cron run. Pre-existing isActive=true
@@ -37,6 +40,9 @@ export async function POST() {
     select: {
       shopifyStoreUrl: true,
       shopifyToken: true,
+      dashboardSourceEnabled: true,
+      dashboardUrl: true,
+      dashboardToken: true,
       dacUsername: true,
       dacPassword: true,
       onboardingComplete: true,
@@ -52,10 +58,10 @@ export async function POST() {
     return apiSuccess({ ok: true, alreadyComplete: true });
   }
 
-  if (!tenant.shopifyStoreUrl || !tenant.shopifyToken) {
-    return apiError('Falta conectar Shopify', 422);
+  if (!storeConnection(tenant).kind) {
+    return apiError('Falta conectar una tienda (Shopify o Dashboard con Excel)', 422);
   }
-  if (!tenant.dacUsername || !tenant.dacPassword) {
+  if (!hasDac(tenant)) {
     return apiError('Falta conectar DAC', 422);
   }
   if (!tenant.user?.emailVerified) {

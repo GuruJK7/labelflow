@@ -4,7 +4,8 @@
  *
  * "Cuantos envios por tienda" — counts dispatched shipments (status
  * CREATED|COMPLETED) per store over a date window, for the authenticated
- * user's stores. Powers the shipments-by-store filter + chart.
+ * user's stores (for an admin, every active tenant too: lib/control-scope).
+ * Powers the shipments-by-store filter + chart.
  *
  * Date boundaries are Uruguay-local (UTC-3, no DST) so "today" / a chosen day
  * matches what the operator sees. Counting key is Label.createdAt (the row is
@@ -13,7 +14,8 @@
 
 import { db } from '@/lib/db';
 import { LabelStatus } from '@prisma/client';
-import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
+import { apiError, apiSuccess } from '@/lib/api-utils';
+import { getControlActor, controlTenantWhere } from '@/lib/control-scope';
 import { startOfDayUy } from '@/lib/uy-time';
 
 const ALLOWED_RANGES = [7, 30, 90];
@@ -38,8 +40,8 @@ function uyDayStart(ymd: string): Date | null {
 }
 
 export async function GET(req: Request) {
-  const auth = await getAuthenticatedUser();
-  if (!auth) return apiError('No autorizado', 401);
+  const actor = await getControlActor();
+  if (!actor) return apiError('No autorizado', 401);
 
   const { searchParams } = new URL(req.url);
   const fromParam = searchParams.get('from');
@@ -68,7 +70,7 @@ export async function GET(req: Request) {
   }
 
   const tenants = await db.tenant.findMany({
-    where: { userId: auth.userId },
+    where: controlTenantWhere(actor),
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     select: { id: true, name: true },
   });

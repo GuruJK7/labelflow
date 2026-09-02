@@ -118,7 +118,7 @@ export async function GET(req: NextRequest) {
     where: { id: tenantId },
     // shopifyStoreUrl/shopifyToken son para el read-through backfill de ítems
     // (lib/wms-items-backfill.ts). El token viaja cifrado y se descifra ahí.
-    select: { name: true, shopifyStoreUrl: true, shopifyToken: true },
+    select: { id: true, name: true, shopifyStoreUrl: true, shopifyToken: true },
   });
   if (!tenant) return apiError('Tenant no encontrado', 404);
 
@@ -180,6 +180,7 @@ export async function GET(req: NextRequest) {
   const enZona = filtrarZona(rows, zona);
 
   const backfill = await backfillMissingItems(enZona, {
+    id: tenant.id,
     shopifyStoreUrl: tenant.shopifyStoreUrl,
     shopifyToken: tenant.shopifyToken,
   });

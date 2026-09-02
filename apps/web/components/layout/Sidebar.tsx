@@ -3,93 +3,21 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
-import {
-  LayoutDashboard,
-  LayoutGrid,
-  Package,
-  Tags,
-  Settings,
-  LogOut,
-  Zap,
-  CreditCard,
-  ChevronLeft,
-  ChevronDown,
-  Menu,
-  X,
-  Megaphone,
-  Image,
-  BarChart3,
-  SlidersHorizontal,
-  MessageSquare,
-  ShoppingCart,
-  Flag,
-  Truck,
-  Gift,
-} from 'lucide-react';
+import { LogOut, Zap, ChevronLeft, ChevronDown, Menu, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useState } from 'react';
 import { isFeatureEnabled, SECTION_FLAGS, ITEM_FLAGS } from '@/lib/feature-flags';
+import { navSectionsFor } from './nav';
 
 /**
- * Sidebar navigation sections.
- *
- * `displayLabel` is the user-facing name for "soon" (feature-flagged-off)
- * sections, since when collapsed into a single umbrella row the section
- * uppercase label ("META ADS") would look like a header rather than a
- * nav item. For enabled sections it's unused — we keep the original
- * uppercase label as the section heading.
- *
- * `umbrellaIcon` (optional) overrides the icon shown on the collapsed
- * umbrella row. Defaults to the first item's icon — which is what we
- * want for ads (Megaphone) and recover (MessageSquare).
+ * Sidebar. Las secciones salen de `navSectionsFor(isAdmin)` (nav.ts, puro y
+ * testeado): el usuario normal ve Dashboard, Etiquetas y Configuración; el
+ * admin ve todo (D32). `isAdmin` lo resuelve el layout del dashboard en el
+ * server con ADMIN_EMAILS; default `false` para no mostrar de más nunca.
  */
-const navSections: Array<{
-  label: string;
-  displayLabel?: string;
-  items: Array<{ href: string; label: string; icon: typeof LayoutDashboard }>;
-}> = [
-  {
-    label: 'Principal',
-    items: [
-      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { href: '/control', label: 'Control', icon: LayoutGrid },
-      { href: '/orders', label: 'Pedidos', icon: Package },
-      { href: '/labels', label: 'Etiquetas', icon: Tags },
-    ],
-  },
-  {
-    label: 'META ADS',
-    displayLabel: 'Meta Ads',
-    items: [
-      { href: '/ads', label: 'Panel de Anuncios', icon: Megaphone },
-      { href: '/ads/creativos', label: 'Anuncios', icon: Image },
-      { href: '/ads/rendimiento', label: 'Rendimiento', icon: BarChart3 },
-      { href: '/ads/configuracion', label: 'Config. Ads', icon: SlidersHorizontal },
-    ],
-  },
-  {
-    label: 'RECOVER',
-    displayLabel: 'Recover',
-    items: [
-      { href: '/recover', label: 'Panel Recover', icon: MessageSquare },
-      { href: '/recover/carts', label: 'Carritos', icon: ShoppingCart },
-      { href: '/recover/settings', label: 'Config. Recover', icon: SlidersHorizontal },
-    ],
-  },
-  {
-    label: 'Sistema',
-    items: [
-      { href: '/reports', label: 'Reportes', icon: Flag },
-      { href: '/settings', label: 'Configuración', icon: Settings },
-      { href: '/settings/shipping-rules', label: 'Reglas de envío', icon: Truck },
-      { href: '/settings/billing', label: 'Envíos', icon: CreditCard },
-      { href: '/settings/referrals', label: 'Referidos', icon: Gift },
-    ],
-  },
-];
-
-export function Sidebar() {
+export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
+  const navSections = navSectionsFor(isAdmin);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   // Which "Coming Soon" sections are expanded to reveal their sub-items.

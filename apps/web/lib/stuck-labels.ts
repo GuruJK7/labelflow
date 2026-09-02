@@ -21,6 +21,7 @@
 import { LabelStatus } from '@prisma/client';
 import { db } from '@/lib/db';
 import { isResolvedExternally } from '@/lib/shopify-reconcile';
+import { esContrareembolso } from '@/lib/contrarreembolso';
 
 // Category pattern groups — a stuck label is classified by the FIRST group its
 // errorMessage matches.
@@ -71,6 +72,7 @@ export function classifyStuck(
   errorMessage: string | null,
   deliveryAddress: string | null,
   paymentType: string | null,
+  codAmount?: number | null,
 ): StuckClass {
   const l = (errorMessage ?? '').toLowerCase();
   if (errorMessage && ORPHAN_PATTERNS.some((p) => l.includes(p))) {
@@ -82,6 +84,12 @@ export function classifyStuck(
     //     nothing real (the inert orphan never ships) -> RETRYABLE.
     //   - REMITENTE (store pre-pays): a duplicate could double-charge the store,
     //     so it stays held ('orphan') for manual verification in DAC.
+    //   - CONTRAREEMBOLSO [01-sep-2026]: held as 'orphan' too. The reasoning that
+    //     makes DESTINATARIO safe does NOT carry over: there the duplicate only
+    //     risks a shipping fee on an inert guia, but a COD duplicate risks
+    //     charging the END CUSTOMER for the merchandise twice. That is the
+    //     store's money and its reputation, so it never auto-retries.
+    if (esContrareembolso(codAmount)) return 'orphan';
     return paymentType === 'REMITENTE' ? 'orphan' : 'retryable';
   }
   if (errorMessage && REMITENTE_PATTERNS.some((p) => l.includes(p))) return 'remitente';
@@ -113,6 +121,7 @@ export interface RetryableLabel {
   errorMessage: string | null;
   deliveryAddress: string | null;
   paymentType: string | null;
+  codAmount: number | null;
 }
 
 /**
@@ -137,12 +146,13 @@ export async function selectRetryable(tenantId: string, limit?: number): Promise
       errorMessage: true,
       deliveryAddress: true,
       paymentType: true,
+      codAmount: true,
     },
   });
   const retryable = candidates.filter(
     (l) =>
       !isResolvedExternally(l.errorMessage) &&
-      classifyStuck(l.errorMessage, l.deliveryAddress, l.paymentType) === 'retryable',
+      classifyStuck(l.errorMessage, l.deliveryAddress, l.paymentType, l.codAmount) === 'retryable',
   );
   return typeof limit === 'number' ? retryable.slice(0, limit) : retryable;
 }
@@ -173,13 +183,13 @@ export async function getStuckBreakdown(tenantId: string): Promise<StuckBreakdow
     where: { tenantId, dacGuia: null, status: { in: RETRYABLE_STATUSES } },
     orderBy: { createdAt: 'asc' },
     take: MAX_CANDIDATE_SCAN,
-    select: { errorMessage: true, deliveryAddress: true, paymentType: true },
+    select: { errorMessage: true, deliveryAddress: true, paymentType: true, codAmount: true },
   });
   // Exclude resolved-externally rows in JS (a Prisma NOT-startsWith on a
   // nullable column would also drop null-errorMessage rows, which are valid
   // candidates — e.g. a PENDING with no error recorded).
   const live = candidates.filter((c) => !isResolvedExternally(c.errorMessage));
   const breakdown = { retryable: 0, orphan: 0, remitente: 0, needsAddress: 0 };
-  for (const c of live) breakdown[classifyStuck(c.errorMessage, c.deliveryAddress, c.paymentType)] += 1;
+  for (const c of live) breakdown[classifyStuck(c.errorMessage, c.deliveryAddress, c.paymentType, c.codAmount)] += 1;
   return { count: breakdown.retryable, total: live.length, ...breakdown };
 }

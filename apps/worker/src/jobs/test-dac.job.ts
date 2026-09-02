@@ -1,6 +1,7 @@
 import { db } from '../db';
-import { decrypt, decryptIfPresent } from '../encryption';
+import { decrypt } from '../encryption';
 import { createShopifyClient } from '../shopify';
+import { resolveShopifyAccessForJob, shopifyTokenSourceForTenant } from '../shopify/access';
 import { getRecentOrders } from '../shopify';
 import { dacBrowser } from '../dac/browser';
 import { smartLogin } from '../dac/auth';
@@ -84,11 +85,15 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
     }
 
     const shopifyUrl = tenant.shopifyStoreUrl;
-    const shopifyToken = decryptIfPresent(tenant.shopifyToken);
+    // Renueva bajo demanda si es un token del App Store (D29); legacy → el
+    // mismo string que decryptIfPresent. El motivo accionable va al runlog.
+    const shopifyAccess = await resolveShopifyAccessForJob(tenant);
+    const shopifyToken = shopifyAccess.access;
 
     if (!shopifyUrl || !shopifyToken) {
-      slog.error('config', 'Shopify credentials not configured');
-      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Missing Shopify config' } });
+      const motivo = shopifyAccess.reason && shopifyAccess.reason !== 'no-token' ? shopifyAccess.message : 'Missing Shopify config';
+      slog.error('config', `Shopify credentials not configured: ${motivo}`);
+      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: motivo } });
       return;
     }
 
@@ -104,7 +109,10 @@ export async function testDacJob(tenantId: string, jobId: string): Promise<void>
     // The fix: when orderIds is provided, fetch up to 250 (Shopify's max per call)
     // recent orders, then filter. The maxOrders cap is also bypassed in this mode
     // so all matched IDs are processed, not just the first N.
-    const shopifyClient = createShopifyClient(shopifyUrl, shopifyToken, { tenantId: tenant.id, slug: tenant.slug });
+    const shopifyClient = createShopifyClient(shopifyUrl, shopifyTokenSourceForTenant(tenant.id, shopifyAccess), {
+      tenantId: tenant.id,
+      slug: tenant.slug,
+    });
     const hasSpecificIds = !!(specificOrderIds && specificOrderIds.length > 0);
     const fetchLimit = hasSpecificIds ? 250 : maxOrders;
     let orders = await getRecentOrders(shopifyClient, fetchLimit);

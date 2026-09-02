@@ -4,6 +4,8 @@ import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getPlanLimit } from '@/lib/mercadopago';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { checkRunGate, checkPlanLimit } from '@/lib/can-run';
+import { warmShopifyToken } from '@/lib/shopify-access';
+import { storeConnection } from '@/lib/onboarding-state';
 
 export async function POST(req: Request) {
   const auth = await getAuthenticatedTenant();
@@ -40,7 +42,15 @@ export async function POST(req: Request) {
     }),
     db.tenant.findUnique({
       where: { id: auth.tenantId },
-      select: { labelsThisMonth: true },
+      select: {
+        labelsThisMonth: true,
+        // Para elegir el tipo de job según la tienda conectada (D33, H10).
+        shopifyStoreUrl: true,
+        shopifyToken: true,
+        dashboardSourceEnabled: true,
+        dashboardUrl: true,
+        dashboardToken: true,
+      },
     }),
   ]);
 
@@ -71,10 +81,40 @@ export async function POST(req: Request) {
     return apiError('Ya hay un job en ejecucion. Espera a que termine.', 409);
   }
 
-  const jobId = await enqueueProcessOrders(auth.tenantId, 'MANUAL');
+  // Tipo de job según la tienda conectada (D33). Shopify va como siempre;
+  // Dashboard con Excel crea el mismo job que el scheduler
+  // (`PROCESS_DASHBOARD_ORDERS`, apps/worker/src/jobs/scheduler.ts) y el
+  // poller del worker lo rutea por tipo. Sin tienda no hay qué procesar.
+  const kind = storeConnection(originating).kind;
+  if (!kind) return apiError('Conectá una tienda antes de procesar', 422);
+  const type = kind === 'shopify' ? 'PROCESS_ORDERS' : 'PROCESS_DASHBOARD_ORDERS';
+
+  if (kind === 'shopify') {
+    // Token fresco ANTES de encolar (D29): el worker no tiene el secret de la
+    // app pública en Render, así que un job manual arranca con el par que la
+    // web acaba de renovar. Best-effort: si falla, el job lo reporta.
+    await warmShopifyToken(auth.tenantId);
+  }
 
   // Store maxOrders override in RunLog so the worker reads it
   const effectiveMax = maxOrders || (testMode ? 1 : 0);
+
+  // Revisión 2026-09-02: el job de Dashboard con Excel
+  // (apps/worker/src/jobs/process-dashboard-orders.job.ts) trae hasta
+  // DASHBOARD_FETCH_LIMIT=100 pedidos confirmados y sólo recorta por saldo:
+  // NO lee el RunLog `maxOrdersOverride` como hace process-orders.job.ts.
+  // Encolar "1 pedido" ahí despacharía todos y quemaría créditos que el
+  // usuario no pidió gastar. Hasta que ese job lea el override (worker, otro
+  // turno), el límite se rechaza antes de crear el job.
+  if (kind === 'dashboard' && effectiveMax > 0) {
+    return apiError(
+      'El límite de pedidos sólo aplica a tiendas Shopify. Con Dashboard con Excel se procesan todos los pedidos confirmados: ejecutá sin límite.',
+      422,
+    );
+  }
+
+  const jobId = await enqueueProcessOrders(auth.tenantId, 'MANUAL', { type });
+
   if (effectiveMax > 0) {
     await db.runLog.create({
       data: {
@@ -88,7 +128,7 @@ export async function POST(req: Request) {
   }
 
   const label = effectiveMax === 1 ? '1 pedido' : effectiveMax > 0 ? `${effectiveMax} pedidos` : 'todos los pedidos';
-  return apiSuccess({ jobId, maxOrders: effectiveMax, message: `Job encolado: ${label}` }, { status: 202 });
+  return apiSuccess({ jobId, type, maxOrders: effectiveMax, message: `Job encolado: ${label}` }, { status: 202 });
 }
 
 export async function GET() {

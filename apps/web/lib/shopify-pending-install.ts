@@ -27,6 +27,11 @@ import { normalizeShopDomain, PENDING_INSTALL_TTL_SECONDS } from '@/lib/shopify-
 export const PENDING_INSTALL_PREFIX = 'pending-install:v1:';
 export interface PendingInstall {
   shop: string;
+  /**
+   * Lo que /claim va a cifrar y guardar en `Tenant.shopifyToken`: desde D29
+   * es el envelope entero (access + refresh + vencimientos, JSON v1) o, si
+   * Shopify no dio refresh, el access pelado. Es opaco para este módulo.
+   */
   token: string;
   /** Segundos Unix en que se emitió. */
   iat: number;

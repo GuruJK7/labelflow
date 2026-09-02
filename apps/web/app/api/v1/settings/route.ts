@@ -1,8 +1,10 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
+import { codFeatureEnabled } from '@/lib/cod-feature';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { encryptIfPresent, decryptOrRaw } from '@/lib/encryption';
+import { shopDomainChangeConflicts, SHOP_DOMAIN_TAKEN_MESSAGE } from '@/lib/shop-domain-taken';
 import { startOfDayUy, startOfMonthUy } from '@/lib/uy-time';
 
 const updateSchema = z.object({
@@ -53,6 +55,8 @@ const updateSchema = z.object({
   fulfillMode: z.enum(['off', 'on', 'always']).optional(),
   consolidateConsecutiveOrders: z.boolean().optional(),
   consolidationWindowMinutes: z.number().min(1).max(1440).optional(),
+  // Contrareembolso (D33/H7): columna existente, sin UI hasta ahora.
+  codEnabled: z.boolean().optional(),
   defaultPrinter: z.string().max(200).optional(),
   autoPrintEnabled: z.boolean().optional(),
   orderSortDirection: z.enum(['oldest_first', 'newest_first']).optional(),
@@ -110,6 +114,7 @@ export async function GET() {
       productTypeCache: true,
       consolidateConsecutiveOrders: true,
       consolidationWindowMinutes: true,
+      codEnabled: true,
       paymentAutoEnabled: true,
       paymentCardBrand: true,
       paymentCardLast4: true,
@@ -210,6 +215,10 @@ export async function GET() {
     productTypeCache: tenant.productTypeCache,
     consolidateConsecutiveOrders: tenant.consolidateConsecutiveOrders,
     consolidationWindowMinutes: tenant.consolidationWindowMinutes,
+    codEnabled: tenant.codEnabled,
+    // Revisión 2026-09-02: el toggle sólo se ofrece si el worker desplegado lo
+    // honra (COD_FEATURE_ENABLED). Ver lib/cod-feature.ts.
+    codAvailable: codFeatureEnabled(),
     // Auto-payment config — never leak CVC, return boolean "set" instead
     paymentAutoEnabled: tenant.paymentAutoEnabled,
     paymentCardBrand: tenant.paymentCardBrand,
@@ -231,31 +240,16 @@ export async function PUT(req: NextRequest) {
   const data: Record<string, unknown> = {};
   const input = parsed.data;
 
-  // Un dominio de Shopify pertenece a UN tenant. Mismo chequeo que hace
-  // /api/shopify/install: sin él, dos cuentas podían apuntar a la misma
-  // tienda cargando el token a mano, y el worker despachaba cada pedido dos
-  // veces. Insensible a mayúsculas por los dominios viejos guardados así (D18).
-  //
-  // Sólo cuando el dominio CAMBIA. "Guardar token" manda siempre el dominio
-  // que cargó del GET, y hay tenants que comparten tienda a propósito (el
-  // worker lo contempla con `sharedTenantIds`; incidente Aura 2026-05-08):
-  // chequear también cuando no se tocó el dominio les cerraba la única forma
-  // de rotar el token, porque /install y /callback ya les dan already_linked (D21).
+  // Un dominio de Shopify pertenece a UN tenant. Mismo chequeo que hacen
+  // /api/shopify/install, /claim y onboarding/test-shopify (lib/shop-domain-taken):
+  // sin él, dos cuentas podían apuntar a la misma tienda cargando el token a
+  // mano, y el worker despachaba cada pedido dos veces. Insensible a mayúsculas
+  // (D18) y sólo cuando el dominio CAMBIA: "Guardar token" manda siempre el
+  // dominio que cargó del GET, y los tenants que comparten tienda a propósito
+  // tienen que poder rotar el token (D21).
   if (input.shopifyStoreUrl !== undefined) {
-    const actual = await db.tenant.findUnique({
-      where: { id: auth.tenantId },
-      select: { shopifyStoreUrl: true },
-    });
-    const sinCambio = actual?.shopifyStoreUrl?.toLowerCase() === input.shopifyStoreUrl;
-    const tomada = sinCambio ? null : await db.tenant.findFirst({
-      where: {
-        shopifyStoreUrl: { equals: input.shopifyStoreUrl, mode: 'insensitive' },
-        id: { not: auth.tenantId },
-      },
-      select: { id: true },
-    });
-    if (tomada) {
-      return apiError('Esa tienda ya está conectada a otra cuenta. Escribinos y lo resolvemos.', 409);
+    if (await shopDomainChangeConflicts(input.shopifyStoreUrl, auth.tenantId)) {
+      return apiError(SHOP_DOMAIN_TAKEN_MESSAGE, 409);
     }
   }
 
@@ -288,6 +282,15 @@ export async function PUT(req: NextRequest) {
   if (input.allowedProductTypes !== undefined) data.allowedProductTypes = input.allowedProductTypes;
   if (input.consolidateConsecutiveOrders !== undefined) data.consolidateConsecutiveOrders = input.consolidateConsecutiveOrders;
   if (input.consolidationWindowMinutes !== undefined) data.consolidationWindowMinutes = input.consolidationWindowMinutes;
+  if (input.codEnabled !== undefined) {
+    // Prender el contrareembolso promete algo que sólo cumple el worker
+    // desplegado con df13204; hasta que Adrian lo confirme (COD_FEATURE_ENABLED)
+    // no se persiste un `true`. Apagarlo siempre se puede.
+    if (input.codEnabled && !codFeatureEnabled()) {
+      return apiError('El contrareembolso todavía no está disponible. Avisamos cuando se pueda prender.', 422);
+    }
+    data.codEnabled = input.codEnabled;
+  }
 
   // Auto-payment (plain fields)
   if (input.paymentAutoEnabled !== undefined) data.paymentAutoEnabled = input.paymentAutoEnabled;

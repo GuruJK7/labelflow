@@ -3,8 +3,9 @@
  *
  * Most-recent executed orders (Label rows) ACROSS ALL of the user's stores,
  * newest first — powers the global "Ultimos envios" feed at the bottom of the
- * control dashboard. Cross-store: getAuthenticatedUser() + scope to the user's
- * own tenantIds (never a client-supplied tenantId).
+ * control dashboard. Cross-store: scope to the user's own tenantIds (never a
+ * client-supplied tenantId); for an admin, every active tenant too
+ * (lib/control-scope), the same set /overview lists.
  *
  * Each row includes the store name (tenant.name) so the feed shows which store
  * each shipment belongs to. pdfPath is reduced to a `hasPdf` boolean; the PDF
@@ -14,7 +15,8 @@
 import { NextRequest } from 'next/server';
 import { LabelStatus } from '@prisma/client';
 import { db } from '@/lib/db';
-import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
+import { apiError, apiSuccess } from '@/lib/api-utils';
+import { getControlActor, controlTenantWhere } from '@/lib/control-scope';
 import { isResolvedExternally } from '@/lib/shopify-reconcile';
 
 const VALID_STATUSES: LabelStatus[] = [
@@ -27,15 +29,15 @@ const VALID_STATUSES: LabelStatus[] = [
 ];
 
 export async function GET(req: NextRequest) {
-  const auth = await getAuthenticatedUser();
-  if (!auth) return apiError('No autorizado', 401);
+  const actor = await getControlActor();
+  if (!actor) return apiError('No autorizado', 401);
 
   const sp = req.nextUrl.searchParams;
   const limit = Math.min(200, Math.max(1, parseInt(sp.get('limit') ?? '40', 10) || 40));
   const statusParam = (sp.get('status') ?? 'all').toUpperCase();
 
   const tenants = await db.tenant.findMany({
-    where: { userId: auth.userId },
+    where: controlTenantWhere(actor),
     select: { id: true },
   });
   if (tenants.length === 0) return apiSuccess([]);

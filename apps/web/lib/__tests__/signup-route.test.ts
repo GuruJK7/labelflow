@@ -106,6 +106,8 @@ describe('POST /api/auth/signup', () => {
     const tenant = mocks.userCreate.mock.calls[0][0].data.tenants.create[0];
     expect(tenant.tosAcceptedAt).toBeInstanceOf(Date);
     expect(tenant.referralBonusCredits).toBe(0);
+    // D31: el trial va explícito (5); confiar en el default del schema regala 10.
+    expect(tenant.shipmentCredits).toBe(5);
   });
 
   it('body inválido (contraseña corta) → 400 "Datos inválidos" sin crear nada', async () => {
@@ -275,6 +277,8 @@ describe('POST /api/auth/signup', () => {
     expect(tenant.referredById).toBe('t-ref');
     expect(tenant.referredByCode).toBe('JK7-A4F2');
     expect(tenant.referralBonusCredits).toBe(10);
+    // El bono de referido es un pool aparte: el trial sigue siendo 5 (D31).
+    expect(tenant.shipmentCredits).toBe(5);
   });
 
   it('auto-referido por IP: misma IP de alta que el referidor → atribución sí, bono NO (D26)', async () => {

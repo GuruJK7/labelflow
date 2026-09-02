@@ -18,7 +18,7 @@ import { SignupForm } from './SignupForm';
 export const metadata = {
   title: 'Creá tu cuenta — AutoEnvía',
   description:
-    'Creá tu cuenta gratis y conectá tu tienda Shopify con DAC. Sin tarjeta: 10 envíos de regalo para empezar.',
+    'Creá tu cuenta gratis y conectá tu tienda Shopify con DAC. Sin tarjeta: 5 envíos de regalo para empezar.', // 5 = TRIAL_SHIPMENTS (lib/trial.ts); metadata es string estático
 };
 
 /** Alta asistida: mismo número de WhatsApp que usa la landing. */

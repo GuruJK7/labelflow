@@ -51,7 +51,7 @@
  *     queda afuera es cualquier fila con un id no numérico (semillas, manuales).
  */
 import { db } from '@/lib/db';
-import { decryptIfPresent } from '@/lib/encryption';
+import { shopifyAccessForTenant } from '@/lib/shopify-access';
 import type { WmsExportItemRow } from '@/lib/wms-export';
 
 /** Misma versión de la Admin API que usa el resto del repo (worker incluido). */
@@ -82,8 +82,12 @@ export interface BackfillLabelRow {
   items: WmsExportItemRow[];
 }
 
-/** Credenciales del tenant tal cual salen de la tabla (token cifrado). */
+/**
+ * Credenciales del tenant tal cual salen de la tabla (token cifrado). El `id`
+ * es para renovar el token bajo demanda si es del App Store (D29).
+ */
 export interface BackfillTenantCreds {
+  id: string;
   shopifyStoreUrl: string | null;
   shopifyToken: string | null;
 }
@@ -262,7 +266,7 @@ export async function backfillMissingItems(
   //    tenant sin fallback posible. Se sale como si no hubiera nada que hacer.
   const storeUrl = clean(tenant?.shopifyStoreUrl);
   if (!storeUrl || !tenant?.shopifyToken) return VACIO('sin-credenciales');
-  const token = decryptIfPresent(tenant.shopifyToken);
+  const token = await shopifyAccessForTenant(tenant);
   if (!token) return VACIO('token-ilegible');
 
   const acotadas = faltantes.slice(0, MAX_BACKFILL_LABELS);

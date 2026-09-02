@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { encrypt } from '@/lib/encryption';
 import { nuevoTenantBase } from '@/lib/tenant-provision';
 import { shopifyGraphql, SHOPIFY_GRAPHQL_API_VERSION } from '@/lib/shopify-graphql';
+import { TRIAL_SHIPMENTS } from './trial';
 
 /**
  * Alta de cuenta a partir de una instalación desde el Shopify App Store.
@@ -143,7 +144,12 @@ export type ProvisionOutcome =
  */
 export async function provisionFromShopify(
   info: ShopInfo,
-  accessToken: string,
+  /**
+   * Texto plano que se guarda cifrado en `Tenant.shopifyToken`: el envelope
+   * v1 (access + refresh, D29) o un token pelado si Shopify no dio refresh.
+   * Acá no se usa para hablar con Shopify, sólo se cifra y se persiste.
+   */
+  credentialPlain: string,
 ): Promise<ProvisionOutcome> {
   const slug = tenantSlugForShop(info.domain);
 
@@ -169,7 +175,7 @@ export async function provisionFromShopify(
         }
         await tx.tenant.update({
           where: { id: existingByShop.id },
-          data: { shopifyToken: encrypt(accessToken) },
+          data: { shopifyToken: encrypt(credentialPlain) },
         });
         return { kind: 'existing', userId: user.id, tenantId: existingByShop.id, email: info.email } as const;
       }
@@ -191,9 +197,12 @@ export async function provisionFromShopify(
                 slug,
                 name: info.name,
                 shopifyStoreUrl: info.domain,
-                shopifyToken: encrypt(accessToken),
+                shopifyToken: encrypt(credentialPlain),
                 apiKey: base.apiKey,
                 referralCode: base.referralCode,
+                // D31: cuenta nueva → trial explícito (5), no el default (10).
+                // Sólo acá: `existing` no crea, `claim` y `conflict` tampoco.
+                shipmentCredits: TRIAL_SHIPMENTS,
               },
             ],
           },

@@ -14,7 +14,8 @@
 import { NextRequest } from 'next/server';
 import { LabelStatus } from '@prisma/client';
 import { db } from '@/lib/db';
-import { getAuthenticatedUser, apiError, apiSuccess } from '@/lib/api-utils';
+import { apiError, apiSuccess } from '@/lib/api-utils';
+import { getControlActor, controlTenantWhere } from '@/lib/control-scope';
 import { isResolvedExternally } from '@/lib/shopify-reconcile';
 
 const VALID_STATUSES: LabelStatus[] = [
@@ -27,8 +28,8 @@ const VALID_STATUSES: LabelStatus[] = [
 ];
 
 export async function GET(req: NextRequest) {
-  const auth = await getAuthenticatedUser();
-  if (!auth) return apiError('No autorizado', 401);
+  const actor = await getControlActor();
+  if (!actor) return apiError('No autorizado', 401);
 
   const sp = req.nextUrl.searchParams;
   const tenantId = sp.get('tenantId') ?? '';
@@ -37,9 +38,10 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(100, Math.max(1, parseInt(sp.get('limit') ?? '60', 10) || 60));
   const statusParam = (sp.get('status') ?? 'all').toUpperCase();
 
-  // Ownership — same 403 whether someone else's or nonexistent.
+  // Alcance — same 403 whether someone else's or nonexistent. El admin
+  // (ADMIN_EMAILS) alcanza además cualquier tenant activo (lib/control-scope).
   const owned = await db.tenant.findFirst({
-    where: { id: tenantId, userId: auth.userId },
+    where: { id: tenantId, ...controlTenantWhere(actor) },
     select: { id: true },
   });
   if (!owned) return apiError('Tienda no encontrada', 403);

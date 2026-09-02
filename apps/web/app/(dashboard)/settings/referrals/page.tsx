@@ -13,6 +13,7 @@ import {
   ShoppingCart,
   Plus,
 } from 'lucide-react';
+import { TRIAL_SHIPMENTS, REFEREE_BONUS_CREDITS } from '@/lib/trial';
 
 interface ReferralState {
   referralCode: string | null;
@@ -55,7 +56,7 @@ export default function ReferralsPage() {
   function shareWhatsApp() {
     if (!state?.referralLink) return;
     const msg = encodeURIComponent(
-      `Te recomiendo LabelFlow para automatizar tus envíos con DAC. Te regalan 10 envíos gratis si te registrás con mi link: ${state.referralLink}`,
+      `Te recomiendo LabelFlow para automatizar tus envíos con DAC. Te regalan ${TRIAL_SHIPMENTS} envíos gratis si te registrás con mi link: ${state.referralLink}`,
     );
     window.open(`https://wa.me/?text=${msg}`, '_blank');
   }
@@ -73,8 +74,8 @@ export default function ReferralsPage() {
         </h1>
         <p className="text-zinc-400 text-sm mt-2 max-w-2xl">
           Invitá a otros emprendedores. Quien entra con tu link arranca con
-          <span className="text-white font-semibold"> 20 envíos gratis</span>
-          {' '}(los 10 universales + 10 extra por venir referido) y vos te
+          <span className="text-white font-semibold"> {TRIAL_SHIPMENTS + REFEREE_BONUS_CREDITS} envíos gratis</span>
+          {' '}(los {TRIAL_SHIPMENTS} universales + {REFEREE_BONUS_CREDITS} extra por venir referido) y vos te
           quedás con el <span className="text-white font-semibold">20% de cada pack</span>
           {' '}que compren — para siempre.
         </p>
@@ -210,7 +211,7 @@ export default function ReferralsPage() {
             number={2}
             icon={<ShoppingCart className="w-5 h-5" />}
             title="Tu referido arranca con bonus"
-            description="Recibe 10 envíos gratis EXTRA por entrar con tu link (encima de los 10 universales = 20 totales) y compra packs cuando los necesite."
+            description={`Recibe ${REFEREE_BONUS_CREDITS} envíos gratis EXTRA por entrar con tu link (encima de los ${TRIAL_SHIPMENTS} universales = ${TRIAL_SHIPMENTS + REFEREE_BONUS_CREDITS} totales) y compra packs cuando los necesite.`}
             accent="cyan"
           />
           <Step

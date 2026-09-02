@@ -24,6 +24,7 @@ interface LabelInsight {
   dacGuia: string | null;
   status: string;
   paymentType: string;
+  codAmount?: number | null;
   totalUyu: number;
   emailSent: boolean;
   errorMessage: string | null;
@@ -293,11 +294,15 @@ export function ShipmentInsights() {
                       <div className="text-right shrink-0">
                         <span className={cn(
                           'text-[10px] font-medium px-2 py-0.5 rounded-full',
-                          label.paymentType === 'REMITENTE'
-                            ? 'bg-violet-500/10 text-violet-400'
-                            : 'bg-amber-500/10 text-amber-400',
+                          label.codAmount != null
+                            ? 'bg-emerald-500/10 text-emerald-400'
+                            : label.paymentType === 'REMITENTE'
+                              ? 'bg-violet-500/10 text-violet-400'
+                              : 'bg-amber-500/10 text-amber-400',
                         )}>
-                          {label.paymentType === 'REMITENTE' ? 'Pago tienda' : 'Pago destino'}
+                          {label.codAmount != null
+                            ? 'Contrareembolso'
+                            : label.paymentType === 'REMITENTE' ? 'Pago tienda' : 'Pago destino'}
                         </span>
                         <p className="text-[10px] text-zinc-600 mt-1">{timeAgo(label.createdAt)}</p>
                       </div>

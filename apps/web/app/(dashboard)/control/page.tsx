@@ -7,6 +7,12 @@
  * to complete (live Shopify) and sin completar (retryable), run/retry any store,
  * watch which store is running (and the queue), and filter shipments per store.
  *
+ * Admin (D32, revisión 2026-09-02): /overview responde `adminView: true` y cada
+ * tienda trae `owner` (email del dueño + si es propia). La página agrupa por
+ * dueño, las propias primero. Ejecutar/Reintentar/Ver pedidos funcionan sobre
+ * cualquier tienda listada (el server lo autoriza en lib/control-scope);
+ * Eliminar sigue siendo sólo para las propias (DELETE /tenants es del dueño).
+ *
  * Data:
  *  - GET /api/v1/control/overview  (DB-only, polled) — stores + wallet + queue
  *  - GET /api/v1/control/pending   (Shopify, throttled) — backlog per store
@@ -51,6 +57,8 @@ interface StoreRow {
   doneMonth: number;
   lastRunAt: string | null;
   maxOrdersPerRun: number;
+  /** Sólo en la vista admin: dueño de la tienda. */
+  owner?: { email: string; own: boolean };
   running: null | {
     jobId: string;
     status: string;
@@ -81,6 +89,8 @@ interface Overview {
   stores: StoreRow[];
   wallet: Wallet;
   queue: QueueItem[];
+  /** true cuando el que mira es admin y la lista incluye tiendas ajenas. */
+  adminView?: boolean;
 }
 interface PendingItem {
   tenantId: string;
@@ -305,9 +315,36 @@ export default function ControlPage() {
   const stores = overview?.stores ?? [];
   const queue = overview?.queue ?? [];
   const wallet = overview?.wallet;
-  // Credit-holder = oldest store = stores[0] (overview orders createdAt asc, id
-  // asc). It can't be deleted, so the card hides the trash for it.
-  const holderId = stores[0]?.id;
+  const adminView = overview?.adminView === true;
+  // Credit-holder = oldest OWN store (overview orders createdAt asc, id asc; in
+  // the admin view the first own one). It can't be deleted, so the card hides
+  // the trash for it.
+  const holderId = adminView ? stores.find((s) => s.owner?.own)?.id : stores[0]?.id;
+  // Vista admin: tiendas agrupadas por dueño, las propias primero y después
+  // cada cliente por email. Fuera de la vista admin hay un solo grupo sin título.
+  const storeGroups = useMemo(() => {
+    if (!adminView) return [{ key: 'all', title: null as string | null, own: true, stores }];
+    const byOwner = new Map<string, StoreRow[]>();
+    for (const s of stores) {
+      const key = s.owner?.own ? '' : s.owner?.email ?? '—';
+      const list = byOwner.get(key);
+      if (list) list.push(s);
+      else byOwner.set(key, [s]);
+    }
+    return Array.from(byOwner.entries())
+      .sort(([a], [b]) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)))
+      .map(([email, list]) => ({
+        key: email || 'own',
+        title: email === '' ? 'Tus tiendas' : email,
+        own: email === '',
+        stores: list,
+      }));
+  }, [adminView, stores]);
+  const ownerByTenant = useMemo(() => {
+    const m = new Map<string, StoreRow['owner']>();
+    for (const s of stores) if (s.owner) m.set(s.id, s.owner);
+    return m;
+  }, [stores]);
   const runningByTenant = useMemo(() => {
     const m = new Map<string, StoreRow['running']>();
     for (const s of stores) if (s.running) m.set(s.id, s.running);
@@ -351,7 +388,10 @@ export default function ControlPage() {
           <p className="text-xs font-medium tracking-widest text-cyan-400/80 uppercase mb-1 flex items-center gap-1.5">
             <Zap className="w-3.5 h-3.5" /> Centro de Control
           </p>
-          <h1 className="text-2xl sm:text-3xl font-bold text-white">Tus tiendas</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-white">{adminView ? 'Todas las tiendas' : 'Tus tiendas'}</h1>
+          {adminView && (
+            <p className="mt-1 text-xs text-zinc-500">Vista admin: tus tiendas y las de todos los clientes con onboarding completo, agrupadas por dueño.</p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <div className="glass rounded-xl px-4 py-2 text-right">
@@ -478,7 +518,12 @@ export default function ControlPage() {
                     {isRunningRow ? '▶' : queuedOrdinal}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-white truncate">{q.tenantName}</p>
+                    <p className="text-sm font-medium text-white truncate">
+                      {q.tenantName}
+                      {adminView && ownerByTenant.get(q.tenantId) && !ownerByTenant.get(q.tenantId)?.own && (
+                        <span className="ml-2 text-[11px] font-normal text-zinc-500">{ownerByTenant.get(q.tenantId)?.email}</span>
+                      )}
+                    </p>
                     <p className="text-[11px] text-zinc-500">
                       {isRunningRow
                         ? total > 0
@@ -508,32 +553,45 @@ export default function ControlPage() {
         </div>
       )}
 
-      {/* Stores grid */}
+      {/* Stores grid (admin: one grid per owner, own stores first) */}
       {stores.length === 0 ? (
         <div className="glass rounded-2xl p-10 text-center text-zinc-500">
           <Store className="w-8 h-8 mx-auto mb-3 opacity-50" />
-          No tenés tiendas todavía.
+          {adminView ? 'No hay tiendas activas todavía.' : 'No tenés tiendas todavía.'}
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 mb-8">
-          {stores.map((s) => (
-            <StoreCard
-              key={s.id}
-              store={s}
-              pending={pending[s.id]}
-              selected={selected.has(s.id)}
-              busy={busy[s.id]}
-              bulkBusy={bulkRunning || bulkRetrying}
-              loteLabel={batchLabel(lote)}
-              canDelete={s.id !== holderId}
-              onToggleSelect={() => toggleSelect(s.id)}
-              onRun={() => runStore(s.id)}
-              onRetry={() => retryStore(s.id, s.stuck.retryable)}
-              onViewLabels={() => setLabelsModal({ id: s.id, name: s.name })}
-              onDelete={() => setDeleteTarget({ id: s.id, name: s.name })}
-            />
-          ))}
-        </div>
+        storeGroups.map((g) => (
+          <div key={g.key} className="mb-8">
+            {g.title && (
+              <div className="flex items-center gap-2 mb-3">
+                <Store className="w-3.5 h-3.5 text-zinc-500" />
+                <h2 className={cn('text-sm font-semibold', g.own ? 'text-cyan-300' : 'text-zinc-200')}>{g.title}</h2>
+                <span className="text-xs text-zinc-500">{g.stores.length} tienda{g.stores.length === 1 ? '' : 's'}</span>
+              </div>
+            )}
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {g.stores.map((s) => (
+                <StoreCard
+                  key={s.id}
+                  store={s}
+                  pending={pending[s.id]}
+                  selected={selected.has(s.id)}
+                  busy={busy[s.id]}
+                  bulkBusy={bulkRunning || bulkRetrying}
+                  loteLabel={batchLabel(lote)}
+                  // Eliminar sigue siendo del dueño: DELETE /api/v1/tenants/[id] es
+                  // user-scoped a propósito (borrado irreversible de una tienda ajena).
+                  canDelete={(!s.owner || s.owner.own) && s.id !== holderId}
+                  onToggleSelect={() => toggleSelect(s.id)}
+                  onRun={() => runStore(s.id)}
+                  onRetry={() => retryStore(s.id, s.stuck.retryable)}
+                  onViewLabels={() => setLabelsModal({ id: s.id, name: s.name })}
+                  onDelete={() => setDeleteTarget({ id: s.id, name: s.name })}
+                />
+              ))}
+            </div>
+          </div>
+        ))
       )}
 
       {/* Shipments per store */}

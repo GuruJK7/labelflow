@@ -14,7 +14,7 @@ import {
 import { trackServer } from './analytics.server';
 import { writeAuditLog } from './audit-log';
 
-const REFEREE_BONUS_CREDITS = 10;
+import { TRIAL_SHIPMENTS, REFEREE_BONUS_CREDITS } from './trial';
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -367,14 +367,17 @@ export const authOptions: NextAuthOptions = {
             referralCode: myReferralCode,
             referredByCode,
             referredById,
+            // D31: primer tenant del user → trial explícito, no el default.
+            shipmentCredits: TRIAL_SHIPMENTS,
             referralBonusCredits: refereeBonus,
           },
         });
         newTenantId = t.id;
       } else {
         // Atomic User + Tenant creation via Prisma nested write.
-        // shipmentCredits arranca en 10 por @default del schema (welcome
-        // bonus universal). referralBonusCredits SÓLO si vino vía referral.
+        // shipmentCredits va explícito en TRIAL_SHIPMENTS (D31); el @default
+        // del schema (10) ya no rige. referralBonusCredits SÓLO si vino vía
+        // referral.
         //
         // Multi-store note: `tenants: { create: [...] }` produces the
         // same effect as the old 1:1 `tenant: { create: ... }` — creates
@@ -397,6 +400,7 @@ export const authOptions: NextAuthOptions = {
                   referralCode: myReferralCode,
                   referredByCode,
                   referredById,
+                  shipmentCredits: TRIAL_SHIPMENTS,
                   referralBonusCredits: refereeBonus,
                 },
               ],

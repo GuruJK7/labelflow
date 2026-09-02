@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Save, X, Power, PowerOff } from 'lucide-react';
+import { SettingsNav } from '../_components/SettingsNav';
 import {
   SHIPPING_RULE_TYPES,
   RULE_TYPE_LABELS,
@@ -222,6 +223,7 @@ export default function ShippingRulesPage() {
 
   return (
     <div className="p-6 max-w-5xl">
+      <SettingsNav />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Reglas de envío</h1>

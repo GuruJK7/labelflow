@@ -30,6 +30,24 @@ export async function GET(req: NextRequest) {
     where.status = status.toUpperCase();
   }
 
+  // [01-sep-2026] Filtro por forma de cobro. Mismo patron que `status`: se resuelve
+  // en la query de Prisma, no en el cliente.
+  //   cod           -> solo contrareembolso (codAmount cargado)
+  //   REMITENTE     -> paga la tienda
+  //   DESTINATARIO  -> paga el destinatario, SIN contrareembolso
+  // Sin el parametro, el where queda igual que antes: no cambia ningun listado existente.
+  const pago = searchParams.get('pago');
+  if (pago && pago !== 'all') {
+    if (pago === 'cod') {
+      where.codAmount = { not: null };
+    } else if (pago === 'REMITENTE' || pago === 'DESTINATARIO') {
+      where.paymentType = pago;
+      where.codAmount = null;
+    } else {
+      return apiError('Invalid pago value', 400);
+    }
+  }
+
   // Filter to only labels that have a PDF available
   const hasPdf = searchParams.get('hasPdf');
   if (hasPdf === 'true') {
@@ -53,6 +71,7 @@ export async function GET(req: NextRequest) {
         status: true,
         errorMessage: true,
         paymentType: true,
+        codAmount: true,
         totalUyu: true,
         city: true,
         department: true,
