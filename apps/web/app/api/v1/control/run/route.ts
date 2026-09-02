@@ -17,6 +17,7 @@ import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { getPlanLimit } from '@/lib/mercadopago';
 import { checkRunGate, checkPlanLimit } from '@/lib/can-run';
+import { warmShopifyToken } from '@/lib/shopify-access';
 
 export async function POST(req: Request) {
   const auth = await getAuthenticatedUser();
@@ -76,6 +77,9 @@ export async function POST(req: Request) {
   if (await isJobRunning(tenantId)) {
     return apiError('Ya hay un job en ejecucion para esta tienda.', 409);
   }
+
+  // Token fresco ANTES de encolar (D29), mismo motivo que en /api/v1/jobs.
+  await warmShopifyToken(tenantId);
 
   const jobId = await enqueueProcessOrders(tenantId, 'MANUAL');
   if (maxOrders > 0) {

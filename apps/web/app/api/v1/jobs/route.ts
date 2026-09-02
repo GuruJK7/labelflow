@@ -4,6 +4,7 @@ import { enqueueProcessOrders, isJobRunning } from '@/lib/queue';
 import { getPlanLimit } from '@/lib/mercadopago';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { checkRunGate, checkPlanLimit } from '@/lib/can-run';
+import { warmShopifyToken } from '@/lib/shopify-access';
 
 export async function POST(req: Request) {
   const auth = await getAuthenticatedTenant();
@@ -70,6 +71,11 @@ export async function POST(req: Request) {
   if (running) {
     return apiError('Ya hay un job en ejecucion. Espera a que termine.', 409);
   }
+
+  // Token fresco ANTES de encolar (D29): el worker no tiene el secret de la
+  // app pública en Render, así que un job manual arranca con el par que la
+  // web acaba de renovar. Best-effort: si falla, el job lo reporta.
+  await warmShopifyToken(auth.tenantId);
 
   const jobId = await enqueueProcessOrders(auth.tenantId, 'MANUAL');
 

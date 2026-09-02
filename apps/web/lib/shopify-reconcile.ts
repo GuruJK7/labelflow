@@ -35,7 +35,7 @@
  */
 
 import { db } from '@/lib/db';
-import { decrypt } from '@/lib/encryption';
+import { shopifyAccessForTenant } from '@/lib/shopify-access';
 
 const SHOPIFY_API_VERSION = '2024-01';
 
@@ -99,17 +99,15 @@ export async function reconcileStuckAgainstShopify(tenantId: string): Promise<Re
 
   const tenant = await db.tenant.findUnique({
     where: { id: tenantId },
-    select: { shopifyStoreUrl: true, shopifyToken: true },
+    select: { id: true, shopifyStoreUrl: true, shopifyToken: true },
   });
   if (!tenant?.shopifyStoreUrl || !tenant.shopifyToken) {
     return { ...empty, skipped: 'no-token' };
   }
-  let token: string;
-  try {
-    token = decrypt(tenant.shopifyToken);
-  } catch {
-    return { ...empty, skipped: 'decrypt-failed' };
-  }
+  // Renueva bajo demanda si es un token del App Store (D29); legacy → mismo
+  // string que `decrypt`. null cubre "no descifra" y "no se pudo renovar".
+  const token = await shopifyAccessForTenant(tenant);
+  if (!token) return { ...empty, skipped: 'decrypt-failed' };
 
   // Candidate stuck rows, minus any already flagged (idempotent re-runs).
   const rawCandidates = await db.label.findMany({

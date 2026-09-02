@@ -1,6 +1,6 @@
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
-import { decryptIfPresent } from '@/lib/encryption';
+import { shopifyAccessForTenant } from '@/lib/shopify-access';
 
 const DAC_TRACKING_BASE_URL = 'https://www.dac.com.uy/envios/rastrear';
 
@@ -26,14 +26,14 @@ export async function POST(req: Request) {
   // Load tenant credentials
   const tenant = await db.tenant.findUnique({
     where: { id: tenantId },
-    select: { shopifyStoreUrl: true, shopifyToken: true },
+    select: { id: true, shopifyStoreUrl: true, shopifyToken: true },
   });
 
   if (!tenant?.shopifyStoreUrl || !tenant?.shopifyToken) {
     return apiError('Shopify credentials not configured', 400);
   }
 
-  const shopifyToken = decryptIfPresent(tenant.shopifyToken);
+  const shopifyToken = await shopifyAccessForTenant(tenant);
   if (!shopifyToken) {
     return apiError('Cannot decrypt Shopify token', 500);
   }

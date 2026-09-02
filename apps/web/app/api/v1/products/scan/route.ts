@@ -1,6 +1,6 @@
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
-import { decryptIfPresent } from '@/lib/encryption';
+import { shopifyAccessForTenant } from '@/lib/shopify-access';
 
 /**
  * Cache entry for one Shopify product. Persisted as `Tenant.productTypeCache`.
@@ -35,14 +35,14 @@ export async function POST() {
 
   const tenant = await db.tenant.findUnique({
     where: { id: auth.tenantId },
-    select: { shopifyStoreUrl: true, shopifyToken: true },
+    select: { id: true, shopifyStoreUrl: true, shopifyToken: true },
   });
 
   if (!tenant?.shopifyStoreUrl || !tenant?.shopifyToken) {
     return apiError('Shopify no configurado. Ve a Configuracion para conectar tu tienda.', 400);
   }
 
-  const token = decryptIfPresent(tenant.shopifyToken);
+  const token = await shopifyAccessForTenant(tenant);
   if (!token) return apiError('Token de Shopify invalido', 400);
 
   const baseUrl = `https://${tenant.shopifyStoreUrl}/admin/api/2024-01`;
