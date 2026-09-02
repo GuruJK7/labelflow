@@ -34,6 +34,7 @@ interface Label {
   status: string;
   errorMessage: string | null;
   paymentType: string;
+  codAmount?: number | null;
   totalUyu: number;
   city: string;
   department: string;
@@ -56,6 +57,7 @@ export default function OrdersPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('all');
+  const [pago, setPago] = useState('all'); // [01-sep-2026] filtro de forma de cobro
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -65,6 +67,7 @@ export default function OrdersPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(limit), status });
+      if (pago !== 'all') params.set('pago', pago);
       if (search) params.set('search', search);
       const res = await fetch(`/api/v1/orders?${params}`);
       if (res.ok) {
@@ -76,7 +79,7 @@ export default function OrdersPage() {
       // silent
     }
     setLoading(false);
-  }, [page, status, search]);
+  }, [page, status, pago, search]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -135,6 +138,21 @@ export default function OrdersPage() {
               <option value="CREATED">Creados (sin PDF)</option>
               <option value="PENDING">Pendientes</option>
               <option value="SKIPPED">Salteados</option>
+            </select>
+          </div>
+
+          {/* Forma de cobro — [01-sep-2026] */}
+          <div className="relative">
+            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-600" />
+            <select
+              value={pago}
+              onChange={(e) => { setPago(e.target.value); setPage(1); }}
+              className="pl-9 pr-8 py-2 appearance-none bg-white/[0.03] border border-white/[0.06] rounded-xl text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 cursor-pointer"
+            >
+              <option value="all">Cualquier cobro</option>
+              <option value="cod">Contrareembolso</option>
+              <option value="DESTINATARIO">Paga destinatario</option>
+              <option value="REMITENTE">Paga remitente</option>
             </select>
           </div>
 
@@ -220,11 +238,15 @@ export default function OrdersPage() {
                           <td className="px-5 py-3.5">
                             <span className={cn(
                               'inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full',
-                              label.paymentType === 'REMITENTE'
-                                ? 'text-cyan-400 bg-cyan-500/10'
-                                : 'text-amber-400 bg-amber-500/10'
+                              label.codAmount != null
+                                ? 'text-emerald-400 bg-emerald-500/10'
+                                : label.paymentType === 'REMITENTE'
+                                  ? 'text-cyan-400 bg-cyan-500/10'
+                                  : 'text-amber-400 bg-amber-500/10'
                             )}>
-                              {label.paymentType === 'REMITENTE' ? 'Remitente' : 'Destinatario'}
+                              {label.codAmount != null
+                                ? `Contrareembolso $${label.codAmount}`
+                                : label.paymentType === 'REMITENTE' ? 'Remitente' : 'Destinatario'}
                             </span>
                           </td>
                           <td className="px-5 py-3.5">

@@ -520,6 +520,15 @@ model Label {
   department           String
   totalUyu             Float
   paymentType          PaymentType
+  /// CONTRAREEMBOLSO (DAC TipoGuia=6) — [01-sep-2026]
+  /// Monto en pesos que DAC le cobra al destinatario y le gira al remitente.
+  /// null = NO es contrareembolso, y el envio se comporta exactamente como antes.
+  /// Deliberadamente NO se agrego un tercer valor a enum PaymentType: hay tres
+  /// lugares que hacen `paymentType === 'REMITENTE' ? a : b` y tratan cualquier
+  /// otro valor como DESTINATARIO — uno de ellos (apps/web/lib/stuck-labels.ts:73)
+  /// decide como se reconcilia un envio trabado, no es cosmetico.
+  /// Ver apps/worker/src/dac/contrarreembolso.ts.
+  codAmount            Int?
   // Auto-payment outcome on the DAC/Plexo side. Relevant only when
   // paymentType = REMITENTE AND tenant.paymentAutoEnabled = true.
   // Values:
