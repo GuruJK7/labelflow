@@ -1,8 +1,8 @@
-import type { AxiosInstance } from 'axios';
+import type { ShopifyClient } from '../shopify';
 import { db } from '../db';
 import type { ShopifyOrder } from '../shopify/types';
-import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify/fulfillment';
-import { markOrderProcessed, addOrderNote } from '../shopify/orders';
+import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify';
+import { markOrderProcessed, addOrderNote } from '../shopify';
 import { uploadLabelPdf } from '../storage/upload';
 import { buildSafeLabelGeoFields } from '../jobs/label-safe-fields';
 import { persistLabelItems } from '../jobs/label-items';
@@ -35,7 +35,7 @@ export interface CtxRepartoPropio {
   jobId: string;
   /** Nombre que va como remitente en la etiqueta. */
   nombreTienda: string;
-  shopifyClient: AxiosInstance;
+  shopifyClient: ShopifyClient;
   /** En testMode no se toca Shopify ni se sube nada. */
   testMode: boolean;
   /** Si el tenant tiene el fulfillment apagado, no marcamos preparado. */

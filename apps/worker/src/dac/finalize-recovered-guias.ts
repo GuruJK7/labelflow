@@ -1,12 +1,12 @@
 import type { Page } from 'playwright';
-import type { AxiosInstance } from 'axios';
+import type { ShopifyClient } from '../shopify';
 import fs from 'fs';
 import { db } from '../db';
 import type { StepLogger } from '../logger';
 import { downloadLabel } from './label';
 import { uploadLabelPdf } from '../storage/upload';
-import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError } from '../shopify/fulfillment';
-import { markOrderProcessed } from '../shopify/orders';
+import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError } from '../shopify';
+import { markOrderProcessed } from '../shopify';
 import { isStep3GeoTenantEnabled } from './geocode-fallback';
 
 const STEP = 'finalize-recovered';
@@ -61,7 +61,7 @@ export async function finalizeRecoveredGuiaLabels(opts: {
   tmpDir: string;
   dacUsername: string;
   dacPassword: string;
-  shopifyClient: AxiosInstance;
+  shopifyClient: ShopifyClient;
   enabledTenantsEnv: string | undefined;
   maxToFinalize?: number;
 }): Promise<FinalizeRecoveredResult> {

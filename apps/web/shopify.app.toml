@@ -56,18 +56,16 @@ redirect_urls = [
 ]
 
 [webhooks]
+# Suscripciones de webhooks: NO se declaran acá a propósito. Las registra la app
+# por tienda con webhookSubscriptionCreate en el callback/claim (lib/shopify-register-webhooks.ts),
+# porque `webhookSubscriptions` no ve las app-scoped del TOML y declararlas en los dos
+# lados entregaría cada pedido dos veces (revisión de feat/shopify-graphql, 2026-09-01).
 api_version = "2026-07"
 
   # Pedido pago → encolar al instante en vez de esperar al cron de 15 minutos.
-  [[webhooks.subscriptions]]
-  topics = ["orders/paid"]
-  uri = "/api/webhooks/shopify"
 
   # Desinstalación → limpiar el token. Sin esto queda un token muerto y el cron
   # encolando trabajos que nunca van a servir.
-  [[webhooks.subscriptions]]
-  topics = ["app/uninstalled"]
-  uri = "/api/shopify/uninstalled"
 
   # Obligatorios para cualquier app pública. Ya están implementados.
   [webhooks.privacy_compliance]

@@ -43,9 +43,9 @@ import {
 } from '../dac/remitente-manual';
 import { markAddressResolutionFeedback } from '../dac/ai-resolver';
 import { downloadLabel } from '../dac/label';
-import { createShopifyClient } from '../shopify/client';
-import { markOrderProcessed, addOrderNote } from '../shopify/orders';
-import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify/fulfillment';
+import { createShopifyClient } from '../shopify';
+import { markOrderProcessed, addOrderNote } from '../shopify';
+import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify';
 import { sendShipmentNotification } from '../notifier/email';
 import fsSync from 'fs';
 
@@ -184,7 +184,7 @@ export async function agentBulkUploadJob(job: {
     }
 
     // 3. Launch browser + login (skipped in dry-run)
-    const shopifyClient = createShopifyClient(tenant.shopifyStoreUrl, shopifyToken);
+    const shopifyClient = createShopifyClient(tenant.shopifyStoreUrl, shopifyToken, { tenantId: tenant.id, slug: tenant.slug });
     // `page` is unused in dry-run but createShipment needs a Playwright Page
     // in the live path — we only start the browser when we'll actually touch DAC.
     // Use `any` locally to avoid a cascade of nullable types below.

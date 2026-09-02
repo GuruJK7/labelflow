@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { db } from '@/lib/db';
 import { encrypt } from '@/lib/encryption';
 import { nuevoTenantBase } from '@/lib/tenant-provision';
+import { shopifyGraphql, SHOPIFY_GRAPHQL_API_VERSION } from '@/lib/shopify-graphql';
 
 /**
  * Alta de cuenta a partir de una instalación desde el Shopify App Store.
@@ -51,22 +52,45 @@ export interface ShopInfo {
  * Datos de la tienda, para dar de alta la cuenta con algo real en vez de
  * inventar un nombre. Si Shopify no contesta, devolvemos null y el llamador
  * decide: es mejor no crear cuenta que crearla con basura.
+ *
+ * GraphQL, no REST (D27): la app pública fue creada después del 1/4/2025 y
+ * Shopify le niega el REST Admin API — el primer install real en
+ * autoenvia-qa murió acá con `shop_info_failed`. Campos verificados en
+ * objects/Shop 2026-07: `name`, `email` (no deprecado), `myshopifyDomain`.
  */
+export const SHOP_INFO_QUERY = `query LabelFlowShopInfo {
+  shop {
+    name
+    email
+    myshopifyDomain
+  }
+}`;
+
 export async function fetchShopInfo(
   shop: string,
   accessToken: string,
-  apiVersion = '2026-07',
+  apiVersion = SHOPIFY_GRAPHQL_API_VERSION,
 ): Promise<ShopInfo | null> {
   try {
-    const resp = await fetch(`https://${shop}/admin/api/${apiVersion}/shop.json`, {
-      headers: { 'X-Shopify-Access-Token': accessToken },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!resp.ok) return null;
-    const json = (await resp.json()) as { shop?: { email?: string; name?: string } };
-    const email = (json.shop?.email ?? '').trim().toLowerCase();
+    const res = await shopifyGraphql<{ shop?: { name?: string | null; email?: string | null; myshopifyDomain?: string | null } }>(
+      shop,
+      accessToken,
+      SHOP_INFO_QUERY,
+      {},
+      { apiVersion },
+    );
+    if (res.status !== 200 || !res.data?.shop) {
+      // Sin token en el log: sólo tienda, status y códigos de error.
+      console.warn('[shopify/provision] shop info failed', {
+        shop,
+        status: res.status,
+        codes: res.errors.map((e) => e.extensions?.code ?? 'unknown'),
+      });
+      return null;
+    }
+    const email = (res.data.shop.email ?? '').trim().toLowerCase();
     if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return null;
-    return { email, name: (json.shop?.name ?? shop).trim() || shop, domain: shop };
+    return { email, name: (res.data.shop.name ?? shop).trim() || shop, domain: shop };
   } catch {
     return null;
   }
