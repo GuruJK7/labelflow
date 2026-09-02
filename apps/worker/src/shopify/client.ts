@@ -1,15 +1,30 @@
 import axios, { AxiosInstance } from 'axios';
 import logger from '../logger';
+import type { ShopifyTokenSource } from './graphql-client';
 
-export function createShopifyClient(storeUrl: string, token: string): AxiosInstance {
+/**
+ * Con un string el cliente es el de siempre (header fijo, byte a byte). Con
+ * un proveedor (token expirable, D29) el header se resuelve en cada request
+ * para que un job largo no siga mandando un access vencido. REST no reintenta
+ * en 401: los tenants con token expirable hablan GraphQL (la app pública no
+ * tiene REST) y los legacy no vencen.
+ */
+export function createShopifyClient(storeUrl: string, token: ShopifyTokenSource): AxiosInstance {
   const client = axios.create({
     baseURL: `https://${storeUrl}/admin/api/2024-01`,
     headers: {
-      'X-Shopify-Access-Token': token,
+      ...(typeof token === 'string' ? { 'X-Shopify-Access-Token': token } : {}),
       'Content-Type': 'application/json',
     },
     timeout: 30_000,
   });
+
+  if (typeof token !== 'string') {
+    client.interceptors.request.use(async (config) => {
+      config.headers.set('X-Shopify-Access-Token', await token());
+      return config;
+    });
+  }
 
   client.interceptors.response.use((response) => {
     // Axios header values are `string | number | true | AxiosHeaders`, so we

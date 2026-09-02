@@ -1,6 +1,6 @@
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
-import { decryptIfPresent } from '@/lib/encryption';
+import { shopifyAccessForTenant } from '@/lib/shopify-access';
 
 export async function GET() {
   const auth = await getAuthenticatedTenant();
@@ -8,14 +8,14 @@ export async function GET() {
 
   const tenant = await db.tenant.findUnique({
     where: { id: auth.tenantId },
-    select: { shopifyStoreUrl: true, shopifyToken: true },
+    select: { id: true, shopifyStoreUrl: true, shopifyToken: true },
   });
 
   if (!tenant?.shopifyStoreUrl || !tenant?.shopifyToken) {
     return apiError('Shopify not configured', 400);
   }
 
-  const token = decryptIfPresent(tenant.shopifyToken);
+  const token = await shopifyAccessForTenant(tenant);
   if (!token) return apiError('Cannot decrypt token', 500);
 
   // Check current access scopes

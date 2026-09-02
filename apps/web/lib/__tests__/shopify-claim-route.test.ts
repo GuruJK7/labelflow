@@ -404,3 +404,28 @@ describe('POST /api/shopify/claim — escribe, y redirige siempre con 303 (Post/
     expect(location(res).searchParams.get('webhooks')).toBe('partial');
   });
 });
+
+describe('POST /api/shopify/claim — tokens offline expirables (D29)', () => {
+  it('la cookie trae el envelope entero → se persiste tal cual; Shopify recibe SÓLO el access', async () => {
+    const envelope = JSON.stringify({
+      v: 1,
+      access: 'shpat_pend_access',
+      exp: Date.now() + 3600 * 1000,
+      refresh: 'shprt_pend',
+      refreshExp: Date.now() + 7776000 * 1000,
+    });
+    const res = await post({ [PENDING_INSTALL_COOKIE]: sealPendingInstall({ shop: SHOP, token: envelope }) });
+    expect(location(res).searchParams.get('shopify')).toBe('connected');
+
+    const data = mocks.tx.tenant.create.mock.calls[0][0].data;
+    expect(decrypt(data.shopifyToken)).toBe(envelope);
+    expect(mocks.fetchShopInfo).toHaveBeenCalledWith(SHOP, 'shpat_pend_access');
+    expect(mocks.registerShopifyWebhooks.mock.calls[0][1]).toBe('shpat_pend_access');
+  });
+
+  it('un envelope corrupto en la cookie → claim_invalid, sin escribir', async () => {
+    const res = await post({ [PENDING_INSTALL_COOKIE]: sealPendingInstall({ shop: SHOP, token: '{"v":1}' }) });
+    expect(location(res).searchParams.get('shopify')).toBe('claim_invalid');
+    expect(mocks.tx.tenant.create).not.toHaveBeenCalled();
+  });
+});

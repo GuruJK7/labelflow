@@ -143,7 +143,12 @@ export type ProvisionOutcome =
  */
 export async function provisionFromShopify(
   info: ShopInfo,
-  accessToken: string,
+  /**
+   * Texto plano que se guarda cifrado en `Tenant.shopifyToken`: el envelope
+   * v1 (access + refresh, D29) o un token pelado si Shopify no dio refresh.
+   * Acá no se usa para hablar con Shopify, sólo se cifra y se persiste.
+   */
+  credentialPlain: string,
 ): Promise<ProvisionOutcome> {
   const slug = tenantSlugForShop(info.domain);
 
@@ -169,7 +174,7 @@ export async function provisionFromShopify(
         }
         await tx.tenant.update({
           where: { id: existingByShop.id },
-          data: { shopifyToken: encrypt(accessToken) },
+          data: { shopifyToken: encrypt(credentialPlain) },
         });
         return { kind: 'existing', userId: user.id, tenantId: existingByShop.id, email: info.email } as const;
       }
@@ -191,7 +196,7 @@ export async function provisionFromShopify(
                 slug,
                 name: info.name,
                 shopifyStoreUrl: info.domain,
-                shopifyToken: encrypt(accessToken),
+                shopifyToken: encrypt(credentialPlain),
                 apiKey: base.apiKey,
                 referralCode: base.referralCode,
               },

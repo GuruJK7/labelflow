@@ -4,7 +4,7 @@
  */
 
 import { db } from '@/lib/db';
-import { decrypt } from '@/lib/encryption';
+import { shopifyAccessForTenant } from '@/lib/shopify-access';
 
 const SHOPIFY_API_VERSION = '2024-01';
 const CHECKOUT_TOPICS = ['checkouts/create', 'checkouts/update'] as const;
@@ -19,7 +19,7 @@ const CHECKOUT_TOPICS = ['checkouts/create', 'checkouts/update'] as const;
 export async function registerShopifyRecoverWebhooks(tenantId: string): Promise<boolean> {
   const tenant = await db.tenant.findUnique({
     where: { id: tenantId },
-    select: { shopifyStoreUrl: true, shopifyToken: true },
+    select: { id: true, shopifyStoreUrl: true, shopifyToken: true },
   });
 
   if (!tenant?.shopifyStoreUrl || !tenant.shopifyToken) {
@@ -33,10 +33,8 @@ export async function registerShopifyRecoverWebhooks(tenantId: string): Promise<
     return false;
   }
 
-  let accessToken: string;
-  try {
-    accessToken = decrypt(tenant.shopifyToken);
-  } catch {
+  const accessToken = await shopifyAccessForTenant(tenant);
+  if (!accessToken) {
     console.warn(`[Recover Setup] Failed to decrypt Shopify token for tenant ${tenantId}`);
     return false;
   }
@@ -93,7 +91,7 @@ export async function registerShopifyRecoverWebhooks(tenantId: string): Promise<
 export async function unregisterShopifyRecoverWebhooks(tenantId: string): Promise<void> {
   const tenant = await db.tenant.findUnique({
     where: { id: tenantId },
-    select: { shopifyStoreUrl: true, shopifyToken: true },
+    select: { id: true, shopifyStoreUrl: true, shopifyToken: true },
   });
 
   if (!tenant?.shopifyStoreUrl || !tenant.shopifyToken) return;
@@ -101,12 +99,8 @@ export async function unregisterShopifyRecoverWebhooks(tenantId: string): Promis
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
   if (!appUrl) return;
 
-  let accessToken: string;
-  try {
-    accessToken = decrypt(tenant.shopifyToken);
-  } catch {
-    return;
-  }
+  const accessToken = await shopifyAccessForTenant(tenant);
+  if (!accessToken) return;
 
   const webhookUrl = `${appUrl}/api/webhooks/shopify/checkouts`;
 

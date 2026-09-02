@@ -41,6 +41,7 @@ import {
   SCOPES_PARAM,
 } from '../shopify-oauth';
 import { openPendingInstall } from '../shopify-pending-install';
+import { decrypt } from '../encryption';
 import { signQuery, makeRequest, location, cookieDeleted } from './_shopify-route-utils';
 
 const SECRET = process.env.SHOPIFY_API_SECRET as string;
@@ -310,5 +311,75 @@ describe('callback — rama A (App Store): destinos públicos, sin email en la q
     // Las cookies del OAuth se limpian igual.
     expect(cookieDeleted(res, STATE_COOKIE)).toBe(true);
     expect(cookieDeleted(res, FLOW_COOKIE)).toBe(true);
+  });
+});
+
+describe('callback — tokens offline expirables (D29)', () => {
+  const EXPIRING = {
+    access_token: 'shpat_nuevo',
+    scope: SCOPES_PARAM,
+    expires_in: 3600,
+    refresh_token: 'shprt_nuevo',
+    refresh_token_expires_in: 7776000,
+  };
+
+  function exchangeBody(): Record<string, unknown> {
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes('/admin/oauth/access_token'));
+    if (!call) throw new Error('no hubo canje');
+    return JSON.parse(String((call[1] as RequestInit).body));
+  }
+
+  it('el canje pide expiring: "1" y guarda el envelope entero cifrado (rama B)', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(EXPIRING), { status: 200 }));
+    mocks.getAuthenticatedUser.mockResolvedValue({ userId: 'u1' });
+    mocks.tenantFindFirst.mockResolvedValueOnce({ id: 'tenant-1', shopifyStoreUrl: null }).mockResolvedValueOnce(null);
+    mocks.tenantUpdate.mockResolvedValue({});
+    const antes = Date.now();
+    const res = await GET(makeRequest('/api/shopify/callback', signedQuery(), dashboardCookies));
+    expect(location(res).searchParams.get('shopify')).toBe('connected');
+
+    expect(exchangeBody()).toEqual({
+      client_id: 'client-id-de-test',
+      client_secret: 'secreto-de-test',
+      code: 'code-123',
+      expiring: '1',
+    });
+
+    const guardado = JSON.parse(decrypt(mocks.tenantUpdate.mock.calls[0][0].data.shopifyToken));
+    expect(guardado.v).toBe(1);
+    expect(guardado.access).toBe('shpat_nuevo');
+    expect(guardado.refresh).toBe('shprt_nuevo');
+    expect(guardado.exp).toBeGreaterThanOrEqual(antes + 3600 * 1000);
+    expect(guardado.exp).toBeLessThanOrEqual(Date.now() + 3600 * 1000);
+    expect(guardado.refreshExp).toBeGreaterThanOrEqual(antes + 7776000 * 1000);
+    // Los webhooks se registran con el access, no con el envelope.
+    expect(mocks.registerShopifyWebhooks.mock.calls[0][1]).toBe('shpat_nuevo');
+  });
+
+  it('si Shopify no devuelve refresh_token, el access se guarda pelado (legacy) y el canje igual pidió expiring', async () => {
+    mocks.getAuthenticatedUser.mockResolvedValue({ userId: 'u1' });
+    mocks.tenantFindFirst.mockResolvedValueOnce({ id: 'tenant-1', shopifyStoreUrl: null }).mockResolvedValueOnce(null);
+    mocks.tenantUpdate.mockResolvedValue({});
+    await GET(makeRequest('/api/shopify/callback', signedQuery(), dashboardCookies));
+    expect(exchangeBody().expiring).toBe('1');
+    expect(decrypt(mocks.tenantUpdate.mock.calls[0][0].data.shopifyToken)).toBe('shpat_nuevo');
+  });
+
+  it('rama A: provision recibe el envelope, shop info el access, y la cookie pendiente transporta el envelope entero', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(EXPIRING), { status: 200 }));
+    mocks.provisionFromShopify.mockResolvedValue({ kind: 'claim', email: 'dueno@acme.com' });
+    const res = await GET(makeRequest('/api/shopify/callback', signedQuery(), appStoreCookies));
+    expect(location(res).pathname).toBe('/api/shopify/claim');
+
+    expect(mocks.fetchShopInfo).toHaveBeenCalledWith(SHOP, 'shpat_nuevo');
+    const [, credencial] = mocks.provisionFromShopify.mock.calls[0];
+    const envelope = JSON.parse(credencial);
+    expect(envelope).toMatchObject({ v: 1, access: 'shpat_nuevo', refresh: 'shprt_nuevo' });
+
+    const cookie = res.cookies.get(PENDING_INSTALL_COOKIE)?.value;
+    expect(cookie).toBeTruthy();
+    expect(cookie).not.toContain('shpat_');
+    expect(cookie).not.toContain('shprt_');
+    expect(openPendingInstall(cookie)?.token).toBe(credencial);
   });
 });

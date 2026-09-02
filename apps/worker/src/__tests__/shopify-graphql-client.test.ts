@@ -94,6 +94,71 @@ describe('createShopifyGraphqlClient', () => {
     expect(calls).toHaveLength(1);
   });
 
+  // D29 (revisión): token expirable a mitad de un job largo.
+  it('proveedor de token: se le pide el token en CADA request (no queda capturado en el closure)', async () => {
+    const { fetchImpl, calls } = makeFetch([jsonResponse({ data: { a: 1 } }), jsonResponse({ data: { a: 2 } })]);
+    let n = 0;
+    const provider = vi.fn(async () => `shpat_v${++n}`);
+    const c = createShopifyGraphqlClient(SHOP, provider, { fetchImpl, ...noSleep });
+    await c.request('q');
+    await c.request('q');
+    expect(provider).toHaveBeenCalledTimes(2);
+    expect(provider.mock.calls.every((args) => args.length === 0)).toBe(true);
+    expect((calls[0].init.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_v1');
+    expect((calls[1].init.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_v2');
+  });
+
+  it('401 con proveedor: pide un token FORZADO y reintenta exactamente una vez con el nuevo', async () => {
+    const { fetchImpl, calls } = makeFetch([
+      jsonResponse({ errors: 'Invalid API key or access token' }, 401),
+      jsonResponse({ data: { ok: true } }),
+    ]);
+    const provider = vi.fn(async (opts?: { forceRefresh?: boolean }) => (opts?.forceRefresh ? 'shpat_ROTADO' : 'shpat_VENCIDO'));
+    const c = createShopifyGraphqlClient(SHOP, provider, { fetchImpl, ...noSleep });
+    const data = await c.request<{ ok: boolean }>('q');
+    expect(data.ok).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect((calls[0].init.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_VENCIDO');
+    expect((calls[1].init.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_ROTADO');
+    expect(provider).toHaveBeenCalledTimes(2);
+    expect(provider.mock.calls[1][0]).toEqual({ forceRefresh: true });
+  });
+
+  it('401 con proveedor que devuelve el MISMO token (sin secret, o 401 que no es vencimiento): no repite, sube HTTP_401 sin el token', async () => {
+    const { fetchImpl, calls } = makeFetch([jsonResponse({ errors: 'Invalid API key or access token' }, 401)]);
+    const provider = vi.fn(async () => TOKEN);
+    const c = createShopifyGraphqlClient(SHOP, provider, { fetchImpl, ...noSleep });
+    const err = (await c.request('q').catch((e) => e)) as ShopifyGraphqlError;
+    expect(err.code).toBe('HTTP_401');
+    expect(err.message).not.toContain(TOKEN);
+    expect(calls).toHaveLength(1);
+    expect(provider).toHaveBeenCalledTimes(2);
+  });
+
+  it('401 dos veces seguidas con proveedor: un solo reintento, después sube el 401', async () => {
+    const { fetchImpl, calls } = makeFetch([
+      jsonResponse({ errors: 'x' }, 401),
+      jsonResponse({ errors: 'x' }, 401),
+      jsonResponse({ data: { nunca: true } }),
+    ]);
+    let n = 0;
+    const provider = vi.fn(async () => `shpat_${++n}`);
+    const c = createShopifyGraphqlClient(SHOP, provider, { fetchImpl, ...noSleep });
+    const err = (await c.request('q').catch((e) => e)) as ShopifyGraphqlError;
+    expect(err.code).toBe('HTTP_401');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('el proveedor que tira (reinstalar / sin token) hace fallar el request con ese mismo error, sin llamar a Shopify', async () => {
+    const { fetchImpl, calls } = makeFetch([]);
+    const provider = vi.fn(async () => {
+      throw new Error('la tienda tiene que reinstalar la app');
+    });
+    const c = createShopifyGraphqlClient(SHOP, provider, { fetchImpl, ...noSleep });
+    await expect(c.request('q')).rejects.toThrow('reinstalar la app');
+    expect(calls).toHaveLength(0);
+  });
+
   it('ACCESS_DENIED con data null → ShopifyGraphqlError code ACCESS_DENIED', async () => {
     const { fetchImpl } = makeFetch([jsonResponse({
       data: null,

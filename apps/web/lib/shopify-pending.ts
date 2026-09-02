@@ -15,7 +15,7 @@
  */
 
 import { db } from '@/lib/db';
-import { decrypt } from '@/lib/encryption';
+import { shopifyAccessForTenant } from '@/lib/shopify-access';
 
 const SHOPIFY_API_VERSION = '2024-01';
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 min — a backlog number this stale is fine.
@@ -44,18 +44,16 @@ export async function getUnfulfilledCount(tenantId: string, force = false): Prom
 
   const tenant = await db.tenant.findUnique({
     where: { id: tenantId },
-    select: { shopifyStoreUrl: true, shopifyToken: true },
+    select: { id: true, shopifyStoreUrl: true, shopifyToken: true },
   });
   if (!tenant?.shopifyStoreUrl || !tenant.shopifyToken) {
     return { tenantId, count: null, cached: false, skipped: 'no-token' };
   }
 
-  let token: string;
-  try {
-    token = decrypt(tenant.shopifyToken);
-  } catch {
-    return { tenantId, count: null, cached: false, skipped: 'decrypt-failed' };
-  }
+  // Renueva bajo demanda si es un token del App Store (D29); legacy → mismo
+  // string que `decrypt`. null cubre "no descifra" y "no se pudo renovar".
+  const token = await shopifyAccessForTenant(tenant);
+  if (!token) return { tenantId, count: null, cached: false, skipped: 'decrypt-failed' };
 
   // Defense-in-depth: only ever fetch a *.myshopify.com host. The write paths
   // (settings/onboarding) already enforce this allowlist, but asserting it at
