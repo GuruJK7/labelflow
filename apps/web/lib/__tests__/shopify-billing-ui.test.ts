@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { VolumeSelector } from '@/app/(dashboard)/settings/billing/_components/VolumeSelector';
@@ -81,5 +83,41 @@ describe('registro del webhook de cobro', () => {
     const origen = 'https://autoenvia.com';
     const rutas = WEBHOOK_TOPICS.map((t) => webhookAddressFor(t, origen));
     expect(new Set(rutas).size).toBe(WEBHOOK_TOPICS.length);
+  });
+});
+
+/**
+ * La pantalla de compra COMPLETA, no sólo los botones.
+ *
+ * 🔴 POR QUÉ ESTE TEST EXISTE. Al sacar las capturas para el App Store, la
+ * pantalla de "Comprar envíos" seguía diciendo "MercadoPago los cobra en
+ * pesos" en la bajada, en el aviso de pago pendiente y en el sello de "Pago
+ * seguro" — aunque los botones ya fueran de Shopify. Una captura con la
+ * palabra MercadoPago adentro es exactamente lo que un revisor marca como
+ * cobro fuera de la Billing API (requisito 1.2). Los botones no alcanzan: lo
+ * que se revisa es la pantalla.
+ */
+describe('la pantalla de compra no nombra otro cobrador', () => {
+  const FUENTE = readFileSync(
+    join(__dirname, '..', '..', 'app', '(dashboard)', 'settings', 'billing', 'page.tsx'),
+    'utf8',
+  );
+
+  it('cada mención a MercadoPago está detrás de la bandera del riel', () => {
+    // Se recorre línea por línea: toda línea que nombre MercadoPago en TEXTO
+    // visible tiene que estar en una expresión que dependa de `shopifyBilling`.
+    const sospechosas = FUENTE.split('\n')
+      .map((l, i) => [i + 1, l] as const)
+      .filter(([, l]) => /MercadoPago/.test(l))
+      .filter(([, l]) => !/^\s*\*/.test(l)) // comentarios no se renderizan
+      .filter(([, l]) => !/onPayMercadoPago/.test(l)) // el nombre del prop no se ve
+      .filter(([, l]) => !/shopifyBilling/.test(l));
+    // Lo que queda tiene que estar dentro de un ternario abierto en las líneas
+    // previas; se acepta sólo si la línea anterior menciona la bandera.
+    const lineas = FUENTE.split('\n');
+    const huerfanas = sospechosas.filter(([n]) =>
+      !lineas.slice(Math.max(0, n - 6), n - 1).some((l) => /shopifyBilling/.test(l)),
+    );
+    expect(huerfanas.map(([n, l]) => `${n}: ${l.trim()}`)).toEqual([]);
   });
 });
