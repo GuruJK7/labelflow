@@ -9,7 +9,7 @@ vi.mock('@/lib/api-utils', () => ({ getAuthenticatedTenant: mocks.getAuthenticat
 vi.mock('@/lib/db', () => ({ db: { tenant: { findFirst: mocks.tenantFindFirst } } }));
 
 import { GET } from '@/app/api/shopify/install/route';
-import { STATE_COOKIE, TENANT_COOKIE, FLOW_COOKIE, FLOW_APPSTORE } from '../shopify-oauth';
+import { STATE_COOKIE, TENANT_COOKIE, FLOW_COOKIE, FLOW_APPSTORE, NEXT_COOKIE } from '../shopify-oauth';
 import { makeRequest, location, cookieDeleted, fakeTenantFindFirst } from './_shopify-route-utils';
 
 beforeEach(() => {
@@ -53,5 +53,45 @@ describe('/api/shopify/install', () => {
     const loc = location(res);
     expect(loc.pathname).toBe('/login');
     expect(loc.searchParams.get('next')).toBe('/api/shopify/install?shop=acme.myshopify.com');
+  });
+
+  describe('next= (D33: volver al wizard)', () => {
+    it('next=/onboarding → cookie NEXT con esa ruta', async () => {
+      const res = await GET(makeRequest('/api/shopify/install', { shop: 'acme.myshopify.com', next: '/onboarding' }));
+      expect(location(res).pathname).toBe('/admin/oauth/authorize');
+      expect(res.cookies.get(NEXT_COOKIE)?.value).toBe('/onboarding');
+    });
+
+    it('next absoluto o protocolo-relativo → NO se setea (y se borra una vieja)', async () => {
+      for (const next of ['https://evil.com', '//evil.com', 'javascript:alert(1)']) {
+        const res = await GET(makeRequest('/api/shopify/install', { shop: 'acme.myshopify.com', next }));
+        expect(location(res).pathname).toBe('/admin/oauth/authorize');
+        expect(res.cookies.get(NEXT_COOKIE)?.value ?? '').toBe('');
+      }
+    });
+
+    it('sin next → sin cookie NEXT (se borra) y los errores siguen yendo a /settings', async () => {
+      const res = await GET(makeRequest('/api/shopify/install', { shop: 'acme.myshopify.com' }));
+      expect(cookieDeleted(res, NEXT_COOKIE)).toBe(true);
+      const bad = await GET(makeRequest('/api/shopify/install', { shop: 'acme.evil.com' }));
+      expect(location(bad).pathname).toBe('/settings');
+      expect(location(bad).searchParams.get('shopify')).toBe('bad_shop');
+    });
+
+    it('con next válido, los errores de este paso vuelven al next (bad_shop, already_linked)', async () => {
+      const bad = await GET(makeRequest('/api/shopify/install', { shop: 'acme.evil.com', next: '/onboarding' }));
+      expect(location(bad).pathname).toBe('/onboarding');
+      expect(location(bad).searchParams.get('shopify')).toBe('bad_shop');
+      mocks.tenantFindFirst.mockResolvedValueOnce({ id: 'tenant-ajeno' });
+      const linked = await GET(makeRequest('/api/shopify/install', { shop: 'acme.myshopify.com', next: '/onboarding' }));
+      expect(location(linked).pathname).toBe('/onboarding');
+      expect(location(linked).searchParams.get('shopify')).toBe('already_linked');
+    });
+
+    it('sin sesión: el next viaja dentro del back al login', async () => {
+      mocks.getAuthenticatedTenant.mockResolvedValue(null);
+      const res = await GET(makeRequest('/api/shopify/install', { shop: 'acme.myshopify.com', next: '/onboarding' }));
+      expect(location(res).searchParams.get('next')).toBe('/api/shopify/install?shop=acme.myshopify.com&next=%2Fonboarding');
+    });
   });
 });

@@ -53,6 +53,8 @@ const updateSchema = z.object({
   fulfillMode: z.enum(['off', 'on', 'always']).optional(),
   consolidateConsecutiveOrders: z.boolean().optional(),
   consolidationWindowMinutes: z.number().min(1).max(1440).optional(),
+  // Contrareembolso (D33/H7): columna existente, sin UI hasta ahora.
+  codEnabled: z.boolean().optional(),
   defaultPrinter: z.string().max(200).optional(),
   autoPrintEnabled: z.boolean().optional(),
   orderSortDirection: z.enum(['oldest_first', 'newest_first']).optional(),
@@ -110,6 +112,7 @@ export async function GET() {
       productTypeCache: true,
       consolidateConsecutiveOrders: true,
       consolidationWindowMinutes: true,
+      codEnabled: true,
       paymentAutoEnabled: true,
       paymentCardBrand: true,
       paymentCardLast4: true,
@@ -210,6 +213,7 @@ export async function GET() {
     productTypeCache: tenant.productTypeCache,
     consolidateConsecutiveOrders: tenant.consolidateConsecutiveOrders,
     consolidationWindowMinutes: tenant.consolidationWindowMinutes,
+    codEnabled: tenant.codEnabled,
     // Auto-payment config — never leak CVC, return boolean "set" instead
     paymentAutoEnabled: tenant.paymentAutoEnabled,
     paymentCardBrand: tenant.paymentCardBrand,
@@ -288,6 +292,7 @@ export async function PUT(req: NextRequest) {
   if (input.allowedProductTypes !== undefined) data.allowedProductTypes = input.allowedProductTypes;
   if (input.consolidateConsecutiveOrders !== undefined) data.consolidateConsecutiveOrders = input.consolidateConsecutiveOrders;
   if (input.consolidationWindowMinutes !== undefined) data.consolidationWindowMinutes = input.consolidationWindowMinutes;
+  if (input.codEnabled !== undefined) data.codEnabled = input.codEnabled;
 
   // Auto-payment (plain fields)
   if (input.paymentAutoEnabled !== undefined) data.paymentAutoEnabled = input.paymentAutoEnabled;

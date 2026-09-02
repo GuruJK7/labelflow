@@ -271,6 +271,12 @@ export const STATE_COOKIE = 'shopify_oauth_state';
 export const TENANT_COOKIE = 'shopify_oauth_tenant';
 /** Vida corta: el usuario va y vuelve de Shopify en segundos. */
 export const STATE_TTL_SECONDS = 600;
+/**
+ * A dónde volver después del callback (rama dashboard). La pone /install a
+ * partir de `?next=` ya validado con `safeRelativePath`; sin ella el callback
+ * vuelve a /settings como siempre. Misma vida que el `state`.
+ */
+export const NEXT_COOKIE = 'shopify_oauth_next';
 
 /**
  * Instalación del App Store pendiente de reclamo (D11). El token de la tienda
