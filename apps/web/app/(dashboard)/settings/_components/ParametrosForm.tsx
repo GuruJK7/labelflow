@@ -568,7 +568,12 @@ export function ParametrosForm({
         que="Cuando sale la guía, le mandamos un email a tu cliente con el número de seguimiento, desde tu propia casilla."
         paraQuien="Tiendas que quieren avisar sin depender de Shopify."
         ejemplo="Gmail: servidor smtp.gmail.com, puerto 587, tu usuario y una contraseña de aplicación."
-        aviso="Se manda sólo si cargás servidor, usuario y contraseña. Para apagarlo, dejalos vacíos."
+        // Lo que hace el worker (process-orders.job.ts, "Send email notification"):
+        // manda sólo si emailHost, emailUser y emailPass están los tres guardados.
+        // Y PUT /api/v1/settings no acepta vacíos para esos campos: guardar con
+        // los inputs en blanco NO borra lo guardado, así que no se promete un
+        // "apagar" que no existe.
+        aviso={EMAIL_AVISO}
         footer={
           <SaveRow
             label="Guardar"
@@ -640,6 +645,15 @@ export function ParametrosForm({
  *  sin un toggle que prometa lo que hoy no se cumple. */
 export const COD_PROXIMAMENTE =
   'Todavía no se puede prender. Cuando esté disponible vas a poder activarlo desde este mismo lugar; hasta entonces todas las guías salen sin cobro en la entrega.';
+
+/** Aviso al cliente por email: dice exactamente lo que hace el worker
+ *  (`process-orders.job.ts`, "Send email notification": manda sólo si
+ *  emailHost, emailUser y emailPass están los tres guardados) y lo que NO hace
+ *  esta pantalla: `PUT /api/v1/settings` no acepta vacíos para esos campos, así
+ *  que guardar con los inputs en blanco no borra nada. Antes prometía "para
+ *  apagarlo, dejalos vacíos", que no apagaba nada (revisión 2026-09-02). */
+export const EMAIL_AVISO =
+  'Se manda sólo cuando servidor, usuario y contraseña están los tres guardados; si falta alguno, no sale ningún email. Guardar con los campos vacíos no borra lo que ya está guardado: si querés dejar de avisar, escribinos y lo apagamos.';
 
 /** Texto único del paso 4 / Configuración para Dashboard con Excel. */
 export const AVISO_DASHBOARD_TITULO = 'Con Dashboard con Excel no hay parámetros para ajustar';
