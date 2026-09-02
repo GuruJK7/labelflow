@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { SettingsNav } from '../_components/SettingsNav';
 import { VolumeSelector } from './_components/VolumeSelector';
-import { formatUsdMilli } from '@/lib/pricing';
+import { formatUsdMilli, formatUsdUnitMilli } from '@/lib/pricing';
 import {
   Check,
   AlertCircle,
@@ -31,6 +31,13 @@ interface Pack {
 }
 
 const usd = (milli: number) => formatUsdMilli(BigInt(Math.round(milli)));
+/**
+ * Precios POR ENVÍO. Van con el formateador exacto en milésimos y no con `usd`:
+ * el escalón de 1.000 vale 0,175 y con dos decimales se leería "0,18" — el
+ * número que se descartó justamente porque no cierra contra los 7,00 UYU
+ * que se cobran.
+ */
+const usdUnit = (milli: number) => formatUsdUnitMilli(BigInt(Math.round(milli)));
 
 // Marketing copy per pack — keeps the JSX clean and centralizes voice.
 // If business adds/renames packs, update this map.
@@ -464,7 +471,7 @@ function BillingContent() {
                         isBest ? 'text-amber-400' : 'text-cyan-400'
                       }`}
                     >
-                      USD {usd(pack.pricePerShipmentUsdMilli)}
+                      USD {usdUnit(pack.pricePerShipmentUsdMilli)}
                     </span>{' '}
                     por envío
                   </p>

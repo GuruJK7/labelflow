@@ -48,7 +48,9 @@ describe('<VolumeSelector>', () => {
 
   it('muestra la escalera completa de ocho escalones con sus precios', () => {
     const html = render([]);
-    for (const precio of ['USD 0,50', 'USD 0,42', 'USD 0,37', 'USD 0,30', 'USD 0,25', 'USD 0,18', 'USD 0,14', 'USD 0,11']) {
+    // 0,175 y no 0,18: el precio por envío se muestra exacto en milésimos.
+    const precios = ['USD 0,50', 'USD 0,42', 'USD 0,37', 'USD 0,30', 'USD 0,25', 'USD 0,175', 'USD 0,14', 'USD 0,11'];
+    for (const precio of precios) {
       expect(html, precio).toContain(precio);
     }
     expect(html).toContain('La escalera completa');

@@ -3,7 +3,12 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Zap, X, Gift } from 'lucide-react';
-import { PRICING_TIERS, periodTotalUsdMilli, formatUsdMilli } from '@/lib/pricing';
+import {
+  PRICING_TIERS,
+  periodTotalUsdMilli,
+  formatUsdMilli,
+  formatUsdUnitMilli,
+} from '@/lib/pricing';
 
 const STORAGE_KEY = 'lf_exhausted_dismissed_at';
 const DISMISS_TTL_MS = 1000 * 60 * 30; // 30 min — re-show frequently when at 0
@@ -124,7 +129,8 @@ function PackTeaser({ onCtaClick }: { onCtaClick: () => void }) {
 
   const savingsPct = Math.round(((baseUnitMilli - unitUsdMilli) / baseUnitMilli) * 100);
   const totalUsd = formatUsdMilli(totalUsdMilli);
-  const perShipmentUsd = formatUsdMilli(BigInt(Math.round(unitUsdMilli)));
+  // Por envío: exacto en milésimos, o el escalón de 0,175 se leería 0,18.
+  const perShipmentUsd = formatUsdUnitMilli(BigInt(Math.round(unitUsdMilli)));
 
   return (
     <Link

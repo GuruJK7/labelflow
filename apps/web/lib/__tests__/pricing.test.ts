@@ -44,7 +44,7 @@ describe('escalera D35 — los ocho escalones', () => {
       [100, 370],
       [250, 300],
       [500, 250],
-      [1000, 180],
+      [1000, 175],
       [2500, 140],
       [5000, 110],
     ]);
@@ -92,8 +92,8 @@ describe('escalera D35 — los ocho escalones', () => {
       [499, 250, 300],
       [500, 500, 250],
       [999, 500, 250],
-      [1000, 1000, 180],
-      [2499, 1000, 180],
+      [1000, 1000, 175],
+      [2499, 1000, 175],
       [2500, 2500, 140],
       [4999, 2500, 140],
       [5000, 5000, 110],
@@ -170,9 +170,9 @@ describe('total del período — monotonía', () => {
       [249, 250],
       [417, 500],
       [499, 500],
-      [721, 1000],
+      [701, 1000],
       [999, 1000],
-      [1945, 2500],
+      [2001, 2500],
       [2499, 2500],
       [3929, 5000],
       [4999, 5000],
@@ -195,7 +195,7 @@ describe('total del período — monotonía', () => {
       [100, 37_000],
       [250, 75_000],
       [500, 125_000],
-      [1000, 180_000],
+      [1000, 175_000],
       [2500, 350_000],
       [5000, 550_000],
     ];
@@ -206,8 +206,9 @@ describe('total del período — monotonía', () => {
 
   it('marca cuando el cliente paga el techo de un escalón mejor', () => {
     expect(quoteUsd(800).cappedByBetterTier).toBe(true);
-    expect(Number(quoteUsd(800).totalUsdMilli)).toBe(180_000);
-    expect(Number(quoteUsd(800).effectiveUnitUsdMilli)).toBe(225); // 180/800
+    expect(Number(quoteUsd(800).totalUsdMilli)).toBe(175_000);
+    // 175,00/800 = 0,21875; el efectivo trunca para no mostrar de más.
+    expect(Number(quoteUsd(800).effectiveUnitUsdMilli)).toBe(218);
     expect(quoteUsd(1000).cappedByBetterTier).toBe(false);
     expect(quoteUsd(10).cappedByBetterTier).toBe(false);
   });
@@ -293,7 +294,7 @@ describe('conversión a pesos', () => {
       [100, 1480],
       [250, 3000],
       [500, 5000],
-      [1000, 7200],
+      [1000, 7000],
       [2500, 14000],
       [5000, 22000],
     ];
@@ -325,7 +326,7 @@ describe('conversión a pesos', () => {
 
   it('usdMilliToUyuMilli conserva los milésimos', () => {
     expect(usdMilliToUyuMilli(500n, 40_000n)).toBe(20_000n); // 0,50 × 40 = 20 UYU
-    expect(usdMilliToUyuMilli(180n, 40_000n)).toBe(7_200n); // 0,18 × 40 = 7,20 UYU
+    expect(usdMilliToUyuMilli(175n, 40_000n)).toBe(7_000n); // 0,175 × 40 = 7 UYU exactos
   });
 
   it('rechaza tipos de cambio implausibles', () => {
@@ -364,35 +365,45 @@ describe('USD_UYU_RATE — la env var', () => {
 });
 
 describe('la promesa de D35: ningún cliente actual paga más', () => {
-  it('el techo para que se cumpla sin asterisco es 38,888 UYU/USD', () => {
-    expect(maxRateWithoutIncreaseMilli()).toBe(38_888n);
-    expect(legacyPriceRegressions(38_888n)).toEqual([]);
+  it('el techo para que se cumpla es 40 UYU/USD: EXACTO el tipo base', () => {
+    // 🔴 Antes de que el escalón de 1.000 pasara a 0,175 este techo era 38,888
+    // y el tipo base (40) ya estaba POR ENCIMA — de ahí salía la excepción.
+    // Ahora el techo lo fijan cuatro escalones a la vez, todos los que caen
+    // redondos: 20/0,50 · 12/0,30 · 10/0,25 · 7/0,175 dan los cuatro 40.000.
+    expect(maxRateWithoutIncreaseMilli()).toBe(BASE_USD_UYU_RATE_MILLI);
+    expect(maxRateWithoutIncreaseMilli()).toBe(40_000n);
+    expect(legacyPriceRegressions(40_000n)).toEqual([]);
+    // Y no hay margen: 40,001 ya encarece al primer escalón. Los otros tres
+    // que empatan en 40 aguantan un poquito más sólo porque la suba todavía no
+    // llega al milésimo de peso y el redondeo half-up se la come; a 40,1 ya
+    // suben los cuatro.
+    expect(legacyPriceRegressions(40_001n).map((r) => r.minShipments)).toEqual([0]);
+    expect(legacyPriceRegressions(40_100n).map((r) => r.minShipments)).toEqual([0, 250, 500, 1000]);
   });
 
-  it('al tipo base (40) sube UN solo escalón: el de 1000', () => {
-    // 🔴 Es la única excepción de D35 y está asumida: 0,18 es 7/40 = 0,175
-    // redondeado para arriba. Este test existe para que no se olvide ni crezca.
-    const subas = legacyPriceRegressions(BASE_USD_UYU_RATE_MILLI);
-    expect(subas).toHaveLength(1);
-    expect(subas[0].minShipments).toBe(1000);
-    expect(subas[0].legacyUyu).toBe(7);
-    expect(Number(subas[0].newUyuMilli)).toBe(7_200); // 7,20 UYU: +2,86 %
+  it('al tipo base (40) NO sube ningún escalón: la promesa vale sin asterisco', () => {
+    // 🔴 Este es el test de la decisión de Adrian del 2026-09-02. Con el
+    // escalón de 1.000 en 0,18 acá había exactamente una suba (7,00 → 7,20,
+    // +2,86 %); con 0,175 no hay ninguna. Si alguien vuelve a mover ese
+    // número para arriba, esta lista deja de estar vacía y el test cae.
+    expect(legacyPriceRegressions(BASE_USD_UYU_RATE_MILLI)).toEqual([]);
   });
 
-  it('los otros cinco escalones viejos bajan o quedan igual al tipo base', () => {
+  it('los seis escalones viejos bajan o quedan igual al tipo base', () => {
     for (const [corte, viejo] of LEGACY_UNIT_PRICE_UYU) {
-      if (corte === 1000) continue;
       const nuevo = usdMilliToUyuMilli(unitPriceUsdMilliFor(corte), BASE_USD_UYU_RATE_MILLI);
       expect(nuevo <= BigInt(viejo) * 1000n, `escalón ${corte}`).toBe(true);
     }
+    // El de 1.000 es el que se movió: 7 UYU clavados, ni un milésimo más.
+    expect(usdMilliToUyuMilli(unitPriceUsdMilliFor(1000), BASE_USD_UYU_RATE_MILLI)).toBe(7_000n);
   });
 
-  it('LA SUBA ES UN REDONDEO PARA ARRIBA, y es el único de la escalera', () => {
-    // 🔴 Lo que hace que esto sea una decisión y no un capricho: de los seis
-    // escalones viejos, tres caen justo en un centavo (0,50 / 0,30 / 0,25) y
-    // tres no. De esos tres, DOS se redondearon para abajo —a favor del
-    // cliente— y uno solo para arriba, y es exactamente el que rompe la
-    // promesa. La escalera de D35 no tiene una regla de redondeo consistente.
+  it('NINGÚN escalón se redondea para arriba: dos para abajo y cuatro exactos', () => {
+    // Lo que arregló la decisión de Adrian: de los seis escalones viejos, el
+    // borrador de D35 redondeaba DOS para abajo (0,425 → 0,42 y 0,375 → 0,37,
+    // a favor del cliente) y UNO para arriba (0,175 → 0,18) — justo el que
+    // rompía la promesa. Con 0,175 no queda ningún redondeo en contra del
+    // cliente, y este test cae si aparece uno.
     const direccion = [...LEGACY_UNIT_PRICE_UYU].map(([corte, viejoUyu]) => {
       // El precio en USD exacto que sale de dividir por el tipo base, en milésimos.
       const exactoUsdMilli = (BigInt(viejoUyu) * 1_000_000n) / BASE_USD_UYU_RATE_MILLI;
@@ -410,31 +421,30 @@ describe('la promesa de D35: ningún cliente actual paga más', () => {
       [100, 375, 370, 'abajo'],
       [250, 300, 300, 'exacto'],
       [500, 250, 250, 'exacto'],
-      [1000, 175, 180, 'arriba'], // el único, y el único que sube en pesos
+      [1000, 175, 175, 'exacto'],
     ]);
-    expect(direccion.filter((d) => d[3] === 'arriba')).toHaveLength(1);
+    expect(direccion.filter((d) => d[3] === 'arriba')).toHaveLength(0);
+    expect(direccion.filter((d) => d[3] === 'abajo')).toHaveLength(2);
   });
 
-  it('las dos salidas posibles cierran la promesa sin tocar nada más', () => {
-    // Para que Adrian decida sobre números, no sobre adjetivos. Ninguna de las
-    // dos se aplica acá: la escalera queda como la dictó D35.
+  it('CONTRAFÁCTICO: con el 0,18 del borrador la promesa se rompía', () => {
+    // El valor descartado, medido, para que nadie lo reponga "porque queda más
+    // redondo". Es lo único que queda del 0,18 en el repo.
     const conEscalon = (usdMilli: bigint) =>
       PRICING_TIERS.map((t) =>
         t.minShipments === 1000 ? { ...t, unitPriceUsdMilli: usdMilli } : t,
       );
 
-    // (a) 175n = 7/40 exacto. El escalón queda en 7,00 UYU: nadie paga más.
+    const conViejo = legacyPriceRegressions(BASE_USD_UYU_RATE_MILLI, conEscalon(180n));
+    expect(conViejo).toHaveLength(1);
+    expect(conViejo[0].minShipments).toBe(1000);
+    expect(Number(conViejo[0].newUyuMilli)).toBe(7_200); // 7,20 en vez de 7,00
+    expect(formatPercent(conViejo[0].newUyuMilli, 7_000n)).toBe('2,9'); // +2,86 %
+
+    // Y lo vigente, contra lo que se comparó: 0,175 no rompe nada.
     expect(legacyPriceRegressions(BASE_USD_UYU_RATE_MILLI, conEscalon(175n))).toEqual([]);
     expect(usdMilliToUyuMilli(175n, BASE_USD_UYU_RATE_MILLI)).toBe(7_000n);
-
-    // (b) 170n = redondear para abajo al centavo, como los otros dos. 6,80 UYU.
-    expect(legacyPriceRegressions(BASE_USD_UYU_RATE_MILLI, conEscalon(170n))).toEqual([]);
-    expect(usdMilliToUyuMilli(170n, BASE_USD_UYU_RATE_MILLI)).toBe(6_800n);
-
-    // Las dos siguen siendo una escalera válida (más barata que 0,25, más cara
-    // que 0,14): cambiar ese número no rompe ningún invariante estructural.
     expect(() => assertPricingTiersValid(conEscalon(175n))).not.toThrow();
-    expect(() => assertPricingTiersValid(conEscalon(170n))).not.toThrow();
   });
 
   it('a 44 UYU/USD (el tipo hardcodeado en otros repos) suben LOS SEIS escalones', () => {
@@ -454,20 +464,23 @@ describe('guardarraíl: mover USD_UYU_RATE deja rastro', () => {
    * con el valor de la env. Antes de esto, subir la env a 44 encarecía los seis
    * escalones viejos entre 8,7 % y 13,1 % sin dejar una línea de log.
    */
-  it('la línea de base son las subas ya asumidas por D35: al tipo base no hay ninguna nueva', () => {
+  it('la línea de base quedó vacía: la escalera ya no tiene subas asumidas', () => {
     expect(unexpectedLegacyRegressions(BASE_USD_UYU_RATE_MILLI)).toEqual([]);
     // Y por debajo del techo tampoco, obviamente.
     expect(unexpectedLegacyRegressions(38_888n)).toEqual([]);
     expect(unexpectedLegacyRegressions(20_000n)).toEqual([]);
   });
 
-  it('a 44 las cinco subas NUEVAS son las que D35 no previó (la de 1000 ya estaba)', () => {
+  it('a 44 las SEIS subas son nuevas: ya no hay ninguna descontada de antes', () => {
+    // Con el escalón de 1.000 en 0,18 este test esperaba cinco: la del de
+    // 1.000 estaba en la línea de base y se descontaba. Ahora no se descuenta
+    // ninguna, así que el aviso reporta el daño completo.
     expect(unexpectedLegacyRegressions(44_000n).map((r) => r.minShipments)).toEqual([
-      0, 50, 100, 250, 500,
+      0, 50, 100, 250, 500, 1000,
     ]);
   });
 
-  it('al tipo base el checkout NO grita: la excepción de D35 no es ruido', () => {
+  it('al tipo base el checkout NO grita: al tipo base no sube nadie', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(getUsdUyuRateMilli({ [USD_UYU_RATE_ENV]: '40' })).toBe(40_000n);
     expect(getUsdUyuRateMilli({})).toBe(40_000n);
@@ -488,9 +501,9 @@ describe('guardarraíl: mover USD_UYU_RATE deja rastro', () => {
     }
     expect(msg).toContain('22,00 UYU'); // 0,50 × 44
     expect(msg).toContain('+10,0 %');
-    expect(msg).toContain('7,92 UYU'); // el de 1000: 0,18 × 44
-    expect(msg).toContain('+13,1 %');
-    expect(msg).toContain('38,888'); // el techo
+    expect(msg).toContain('7,70 UYU'); // el de 1000: 0,175 × 44
+    expect(msg).toContain('+8,7 %'); // el de 50: 17 → 18,48
+    expect(msg).toContain('sube es 40 UYU/USD'); // el techo, ahora igual al base
     expect(msg).toContain('ALERTA DE PRECIO');
     spy.mockRestore();
   });

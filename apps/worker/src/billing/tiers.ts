@@ -100,7 +100,7 @@ function tier(minShipments: number, unitPriceUsdMilli: bigint, label: string): T
  * en dólares por envío según el volumen mensual:
  *
  *     0 → 0,50 · 50 → 0,42 · 100 → 0,37 · 250 → 0,30
- *     500 → 0,25 · 1000 → 0,18 · 2500 → 0,14 · 5000 → 0,11
+ *     500 → 0,25 · 1000 → 0,175 · 2500 → 0,14 · 5000 → 0,11
  *
  * Está duplicada, no importada: `apps/worker` compila a CommonJS con
  * `rootDir: "./src"` y no puede importar fuera de su árbol. El test
@@ -108,9 +108,9 @@ function tier(minShipments: number, unitPriceUsdMilli: bigint, label: string): T
  * escalón por escalón y falla si alguien mueve una sola.
  *
  * Los seis primeros escalones son los precios que ya regían en pesos
- * (20/17/15/12/10/7) al tipo base; el de 1.000 queda en 7,20 en vez de 7,00
- * (0,18 × 40) — la única suba, documentada en D35 y medida por
- * `legacyPriceRegressions()` del lado web.
+ * (20/17/15/12/10/7) al tipo base, los seis EXACTOS o más baratos: el de 1.000
+ * es 0,175 (= 7/40) desde que Adrian lo firmó el 2026-09-02, así que ninguno
+ * sube. Medido del lado web por `legacyPriceRegressions()`.
  *
  * Debe quedar ordenado por minShipments ascendente. `assertTiersValid()` lo
  * verifica y corre al importar el módulo.
@@ -121,7 +121,7 @@ export const TIERS: readonly Tier[] = Object.freeze([
   tier(100, 370n, 'Desde 100 envíos/mes'),
   tier(250, 300n, 'Desde 250 envíos/mes'),
   tier(500, 250n, 'Desde 500 envíos/mes'),
-  tier(1000, 180n, 'Desde 1000 envíos/mes'),
+  tier(1000, 175n, 'Desde 1000 envíos/mes'),
   tier(2500, 140n, 'Desde 2500 envíos/mes'),
   tier(5000, 110n, 'Desde 5000 envíos/mes'),
 ]);
@@ -204,11 +204,11 @@ export function tierFor(n: number, tiers: readonly Tier[] = TIERS): Tier {
  *     89..99     pagan más que 100    (89×0,42 = 37,38   >  100×0,37 = 37,00)
  *     203..249   pagan más que 250    (203×0,37 = 75,11  >  250×0,30 = 75,00)
  *     417..499   pagan más que 500    (417×0,30 = 125,10 >  500×0,25 = 125,00)
- *     721..999   pagan más que 1000   (721×0,25 = 180,25 > 1000×0,18 = 180,00)
- *     1945..2499 pagan más que 2500   (1945×0,18 = 350,10 > 2500×0,14 = 350,00)
+ *     701..999   pagan más que 1000   (701×0,25 = 175,25 > 1000×0,175 = 175,00)
+ *     2001..2499 pagan más que 2500   (2001×0,175 = 350,175 > 2500×0,14 = 350,00)
  *     3929..4999 pagan más que 5000   (3929×0,14 = 550,06 > 5000×0,11 = 550,00)
  *
- * Un cliente con 800 envíos pagaría USD 200 mientras uno con 1.000 paga 180.
+ * Un cliente con 800 envíos pagaría USD 200 mientras uno con 1.000 paga 175.
  * Eso no es un tarifario, es una trampa: castiga al que está a punto de crecer,
  * y el primero que lo note tiene razón en enojarse.
  *

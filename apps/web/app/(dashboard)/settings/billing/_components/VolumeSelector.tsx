@@ -10,7 +10,7 @@ import {
   listPricingSteps,
   type VolumeQuote,
 } from '@/lib/credit-packs';
-import { formatUsdMilli } from '@/lib/pricing';
+import { formatUsdMilli, formatUsdUnitMilli } from '@/lib/pricing';
 
 /**
  * Selector "¿Cuántos envíos hacés por mes?" (D34, reexpresado en dólares por D35).
@@ -47,6 +47,12 @@ export interface VolumeSelectorProps {
 
 const fmt = (n: number) => n.toLocaleString('es-UY');
 const usd = (milli: number) => formatUsdMilli(BigInt(Math.round(milli)));
+/**
+ * Precios y diferencias POR ENVÍO: exactos en milésimos. Con dos decimales, el
+ * escalón de 1.000 (0,175) se leería "0,18" y el efectivo con 800 envíos
+ * (0,218) se leería "0,22" — los dos por encima de lo que se cobra.
+ */
+const usdUnit = (milli: number) => formatUsdUnitMilli(BigInt(Math.round(milli)));
 
 export function VolumeSelector({
   usdUyuRateMilli,
@@ -164,7 +170,7 @@ export function VolumeSelector({
                   Precio por envío
                 </p>
                 <p className="text-3xl font-bold text-white tabular-nums">
-                  USD {usd(quote.effectiveUnitUsdMilli)}
+                  USD {usdUnit(quote.effectiveUnitUsdMilli)}
                 </p>
                 <p className="text-xs text-cyan-400/90 mt-1">{currentStep}</p>
               </div>
@@ -209,10 +215,10 @@ export function VolumeSelector({
                   </span>{' '}
                   pagás{' '}
                   <span className="text-white font-semibold tabular-nums">
-                    USD {usd(quote.nextStep.savesPerShipmentUsdMilli)} menos por envío
+                    USD {usdUnit(quote.nextStep.savesPerShipmentUsdMilli)} menos por envío
                   </span>
                   : {quote.nextStep.label.toLowerCase()}, USD{' '}
-                  {usd(quote.nextStep.unitPriceUsdMilli)} cada uno.{' '}
+                  {usdUnit(quote.nextStep.unitPriceUsdMilli)} cada uno.{' '}
                   <button
                     type="button"
                     onClick={() => pickPreset(quote.nextStep!.minShipments)}
@@ -336,7 +342,7 @@ export function VolumeSelector({
                         )}
                       </td>
                       <td className="py-2.5 px-2 text-right tabular-nums font-semibold">
-                        USD {usd(step.unitPriceUsdMilli)}
+                        USD {usdUnit(step.unitPriceUsdMilli)}
                       </td>
                       <td className="py-2.5 px-2 text-right tabular-nums">
                         USD {usd(step.totalAtStepUsdMilli)}

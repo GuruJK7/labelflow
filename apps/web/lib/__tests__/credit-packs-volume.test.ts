@@ -49,7 +49,7 @@ describe('catálogo', () => {
       ['pack_100', 100, 370, 37_000, 1_480, 14.8],
       ['pack_250', 250, 300, 75_000, 3_000, 12],
       ['pack_500', 500, 250, 125_000, 5_000, 10],
-      ['pack_1000', 1000, 180, 180_000, 7_200, 7.2],
+      ['pack_1000', 1000, 175, 175_000, 7_000, 7],
       ['pack_2500', 2500, 140, 350_000, 14_000, 5.6],
       ['pack_5000', 5000, 110, 550_000, 22_000, 4.4],
     ]);
@@ -111,7 +111,7 @@ describe('listPricingSteps', () => {
       { minShipments: 100, label: 'Desde 100 envíos por mes', unitPriceUsdMilli: 370, totalAtStepUsdMilli: 37_000, totalAtStepUyu: 1_480 },
       { minShipments: 250, label: 'Desde 250 envíos por mes', unitPriceUsdMilli: 300, totalAtStepUsdMilli: 75_000, totalAtStepUyu: 3_000 },
       { minShipments: 500, label: 'Desde 500 envíos por mes', unitPriceUsdMilli: 250, totalAtStepUsdMilli: 125_000, totalAtStepUyu: 5_000 },
-      { minShipments: 1000, label: 'Desde 1000 envíos por mes', unitPriceUsdMilli: 180, totalAtStepUsdMilli: 180_000, totalAtStepUyu: 7_200 },
+      { minShipments: 1000, label: 'Desde 1000 envíos por mes', unitPriceUsdMilli: 175, totalAtStepUsdMilli: 175_000, totalAtStepUyu: 7_000 },
       { minShipments: 2500, label: 'Desde 2500 envíos por mes', unitPriceUsdMilli: 140, totalAtStepUsdMilli: 350_000, totalAtStepUyu: 14_000 },
       { minShipments: 5000, label: 'Desde 5000 envíos por mes', unitPriceUsdMilli: 110, totalAtStepUsdMilli: 550_000, totalAtStepUyu: 22_000 },
     ]);
@@ -130,8 +130,8 @@ describe('quoteForVolume (catálogo completo)', () => {
     [100, 'pack_100', 1, 370, 37_000, 1_480, 'Desde 100 envíos por mes'],
     [250, 'pack_250', 1, 300, 75_000, 3_000, 'Desde 250 envíos por mes'],
     [500, 'pack_500', 1, 250, 125_000, 5_000, 'Desde 500 envíos por mes'],
-    [800, 'pack_1000', 1, 225, 180_000, 7_200, 'Desde 500 envíos por mes'],
-    [1000, 'pack_1000', 1, 180, 180_000, 7_200, 'Desde 1000 envíos por mes'],
+    [800, 'pack_1000', 1, 218, 175_000, 7_000, 'Desde 500 envíos por mes'],
+    [1000, 'pack_1000', 1, 175, 175_000, 7_000, 'Desde 1000 envíos por mes'],
     [2500, 'pack_2500', 1, 140, 350_000, 14_000, 'Desde 2500 envíos por mes'],
     [5000, 'pack_5000', 1, 110, 550_000, 22_000, 'Desde 5000 envíos por mes'],
     [5001, 'pack_5000', 2, 110, 550_110, 22_004, 'Desde 5000 envíos por mes'],

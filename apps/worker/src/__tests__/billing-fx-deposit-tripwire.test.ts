@@ -82,15 +82,15 @@ describe('alambre de tropiezo: depósitos y el segundo tipo de cambio', () => {
 
     // Al tipo base los dos lados coinciden: es el único punto sin fuga.
     expect(enviosQueCompra(deposito(550_000n, BASE_USD_UYU_RATE_MILLI))).toBe(5000);
-    expect(enviosQueCompra(deposito(180_000n, BASE_USD_UYU_RATE_MILLI))).toBe(1000);
+    expect(enviosQueCompra(deposito(175_000n, BASE_USD_UYU_RATE_MILLI))).toBe(1000);
 
     // Tipo 44: el cliente paga 5.000 y se lleva 5.500. Pierde la empresa.
     expect(enviosQueCompra(deposito(550_000n, 44_000n))).toBe(5500);
-    expect(enviosQueCompra(deposito(180_000n, 44_000n))).toBe(1100);
+    expect(enviosQueCompra(deposito(175_000n, 44_000n))).toBe(1100);
 
     // Tipo 36: el cliente paga 5.000 y se lleva 3.535 (-29,3 %). Pierde él.
     expect(enviosQueCompra(deposito(550_000n, 36_000n))).toBe(3535);
-    // Y el pack chico es todavía peor: -35,2 %.
-    expect(enviosQueCompra(deposito(180_000n, 36_000n))).toBe(648);
+    // Y el pack chico es todavía peor: -37,0 %.
+    expect(enviosQueCompra(deposito(175_000n, 36_000n))).toBe(630);
   });
 });

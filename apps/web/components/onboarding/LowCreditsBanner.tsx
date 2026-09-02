@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { AlertCircle, X } from 'lucide-react';
-import { periodTotalUsdMilli, formatUsdMilli } from '@/lib/pricing';
+import { periodTotalUsdMilli, formatUsdMilli, formatUsdUnitMilli } from '@/lib/pricing';
 
 const STORAGE_KEY = 'lf_lowcredits_dismissed_at';
 const DISMISS_TTL_MS = 1000 * 60 * 60 * 12; // 12 h — re-show after half a day
@@ -50,7 +50,10 @@ export function LowCreditsBanner({ credits }: { credits: number }) {
   const shipments = 100;
   const totalUsdMilli = periodTotalUsdMilli(shipments);
   const totalUsd = formatUsdMilli(totalUsdMilli);
-  const perShipmentUsd = formatUsdMilli(BigInt(Math.round(Number(totalUsdMilli) / shipments)));
+  // Por envío: exacto en milésimos, o el escalón de 0,175 se leería 0,18.
+  const perShipmentUsd = formatUsdUnitMilli(
+    BigInt(Math.round(Number(totalUsdMilli) / shipments)),
+  );
 
   const lead =
     credits === 1

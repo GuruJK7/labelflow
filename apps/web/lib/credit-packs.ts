@@ -88,7 +88,7 @@ export type CreditPackId = `pack_${(typeof PACK_SHIPMENTS)[number]}`;
  * entran, un -73,8 %. Y dos clientes del MISMO volumen mensual terminan pagando
  * 0,11 contra 0,42 —3,8 veces— según qué paquete compraron.
  *
- * El mecanismo ya existía antes de D35 y topeaba en 64 % (`pack_1000`, 0,18).
+ * El mecanismo ya existía antes de D35 y topea en 65 % (`pack_1000`, 0,175).
  * Agregar los dos escalones nuevos lo lleva a 78 % (`pack_5000`, 0,11): esta
  * rama DUPLICARÍA el techo del agujero sin que nadie lo haya decidido.
  *

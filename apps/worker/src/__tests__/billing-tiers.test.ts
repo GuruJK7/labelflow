@@ -56,7 +56,7 @@ describe('tarifario — estructura', () => {
       [100, 370],
       [250, 300],
       [500, 250],
-      [1000, 180],
+      [1000, 175],
       [2500, 140],
       [5000, 110],
     ]);
@@ -71,7 +71,7 @@ describe('tarifario — estructura', () => {
     }
     // Y a tipo 40 dan estos pesos por envío.
     expect(TIERS.map((x) => Number(x.unitPriceMilli))).toEqual([
-      20_000, 16_800, 14_800, 12_000, 10_000, 7_200, 5_600, 4_400,
+      20_000, 16_800, 14_800, 12_000, 10_000, 7_000, 5_600, 4_400,
     ]);
   });
 
@@ -90,7 +90,7 @@ describe('tarifario — estructura', () => {
     expect(unitPriceFor(100)).toBe(usdMilliToUyuMilliAtBase(370n));
     expect(unitPriceFor(250)).toBe(usdMilliToUyuMilliAtBase(300n));
     expect(unitPriceFor(500)).toBe(usdMilliToUyuMilliAtBase(250n));
-    expect(unitPriceFor(1000)).toBe(usdMilliToUyuMilliAtBase(180n));
+    expect(unitPriceFor(1000)).toBe(usdMilliToUyuMilliAtBase(175n));
     expect(unitPriceFor(2500)).toBe(usdMilliToUyuMilliAtBase(140n));
     expect(unitPriceFor(5000)).toBe(usdMilliToUyuMilliAtBase(110n));
     expect(unitPriceFor(99999)).toBe(usdMilliToUyuMilliAtBase(110n));
@@ -148,9 +148,9 @@ describe('tarifario — total del período', () => {
       [249, 250],
       [417, 500],
       [499, 500],
-      [721, 1000],
+      [701, 1000],
       [999, 1000],
-      [1945, 2500],
+      [2001, 2500],
       [2499, 2500],
       [3929, 5000],
       [4999, 5000],
@@ -177,33 +177,34 @@ describe('tarifario — total del período', () => {
   });
 
   it('los totales de referencia son los de D35 convertidos al tipo base', () => {
-    // USD 5 / 21 / 37 / 75 / 125 / 180 / 350 / 550 a 40 UYU/USD.
+    // USD 5 / 21 / 37 / 75 / 125 / 175 / 350 / 550 a 40 UYU/USD.
     expect(periodTotalMilli(10)).toBe(uyu(200));
     expect(periodTotalMilli(50)).toBe(uyu(840));
     expect(periodTotalMilli(100)).toBe(uyu(1480));
     expect(periodTotalMilli(250)).toBe(uyu(3000));
     expect(periodTotalMilli(500)).toBe(uyu(5000));
-    expect(periodTotalMilli(1000)).toBe(uyu(7200));
+    expect(periodTotalMilli(1000)).toBe(uyu(7000));
     expect(periodTotalMilli(2500)).toBe(uyu(14000));
     expect(periodTotalMilli(5000)).toBe(uyu(22000));
   });
 
-  it('SÓLO el escalón de 1000 cobra más que el tarifario viejo en pesos', () => {
-    // La promesa de D35 es "ningún cliente actual paga más". Se cumple en cinco
-    // de los seis escalones viejos; el de 1000 sube de 7,00 a 7,20 porque 0,18
-    // es 7/40 redondeado para arriba (7/40 = 0,175). Está asumido y decidido:
-    // este test existe para que la excepción no se olvide ni crezca.
+  it('NINGÚN escalón cobra más que el tarifario viejo en pesos', () => {
+    // La promesa de D35 es "ningún cliente actual paga más" y ahora se cumple
+    // en los SEIS escalones viejos. El de 1.000 era la excepción mientras valía
+    // 0,18 (7/40 redondeado para arriba → 7,20 UYU); con 0,175 da 7,00 clavado.
+    // Decisión de Adrian del 2026-09-02; este test cae si alguien la revierte.
     const viejos: Array<[number, number]> = [
       [0, 20],
       [50, 17],
       [100, 15],
       [250, 12],
       [500, 10],
+      [1000, 7],
     ];
     for (const [corte, precioViejo] of viejos) {
       expect(unitPriceFor(corte), `escalón ${corte}`).toBeLessThanOrEqual(uyu(precioViejo));
     }
-    expect(unitPriceFor(1000)).toBe(uyu(7) + 200n); // 7,20 UYU
+    expect(unitPriceFor(1000)).toBe(uyu(7)); // 7,00 UYU exactos, no 7,20
   });
 
   it('el precio efectivo nunca supera al de lista', () => {
@@ -214,7 +215,7 @@ describe('tarifario — total del período', () => {
 
   it('marca cuando el cliente está pagando el techo de un tramo mejor', () => {
     expect(quote(800).cappedByBetterTier).toBe(true);
-    expect(quote(800).totalMilli).toBe(uyu(7200));
+    expect(quote(800).totalMilli).toBe(uyu(7000));
     expect(quote(1000).cappedByBetterTier).toBe(false);
     expect(quote(10).cappedByBetterTier).toBe(false);
   });

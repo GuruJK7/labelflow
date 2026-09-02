@@ -50,11 +50,19 @@ export interface PricingTier {
  * tipo de cambio base de 40 UYU/USD; los dos últimos (2.500 y 5.000) son
  * nuevos y premian volumen que hoy no existe.
  *
- * 🔴 UNA EXCEPCIÓN a "ningún cliente actual paga más": el escalón de 1.000
- * queda en USD 0,18, y 7 UYU / 40 = 0,175. A tipo 40 ese cliente pasa de 7,00
- * a 7,20 UYU por envío (+2,86 %). Es el único que sube y está medido por
- * `legacyPriceRegressions()`, que tiene su propio test. Si Adrian quiere que
- * la promesa valga sin asterisco, el cambio es una línea: `180n` → `175n`.
+ * SIN EXCEPCIONES. La promesa "ningún cliente actual paga más" vale para los
+ * seis escalones viejos al tipo base. El de 1.000 quedó en USD 0,175 —el 7/40
+ * exacto— y no en el 0,18 del borrador de D35: 0,18 × 40 daba 7,20 UYU y
+ * subía 2,86 % justo al cliente de mayor volumen, que es el que más rápido lo
+ * nota. Adrian firmó 0,175 el 2026-09-02. `legacyPriceRegressions()` al tipo
+ * base devuelve la lista vacía, y hay un test que falla si deja de estarlo.
+ *
+ * 🔴 EFECTO LATERAL, y es el que importa para operar: el techo del tipo de
+ * cambio (`maxRateWithoutIncreaseMilli()`) pasó de 38,888 a 40,000, o sea que
+ * ahora coincide EXACTO con el tipo base. Antes el base ya estaba por encima
+ * del techo —de ahí venía la excepción—; ahora queda justo en el borde. Margen
+ * hacia arriba: cero. Cualquier `USD_UYU_RATE` > 40 sube precios viejos y
+ * dispara la alerta de `warnIfRateRaisesLegacyPrices()`.
  */
 export const PRICING_TIERS: readonly PricingTier[] = Object.freeze([
   { minShipments: 0, unitPriceUsdMilli: 500n, label: 'Hasta 49 envíos por mes' },
@@ -62,7 +70,7 @@ export const PRICING_TIERS: readonly PricingTier[] = Object.freeze([
   { minShipments: 100, unitPriceUsdMilli: 370n, label: 'Desde 100 envíos por mes' },
   { minShipments: 250, unitPriceUsdMilli: 300n, label: 'Desde 250 envíos por mes' },
   { minShipments: 500, unitPriceUsdMilli: 250n, label: 'Desde 500 envíos por mes' },
-  { minShipments: 1000, unitPriceUsdMilli: 180n, label: 'Desde 1000 envíos por mes' },
+  { minShipments: 1000, unitPriceUsdMilli: 175n, label: 'Desde 1000 envíos por mes' },
   { minShipments: 2500, unitPriceUsdMilli: 140n, label: 'Desde 2500 envíos por mes' },
   { minShipments: 5000, unitPriceUsdMilli: 110n, label: 'Desde 5000 envíos por mes' },
 ]);
@@ -90,8 +98,9 @@ export const LEGACY_UNIT_PRICE_UYU: ReadonlyMap<number, number> = new Map([
  * no está seteada y como tipo fijo del ledger del worker, que no puede
  * moverse con una env var sin reescribir períodos ya liquidados.
  *
- * 🔴 Para que NINGÚN precio viejo suba hace falta un tipo ≤ 38,88 (ver
- * `maxRateWithoutIncreaseMilli()`). A 40 sube sólo el escalón de 1.000.
+ * 🔴 Con el escalón de 1.000 en 0,175, este tipo base es EXACTAMENTE el más
+ * alto al que ningún precio viejo sube (ver `maxRateWithoutIncreaseMilli()`).
+ * No hay margen: 40,001 ya sube el escalón de 0.
  */
 export const BASE_USD_UYU_RATE_MILLI = 40_000n;
 
@@ -140,10 +149,11 @@ export function getUsdUyuRateMilli(env: NodeJS.ProcessEnv = process.env): bigint
  * quedaría una sola línea de log. `legacyPriceRegressions()` ya medía esto,
  * pero sólo la llamaban los tests. Acá se engancha al camino real.
  *
- * NO ES RUIDO: la suba del escalón de 1.000 al tipo BASE es la excepción
- * conocida de D35 (7,00 → 7,20) y no dispara nada. Sólo dispara lo que D35 no
- * previó, y cuando dispara lista TODOS los escalones que suben, incluido el de
- * 1.000, para que el aviso alcance para decidir. Una vez por proceso.
+ * NO ES RUIDO: al tipo base no sube ningún precio viejo (desde que el escalón
+ * de 1.000 pasó a 0,175) y por lo tanto no dispara nada. Sólo dispara cuando
+ * mover la env efectivamente encarece a alguien que ya estaba, y entonces
+ * lista TODOS los escalones que suben para que el aviso alcance para decidir
+ * sin ir a buscar nada más. Una vez por proceso.
  *
  * NO bloquea el checkout a propósito: quedarse sin cobrar por una env mal
  * puesta es peor que cobrar de más dejándolo escrito.
@@ -289,7 +299,8 @@ export function periodTotalUsdMilli(
 /**
  * Precio efectivo por envío que termina pagando el cliente. Es lo que va en el
  * recibo y en la UI: con 800 envíos el precio de lista dice 0,25 pero el
- * efectivo es 180,00/800 = 0,225, porque se cobra el techo del escalón de 1000.
+ * efectivo es 175,00/800 = 0,21875, porque se cobra el techo del escalón de
+ * 1000. Trunca a 0,218.
  * Trunca hacia abajo (división entera): nunca muestra un precio mayor al real.
  */
 export function effectiveUnitUsdMilli(
@@ -415,10 +426,12 @@ export function legacyPriceRegressions(
 /**
  * Las subas que D35 NO previó, al tipo dado.
  *
- * La línea de base es lo que ya sube al tipo BASE: el escalón de 1.000, que es
- * la excepción asumida y documentada de D35. Todo lo que aparece por encima de
- * esa línea es una suba nueva, causada por mover `USD_UYU_RATE`, y es lo que
- * dispara la alerta. Vacío al tipo base y a cualquier tipo menor.
+ * La línea de base es lo que sube al tipo BASE, que desde que el escalón de
+ * 1.000 pasó a 0,175 es NADA: la escalera ya no tiene excepciones asumidas.
+ * El descuento de la línea de base se mantiene igual —cuesta cero y es lo que
+ * evita que una excepción futura se convierta en alerta permanente—, pero hoy
+ * esta función devuelve lo mismo que `legacyPriceRegressions()`. Vacío al tipo
+ * base y a cualquier tipo menor.
  */
 export function unexpectedLegacyRegressions(
   rateMilli: bigint,
@@ -432,9 +445,10 @@ export function unexpectedLegacyRegressions(
 
 /**
  * El tipo de cambio más alto al que ningún precio viejo sube, en milésimos.
- * Con la escalera de D35 da 38.888 (38,888 UYU/USD), fijado por el escalón de
- * 1.000: 7 UYU / 0,18 USD. Por encima de eso, `legacyPriceRegressions()` deja
- * de estar vacía.
+ * Con la escalera vigente da 40.000 (40 UYU/USD) — el tipo base exacto—, y lo
+ * fijan CUATRO escalones a la vez, los que caen redondos: 0 (20/0,50),
+ * 250 (12/0,30), 500 (10/0,25) y 1.000 (7/0,175). Por encima de eso,
+ * `legacyPriceRegressions()` deja de estar vacía.
  */
 export function maxRateWithoutIncreaseMilli(
   tiers: readonly PricingTier[] = PRICING_TIERS,
@@ -461,6 +475,27 @@ export function formatUsdMilli(usdMilli: bigint): string {
   const whole = cents / 100n;
   const rest = cents % 100n;
   return `${whole.toLocaleString('es-UY')},${rest.toString().padStart(2, '0')}`;
+}
+
+/**
+ * `500n` → `"0,50"`, `175n` → `"0,175"`, `218n` → `"0,218"`. EXACTO en
+ * milésimos: nunca redondea, así que nunca miente.
+ *
+ * 🔴 POR QUÉ NO ALCANZA `formatUsdMilli` PARA UN PRECIO POR ENVÍO. Desde que el
+ * escalón de 1.000 vale 0,175, dos decimales lo muestran como "0,18" — que es
+ * exactamente el número que Adrian descartó, y que además no cierra: el
+ * comerciante multiplica 0,18 × 40 y le da 7,20, cuando se le cobran 7,00. El
+ * precio efectivo tiene el mismo problema (0,218 con 800 envíos). Los TOTALES
+ * sí van con dos decimales, porque son montos de dinero de verdad; los precios
+ * unitarios van con éste.
+ */
+export function formatUsdUnitMilli(usdMilli: bigint): string {
+  if (usdMilli < 0n) throw new RangeError('formatUsdUnitMilli: monto negativo');
+  const whole = usdMilli / 1000n;
+  const milli = (usdMilli % 1000n).toString().padStart(3, '0');
+  // El tercer decimal sólo aparece si dice algo: 0,50 y no 0,500.
+  const decimales = milli.endsWith('0') ? milli.slice(0, 2) : milli;
+  return `${whole.toLocaleString('es-UY')},${decimales}`;
 }
 
 /** `7920n` → `"7,92"`. Milésimos de peso con dos decimales. Sólo para mensajes. */

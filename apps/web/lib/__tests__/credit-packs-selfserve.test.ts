@@ -20,7 +20,7 @@ import { BASE_USD_UYU_RATE_MILLI, PRICING_TIERS, periodTotalUsdMilli } from '@/l
  * Un paquete cobra el precio del escalón aplicado al TAMAÑO DEL PACK, los
  * envíos se acreditan 1:1 y no vencen. Comprar un paquete grande compra el
  * precio de un escalón alto para siempre, sin tener nunca ese volumen mensual.
- * El mecanismo ya existía y topeaba en 64 % de descuento (`pack_1000`, 0,18);
+ * El mecanismo ya existía y topea en 65 % de descuento (`pack_1000`, 0,175);
  * los dos escalones nuevos de D35 lo llevarían a 78 % (`pack_5000`, 0,11).
  *
  * Mientras Adrian no firme, la escalera de D35 queda completa y visible —es el
@@ -59,7 +59,7 @@ describe('con la env apagada (el default de hoy)', () => {
       'pack_1000',
     ]);
     const masCaro = Math.max(...packs.map((p) => p.totalPriceUsdMilli));
-    expect(masCaro).toBe(180_000); // USD 180, no USD 550
+    expect(masCaro).toBe(175_000); // USD 175, no USD 550
   });
 
   it('el checkout rechaza un ?pack=pack_5000 escrito a mano', () => {
@@ -70,11 +70,14 @@ describe('con la env apagada (el default de hoy)', () => {
     expect(packIdList()).not.toContain('pack_5000');
   });
 
-  it('EL TECHO DEL AGUJERO NO CRECE: el mejor precio comprable sigue siendo 0,18', () => {
+  it('EL TECHO DEL AGUJERO NO CRECE: el mejor precio comprable es 0,175', () => {
     const base = Number(PRICING_TIERS[0].unitPriceUsdMilli); // 0,50
     const mejor = Math.min(...listPacks(RATE).map((p) => p.pricePerShipmentUsdMilli));
-    expect(mejor).toBe(180); // el de pack_1000, igual que antes de D35
-    expect(Math.round((1 - mejor / base) * 100)).toBe(64); // no 78
+    expect(mejor).toBe(175); // el de pack_1000
+    // 65 % y no 64 %: bajar el escalón de 1.000 a 0,175 ensancha un punto el
+    // agujero del pack comprable. Sigue MUY lejos del 78 % de los packs
+    // grandes, que es lo que este test cuida que no se habilite en silencio.
+    expect(Math.round((1 - mejor / base) * 100)).toBe(65); // no 78
   });
 
   it('MEDIDO: el cliente de 60 envíos/mes ya no puede comprarse 0,11 para siempre', () => {
@@ -88,9 +91,9 @@ describe('con la env apagada (el default de hoy)', () => {
     expect(deberiaPagar).toBe(2_100); // USD 2.100
     expect(grande.totalPriceUsdMilli / 1000).toBe(550); // paga USD 550: -73,8 %
 
-    // Con la env apagada, lo más barato que puede comprarse es 0,18 por envío.
+    // Con la env apagada, lo más barato que puede comprarse es 0,175 por envío.
     const topeHoy = Math.min(...listPacks(RATE).map((p) => p.pricePerShipmentUsdMilli));
-    expect(topeHoy).toBe(180);
+    expect(topeHoy).toBe(175);
   });
 
   it('la ESCALERA sigue mostrando los ocho escalones: D35 no se recorta', () => {
@@ -111,7 +114,7 @@ describe('con la env apagada (el default de hoy)', () => {
     expect(q.effectiveUnitUsdMilli).toBe(140);
     // Pero comprando paquetes sueltos pagaría más, y por eso la UI manda a
     // hablar en vez de empujar tres compras.
-    expect(q.totalPriceUsdMilli).toBe(540_000);
+    expect(q.totalPriceUsdMilli).toBe(525_000); // 3 × pack_1000 a USD 175
     expect(q.totalPriceUsdMilli).toBeGreaterThan(q.monthlyTotalUsdMilli);
   });
 
