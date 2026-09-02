@@ -1,0 +1,174 @@
+/**
+ * Estado del onboarding DERIVADO de la base, sin columnas nuevas (D33).
+ *
+ * Por qué derivado y no guardado: el wizard tiene 6 pasos pero la base ya
+ * sabe todo lo que importa — si hay tienda (Shopify o Dashboard con Excel),
+ * si hay cuenta de DAC, qué cron corre y si el usuario apretó "Activar".
+ * Guardar "en qué paso va" duplicaría eso y se desincronizaría en cuanto
+ * alguien borre un token desde Configuración. Acá vive la ÚNICA definición
+ * de "tienda conectada" / "DAC cargado" y la usan el gate del dashboard,
+ * `onboarding/complete`, `GET /api/v1/onboarding/state` y `POST /api/v1/jobs`.
+ *
+ * Es puro (sin Prisma, sin React) para que se testee en node y para que el
+ * server component de /onboarding y las rutas compartan exactamente la misma
+ * lógica.
+ */
+
+export interface OnboardingRow {
+  shopifyStoreUrl: string | null;
+  shopifyToken: string | null;
+  dashboardSourceEnabled: boolean;
+  dashboardUrl: string | null;
+  dashboardToken: string | null;
+  dacUsername: string | null;
+  dacPassword: string | null;
+  onboardingComplete: boolean;
+  cronSchedule: string | null;
+}
+
+export type StoreKind = 'shopify' | 'dashboard' | null;
+
+export interface StoreConnection {
+  kind: StoreKind;
+  shopify: boolean;
+  dashboard: boolean;
+}
+
+/**
+ * Tienda conectada = Shopify (dominio + token) O Dashboard con Excel
+ * (fuente prendida + URL + token). Si hay las dos, manda Shopify: es la que
+ * tiene aviso instantáneo y la que el worker procesa por la cola.
+ */
+export function storeConnection(
+  r: Pick<OnboardingRow, 'shopifyStoreUrl' | 'shopifyToken' | 'dashboardSourceEnabled' | 'dashboardUrl' | 'dashboardToken'>,
+): StoreConnection {
+  const shopify = !!r.shopifyStoreUrl && !!r.shopifyToken;
+  const dashboard = !!r.dashboardSourceEnabled && !!r.dashboardUrl && !!r.dashboardToken;
+  return { kind: shopify ? 'shopify' : dashboard ? 'dashboard' : null, shopify, dashboard };
+}
+
+export function hasDac(r: Pick<OnboardingRow, 'dacUsername' | 'dacPassword'>): boolean {
+  return !!r.dacUsername && !!r.dacPassword;
+}
+
+/** Regla del gate del dashboard: sin esto, al wizard. */
+export function isConnected(r: OnboardingRow): boolean {
+  return storeConnection(r).kind !== null && hasDac(r);
+}
+
+/* ─── Modo de procesamiento (paso 5) sobre `cronSchedule` (H8) ─────────── */
+
+/** Inmediato: webhook `orders/paid` cuando existe + barrido cada 15 min. */
+export const CRON_INMEDIATO = '*/15 * * * *';
+/** Cada hora: en punto (10:00, 11:00, 12:00…), en la zona horaria del tenant. */
+export const CRON_CADA_HORA = '0 * * * *';
+
+export type ProcessingMode = 'inmediato' | 'cada_hora' | 'personalizado';
+
+export function processingModeFromCron(cron: string | null | undefined): ProcessingMode {
+  const c = (cron ?? '').trim().replace(/\s+/g, ' ');
+  if (c === CRON_INMEDIATO) return 'inmediato';
+  if (c === CRON_CADA_HORA) return 'cada_hora';
+  return 'personalizado';
+}
+
+export function cronForMode(mode: 'inmediato' | 'cada_hora'): string {
+  return mode === 'inmediato' ? CRON_INMEDIATO : CRON_CADA_HORA;
+}
+
+/* ─── Paso actual ──────────────────────────────────────────────────────── */
+
+export type OnboardingStep = 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface DerivedOnboarding {
+  store: StoreConnection;
+  dac: boolean;
+  mode: ProcessingMode;
+  complete: boolean;
+  currentStep: OnboardingStep;
+}
+
+/**
+ * Paso al que hay que llevar al usuario cuando abre /onboarding:
+ *   completo            → 6
+ *   ni tienda ni DAC    → 1 (bienvenida)
+ *   sin tienda          → 2
+ *   sin DAC             → 3
+ *   tienda + DAC        → 4 (parámetros: no tiene estado propio, es revisión;
+ *                            5 y 6 se alcanzan avanzando)
+ */
+export function deriveOnboarding(r: OnboardingRow): DerivedOnboarding {
+  const store = storeConnection(r);
+  const dac = hasDac(r);
+  const mode = processingModeFromCron(r.cronSchedule);
+  const complete = !!r.onboardingComplete;
+  let currentStep: OnboardingStep;
+  if (complete) currentStep = 6;
+  else if (!store.kind && !dac) currentStep = 1;
+  else if (!store.kind) currentStep = 2;
+  else if (!dac) currentStep = 3;
+  else currentStep = 4;
+  return { store, dac, mode, complete, currentStep };
+}
+
+/* ─── Metadatos de los pasos (título, tiempo estimado) ─────────────────── */
+
+export interface OnboardingStepMeta {
+  number: OnboardingStep;
+  /** Título corto para la barra de progreso. */
+  title: string;
+  /** Tiempo estimado que ve el usuario; vacío en el último paso. */
+  estimate: string;
+  /** Una línea para el checklist de bienvenida. */
+  summary: string;
+}
+
+export const ONBOARDING_STEPS: readonly OnboardingStepMeta[] = [
+  { number: 1, title: 'Bienvenida', estimate: '2 min de lectura', summary: 'Qué vamos a configurar y cuánto tarda.' },
+  { number: 2, title: 'Tu tienda', estimate: '2 min', summary: 'Shopify con un botón, o tu Dashboard con Excel.' },
+  { number: 3, title: 'Cuenta DAC', estimate: '1 min', summary: 'Usuario y contraseña con los que entrás a dac.com.uy.' },
+  { number: 4, title: 'Parámetros', estimate: '3 min', summary: 'Quién paga el envío, envío gratis, qué productos, aviso al cliente.' },
+  { number: 5, title: 'Cada cuánto', estimate: '30 seg', summary: 'Al instante o una vez por hora.' },
+  { number: 6, title: 'Listo', estimate: '', summary: 'Tus envíos de prueba y el primer procesamiento.' },
+] as const;
+
+/** `?step=N` de la URL → paso válido o null. Acepta sólo 1–6 enteros. */
+export function parseRequestedStep(raw: string | string[] | null | undefined): OnboardingStep | null {
+  const s = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof s !== 'string' || !/^[1-6]$/.test(s.trim())) return null;
+  return Number(s.trim()) as OnboardingStep;
+}
+
+/* ─── Contrato de `GET /api/v1/onboarding/state` ───────────────────────── */
+
+export interface OnboardingState {
+  currentStep: OnboardingStep;
+  store: {
+    kind: StoreKind;
+    shopifyConnected: boolean;
+    shopifyStoreUrl: string | null;
+    dashboardConnected: boolean;
+    dashboardUrl: string | null;
+  };
+  dac: { connected: boolean; username: string | null };
+  processingMode: ProcessingMode;
+  cronSchedule: string;
+  onboardingComplete: boolean;
+  isActive: boolean;
+  emailVerified: boolean;
+  email: string | null;
+  trialShipments: number;
+  balance: { shipmentCredits: number; referralBonusCredits: number; total: number };
+  params: {
+    paymentRuleEnabled: boolean;
+    paymentThreshold: number;
+    fulfillMode: 'off' | 'on' | 'always';
+    skuInObservations: boolean;
+    codEnabled: boolean;
+    emailConfigured: boolean;
+    allowedProductTypes: string[] | null;
+    consolidateConsecutiveOrders: boolean;
+    consolidationWindowMinutes: number;
+    shippingRulesCount: number;
+  };
+}
