@@ -39,13 +39,28 @@ const nextConfig = {
       },
     ];
   },
-  async rewrites() {
-    // Sirve el landing validado (autoenvia.com raíz) como estático 100% fiel,
-    // sin tocar el resto del app (portal /cliente, pagos, dashboard, /login…).
-    return {
-      beforeFiles: [{ source: '/', destination: '/landing.html' }],
-    };
-  },
+  // NO volver a poner un rewrite de '/' a un HTML estático.
+  //
+  // Entre el 2026-06-12 y hoy, la raíz servía `public/landing.html` por un
+  // rewrite `beforeFiles`. Consecuencia: `app/page.tsx` era código muerto y
+  // nadie lo veía. El landing estático quedó congelado en el modelo de venta
+  // por llamada —"Solicitar demo", "Coordinar llamada", cero enlaces a
+  // /signup— mientras el alta pasaba a ser self-serve, y ninguna de las
+  // correcciones que sí se hicieron sobre page.tsx llegó nunca a un visitante.
+  //
+  // La raíz vuelve a resolverse por el App Router, que es donde vive el
+  // landing mantenible.
+  //
+  // `apps/web/public/landing.html` se BORRÓ (2026-09-02). Sacar el rewrite no
+  // alcanzaba: Next sirve todo `public/` desde la raíz, así que el estático
+  // seguía respondiendo 200 en `/landing.html` — indexable, con "Solicitar
+  // demo", cinco CTA a WhatsApp para coordinar una llamada, cero enlaces a
+  // /signup y un <title> casi duplicado compitiendo contra el de `/`. Estaba
+  // verificado con curl contra el dev server, no leyendo el config.
+  //
+  // NO volver a dejar un HTML de marketing en `public/`: cualquier archivo ahí
+  // es una URL pública aunque ninguna ruta lo enlace. Si hace falta la copia
+  // vieja, está en el historial de git.
 };
 
 module.exports = nextConfig;

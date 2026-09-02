@@ -2,10 +2,12 @@ import './globals.css';
 import type { Metadata } from 'next';
 import { Providers } from './providers';
 
+/** Metadata por defecto de todo el sitio. La landing (`app/page.tsx`) pisa
+ *  title y description con los suyos; esto es lo que ve el resto de las rutas. */
 export const metadata: Metadata = {
-  title: 'AutoEnvía — Logística de envíos automatizada para e-commerce',
+  title: 'AutoEnvía — Despachá con DAC sin cargar una guía a mano',
   description:
-    'Conectamos tu tienda Shopify con DAC y despachamos cada pedido pago solo: guía emitida en segundos, 24/7, sin intervención manual.',
+    'Conectás tu tienda Shopify y cada pedido pago sale con la guía de DAC emitida, el PDF listo para imprimir y el seguimiento cargado. 5 envíos de prueba al crear la cuenta.',
   icons: {
     icon: '/icon.svg',
   },
