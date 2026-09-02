@@ -788,6 +788,15 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         //
         // If a tenant has no rules (or none match), the legacy fields still apply
         // unchanged, so pre-existing behavior is preserved.
+        // [01-sep-2026] CONTRAREEMBOLSO. El monto que DAC le cobra al destinatario sale
+        // del total del pedido de Shopify, y SOLO si la tienda lo tiene prendido
+        // (tenant.codEnabled, false por default). Sin ese flag queda null y todo el
+        // flujo se comporta exactamente como antes. Se declara en el mismo scope que
+        // paymentType porque lo usan los dos: el llenado del form y el upsert del Label.
+        const codAmount: number | null = tenant.codEnabled
+          ? Math.round(parseFloat(order.total_price) || 0) || null
+          : null;
+
         let paymentType: 'REMITENTE' | 'DESTINATARIO';
 
         const ruleResult = await evaluateShippingRules(
@@ -935,7 +944,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             usedGuias,
             undefined, // addressOverride
             undefined, // autoPay
-            { skuInObservations: tenant.skuInObservations },
+            { skuInObservations: tenant.skuInObservations, codAmount },
           );
 
           // Track this guia so it won't be assigned to another order in this batch
@@ -984,6 +993,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             department: resolvedDept,
             totalUyu: parseFloat(order.total_price) || 0,
             paymentType,
+            codAmount,
             paymentStatus: resolvedPaymentStatus,
             paymentFailureReason: resolvedPaymentFailureReason,
             paymentAttemptedAt,

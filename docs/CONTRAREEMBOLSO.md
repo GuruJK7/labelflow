@@ -51,43 +51,35 @@ en el enum los habría roto en silencio.
 Por eso el contrareembolso es un **campo aparte y nullable**: con `codAmount = null`
 el sistema se comporta *exactamente* como antes.
 
-## 🔴 Lo que FALTA: el paso que toca la automatización
+## El interruptor: `Tenant.codEnabled`
 
-Nada de lo anterior hace todavía que DAC emita una guía como contrareembolso. Para
-eso hay que llenar el formulario, y eso vive en `apps/worker/src/dac/shipment.ts`,
-**automatización Playwright intocable por regla del proyecto**: ~3.800 líneas,
-**cero tests sobre el llenado de TipoGuia**, y un valor mal puesto emite guías
-reales mal facturadas en la cuenta del cliente.
+🔴 **Sin esto, tomar el monto del total de Shopify convertiría TODOS los envíos de
+TODOS los clientes en contrareembolso de golpe.** Por eso hay un flag por tienda,
+**apagado por default**:
 
-La lógica ya está resuelta y testeada afuera. El cambio es **una línea** en
-`shipment.ts:2365`, donde hoy dice:
-
-```ts
-const payVal = paymentType === 'REMITENTE'
-  ? DAC_SELECTORS.PAYMENT_VALUE_REMITENTE
-  : DAC_SELECTORS.PAYMENT_VALUE_DESTINATARIO;
+```sql
+-- prender para UNA tienda, cuando se quiera probar
+UPDATE "Tenant" SET "codEnabled" = true WHERE id = '<tenantId>';
+-- apagar
+UPDATE "Tenant" SET "codEnabled" = false WHERE id = '<tenantId>';
 ```
 
-pasaría a:
+Con `codEnabled = false` (el estado de todas las tiendas hoy), `codAmount` queda
+`null`, `planDeCod` devuelve `esCod:false` y el `TipoGuia` que se escribe en DAC es
+**idéntico al de siempre**.
 
-```ts
-import { planDeCod } from './contrarreembolso';
-const cod = planDeCod({ codAmount: label.codAmount });
-const payVal = cod.esCod
-  ? cod.tipoGuia                                   // '6'
-  : paymentType === 'REMITENTE'
-    ? DAC_SELECTORS.PAYMENT_VALUE_REMITENTE
-    : DAC_SELECTORS.PAYMENT_VALUE_DESTINATARIO;
-```
+## De dónde sale el monto
 
-y en el paso 4, antes de "Agregar":
+Del **total del pedido de Shopify**, redondeado a pesos
+(`Math.round(parseFloat(order.total_price))`), en `process-orders.job.ts`. Se calcula
+en el mismo scope que `paymentType` porque lo usan los dos: el llenado del formulario
+y el `upsert` del `Label`.
 
-```ts
-if (cod.esCod) await page.fill('input[name="CostoMercaderia"]', cod.costoMercaderia);
-```
+## Guarda al emitir
 
-`planDeCod` devuelve `esCod: false` ante cualquier valor dudoso, así que con
-`codAmount = null` el `payVal` resultante es **idéntico al de hoy**.
+`shipment.ts` **verifica que el monto haya quedado escrito** en `CostoMercaderia` y
+**tira** si no coincide. Emitir a ciegas ahí significaría que DAC le cobre al cliente
+final un importe distinto del que dice el pedido.
 
 ## ⚠️ Antes de habilitarlo para un cliente real
 

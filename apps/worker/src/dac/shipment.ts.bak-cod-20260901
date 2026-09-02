@@ -4,7 +4,6 @@ import { Prisma } from '@prisma/client';
 import { ShopifyOrder } from '../shopify/types';
 import { resolveOrderPhone } from '../shopify/phone';
 import { DacShipmentResult } from './types';
-import { planDeCod } from './contrarreembolso';
 import { DAC_SELECTORS, DAC_URLS } from './selectors';
 import { ensureLoggedIn } from './auth';
 import { dacBrowser } from './browser';
@@ -1966,7 +1965,7 @@ export async function createShipment(
   usedGuias?: Set<string>,
   addressOverride?: AddressOverride,
   autoPay?: AutoPayConfig,
-  opts?: { skuInObservations?: boolean; codAmount?: number | null }
+  opts?: { skuInObservations?: boolean }
 ): Promise<DacShipmentResult> {
   const slog = createStepLogger(jobId ?? 'manual', tenantId);
   const addr = order.shipping_address;
@@ -2363,18 +2362,9 @@ export async function createShipment(
   slog.info(DAC_STEPS.STEP1_START, 'Filling Step 1: shipment type fields');
 
   const pickupVal = DAC_SELECTORS.PICKUP_VALUE_MOSTRADOR;
-  // [01-sep-2026] CONTRAREEMBOLSO. planDeCod() devuelve esCod:false ante null, 0,
-  // negativo, NaN o fuera de tope, asi que con codAmount ausente el payVal que sale
-  // de aca es IDENTICO al de siempre. Ver apps/worker/src/dac/contrarreembolso.ts.
-  const cod = planDeCod({ codAmount: opts?.codAmount });
-  const payVal = cod.esCod
-    ? cod.tipoGuia // '6' — DAC cobra la mercaderia al destinatario
-    : paymentType === 'REMITENTE'
-      ? DAC_SELECTORS.PAYMENT_VALUE_REMITENTE
-      : DAC_SELECTORS.PAYMENT_VALUE_DESTINATARIO;
-  if (cod.esCod) {
-    slog.info(DAC_STEPS.STEP1_TIPO_GUIA, `CONTRAREEMBOLSO: TipoGuia=${cod.tipoGuia}, a cobrar $${cod.monto}`);
-  }
+  const payVal = paymentType === 'REMITENTE'
+    ? DAC_SELECTORS.PAYMENT_VALUE_REMITENTE
+    : DAC_SELECTORS.PAYMENT_VALUE_DESTINATARIO;
   const packageVal = DAC_SELECTORS.PACKAGE_VALUE_PAQUETE;
   const deliveryVal = isRetiroEnAgencia
     ? DAC_SELECTORS.DELIVERY_VALUE_AGENCIA
@@ -3416,24 +3406,6 @@ export async function createShipment(
     if (el) { el.value = '1'; el.dispatchEvent(new Event('change', { bubbles: true })); }
   });
   slog.info(DAC_STEPS.STEP4_FILL_QTY, 'Set Cantidad = 1');
-
-  // [01-sep-2026] CONTRAREEMBOLSO: el monto a cobrar. input[name="CostoMercaderia"]
-  // ("Costo de la mercaderia $"), pattern="[0-9]*" — solo digitos, sin puntos ni
-  // decimales; planDeCod ya lo entrega en esa forma. Si no es COD no se toca el
-  // campo, que queda en su default "0" igual que hasta hoy.
-  if (cod.esCod) {
-    await page.evaluate((monto: string) => {
-      const el = document.querySelector('[name="CostoMercaderia"]') as HTMLInputElement;
-      if (el) { el.value = monto; el.dispatchEvent(new Event('change', { bubbles: true })); }
-    }, cod.costoMercaderia);
-    const puesto = await page.evaluate(() =>
-      (document.querySelector('[name="CostoMercaderia"]') as HTMLInputElement | null)?.value ?? null);
-    if (puesto !== cod.costoMercaderia) {
-      // No emitir a ciegas: si el monto no quedo escrito, DAC cobraria otra cosa.
-      throw new Error(`CONTRAREEMBOLSO: no pude fijar CostoMercaderia (esperaba "${cod.costoMercaderia}", quedo "${puesto}")`);
-    }
-    slog.info(DAC_STEPS.STEP4_FILL_QTY, `CONTRAREEMBOLSO: CostoMercaderia = ${cod.costoMercaderia}`);
-  }
 
   await page.waitForTimeout(500);
 

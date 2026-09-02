@@ -31,6 +31,11 @@ BEGIN;
 
 ALTER TABLE "Label" ADD COLUMN IF NOT EXISTS "codAmount" INTEGER;
 
+-- Interruptor por tienda. FALSE por default: sin esto, tomar el monto del total de
+-- Shopify convertiria TODOS los envios de TODOS los clientes en contrareembolso.
+-- Con NOT NULL DEFAULT false Postgres no reescribe la tabla (>= v11).
+ALTER TABLE "Tenant" ADD COLUMN IF NOT EXISTS "codEnabled" BOOLEAN NOT NULL DEFAULT false;
+
 COMMENT ON COLUMN "Label"."codAmount" IS
   'Contrareembolso (DAC TipoGuia=6): monto en pesos que DAC le cobra al destinatario y le gira al remitente. NULL = no es contrareembolso.';
 
@@ -44,3 +49,7 @@ COMMIT;
 --
 --   SELECT count(*) AS total, count("codAmount") AS con_cod FROM "Label";
 --   -- esperado justo después de aplicar: con_cod = 0
+--
+--   SELECT count(*) AS tiendas, count(*) FILTER (WHERE "codEnabled") AS con_cod_prendido
+--     FROM "Tenant";
+--   -- esperado justo después de aplicar: con_cod_prendido = 0

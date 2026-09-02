@@ -417,6 +417,13 @@ model Tenant {
   // AI Address Resolutions
   addressResolutions AddressResolution[]
 
+  /// CONTRAREEMBOLSO (DAC TipoGuia=6) — [01-sep-2026]
+  /// Interruptor por tienda. APAGADO por default a proposito: sin esto, marcar el
+  /// monto desde el total de Shopify convertiria TODOS los envios de TODOS los
+  /// clientes en contrareembolso de golpe. Con false, Label.codAmount queda null y
+  /// el sistema se comporta exactamente como antes.
+  codEnabled           Boolean @default(false)
+
   // Shipping rules (first-match-wins rule engine for REMITENTE/DESTINATARIO selection)
   shippingRules ShippingRule[]
 
