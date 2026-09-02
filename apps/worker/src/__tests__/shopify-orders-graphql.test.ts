@@ -23,7 +23,7 @@ type Handler = (query: string, variables: Record<string, unknown>, call: number)
 function makeClient(handler: Handler) {
   let call = 0;
   const request = vi.fn(async (q: string, v: Record<string, unknown> = {}) => handler(q, v, call++));
-  const client = { storeUrl: 'qa.myshopify.com', apiVersion: '2026-07', request, lastCost: null } as unknown as ShopifyGraphqlClient;
+  const client = { storeUrl: 'qa.myshopify.com', apiVersion: '2026-07', request, lastCost: null, lastErrors: [] } as unknown as ShopifyGraphqlClient;
   return { client, request };
 }
 

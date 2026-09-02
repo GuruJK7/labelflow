@@ -127,6 +127,8 @@ export interface ShopifyGraphqlClient {
    */
   request<T>(query: string, variables?: Record<string, unknown>): Promise<T>;
   lastCost: GraphqlCost | null;
+  /** `errors[]` de la última respuesta (vacío si no hubo): útil cuando un campo vino null por permisos. */
+  lastErrors: GraphqlErrorEntry[];
 }
 
 export interface GraphqlClientOptions {
@@ -183,6 +185,7 @@ export function createShopifyGraphqlClient(
     storeUrl,
     apiVersion,
     lastCost: null,
+    lastErrors: [],
     async request<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
       let throttleRetries = 0;
       let transportRetries = 0;
@@ -257,6 +260,7 @@ export function createShopifyGraphqlClient(
         }
 
         const errors = json.errors ?? [];
+        client.lastErrors = errors;
         if (errors.length === 0) {
           if (json.data == null) {
             throw new ShopifyGraphqlError(`Shopify GraphQL returned no data for ${storeUrl}`, 'NO_DATA');
@@ -282,10 +286,12 @@ export function createShopifyGraphqlClient(
         }
 
         // Errores parciales: `data` vino y todos los errores apuntan a un
-        // `path` (campo en null por permisos de datos protegidos, etc.). No se
-        // aborta el ciclo: el adaptador rellena con null/'' y el pedido sigue.
+        // `path` (campo en null por datos protegidos sin aprobar, o por un
+        // scope que falta en UN campo). No se aborta: el adaptador rellena
+        // con null/'' y el pedido sigue. Quien necesite ese campo (p. ej.
+        // `fulfillmentOrders` en fulfillment-graphql.ts) mira `lastErrors`.
         const allByPath = errors.every((e) => Array.isArray(e.path) && e.path.length > 0);
-        if (json.data != null && allByPath && !codes.includes('ACCESS_DENIED')) {
+        if (json.data != null && allByPath) {
           const key = `${storeUrl}|${codes.join(',')}|${errors[0]?.path?.join('.')}`;
           if (!partialErrorsWarned.has(key)) {
             partialErrorsWarned.add(key);

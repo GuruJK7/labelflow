@@ -105,6 +105,11 @@ async function getEligibleFulfillmentOrderGids(
   if (!data.order) {
     throw new Error(`Order ${orderId} not found in Shopify (GraphQL)`);
   }
+  // Permiso faltante SÓLO en el campo: Shopify manda el pedido con
+  // `fulfillmentOrders: null` + errors[] por path (el cliente no aborta).
+  if (!data.order.fulfillmentOrders) {
+    throw new ShopifyMissingScopesError(JSON.stringify(client.lastErrors.map((e) => e.message)));
+  }
 
   const status = mapDisplayFulfillmentStatus(data.order.displayFulfillmentStatus);
   if (status === 'fulfilled' || status === 'partial') {

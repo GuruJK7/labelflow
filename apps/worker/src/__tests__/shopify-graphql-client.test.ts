@@ -125,6 +125,17 @@ describe('createShopifyGraphqlClient', () => {
     expect(data.orders.nodes[0].email).toBeNull();
   });
 
+  it('errores por path con code ACCESS_DENIED y data presente tampoco abortan; quedan en lastErrors', async () => {
+    const { fetchImpl } = makeFetch([jsonResponse({
+      data: { order: { id: 'gid://shopify/Order/1', fulfillmentOrders: null } },
+      errors: [{ message: 'Access denied for fulfillmentOrders field.', path: ['order', 'fulfillmentOrders'], extensions: { code: 'ACCESS_DENIED' } }],
+    })]);
+    const c = createShopifyGraphqlClient(SHOP, TOKEN, { fetchImpl, ...noSleep });
+    const data = await c.request<{ order: { fulfillmentOrders: null } }>('q');
+    expect(data.order.fulfillmentOrders).toBeNull();
+    expect(c.lastErrors.map((e) => e.extensions?.code)).toEqual(['ACCESS_DENIED']);
+  });
+
   it('sin errors y sin data → NO_DATA', async () => {
     const { fetchImpl } = makeFetch([jsonResponse({ data: null })]);
     const c = createShopifyGraphqlClient(SHOP, TOKEN, { fetchImpl, ...noSleep });

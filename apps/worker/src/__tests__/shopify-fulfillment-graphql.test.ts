@@ -13,7 +13,7 @@ type Handler = (query: string, variables: Record<string, unknown>) => Promise<un
 
 function makeClient(handler: Handler) {
   const request = vi.fn(async (q: string, v: Record<string, unknown> = {}) => handler(q, v));
-  const client = { storeUrl: 'qa.myshopify.com', apiVersion: '2026-07', request, lastCost: null } as unknown as ShopifyGraphqlClient;
+  const client = { storeUrl: 'qa.myshopify.com', apiVersion: '2026-07', request, lastCost: null, lastErrors: [] } as unknown as ShopifyGraphqlClient;
   return { client, request };
 }
 
@@ -96,6 +96,14 @@ describe('fulfillOrderWithTracking (GraphQL)', () => {
     expect(err).toBeInstanceOf(ShopifyMissingScopesError);
     expect(err.message).toContain('read_assigned_fulfillment_orders');
     expect(err.message).toContain('Shopify Partners');
+  });
+
+  it('fulfillmentOrders null por permiso faltante en el campo (data presente) → ShopifyMissingScopesError', async () => {
+    const c = makeClient(() => ({ order: { id: 'gid://shopify/Order/123', legacyResourceId: '123', displayFulfillmentStatus: 'UNFULFILLED', fulfillmentOrders: null } }));
+    (c.client as { lastErrors: unknown[] }).lastErrors = [{ message: 'Access denied for fulfillmentOrders field.', path: ['order', 'fulfillmentOrders'], extensions: { code: 'ACCESS_DENIED' } }];
+    const err = await fulfillOrderWithTracking(c.client, 123, 'G').catch((e) => e);
+    expect(err).toBeInstanceOf(ShopifyMissingScopesError);
+    expect(err.message).toContain('Access denied for fulfillmentOrders field');
   });
 
   it('ACCESS_DENIED en la mutación también se traduce', async () => {
