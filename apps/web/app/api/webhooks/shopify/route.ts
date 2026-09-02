@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { enqueueProcessOrders } from '@/lib/queue';
 import { verifyShopifyWebhook } from '@/lib/shopify-webhook';
+import { processingModeFromCron } from '@/lib/onboarding-state';
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest) {
       shopifyStoreUrl: { equals: shopDomain, mode: 'insensitive' },
       isActive: true,
     },
-    select: { id: true },
+    select: { id: true, cronSchedule: true },
   });
 
   if (!tenant) {
@@ -97,6 +98,16 @@ export async function POST(req: NextRequest) {
       // retry, causing more duplicates). Best-effort idempotency.
       console.error('[Shopify Webhook] WebhookReceipt insert failed:', err);
     }
+  }
+
+  // Modo "Cada hora" (D33): el usuario eligió juntar lo que entra y
+  // procesarlo en punto, "útil si preferís revisar antes de que salgan". El
+  // aviso instantáneo va en contra de eso: se registra el receipt (para
+  // deduplicar reintentos de Shopify) y se responde 200 sin encolar; el cron
+  // `0 * * * *` levanta el pedido en la próxima hora. Sólo "Inmediato" (y los
+  // crons a medida del admin, que siempre tuvieron webhook) encolan acá.
+  if (processingModeFromCron(tenant.cronSchedule) === 'cada_hora') {
+    return NextResponse.json({ ok: true, deferred: 'cada_hora' });
   }
 
   try {
