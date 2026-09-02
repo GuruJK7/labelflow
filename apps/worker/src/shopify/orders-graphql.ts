@@ -1,8 +1,10 @@
 import logger from '../logger';
 import type { ShopifyOrder } from './types';
+import { ShopifyProtectedDataError } from './errors';
 import {
   assertNoUserErrors,
   isGraphqlMaxCostExceeded,
+  type GraphqlErrorEntry,
   type ShopifyGraphqlClient,
   type UserError,
 } from './graphql-client';
@@ -31,6 +33,13 @@ const GUIA_NOTE_PREFIX = 'LabelFlow-GUIA:';
 
 /** Límite REST que hay que cubrir (`limit=250` en orders.ts). */
 const REST_LIST_LIMIT = 250;
+/**
+ * Tope de pedidos crudos que se pagina buscando los `limit` que pasan el
+ * filtro del adaptador (`getUnfulfilledOrders` filtra del lado nuestro). Una
+ * tienda con auto-archivado apagado y miles de pedidos abiertos ya preparados
+ * no puede colgar el ciclo: se corta acá con warn.
+ */
+const MAX_SCANNED = 1000;
 /** Página inicial; se achica sola si Shopify contesta MAX_COST_EXCEEDED. */
 const DEFAULT_PAGE = 25;
 const DEFAULT_LINE_ITEMS = 50;
@@ -153,8 +162,63 @@ export const ORDER_NOTE_UPDATE_MUTATION = `mutation LabelFlowOrderNoteUpdate($in
   }
 }`;
 
-/** Equivalente de `financial_status=paid&fulfillment_status=unfulfilled&status=open`. */
-export const UNFULFILLED_QUERY_STRING = 'financial_status:paid fulfillment_status:unfulfilled status:open';
+/**
+ * Equivalente de `financial_status=paid&status=open` de REST. A propósito SIN
+ * `fulfillment_status:` — en 2026-07 ese filtro tiene valores separados
+ * (`unshipped|shipped|fulfilled|partial|scheduled|on_hold|unfulfilled|
+ * request_declined`, doc queries/orders) y no está documentado que
+ * `unfulfilled` incluya los parciales ni los on_hold/scheduled/in_progress
+ * que REST `fulfillment_status=unfulfilled` sí devuelve (null o partial). El
+ * equivalente exacto de REST se aplica del lado nuestro: `isRestUnfulfilled`.
+ */
+export const UNFULFILLED_QUERY_STRING = 'financial_status:paid status:open';
+
+/**
+ * Réplica del filtro REST `fulfillment_status=unfulfilled`: pedidos con
+ * `fulfillment_status` null (UNFULFILLED, ON_HOLD, SCHEDULED, IN_PROGRESS,
+ * OPEN, PENDING_FULFILLMENT, REQUEST_DECLINED) o `partial`. FULFILLED y
+ * RESTOCKED quedan afuera, como en REST.
+ */
+export function isRestUnfulfilled(order: Pick<ShopifyOrder, 'fulfillment_status'>): boolean {
+  return order.fulfillment_status === null || order.fulfillment_status === 'partial';
+}
+
+/** Campos del pedido sin los cuales el ciclo no puede despachar ni contactar (datos protegidos de cliente). */
+const PROTECTED_PORTANTE_FIELDS = new Set(['shippingAddress', 'email', 'phone']);
+
+function isProtectedDataDenial(e: GraphqlErrorEntry): boolean {
+  const path = e.path ?? [];
+  if (path.length === 0) return false;
+  const code = String(e.extensions?.code ?? '');
+  // Sólo denegaciones de acceso; otros errores por path (p. ej. un campo
+  // inválido en una versión futura) siguen tolerándose como hasta ahora.
+  if (!code.startsWith('ACCESS_DENIED')) return false;
+  if (path.some((seg) => seg === 'shippingAddress')) return true;
+  // `email` / `phone` a nivel pedido: `orders.nodes.<n>.email`. Los `phone`
+  // anidados (billingAddress.phone) no son portantes: si el shippingAddress
+  // también está denegado, ya se cortó por la rama de arriba.
+  const last = path[path.length - 1];
+  const prev = path[path.length - 2];
+  return typeof last === 'string' && PROTECTED_PORTANTE_FIELDS.has(last) && typeof prev === 'number';
+}
+
+/**
+ * Tras cada página: si Shopify devolvió los datos protegidos de cliente en
+ * null por falta de aprobación (HTTP 200 + errors[] por path, que el cliente
+ * tolera a propósito), se aborta ACÁ con un error tipado y accionable. Si se
+ * dejara pasar, `dac/shipment.ts` fallaría "has no shipping address" por cada
+ * pedido y el job escribiría una nota de error en todos, cada ciclo.
+ */
+export function assertProtectedDataAvailable(client: ShopifyGraphqlClient): void {
+  const denied = (client.lastErrors ?? []).filter(isProtectedDataDenial);
+  if (denied.length === 0) return;
+  const paths = Array.from(new Set(denied.map((e) => (e.path ?? []).join('.'))));
+  logger.error(
+    { storeUrl: client.storeUrl, denied: paths.slice(0, 10), sample: denied[0]?.message },
+    'Shopify GraphQL: protected customer data not approved for this app — aborting tenant cycle before touching any order',
+  );
+  throw new ShopifyProtectedDataError(client.storeUrl, paths);
+}
 
 interface OrdersData {
   orders: { pageInfo: GqlPageInfo; nodes: GqlOrderNode[] };
@@ -207,14 +271,29 @@ async function fetchRemainingLineItems(
  */
 async function listOrders(
   client: ShopifyGraphqlClient,
-  opts: { query: string | null; reverse: boolean; limit: number },
+  opts: {
+    query: string | null;
+    reverse: boolean;
+    limit: number;
+    /** Filtro del lado nuestro (se aplica antes de contar hacia `limit`). Default: todos. */
+    keep?: (order: ShopifyOrder) => boolean;
+  },
 ): Promise<ShopifyOrder[]> {
   const out: ShopifyOrder[] = [];
+  const keep = opts.keep ?? (() => true);
+  let scanned = 0;
   let first = Math.min(DEFAULT_PAGE, opts.limit);
   let lineItemsFirst = DEFAULT_LINE_ITEMS;
   let after: string | null = null;
 
   while (out.length < opts.limit) {
+    if (scanned >= MAX_SCANNED) {
+      logger.warn(
+        { storeUrl: client.storeUrl, scanned, kept: out.length, limit: opts.limit },
+        'Shopify GraphQL orders: scanned cap reached before filling the page (auto-archive off?), returning what was kept',
+      );
+      break;
+    }
     const want = Math.min(first, opts.limit - out.length);
     let data: OrdersData;
     try {
@@ -235,6 +314,10 @@ async function listOrders(
       throw err;
     }
 
+    // Antes de tocar los nodos: si faltan los datos protegidos, se aborta el
+    // tenant entero con un solo error (ver assertProtectedDataAvailable).
+    assertProtectedDataAvailable(client);
+
     const cost = client.lastCost;
     if (cost) {
       logger.info(
@@ -244,11 +327,16 @@ async function listOrders(
     }
 
     for (const node of data.orders.nodes) {
+      scanned++;
+      // Filtro primero, line items después: no se paga la paginación de ítems
+      // de un pedido que igual se descarta.
+      const probe = toRestOrder(node);
+      if (!keep(probe)) continue;
       let extra: GqlLineItemNode[] = [];
       if (node.lineItems?.pageInfo?.hasNextPage) {
         extra = await fetchRemainingLineItems(client, node.id, node.lineItems.pageInfo.endCursor);
       }
-      out.push(toRestOrder(node, extra));
+      out.push(extra.length > 0 ? toRestOrder(node, extra) : probe);
       if (out.length >= opts.limit) break;
     }
 
@@ -268,6 +356,7 @@ export async function getUnfulfilledOrders(
     query: UNFULFILLED_QUERY_STRING,
     reverse: sortDirection === 'newest_first',
     limit: REST_LIST_LIMIT,
+    keep: isRestUnfulfilled,
   });
 
   // Misma telemetría que orders.ts: pedidos que ya llevan tag/nota nuestra.

@@ -1,6 +1,8 @@
 // D27: orders-graphql.ts devuelve la misma forma REST que orders.ts, pagina
 // hasta 250, achica la página en MAX_COST_EXCEEDED, usa tagsAdd (atómico) y
-// orderUpdate sólo con {id, note}.
+// orderUpdate sólo con {id, note}. El filtro "unfulfilled" de REST (null o
+// partial) se replica del lado nuestro, y si faltan los datos protegidos de
+// cliente se aborta con ShopifyProtectedDataError antes de tocar pedidos.
 import { describe, it, expect, vi } from 'vitest';
 import {
   getUnfulfilledOrders,
@@ -14,17 +16,31 @@ import {
   TAGS_ADD_MUTATION,
   ORDER_NOTE_UPDATE_MUTATION,
   UNFULFILLED_QUERY_STRING,
+  isRestUnfulfilled,
+  assertProtectedDataAvailable,
 } from '../shopify/orders-graphql';
-import { ShopifyGraphqlError, type ShopifyGraphqlClient } from '../shopify/graphql-client';
+import { ShopifyProtectedDataError, isShopifyProtectedDataError } from '../shopify/errors';
+import { ShopifyGraphqlError, type ShopifyGraphqlClient, type GraphqlErrorEntry } from '../shopify/graphql-client';
 import type { GqlOrderNode } from '../shopify/graphql-adapter';
 
 type Handler = (query: string, variables: Record<string, unknown>, call: number) => unknown;
 
-function makeClient(handler: Handler) {
+function makeClient(handler: Handler, errorsByCall: (call: number) => GraphqlErrorEntry[] = () => []) {
   let call = 0;
-  const request = vi.fn(async (q: string, v: Record<string, unknown> = {}) => handler(q, v, call++));
-  const client = { storeUrl: 'qa.myshopify.com', apiVersion: '2026-07', request, lastCost: null, lastErrors: [] } as unknown as ShopifyGraphqlClient;
+  const client = { storeUrl: 'qa.myshopify.com', apiVersion: '2026-07', lastCost: null, lastErrors: [] as GraphqlErrorEntry[] } as unknown as ShopifyGraphqlClient;
+  const request = vi.fn(async (q: string, v: Record<string, unknown> = {}) => {
+    const n = call++;
+    const out = await handler(q, v, n);
+    client.lastErrors = errorsByCall(n);
+    return out;
+  });
+  (client as { request: unknown }).request = request;
   return { client, request };
+}
+
+function protectedDenied(path: Array<string | number>, code = 'ACCESS_DENIED_PROTECTED'): GraphqlErrorEntry {
+  const field = String(path[path.length - 1]);
+  return { message: `This app is not approved to access the Order.${field} field.`, path, extensions: { code } };
 }
 
 function node(id: number, over: Partial<GqlOrderNode> = {}): GqlOrderNode {
@@ -59,7 +75,11 @@ describe('getUnfulfilledOrders', () => {
     expect(q).toBe(ORDERS_QUERY);
     expect(q).toContain('sortKey: CREATED_AT');
     expect(v).toEqual({ first: 25, after: null, query: UNFULFILLED_QUERY_STRING, reverse: true, lineItemsFirst: 50 });
-    expect(UNFULFILLED_QUERY_STRING).toBe('financial_status:paid fulfillment_status:unfulfilled status:open');
+    // Sin `fulfillment_status:` en el query: la semántica de `unfulfilled` en
+    // GraphQL no está documentada (¿incluye partial/on_hold/scheduled?); el
+    // equivalente REST (null o partial) se aplica del lado nuestro.
+    expect(UNFULFILLED_QUERY_STRING).toBe('financial_status:paid status:open');
+    expect(UNFULFILLED_QUERY_STRING).not.toMatch(/fulfillment_status/);
 
     const c2 = makeClient(() => page([], false));
     await getUnfulfilledOrders(c2.client);
@@ -115,6 +135,108 @@ describe('getUnfulfilledOrders', () => {
   it('otros errores del cliente suben tal cual', async () => {
     const { client } = makeClient(() => { throw new ShopifyGraphqlError('denied', 'ACCESS_DENIED'); });
     await expect(getUnfulfilledOrders(client)).rejects.toMatchObject({ code: 'ACCESS_DENIED' });
+  });
+
+  it('réplica de REST fulfillment_status=unfulfilled: quedan null (UNFULFILLED/ON_HOLD/SCHEDULED/IN_PROGRESS) y partial; FULFILLED y RESTOCKED afuera', async () => {
+    const { client } = makeClient(() => page([
+      node(1, { displayFulfillmentStatus: 'UNFULFILLED' }),
+      node(2, { displayFulfillmentStatus: 'FULFILLED' }),
+      node(3, { displayFulfillmentStatus: 'PARTIALLY_FULFILLED' }),
+      node(4, { displayFulfillmentStatus: 'ON_HOLD' }),
+      node(5, { displayFulfillmentStatus: 'RESTOCKED' }),
+      node(6, { displayFulfillmentStatus: 'SCHEDULED' }),
+      node(7, { displayFulfillmentStatus: 'IN_PROGRESS' }),
+      node(8, { displayFulfillmentStatus: null }),
+    ], false));
+    const orders = await getUnfulfilledOrders(client);
+    expect(orders.map((o) => o.id)).toEqual([1, 3, 4, 6, 7, 8]);
+    expect(orders.map((o) => o.fulfillment_status)).toEqual([null, 'partial', null, null, null, null]);
+    expect(isRestUnfulfilled({ fulfillment_status: null })).toBe(true);
+    expect(isRestUnfulfilled({ fulfillment_status: 'partial' })).toBe(true);
+    expect(isRestUnfulfilled({ fulfillment_status: 'fulfilled' })).toBe(false);
+    expect(isRestUnfulfilled({ fulfillment_status: 'restocked' })).toBe(false);
+  });
+
+  it('el tope de 250 cuenta los que pasan el filtro, no los crudos, y el escaneo corta en MAX_SCANNED (1000) sin colgar', async () => {
+    // Cada página: 20 FULFILLED + 5 unfulfilled. Hacen falta 50 páginas para 250.
+    const { client, request } = makeClient((_q, v) => {
+      const start = Number(v.after ?? 0);
+      const n = Number(v.first);
+      const nodes = Array.from({ length: n }, (_, i) => node(start + i + 1, { displayFulfillmentStatus: i < 20 ? 'FULFILLED' : 'UNFULFILLED' }));
+      return page(nodes, true, String(start + n));
+    });
+    const orders = await getUnfulfilledOrders(client);
+    expect(orders.every((o) => o.fulfillment_status === null)).toBe(true);
+    // 1000 crudos escaneados (MAX_SCANNED) → 40 páginas × 5 = 200 y corta con warn, no cuelga.
+    expect(request).toHaveBeenCalledTimes(40);
+    expect(orders).toHaveLength(200);
+  });
+
+  it('no pagina line items de un pedido que el filtro descarta', async () => {
+    const { client, request } = makeClient((q) => {
+      if (q === ORDERS_QUERY) {
+        return page([node(1, { displayFulfillmentStatus: 'FULFILLED', lineItems: { pageInfo: { hasNextPage: true, endCursor: 'LI1' }, nodes: [{ id: 'a', title: 'A', quantity: 1 }] } })], false);
+      }
+      throw new Error('no debería pedir line items de un pedido descartado');
+    });
+    const orders = await getUnfulfilledOrders(client);
+    expect(orders).toEqual([]);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('datos protegidos de cliente sin aprobar (HTTP 200 + errors[] por path)', () => {
+  const protectedErrors = [
+    protectedDenied(['orders', 'nodes', 0, 'email']),
+    protectedDenied(['orders', 'nodes', 0, 'phone']),
+    protectedDenied(['orders', 'nodes', 0, 'shippingAddress']),
+    protectedDenied(['orders', 'nodes', 0, 'billingAddress']),
+  ];
+
+  it('getUnfulfilledOrders aborta con ShopifyProtectedDataError antes de devolver pedidos (nada de notas por pedido)', async () => {
+    const { client, request } = makeClient(
+      () => page([node(1, { email: null, phone: null, shippingAddress: null, billingAddress: null }), node(2, { shippingAddress: null })], true, 'CUR1'),
+      () => protectedErrors,
+    );
+    const err = await getUnfulfilledOrders(client).catch((e) => e);
+    expect(isShopifyProtectedDataError(err)).toBe(true);
+    expect(err).toBeInstanceOf(ShopifyProtectedDataError);
+    expect((err as ShopifyProtectedDataError).storeUrl).toBe('qa.myshopify.com');
+    expect((err as ShopifyProtectedDataError).deniedPaths).toEqual(['orders.nodes.0.email', 'orders.nodes.0.phone', 'orders.nodes.0.shippingAddress']);
+    expect(err.message).toMatch(/protected customer data not approved/);
+    expect(err.message).toMatch(/Partner Dashboard/);
+    // No siguió paginando: un solo request, un solo error por tenant.
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('getRecentOrders (modo TEST) también aborta', async () => {
+    const { client } = makeClient(() => page([node(1)], false), () => [protectedDenied(['orders', 'nodes', 0, 'shippingAddress'])]);
+    await expect(getRecentOrders(client, 5)).rejects.toBeInstanceOf(ShopifyProtectedDataError);
+  });
+
+  it('sólo shippingAddress denegado (código ACCESS_DENIED genérico) alcanza para abortar', async () => {
+    const { client } = makeClient(() => page([node(1)], false), () => [protectedDenied(['orders', 'nodes', 3, 'shippingAddress', 'address1'], 'ACCESS_DENIED')]);
+    await expect(getUnfulfilledOrders(client)).rejects.toBeInstanceOf(ShopifyProtectedDataError);
+  });
+
+  it('errores por path en campos NO portantes siguen tolerándose (el ciclo continúa)', async () => {
+    const tolerated = [
+      protectedDenied(['orders', 'nodes', 0, 'billingAddress']),
+      protectedDenied(['orders', 'nodes', 0, 'billingAddress', 'phone']),
+      protectedDenied(['orders', 'nodes', 0, 'customAttributes']),
+      { message: 'Field deprecated', path: ['orders', 'nodes', 0, 'email'], extensions: { code: 'DEPRECATED' } } as GraphqlErrorEntry,
+      { message: 'sin path', extensions: { code: 'ACCESS_DENIED' } } as GraphqlErrorEntry,
+    ];
+    const { client } = makeClient(() => page([node(1)], false), () => tolerated);
+    const orders = await getUnfulfilledOrders(client);
+    expect(orders.map((o) => o.id)).toEqual([1]);
+    expect(() => assertProtectedDataAvailable(client)).not.toThrow();
+  });
+
+  it('assertProtectedDataAvailable no lanza sin errores ni con lastErrors ausente', () => {
+    const { client } = makeClient(() => page([], false));
+    expect(() => assertProtectedDataAvailable(client)).not.toThrow();
+    expect(() => assertProtectedDataAvailable({ storeUrl: 'x', lastErrors: undefined } as unknown as ShopifyGraphqlClient)).not.toThrow();
   });
 });
 

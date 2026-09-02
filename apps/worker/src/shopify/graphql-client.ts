@@ -23,8 +23,12 @@ import logger from '../logger';
  *   - THROTTLED → espera lo que indique `throttleStatus` y reintenta (máx 3).
  *   - Red / 5xx / 429 → reintento exponencial corto (500 ms, 1 s, 2 s).
  *   - Errores parciales por `path` con `data` presente (típico: datos
- *     protegidos de cliente que la app todavía no tiene aprobados) NO abortan:
- *     se loguean una vez por tienda y se sigue con los campos en null.
+ *     protegidos de cliente que la app todavía no tiene aprobados) NO abortan
+ *     ACÁ: se loguean una vez por tienda, quedan en `lastErrors` y cada
+ *     adaptador decide. `orders-graphql.ts` aborta el tenant con
+ *     `ShopifyProtectedDataError` si el path denegado es portante
+ *     (shippingAddress / email / phone del pedido); `fulfillment-graphql.ts`
+ *     traduce `fulfillmentOrders: null` a ShopifyMissingScopesError.
  *   - Nunca loguea ni incluye el token en ningún mensaje de error.
  *
  * Lo que NO hace: mapear a REST (eso es de los adaptadores) ni elegir modo
