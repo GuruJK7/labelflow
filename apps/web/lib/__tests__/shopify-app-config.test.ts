@@ -26,11 +26,19 @@ describe('shopify.app.toml — coherencia con el código', () => {
     expect(enToml.slice().sort()).toEqual([...REQUIRED_SCOPES].sort());
   });
 
-  it('la redirect_url del toml es la que arma el código', () => {
+  it('la redirect_url del toml es la que arma el código (sobre el ORIGEN de la App URL)', () => {
     const appUrl = tomlValue('application_url');
     expect(appUrl).toBeTruthy();
-    const esperada = callbackUrl(appUrl as string);
+    // La App URL apunta a /api/shopify/entry (instalación desde el App Store);
+    // el callback de OAuth vive en el mismo origen, no debajo de esa ruta.
+    const origen = new URL(appUrl as string).origin;
+    const esperada = callbackUrl(origen);
     expect(TOML).toContain(esperada);
+  });
+
+  it('la App URL es la entrada sin sesión del App Store', () => {
+    const appUrl = tomlValue('application_url');
+    expect(new URL(appUrl as string).pathname).toBe('/api/shopify/entry');
   });
 
   it('suscribe los dos webhooks que el sistema necesita', () => {

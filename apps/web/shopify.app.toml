@@ -27,7 +27,7 @@
 client_id = "a4231e6cc6a41a79e1b01aebf3dd38b5"
 name = "AutoEnvía"
 handle = "autoenvia"
-application_url = "https://autoenvia.com"
+application_url = "https://autoenvia.com/api/shopify/entry"
 
 # No es una app embebida: el comerciante vive en NUESTRO dashboard, va a Shopify
 # sólo a autorizar y vuelve. No renderizamos nada dentro del admin de Shopify.
