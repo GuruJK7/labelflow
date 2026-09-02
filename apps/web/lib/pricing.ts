@@ -535,3 +535,112 @@ function assertCount(n: number): void {
     throw new RangeError(`Volumen implausible (${n}); probable bug de llamador`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Moneda de presentación — el cliente elige en qué moneda LEE el precio
+// ---------------------------------------------------------------------------
+
+/**
+ * La moneda en la que se MUESTRA un precio. No cambia lo que se cobra: la
+ * escalera está denominada en dólares y MercadoPago cobra en pesos, siempre.
+ * Elegir UYU es pedir la conversión ya hecha; elegir USD es ver el precio de
+ * lista tal cual.
+ */
+export type Currency = 'USD' | 'UYU';
+
+export const CURRENCIES: readonly Currency[] = Object.freeze(['USD', 'UYU'] as const);
+
+/**
+ * UYU por default: el cliente es uruguayo, paga en pesos con MercadoPago y lo
+ * que necesita saber para decidir es cuánta plata le sale a él. El dólar es la
+ * unidad de cuenta del negocio, no la del comerciante.
+ */
+export const DEFAULT_CURRENCY: Currency = 'UYU';
+
+export function isCurrency(value: unknown): value is Currency {
+  return value === 'USD' || value === 'UYU';
+}
+
+export interface MoneyFormatOptions {
+  readonly currency: Currency;
+  /** Tipo de cambio en milésimos de UYU por USD. El del checkout, no otro. */
+  readonly rateMilli: bigint;
+}
+
+/**
+ * Símbolo del peso uruguayo. `$U` y no `$` a propósito: en Uruguay el `$` se usa
+ * para las dos monedas, y en una pantalla que muestra USD y UYU alternados un
+ * "$ 7.000" se puede leer como dólares. `$U` no se confunde con nada.
+ */
+export const UYU_SYMBOL = '$U';
+export const USD_SYMBOL = 'USD';
+
+/**
+ * Precio POR ENVÍO en la moneda elegida, con símbolo.
+ *
+ *     formatUnitPrice(175n, { currency: 'USD', rateMilli: 40_000n })  → "USD 0,175"
+ *     formatUnitPrice(175n, { currency: 'UYU', rateMilli: 40_000n })  → "$U 7,00"
+ *
+ * En USD sale EXACTO en milésimos (`formatUsdUnitMilli`): con dos decimales
+ * 0,175 se leería "0,18" y no cerraría contra los 7,00 que se cobran. En UYU
+ * van dos decimales, que es como se escribe un precio unitario en pesos, con
+ * redondeo half-up explícito y sin float en ningún paso.
+ */
+export function formatUnitPrice(usdMilli: bigint, opts: MoneyFormatOptions): string {
+  if (usdMilli < 0n) throw new RangeError('formatUnitPrice: monto negativo');
+  if (opts.currency === 'USD') return `${USD_SYMBOL} ${formatUsdUnitMilli(usdMilli)}`;
+  return `${UYU_SYMBOL} ${formatUyuMilli(usdMilliToUyuMilli(usdMilli, opts.rateMilli))}`;
+}
+
+/**
+ * Monto TOTAL en la moneda elegida, con símbolo.
+ *
+ *     formatTotalPrice(175_000n, { currency: 'USD', rateMilli: 40_000n }) → "USD 175,00"
+ *     formatTotalPrice(175_000n, { currency: 'UYU', rateMilli: 40_000n }) → "$U 7.000"
+ *
+ * 🔴 EL PESO SALE DE `usdMilliToUyuWhole`, que es LA MISMA función con la que
+ * `lib/credit-packs.ts` arma `totalPriceUyu` y con la que el checkout llena el
+ * `unit_price` de MercadoPago. No es una conversión paralela "para mostrar":
+ * es el número que se va a cobrar, al peso entero. Si esto usara otro redondeo,
+ * la pantalla y la pasarela dirían cosas distintas por un peso, que es la clase
+ * de diferencia que un comerciante nota y no perdona.
+ */
+export function formatTotalPrice(usdMilli: bigint, opts: MoneyFormatOptions): string {
+  if (usdMilli < 0n) throw new RangeError('formatTotalPrice: monto negativo');
+  if (opts.currency === 'USD') return `${USD_SYMBOL} ${formatUsdMilli(usdMilli)}`;
+  const uyu = usdMilliToUyuWhole(usdMilli, opts.rateMilli);
+  return `${UYU_SYMBOL} ${BigInt(uyu).toLocaleString('es-UY')}`;
+}
+
+/**
+ * La línea que acompaña a los montos según la moneda elegida. Existe acá y no
+ * suelta en un componente porque es una afirmación sobre PLATA y tiene que
+ * decir lo mismo en el dashboard y en la landing.
+ *
+ * En UYU dice que el precio de lista es en dólares y a qué tipo se convierte:
+ * sin eso, el cliente cree que el precio en pesos es fijo y se sorprende cuando
+ * Adrian mueve `USD_UYU_RATE`. En USD dice que el cobro igual es en pesos y que
+ * el monto exacto se ve antes de pagar: nadie tiene que hacer la cuenta a mano.
+ *
+ * Nunca dice "al tipo de cambio del día": no lo es, y afirmarlo en la pantalla
+ * donde se aprieta comprar sería mentir sobre plata (`pricing-copy.test.ts`).
+ *
+ * `rateLabel` entra ya formateado (`formatRate`) en vez de derivarse del
+ * `rateMilli`: el tipo se formatea UNA vez, en el server que lo lee de la env
+ * (`/api/credit-packs/me`), y viaja como texto. Así el número que se muestra y
+ * el que se usa para convertir no pueden desincronizarse por dos formateos.
+ */
+export function currencyNote(currency: Currency, rateLabel: string): string {
+  const tipo = `${rateLabel} UYU/USD`;
+  if (currency === 'UYU') {
+    return (
+      `Los importes en pesos salen del precio de lista en dólares, convertido al tipo de ` +
+      `cambio de referencia que usamos (${tipo}); no es la cotización del día y puede cambiar. ` +
+      `MercadoPago cobra en pesos a ese mismo tipo.`
+    );
+  }
+  return (
+    `El precio de lista está en dólares, pero MercadoPago cobra en pesos al tipo de cambio ` +
+    `de referencia que usamos (${tipo}); vas a ver el monto exacto en pesos antes de pagar.`
+  );
+}

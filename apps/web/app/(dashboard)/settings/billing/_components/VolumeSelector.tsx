@@ -10,7 +10,13 @@ import {
   listPricingSteps,
   type VolumeQuote,
 } from '@/lib/credit-packs';
-import { formatUsdMilli, formatUsdUnitMilli } from '@/lib/pricing';
+import {
+  currencyNote,
+  formatTotalPrice,
+  formatUnitPrice,
+  type Currency,
+} from '@/lib/pricing';
+import { CurrencyToggle, useCurrency } from '@/app/_components/CurrencyToggle';
 
 /**
  * Selector "¿Cuántos envíos hacés por mes?" (D34, reexpresado en dólares por D35).
@@ -28,6 +34,12 @@ import { formatUsdMilli, formatUsdUnitMilli } from '@/lib/pricing';
  * Los dos botones de pago los maneja la página: MercadoPago cobra en pesos al
  * tipo de cambio de referencia (`USD_UYU_RATE`, no la cotización del día);
  * Whop cobra en dólares.
+ *
+ * MONEDA DE LECTURA (pedido de Adrian): el comerciante elige si lee todo en
+ * USD o en UYU y la elección se recuerda (`useCurrency`). Default UYU: el
+ * cliente es uruguayo. Los pesos NO son una estimación aparte — salen de la
+ * misma conversión a peso entero que arma el `unit_price` de MercadoPago— así
+ * que el número de la tabla es el número del checkout.
  */
 export interface VolumeSelectorProps {
   /** Tipo de cambio en milésimos de UYU por USD, tal como lo devuelve /api/credit-packs/me. */
@@ -43,16 +55,23 @@ export interface VolumeSelectorProps {
   loadingPackId: string | null;
   onPayMercadoPago: (packId: string) => void;
   onPayWhop: (packId: string) => void;
+  /**
+   * Moneda de lectura CONTROLADA desde afuera. Van de a dos: si se pasa
+   * `currency` sin `onCurrencyChange`, el toggle queda mudo a propósito (es lo
+   * que quiere un test de render, no una pantalla).
+   *
+   * Sin estas props el componente se maneja solo y recuerda la elección en
+   * localStorage. La versión controlada existe para cuando la pantalla tenga
+   * más de un bloque de precios y los dos tengan que moverse juntos.
+   */
+  currency?: Currency;
+  onCurrencyChange?: (next: Currency) => void;
 }
 
+const NOOP = () => {};
+
 const fmt = (n: number) => n.toLocaleString('es-UY');
-const usd = (milli: number) => formatUsdMilli(BigInt(Math.round(milli)));
-/**
- * Precios y diferencias POR ENVÍO: exactos en milésimos. Con dos decimales, el
- * escalón de 1.000 (0,175) se leería "0,18" y el efectivo con 800 envíos
- * (0,218) se leería "0,22" — los dos por encima de lo que se cobra.
- */
-const usdUnit = (milli: number) => formatUsdUnitMilli(BigInt(Math.round(milli)));
+const otra = (c: Currency): Currency => (c === 'USD' ? 'UYU' : 'USD');
 
 export function VolumeSelector({
   usdUyuRateMilli,
@@ -62,12 +81,29 @@ export function VolumeSelector({
   loadingPackId,
   onPayMercadoPago,
   onPayWhop,
+  currency: currencyProp,
+  onCurrencyChange,
 }: VolumeSelectorProps) {
   const [volume, setVolume] = useState<number>(100);
   const [custom, setCustom] = useState<string>('');
   const [customError, setCustomError] = useState<string | null>(null);
+  // El hook se llama siempre (regla de hooks); su valor se ignora cuando la
+  // moneda viene por prop.
+  const [propiaCurrency, setPropiaCurrency] = useCurrency();
+  const controlada = currencyProp !== undefined;
+  const currency = controlada ? currencyProp : propiaCurrency;
+  const setCurrency = onCurrencyChange ?? (controlada ? NOOP : setPropiaCurrency);
 
   const rateMilli = BigInt(usdUyuRateMilli);
+  // Los montos que se ven salen SIEMPRE de la escalera en dólares; la moneda
+  // elegida sólo decide cómo se escriben. `unit` va exacto en milésimos (0,175
+  // no puede leerse "0,18"); `total` en pesos usa el redondeo a peso entero del
+  // checkout, así que la tabla y MercadoPago dicen el mismo número.
+  const unit = (milli: number, c: Currency = currency) =>
+    formatUnitPrice(BigInt(Math.round(milli)), { currency: c, rateMilli });
+  const total = (milli: number, c: Currency = currency) =>
+    formatTotalPrice(BigInt(Math.round(milli)), { currency: c, rateMilli });
+  const nota = currencyNote(currency, usdUyuRateLabel);
   const quote: VolumeQuote = useMemo(
     () => quoteForVolume(volume, rateMilli, { largePacks }),
     [volume, usdUyuRateMilli, largePacks],
@@ -114,10 +150,18 @@ export function VolumeSelector({
         <h2 id="volumen-titulo" className="text-2xl md:text-3xl font-bold text-white tracking-tight">
           ¿Cuántos envíos hacés por mes?
         </h2>
-        <p className="text-zinc-400 text-sm mt-2 max-w-2xl">
-          Elegí un número aproximado. Te mostramos en qué escalón caés, cuánto pagás por cada envío
-          y cuánto te falta para el escalón siguiente.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-3 mt-2">
+          <p className="text-zinc-400 text-sm max-w-2xl">
+            Elegí un número aproximado. Te mostramos en qué escalón caés, cuánto pagás por cada
+            envío y cuánto te falta para el escalón siguiente.
+          </p>
+          <CurrencyToggle
+            value={currency}
+            onChange={setCurrency}
+            label="Ver los precios en"
+            className="flex-shrink-0"
+          />
+        </div>
 
         {/* Presets + campo libre */}
         <div className="flex flex-wrap items-center gap-2 mt-6">
@@ -170,7 +214,7 @@ export function VolumeSelector({
                   Precio por envío
                 </p>
                 <p className="text-3xl font-bold text-white tabular-nums">
-                  USD {usdUnit(quote.effectiveUnitUsdMilli)}
+                  {unit(quote.effectiveUnitUsdMilli)}
                 </p>
                 <p className="text-xs text-cyan-400/90 mt-1">{currentStep}</p>
               </div>
@@ -179,10 +223,13 @@ export function VolumeSelector({
                   Tu mes con {fmt(quote.monthlyShipments)} envíos
                 </p>
                 <p className="text-3xl font-bold text-white tabular-nums">
-                  USD {usd(quote.monthlyTotalUsdMilli)}
+                  {total(quote.monthlyTotalUsdMilli)}
                 </p>
+                {/* La otra moneda siempre visible: elegir una no es esconder la
+                    otra, y el que compara con un proveedor en dólares no tiene
+                    que ir a buscar la calculadora. */}
                 <p className="text-xs text-zinc-500 mt-1 tabular-nums">
-                  ≈ ${fmt(quote.monthlyTotalUyu)} UYU
+                  ≈ {total(quote.monthlyTotalUsdMilli, otra(currency))}
                 </p>
               </div>
             </div>
@@ -197,7 +244,7 @@ export function VolumeSelector({
             {quote.savingsVsBaseUsdMilli > 0 && (
               <p className="mt-4 inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2.5 py-1">
                 <TrendingDown className="w-3 h-3" />
-                Ahorrás USD {usd(quote.savingsVsBaseUsdMilli)} por mes frente al precio de entrada
+                Ahorrás {total(quote.savingsVsBaseUsdMilli)} por mes frente al precio de entrada
               </p>
             )}
 
@@ -215,10 +262,10 @@ export function VolumeSelector({
                   </span>{' '}
                   pagás{' '}
                   <span className="text-white font-semibold tabular-nums">
-                    USD {usdUnit(quote.nextStep.savesPerShipmentUsdMilli)} menos por envío
+                    {unit(quote.nextStep.savesPerShipmentUsdMilli)} menos por envío
                   </span>
-                  : {quote.nextStep.label.toLowerCase()}, USD{' '}
-                  {usdUnit(quote.nextStep.unitPriceUsdMilli)} cada uno.{' '}
+                  : {quote.nextStep.label.toLowerCase()},{' '}
+                  {unit(quote.nextStep.unitPriceUsdMilli)} cada uno.{' '}
                   <button
                     type="button"
                     onClick={() => pickPreset(quote.nextStep!.minShipments)}
@@ -240,9 +287,11 @@ export function VolumeSelector({
                 </span>{' '}
                 por{' '}
                 <span className="text-white font-semibold tabular-nums">
-                  USD {usd(quote.totalPriceUsdMilli)}
+                  {total(quote.totalPriceUsdMilli)}
                 </span>{' '}
-                <span className="tabular-nums">(${fmt(quote.totalPriceUyu)} UYU)</span>
+                <span className="tabular-nums">
+                  ({total(quote.totalPriceUsdMilli, otra(currency))})
+                </span>
                 {quote.pack.shipments * quote.quantity !== quote.monthlyShipments && (
                   <span className="text-zinc-500">
                     {' '}
@@ -285,21 +334,25 @@ export function VolumeSelector({
               </button>
             )}
             <p className="text-[11px] text-zinc-500 leading-snug">
-              Los precios están en dólares. MercadoPago los cobra en pesos al tipo de cambio de
-              referencia que usamos ({usdUyuRateLabel} UYU/USD, lo actualizamos cada tanto; no es la
-              cotización del día)
-              {whopAvailable ? '; Whop cobra en dólares con tarjeta internacional' : ''}.
+              {nota}
+              {whopAvailable ? ' Whop cobra en dólares con tarjeta internacional.' : ''}
             </p>
           </div>
         </div>
 
         {/* La escalera completa */}
         <div className="mt-8">
-          <h3 className="text-sm font-semibold text-white mb-3">La escalera completa</h3>
+          <h3 className="text-sm font-semibold text-white mb-3">
+            La escalera completa{' '}
+            <span className="text-zinc-500 font-normal">
+              · {currency === 'UYU' ? 'en pesos' : 'en dólares'}
+            </span>
+          </h3>
           <div className="overflow-x-auto -mx-1">
-            <table className="w-full text-sm min-w-[520px]">
+            <table className="w-full text-sm min-w-[440px]">
               <caption className="sr-only">
-                Precio por envío en dólares según los envíos que hagas en el mes
+                Precio por envío según los envíos que hagas en el mes, en{' '}
+                {currency === 'UYU' ? 'pesos uruguayos' : 'dólares'}
               </caption>
               <thead>
                 <tr className="text-zinc-500 text-[11px] uppercase tracking-wider">
@@ -311,9 +364,6 @@ export function VolumeSelector({
                   </th>
                   <th scope="col" className="text-right pb-2 px-2 font-medium">
                     Mes completo
-                  </th>
-                  <th scope="col" className="text-right pb-2 px-2 font-medium">
-                    En pesos
                   </th>
                 </tr>
               </thead>
@@ -342,13 +392,10 @@ export function VolumeSelector({
                         )}
                       </td>
                       <td className="py-2.5 px-2 text-right tabular-nums font-semibold">
-                        USD {usdUnit(step.unitPriceUsdMilli)}
+                        {unit(step.unitPriceUsdMilli)}
                       </td>
                       <td className="py-2.5 px-2 text-right tabular-nums">
-                        USD {usd(step.totalAtStepUsdMilli)}
-                      </td>
-                      <td className="py-2.5 px-2 text-right tabular-nums text-zinc-500">
-                        ${fmt(step.totalAtStepUyu)}
+                        {total(step.totalAtStepUsdMilli)}
                       </td>
                     </tr>
                   );
@@ -364,8 +411,7 @@ export function VolumeSelector({
 
         <p className="text-xs text-zinc-500 mt-6">
           Los envíos no vencen y se comparten entre todas tus tiendas. Cada guía creada en DAC
-          descuenta un envío. Los montos en pesos salen del tipo de cambio de referencia que usamos
-          ({usdUyuRateLabel} UYU/USD) y pueden cambiar.
+          descuenta un envío. {nota}
         </p>
       </div>
     </section>
