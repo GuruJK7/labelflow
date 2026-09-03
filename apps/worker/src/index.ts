@@ -21,6 +21,7 @@ import { processAdMonitorJob } from './ads/monitor-job';
 import { processRecoverMessage } from './recover/process-message';
 import { startReconciliationLoop, runReconciliation } from './jobs/reconcile.job';
 import { runPdfRetention, startPdfRetentionLoop } from './jobs/pdf-retention.job';
+import { runPiiRetention, startPiiRetentionLoop } from './jobs/pii-retention.job';
 import { flushWorkerAnalytics } from './analytics';
 
 // Emit memory usage every 60 s so we can catch leaks / OOM risk in Render
@@ -431,6 +432,15 @@ async function main(): Promise<void> {
     logger.error({ error: (err as Error).message }, '[PdfRetention] Boot-time run failed'),
   );
   startPdfRetentionLoop();
+
+  // Retención de DATOS PERSONALES (24 meses). Es lo que hace verdadera la
+  // cláusula 6 de la política de privacidad, que promete borrado automático
+  // y hasta hoy no lo ejecutaba nadie. Igual que el de PDFs: una vez al
+  // bootear y después una vez por día.
+  runPiiRetention().catch((err) =>
+    logger.error({ error: (err as Error).message }, '[PiiRetention] Boot-time run failed'),
+  );
+  startPiiRetentionLoop();
 
   // Memory telemetry so we can spot leaks / OOM risk in Render logs.
   startMemoryLogging();
