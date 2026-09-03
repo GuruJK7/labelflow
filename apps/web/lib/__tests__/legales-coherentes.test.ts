@@ -78,3 +78,34 @@ describe('páginas legales: el canal de contacto recibe', () => {
     expect(VERIFY).not.toContain('mailto:');
   });
 });
+
+/**
+ * La cláusula de retención tiene que describir lo que el código hace.
+ *
+ * 🔴 Decía que los datos personales «serán eliminados de forma automática y
+ * definitiva» a los 24 meses. Nada lo hacía: el único job de retención borraba
+ * PDFs a los 15 días y dejaba intactas las filas con nombre, teléfono y
+ * dirección. Una promesa falsa en un documento legal, bajo Ley 18.331 — y la
+ * misma afirmación que Shopify pide declarar para acceder a datos protegidos.
+ * El job existe desde el 2026-09-03 (`pii-retention.job.ts`); este test evita
+ * que la promesa y el código se separen de nuevo.
+ */
+describe('la cláusula de retención', () => {
+  const PRIV = readFileSync(join(raiz, 'privacidad/page.tsx'), 'utf8');
+
+  it('nombra los campos que efectivamente se borran', () => {
+    for (const campo of ['nombre', 'correo', 'teléfono', 'dirección de']) {
+      expect(PRIV.toLowerCase()).toContain(campo.toLowerCase());
+    }
+  });
+
+  it('distingue el dato personal del registro contable', () => {
+    expect(PRIV).toContain('24 meses');
+    expect(PRIV).toContain('5 años');
+    expect(PRIV).toContain('registro contable');
+  });
+
+  it('no promete borrar el registro del envío, que se conserva por ley', () => {
+    expect(PRIV).toContain('ya no permite identificar');
+  });
+});

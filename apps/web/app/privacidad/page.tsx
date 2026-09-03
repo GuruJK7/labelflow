@@ -103,14 +103,16 @@ export default function PrivacidadPage() {
           <section>
             <h2 className="text-lg font-semibold text-white mb-3">6. Período de retención</h2>
             <p>
-              Los datos personales se conservarán por un período máximo de 24 meses desde la
-              última actividad del usuario o la finalización de la relación contractual. Transcurrido
-              dicho plazo, los datos serán eliminados de forma automática y definitiva.
+              Los datos personales de los destinatarios —nombre, correo, teléfono y dirección de
+              entrega— se conservan por un máximo de 24 meses desde que se emitió la guía.
+              Cumplido ese plazo, un proceso automático los borra de nuestra base todos los días,
+              de forma definitiva y sin que nadie tenga que pedirlo.
             </p>
             <p className="mt-2">
-              Los registros de etiquetas y envíos se conservarán por el período legalmente
-              requerido para fines de facturación y auditoría (5 años conforme a la normativa
-              tributaria vigente).
+              Lo que sí se conserva del envío es el registro contable: el número de guía, el
+              importe, la ciudad de destino y las fechas, por el período legalmente requerido para
+              facturación y auditoría (5 años conforme a la normativa tributaria vigente). Ese
+              registro ya no permite identificar a la persona que recibió el paquete.
             </p>
           </section>
 
