@@ -1,0 +1,99 @@
+1
+00:00:02,223 --> 00:00:11,223
+AutoEnvia, by LabelFlow SAS, Uruguay. A Shopify store connects its own account with the carrier DAC, and from then on every paid order is filed with the carrier automatically. Nobody types a shipping form again.
+
+2
+00:00:11,477 --> 00:00:20,477
+This is what the merchant sees. Labels issued today, labels this month, the success rate of the runs, and when the last run happened. Filing one order by hand on the carrier portal takes about four minutes; this replaces that.
+
+3
+00:00:20,709 --> 00:00:28,709
+The controls on top pick how many pending orders to process in one go, and the filters decide which orders qualify: oldest first or newest first, only orders already marked as prepared, and which products to include.
+
+4
+00:00:28,919 --> 00:00:35,919
+The connection row shows the two systems the app depends on: the Shopify store and the DAC carrier account.
+
+5
+00:00:35,923 --> 00:00:44,923
+Below is the shipment tracker, refreshed live. Every order the app dispatched, the destination city, and the tracking number that DAC returned for it. These are real tracking numbers issued by the carrier.
+
+6
+00:00:44,929 --> 00:00:52,929
+And the run log: what was fetched from Shopify, which filter was applied, and what happened with each order. When something fails, the reason is written here, in plain language.
+
+7
+00:00:54,525 --> 00:01:02,525
+Setup is a six step wizard that takes under ten minutes. Every step says how long it takes, and the merchant can come back to any of them later from Settings.
+
+8
+00:01:04,045 --> 00:01:14,045
+Step three: the credentials DAC issued to the merchant in the carrier own portal. They are stored encrypted with AES-256, and every shipment travels on the merchant own carrier contract, never on ours. The screen is explicit that saving stores the credentials; it does not contact the carrier.
+
+9
+00:01:16,236 --> 00:01:24,236
+Step four: the shipping rules. Who pays for shipping, free shipping thresholds, which products to include, and whether the customer gets an email. Each option explains what it does, who it is for, and shows an example.
+
+10
+00:01:24,248 --> 00:01:33,248
+Free shipping can be triggered by order value, by item count, or by a customer tag coming from Shopify. The first rule that matches wins, and each one shows a worked example so the merchant can see the effect before saving.
+
+11
+00:01:33,261 --> 00:01:41,261
+Further down: which products to dispatch, cash on delivery, and the notification to the buyer. Every option follows the same pattern — what it does, who it is for, and an example.
+
+12
+00:01:42,811 --> 00:01:51,811
+Step five: how often orders are processed. Immediately, so a paid order is filed with the carrier within seconds of the payment, or batched once an hour for merchants who prefer to review before anything ships.
+
+13
+00:01:53,441 --> 00:02:02,441
+Everything stays editable afterwards in Settings, in the same tabs as the wizard: the connected store, the DAC account, the shipping rules, and the dispatch parameters.
+
+14
+00:02:02,672 --> 00:02:10,672
+The store tab shows the Shopify connection and the alternative source for merchants who do not sell on Shopify: they upload their orders and the app picks them up from there.
+
+15
+00:02:12,216 --> 00:02:22,216
+The Labels screen — this is where the merchant spends thirty seconds a day. Every dispatched order becomes a PDF label, grouped by the day it was dispatched, each one showing the order number, the customer, the destination and the tracking number DAC returned.
+
+16
+00:02:22,423 --> 00:02:30,423
+Each label can be downloaded on its own, printed on its own, or sent again to the customer. There is also a search by tracking number or order, and a filter by date.
+
+17
+00:02:30,429 --> 00:02:38,429
+They stack one under the other, newest day first. A busy day can be dozens of labels, and they all live on this one screen — no folder of downloaded files to hunt through.
+
+18
+00:02:38,434 --> 00:02:45,434
+Each row carries everything the person packing the box needs to check: order number, customer name, city and the carrier tracking number.
+
+19
+00:02:45,939 --> 00:02:51,939
+Selecting them is one gesture. Tapping the day header takes the whole day at once.
+
+20
+00:02:52,682 --> 00:03:00,682
+Or one keyboard shortcut selects every label available. The bar at the bottom shows the running count, so the merchant can see exactly how many labels are about to come out of the printer.
+
+21
+00:03:00,890 --> 00:03:10,890
+And one click prints all of them together, in a single PDF, in exactly the order they are listed on screen — so the stack coming out of the printer matches the stack of boxes on the table.
+
+22
+00:03:10,894 --> 00:03:19,894
+That is the entire daily routine for the merchant: open Labels, select the day, press print. Everything before that — reading the paid orders, validating the address, filing each shipment with DAC and writing the tracking number back to Shopify — already happened on its own.
+
+23
+00:03:21,770 --> 00:03:31,770
+To recap the merchant side: connect the Shopify store, add the DAC account, set the shipping rules once, and choose how often to run. From then on the paid orders are filed with the carrier on their own and the labels are waiting here.
+
+24
+00:03:31,772 --> 00:03:39,772
+And the buyer side: the order is marked as fulfilled in Shopify with the DAC tracking number written back, so the customer gets Shopify own shipping notification and can follow the parcel.
+
+25
+00:03:39,775 --> 00:03:45,775
+AutoEnvia, by LabelFlow SAS. Thank you for reviewing.
