@@ -92,4 +92,14 @@ describe('POST /api/webhooks/shopify/checkouts', () => {
       tenantId_shopifyCheckoutId: { tenantId: 't-mayus', shopifyCheckoutId: '99' },
     });
   });
+
+  // 🔴 Sonda de la comprobación automática del App Store: firmada con el secreto
+  // de la app, sin topic ni dominio. Antes recibía 401 y Shopify marcaba en rojo
+  // «verifica webhooks con firmas HMAC». Tiene que acusar recibo con 200.
+  it('sonda firmada sin topic ni dominio: 200 y no toca la base', async () => {
+    const body = '{}'
+    const res = await post(body, { 'x-shopify-hmac-sha256': firmar(body) })
+    expect(res.status).toBe(200)
+    expect(mocks.tenantFindFirst).not.toHaveBeenCalled()
+  })
 });

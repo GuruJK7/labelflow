@@ -79,4 +79,51 @@ describe('POST /api/webhooks/shopify/gdpr', () => {
     expect(data.topic).toBe('CUSTOMERS_REDACT');
     expect(data.customerId).toBe('7');
   });
+
+  // 🔴 La comprobación automática del App Store manda una sonda firmada con el
+  // secreto de la app pero SIN los headers de contexto de una tienda real. El
+  // handler exigía topic + shop-domain ANTES de validar la firma y devolvía 401,
+  // y eso hacía fallar los dos chequeos: "proporciona webhooks de cumplimiento"
+  // y "verifica webhooks con firmas HMAC". Una petición legítimamente firmada
+  // por Shopify nunca puede contestarse con un error de autenticación.
+  it('firma válida sin x-shopify-shop-domain: 200, no 401, y no toca la base', async () => {
+    const body = JSON.stringify({ shop_id: 1 });
+    const res = await post(body, {
+      'x-shopify-hmac-sha256': firmar(body),
+      'x-shopify-topic': 'shop/redact',
+    });
+    expect(res.status).toBe(200);
+    expect(mocks.tenantFindFirst).not.toHaveBeenCalled();
+    expect(mocks.gdprCreate).not.toHaveBeenCalled();
+  });
+
+  it('firma válida sin x-shopify-topic: 200, no 401', async () => {
+    const body = JSON.stringify({ shop_id: 1 });
+    const res = await post(body, {
+      'x-shopify-hmac-sha256': firmar(body),
+      'x-shopify-shop-domain': 'mitienda.myshopify.com',
+    });
+    expect(res.status).toBe(200);
+    expect(mocks.gdprCreate).not.toHaveBeenCalled();
+  });
+
+  it('firma válida y ningún header de contexto: 200', async () => {
+    const body = '{}';
+    const res = await post(body, { 'x-shopify-hmac-sha256': firmar(body) });
+    expect(res.status).toBe(200);
+  });
+
+  // La tolerancia con los headers NO afloja la firma: sin firma sigue siendo 401.
+  it('sin firma y sin headers de contexto: sigue siendo 401', async () => {
+    const res = await post('{}', {});
+    expect(res.status).toBe(401);
+    expect(mocks.tenantFindFirst).not.toHaveBeenCalled();
+  });
+
+  it('firma inválida y sin headers de contexto: sigue siendo 401', async () => {
+    const body = '{}';
+    const res = await post(body, { 'x-shopify-hmac-sha256': firmar(body + 'x') });
+    expect(res.status).toBe(401);
+    expect(mocks.tenantFindFirst).not.toHaveBeenCalled();
+  });
 });

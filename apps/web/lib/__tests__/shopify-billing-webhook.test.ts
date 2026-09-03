@@ -97,6 +97,22 @@ describe('firma', () => {
     expect(mocks.settle).not.toHaveBeenCalled();
   });
 
+
+  // 🔴 Sonda de la comprobación automática del App Store: firmada con el secreto
+  // de la app, sin topic ni dominio. Antes recibía 401 y Shopify marcaba en rojo
+  // «verifica webhooks con firmas HMAC». Tiene que acusar recibo con 200.
+  it('sonda firmada sin topic ni dominio: 200 y no acredita nada', async () => {
+    const body = cuerpo('ACTIVE');
+    const req = new Request('https://autoenvia.com/api/webhooks/shopify/app-purchases', {
+      method: 'POST',
+      body,
+      headers: { 'x-shopify-hmac-sha256': firmar(body) },
+    });
+    const res = await POST(req as never);
+    expect(res.status).toBe(200);
+    expect(mocks.settle).not.toHaveBeenCalled();
+  });
+
   it('un cuerpo alterado después de firmar se rechaza', async () => {
     const original = cuerpo('PENDING');
     const alterado = cuerpo('ACTIVE');
