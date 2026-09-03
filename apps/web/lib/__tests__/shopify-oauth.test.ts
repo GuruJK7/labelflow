@@ -106,11 +106,25 @@ describe('buildAuthorizeUrl', () => {
     expect(online.searchParams.get('grant_options[]')).toBe('per-user');
   });
 
-  it('pide exactamente los diez scopes que necesita el worker', () => {
+  it('pide exactamente los scopes que necesita el worker, y ninguno más', () => {
     const u = new URL(buildAuthorizeUrl(base));
     const pedidos = (u.searchParams.get('scope') ?? '').split(',');
     expect(pedidos.sort()).toEqual([...REQUIRED_SCOPES].sort());
-    expect(pedidos).toHaveLength(10);
+    // Derivado, no un número escrito a mano: agregar o quitar un scope no
+    // debería obligar a editar el largo en tres tests distintos.
+    expect(pedidos).toHaveLength(REQUIRED_SCOPES.length);
+  });
+
+  // 🔴 Requisito 3.2 del App Store: pedir sólo los scopes necesarios. La app no
+  // tiene NINGUNA mutación de productos —las únicas son appPurchaseOneTimeCreate,
+  // webhookSubscriptionCreate, fulfillmentCreate, tagsAdd y orderNoteUpdate— así
+  // que pedir permiso de escritura sobre el catálogo del comerciante sobra y es
+  // motivo de rechazo. Se lee el catálogo (scan de SKU y tipo), nada más.
+  it('no pide write_products: no hay ninguna mutación de productos', () => {
+    expect(REQUIRED_SCOPES).toContain('read_products');
+    expect(REQUIRED_SCOPES).not.toContain('write_products');
+    const u = new URL(buildAuthorizeUrl(base));
+    expect(u.searchParams.get('scope')).not.toContain('write_products');
   });
 
   it('normaliza el shop antes de construir la URL', () => {
@@ -223,17 +237,17 @@ describe('missingScopes', () => {
   });
 
   it('detecta el que falta aunque el orden cambie y sobren scopes', () => {
-    const concedidos = [...REQUIRED_SCOPES].reverse().filter((s) => s !== 'write_products');
-    expect(missingScopes([...concedidos, 'read_themes'])).toEqual(['write_products']);
+    const concedidos = [...REQUIRED_SCOPES].reverse().filter((s) => s !== 'write_fulfillments');
+    expect(missingScopes([...concedidos, 'read_themes'])).toEqual(['write_fulfillments']);
   });
 
   it('tolera espacios y valores vacíos', () => {
     expect(missingScopes(' read_orders , write_orders ')).not.toContain('read_orders');
   });
 
-  it('con nada concedido, faltan los diez', () => {
-    expect(missingScopes(null)).toHaveLength(10);
-    expect(missingScopes('')).toHaveLength(10);
+  it('con nada concedido, faltan todos', () => {
+    expect(missingScopes(null)).toHaveLength(REQUIRED_SCOPES.length);
+    expect(missingScopes('')).toHaveLength(REQUIRED_SCOPES.length);
   });
 
   it('write_* implica read_*: el token real de Shopify sólo lista los write', () => {

@@ -49,7 +49,6 @@ const REQUIRED_SCOPES = [
   { name: 'read_fulfillments', why: 'Detectar envíos manuales.' },
   { name: 'write_fulfillments', why: 'Crear el fulfillment con la guía DAC.' },
   { name: 'read_products', why: 'Filtros opcionales por categoría.' },
-  { name: 'write_products', why: 'Actualizar metadata de bultos especiales.' },
   {
     name: 'read_assigned_fulfillment_orders',
     why: 'Leer fulfillment orders asignados.',

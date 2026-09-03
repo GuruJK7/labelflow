@@ -85,11 +85,6 @@ const REQUIRED_SCOPES: { name: string; resource: string; why: string }[] = [
     why: 'Leer tipos de producto para filtros opcionales por categoría.',
   },
   {
-    name: 'write_products',
-    resource: 'Products',
-    why: 'Actualizar metadata de producto cuando armás bultos especiales.',
-  },
-  {
     name: 'read_assigned_fulfillment_orders',
     resource: 'Assigned fulfillment',
     why: 'Leer fulfillment orders asignados a tu cuenta.',
@@ -650,7 +645,7 @@ curl -s -H "X-Shopify-Access-Token: $TOKEN" \\
 python3 -c "
 import sys, json
 scopes = sorted(s['handle'] for s in json.load(sys.stdin)['access_scopes'])
-required = ['read_orders','write_orders','read_fulfillments','write_fulfillments','read_products','write_products','read_assigned_fulfillment_orders','write_assigned_fulfillment_orders','read_merchant_managed_fulfillment_orders','write_merchant_managed_fulfillment_orders']
+required = ['read_orders','write_orders','read_fulfillments','write_fulfillments','read_products','read_assigned_fulfillment_orders','write_assigned_fulfillment_orders','read_merchant_managed_fulfillment_orders','write_merchant_managed_fulfillment_orders']
 missing = [s for s in required if s not in scopes]
 print(f'Granted total: {len(scopes)}')
 print('ALL 10 LABELFLOW SCOPES GRANTED ✅' if not missing else f'MISSING: {missing}')
@@ -667,7 +662,7 @@ curl -s -H "X-Shopify-Access-Token: $TOKEN" \\
 python3 -c "
 import sys, json
 scopes = sorted(s['handle'] for s in json.load(sys.stdin)['access_scopes'])
-required = ['read_orders','write_orders','read_fulfillments','write_fulfillments','read_products','write_products','read_assigned_fulfillment_orders','write_assigned_fulfillment_orders','read_merchant_managed_fulfillment_orders','write_merchant_managed_fulfillment_orders']
+required = ['read_orders','write_orders','read_fulfillments','write_fulfillments','read_products','read_assigned_fulfillment_orders','write_assigned_fulfillment_orders','read_merchant_managed_fulfillment_orders','write_merchant_managed_fulfillment_orders']
 missing = [s for s in required if s not in scopes]
 print(f'Granted total: {len(scopes)}')
 print('ALL 10 LABELFLOW SCOPES GRANTED ✅' if not missing else f'MISSING: {missing}')
@@ -687,7 +682,7 @@ $response = Invoke-RestMethod \`
 $required = @(
   'read_orders','write_orders',
   'read_fulfillments','write_fulfillments',
-  'read_products','write_products',
+  'read_products',
   'read_assigned_fulfillment_orders','write_assigned_fulfillment_orders',
   'read_merchant_managed_fulfillment_orders','write_merchant_managed_fulfillment_orders'
 )

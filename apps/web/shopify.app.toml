@@ -40,15 +40,17 @@ application_url = "https://autoenvia.com/api/shopify/entry"
 embedded = false
 
 [access_scopes]
-# Los mismos diez de REQUIRED_SCOPES en apps/web/lib/shopify-oauth.ts.
+# Los mismos nueve de REQUIRED_SCOPES en apps/web/lib/shopify-oauth.ts.
 # Si cambian allá, cambian acá: hay un test que falla si se desincronizan.
 #
 #   read_orders / write_orders            → leer pedidos pagos, escribir notas y tags
 #   read_fulfillments / write_fulfillments → marcar el pedido como enviado
-#   read_products / write_products         → resolver SKU y tipo de producto
+#   read_products                          → resolver SKU y tipo de producto
+#                                            (sin write_products: no hay ninguna
+#                                             mutación de productos — requisito 3.2)
 #   *_fulfillment_orders                   → API moderna de fulfillment; sin estos,
 #                                            marcar como enviado falla en tiendas nuevas
-scopes = "read_orders,write_orders,read_fulfillments,write_fulfillments,read_products,write_products,read_assigned_fulfillment_orders,write_assigned_fulfillment_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders"
+scopes = "read_orders,write_orders,read_fulfillments,write_fulfillments,read_products,read_assigned_fulfillment_orders,write_assigned_fulfillment_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders"
 
 # Token offline: el worker despacha a las 3 de la mañana sin nadie logueado.
 # Un token online expira con la sesión del comerciante y rompería el cron.
