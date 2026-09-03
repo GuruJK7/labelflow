@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   getStuckBreakdown: vi.fn(),
   getControlActor: vi.fn(),
   controlTenantWhere: vi.fn(),
+  auditControlAccess: vi.fn(),
 }));
 
 vi.mock('@/lib/api-utils', async (importOriginal) => ({
@@ -41,6 +42,10 @@ vi.mock('@/lib/stuck-labels', () => ({ getStuckBreakdown: mocks.getStuckBreakdow
 vi.mock('@/lib/control-scope', () => ({
   getControlActor: mocks.getControlActor,
   controlTenantWhere: mocks.controlTenantWhere,
+  // Registra el acceso del operador a un tenant ajeno. Acá se mockea porque
+  // este test es sobre el GATE de saldo, no sobre la auditoría (que tiene el
+  // suyo en auditoria-acceso-datos.test.ts).
+  auditControlAccess: mocks.auditControlAccess,
 }));
 
 import { POST as retryFailed } from '@/app/api/v1/labels/retry-failed/route';
@@ -62,6 +67,7 @@ beforeEach(() => {
   mocks.tenantFindFirst.mockResolvedValue({ id: 't1' });
   mocks.getControlActor.mockResolvedValue({ userId: 'u1', isAdmin: false });
   mocks.controlTenantWhere.mockReturnValue({});
+  mocks.auditControlAccess.mockResolvedValue(undefined);
   mocks.runRetryForTenant.mockResolvedValue({ retried: 3 });
 });
 

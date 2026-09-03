@@ -12,7 +12,7 @@
 
 import { db } from '@/lib/db';
 import { apiError, apiSuccess } from '@/lib/api-utils';
-import { getControlActor, controlTenantWhere } from '@/lib/control-scope';
+import { getControlActor, controlTenantWhere, auditControlAccess } from '@/lib/control-scope';
 import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { runRetryForTenant } from '@/lib/retry-runner';
 import { checkRunGate } from '@/lib/can-run';
@@ -41,6 +41,9 @@ export async function POST(req: Request) {
     select: { id: true },
   });
   if (!owned) return apiError('Tienda no encontrada', 403);
+
+  // Queda registro de que un operador miró datos de un cliente ajeno.
+  await auditControlAccess(actor, tenantId, 'control.retry.run');
 
   // Plan-active gate — billing flags live on the credit-holder (oldest) tenant.
   const holderId = await getCreditHolderTenantId(tenantId);

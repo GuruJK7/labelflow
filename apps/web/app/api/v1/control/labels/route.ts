@@ -15,7 +15,7 @@ import { NextRequest } from 'next/server';
 import { LabelStatus } from '@prisma/client';
 import { db } from '@/lib/db';
 import { apiError, apiSuccess } from '@/lib/api-utils';
-import { getControlActor, controlTenantWhere } from '@/lib/control-scope';
+import { getControlActor, controlTenantWhere, auditControlAccess } from '@/lib/control-scope';
 import { isResolvedExternally } from '@/lib/shopify-reconcile';
 
 const VALID_STATUSES: LabelStatus[] = [
@@ -45,6 +45,9 @@ export async function GET(req: NextRequest) {
     select: { id: true },
   });
   if (!owned) return apiError('Tienda no encontrada', 403);
+
+  // Queda registro de que un operador miró datos de un cliente ajeno.
+  await auditControlAccess(actor, tenantId, 'control.labels.read');
 
   const where: { tenantId: string; status?: LabelStatus | { in: LabelStatus[] } } = { tenantId };
   if (statusParam === 'COMPLETED') {
