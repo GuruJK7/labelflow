@@ -32,13 +32,17 @@ function render(currency?: Currency, largePacks = false) {
 }
 
 describe('PricingSelector (landing)', () => {
-  it('arranca en pesos, que es el default de quien entra por primera vez', () => {
+  // Desde el 03-09-2026 el default es USD: el precio de lista está denominado
+  // en dólares y es el que publica la ficha del App Store. Lo que este test
+  // protege no es la moneda en sí, sino que la que arranca se muestre SIN
+  // convertir y que no se cuele la otra en la misma pantalla.
+  it('arranca en dólares, que es el default de quien entra por primera vez', () => {
     const html = render();
-    expect(html).toContain('$U 12,00'); // por envío
-    expect(html).toContain('$U 3.000'); // el mes entero
-    expect(html).toContain('$U 2.000'); // ahorro vs. primer escalón
+    expect(html).toContain('USD 0,30'); // por envío
+    expect(html).toContain('USD 75,00'); // el mes entero
+    expect(html).toContain('USD 50,00'); // ahorro vs. primer escalón
     expect(html).toContain('Desde 250 envíos por mes');
-    expect(html).not.toContain('USD 0,30');
+    expect(html).not.toContain('$U 12,00');
   });
 
   it('en dólares muestra la misma cotización sin convertir dos veces', () => {
