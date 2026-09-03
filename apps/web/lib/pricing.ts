@@ -554,6 +554,11 @@ export const CURRENCIES: readonly Currency[] = Object.freeze(['USD', 'UYU'] as c
  * UYU por default: el cliente es uruguayo, paga en pesos con MercadoPago y lo
  * que necesita saber para decidir es cuánta plata le sale a él. El dólar es la
  * unidad de cuenta del negocio, no la del comerciante.
+ *
+ * La LANDING es la excepción y pasa 'USD' a mano (ver PricingSelector): ahí el
+ * precio de lista está denominado en dólares y es el que publica la ficha del
+ * App Store. En la pantalla de compra, en cambio, el comerciante está por pagar
+ * — y por MercadoPago paga en pesos.
  */
 export const DEFAULT_CURRENCY: Currency = 'UYU';
 

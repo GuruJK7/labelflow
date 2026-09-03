@@ -95,7 +95,17 @@ export function PricingSelector({
   const [volume, setVolume] = useState(initialVolume);
   // El hook se llama siempre (regla de hooks); su valor se ignora cuando la
   // moneda viene por prop.
-  const [propiaCurrency, setPropiaCurrency] = useCurrency();
+  // 🔴 La landing arranca en DÓLARES, no en el default de la app.
+  //
+  // El precio de lista está denominado en dólares y es el que publica la ficha
+  // del App Store; mostrar pesos primero hacía que el número más grande de la
+  // sección fuera una conversión y no el precio. En la pantalla de compra el
+  // default sigue siendo pesos, que es lo que el comerciante va a pagar por
+  // MercadoPago.
+  //
+  // El selector sigue ahí: quien quiera pesos los ve en un clic, y la elección
+  // se persiste igual.
+  const [propiaCurrency, setPropiaCurrency] = useCurrency('USD');
   const controlada = currencyProp !== undefined;
   const currency = controlada ? currencyProp : propiaCurrency;
   const setCurrency = onCurrencyChange ?? (controlada ? NOOP : setPropiaCurrency);

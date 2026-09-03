@@ -88,8 +88,8 @@ export function writeStoredCurrency(
  * descarta el árbol y vuelve a renderizar todo del lado del cliente. Un frame
  * en pesos es más barato que eso.
  */
-export function useCurrency(): [Currency, (next: Currency) => void] {
-  const [currency, setCurrencyState] = useState<Currency>(DEFAULT_CURRENCY);
+export function useCurrency(inicial: Currency = DEFAULT_CURRENCY): [Currency, (next: Currency) => void] {
+  const [currency, setCurrencyState] = useState<Currency>(inicial);
 
   useEffect(() => {
     setCurrencyState(readStoredCurrency());
