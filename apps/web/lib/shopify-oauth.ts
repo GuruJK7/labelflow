@@ -34,7 +34,10 @@ import crypto from 'crypto';
  * Por qué cada uno:
  *   read_orders / write_orders  → leer pedidos pagos y escribir notas/tags.
  *   read_fulfillments / write_fulfillments → marcar el pedido como enviado.
- *   read_products / write_products → resolver SKU y tipo de producto.
+ *   read_products → resolver SKU y tipo de producto. NO se pide write_products:
+ *     la app no tiene ninguna mutación de productos (las únicas son cobro,
+ *     webhooks, fulfillment, tagsAdd y la nota del pedido), y el requisito 3.2
+ *     del App Store exige pedir sólo los scopes necesarios.
  *   *_fulfillment_orders → la API moderna de fulfillment; sin estos, marcar
  *     como enviado falla en tiendas nuevas aunque write_fulfillments esté.
  */
@@ -44,7 +47,6 @@ export const REQUIRED_SCOPES = [
   'read_fulfillments',
   'write_fulfillments',
   'read_products',
-  'write_products',
   'read_assigned_fulfillment_orders',
   'write_assigned_fulfillment_orders',
   'read_merchant_managed_fulfillment_orders',
