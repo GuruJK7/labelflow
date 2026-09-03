@@ -12,8 +12,14 @@ export async function POST(req: NextRequest) {
   const shopDomain = req.headers.get('x-shopify-shop-domain');
   const webhookId = req.headers.get('x-shopify-webhook-id');
 
-  if (!hmacHeader || !topic || !shopDomain) {
-    return NextResponse.json({ error: 'Missing headers' }, { status: 401 });
+  // 🔴 La firma es lo único que produce un 401. Los headers de contexto se
+  // exigen DESPUÉS: una petición firmada por Shopify a la que le falta el topic
+  // o el dominio no es un intento de autenticación fallido, y contestarle 401
+  // hace que la comprobación automática del App Store marque en rojo
+  // «verifica webhooks con firmas HMAC». Ver el comentario largo en
+  // app/api/webhooks/shopify/gdpr/route.ts.
+  if (!hmacHeader) {
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
   // C-1/C-2 (2026-04-21 audit):
@@ -27,6 +33,10 @@ export async function POST(req: NextRequest) {
   //    and observing timing/response differences.
   if (!verifyShopifyWebhook(body, hmacHeader)) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+  }
+
+  if (!topic || !shopDomain) {
+    return NextResponse.json({ ok: true, ignored: 'missing-context-headers' });
   }
 
   // Only process order/paid events

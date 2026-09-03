@@ -102,4 +102,22 @@ describe('POST /api/webhooks/shopify', () => {
     expect(res.status).toBe(200);
     expect(mocks.enqueueProcessOrders).not.toHaveBeenCalled();
   });
+
+  // 🔴 Sonda de la comprobación automática del App Store: firmada con el secreto
+  // de la app, sin topic ni dominio. Antes recibía 401 y Shopify marcaba en rojo
+  // «verifica webhooks con firmas HMAC». Tiene que acusar recibo con 200.
+  it('sonda firmada sin topic ni dominio: 200 y no toca la base', async () => {
+    const body = '{}';
+    // Sin `post()`: ese helper inyecta topic y dominio por defecto y la sonda
+    // justamente no los trae.
+    const res = await POST(
+      new NextRequest('https://autoenvia.com/api/webhooks/shopify', {
+        method: 'POST',
+        body,
+        headers: { 'content-type': 'application/json', 'x-shopify-hmac-sha256': firmar(body) },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.tenantFindFirst).not.toHaveBeenCalled();
+  });
 });

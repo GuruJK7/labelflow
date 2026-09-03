@@ -24,9 +24,11 @@ import { verifyShopifyWebhook } from '@/lib/shopify-webhook';
  *     wiring automatic cascade-delete into a webhook handler).
  *
  * Security posture (matches orders/paid and checkouts routes):
- *   1. Validate required headers; reject with 401 if any missing.
- *   2. Verify HMAC with SHOPIFY_API_SECRET BEFORE any DB I/O (prevents
- *      tenant enumeration via timing/response differences).
+ *   1. Verify HMAC with SHOPIFY_API_SECRET BEFORE any DB I/O (prevents
+ *      tenant enumeration via timing/response differences). La firma es lo
+ *      único que produce un 401.
+ *   2. Recién después se exigen los headers de contexto; si faltan en una
+ *      petición firmada se acusa recibo con 200 (ver el comentario en POST).
  *   3. Idempotency via WebhookReceipt — Shopify retries for 48h on any
  *      non-200 or slow reply, and a compliance record must not be
  *      double-inserted.
@@ -47,15 +49,27 @@ export async function POST(req: NextRequest) {
   const shopDomain = req.headers.get('x-shopify-shop-domain');
   const webhookId = req.headers.get('x-shopify-webhook-id');
 
-  if (!hmacHeader || !topicHeader || !shopDomain) {
-    return NextResponse.json({ error: 'Missing headers' }, { status: 401 });
-  }
-
-  // HMAC first — before DB, before enum mapping. An unsigned request that
-  // happens to name a real topic should be indistinguishable from one that
-  // doesn't; defer both the topic check and the persistence to after verify.
+  // 🔴 La firma es lo ÚNICO que decide 401. Los headers de contexto se exigen
+  // DESPUÉS, y su ausencia no es un error de autenticación.
+  //
+  // La comprobación automática del App Store manda una sonda firmada con el
+  // secreto de la app pero sin `x-shopify-topic` ni `x-shopify-shop-domain`.
+  // Cuando esos headers se exigían acá arriba, la sonda recibía 401 y Shopify
+  // marcaba en rojo LOS DOS chequeos a la vez —«proporciona webhooks de
+  // cumplimiento obligatorios» y «verifica webhooks con firmas HMAC»— porque
+  // desde afuera la app parecía rechazar todo. Una petición legítimamente
+  // firmada por Shopify no puede contestarse con un error de autenticación.
+  //
+  // La propiedad de seguridad no se afloja: sigue sin haber I/O de base antes
+  // de verificar, así que tampoco hay enumeración de tenants por timing.
   if (!verifyShopifyWebhook(body, hmacHeader)) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+  }
+
+  // Firmada, pero sin la tienda o el tema no hay nada que registrar: se acusa
+  // recibo con 200 para que Shopify no reintente 48 horas.
+  if (!topicHeader || !shopDomain) {
+    return NextResponse.json({ ok: true, ignored: 'missing-context-headers' });
   }
 
   const topic = TOPIC_TO_ENUM[topicHeader];
