@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import Link from 'next/link';
 import {
   Zap,
@@ -237,6 +238,31 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── El producto, antes de contarlo ─────────────────────────────────
+          Una captura real del panel apenas termina el hero: es la primera
+          prueba de que esto existe. Los datos son de una tienda inventada, y
+          el pie lo dice — la página no muestra ni un dato de cliente real. */}
+      <section className="px-4 sm:px-6 pb-14 sm:pb-16">
+        <ScrollReveal variant="scale">
+          <figure className="mx-auto max-w-5xl">
+            <div className="overflow-hidden rounded-2xl border border-white/[0.08] bg-[#08090b] shadow-2xl shadow-black/50">
+              <Image
+                src="/landing/panel-de-control.png"
+                alt="Panel de AutoEnvía con los envíos del día y las guías de DAC emitidas"
+                width={2880}
+                height={1620}
+                priority
+                sizes="(max-width: 1024px) 100vw, 1024px"
+                className="h-auto w-full"
+              />
+            </div>
+            <figcaption className="mt-3 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">
+              Captura del panel · tienda y nombres ficticios
+            </figcaption>
+          </figure>
+        </ScrollReveal>
+      </section>
+
       {/* ── Integraciones ──────────────────────────────────────────────────── */}
       <section className="relative border-y border-white/[0.06] px-4 sm:px-6 py-10 sm:py-12 overflow-hidden">
         <div
@@ -351,7 +377,17 @@ export default function LandingPage() {
             </div>
           </ScrollReveal>
 
-          <ScrollReveal stagger className="grid md:grid-cols-2 gap-4">
+          <ScrollReveal stagger className="space-y-16 sm:space-y-20">
+            {FEATURE_SHOTS.map((f, i) => (
+              <FeatureShot key={f.title} {...f} flip={i % 2 === 1} />
+            ))}
+          </ScrollReveal>
+
+          <p className="mt-6 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">
+            Capturas del producto · tienda y nombres ficticios
+          </p>
+
+          <ScrollReveal stagger className="mt-16 sm:mt-20 grid md:grid-cols-2 gap-4">
             {FEATURES.map((f) => (
               <Feature key={f.title} {...f} />
             ))}
@@ -600,31 +636,85 @@ const STEPS: { title: string; body: string; note: string }[] = [
   },
 ];
 
-const FEATURES: { title: string; body: string; art: ReactNode }[] = [
+/**
+ * Las cuatro funcionalidades que se pueden MOSTRAR con una captura real.
+ * Salen del grid de tarjetas y van a bloques anchos alternados: una captura de
+ * 2880px dentro de una tarjeta de 460px es ilegible y no prueba nada.
+ *
+ * Las capturas son de una base descartable con la tienda inventada "Kaia Store".
+ * Ni un dato de cliente real, y el pie de cada bloque lo dice.
+ */
+const FEATURE_SHOTS: {
+  title: string;
+  body: string;
+  points: string[];
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+}[] = [
   {
     title: 'Se instala desde Shopify',
-    body: 'Apretás instalar en tu tienda, autorizás los permisos y volvés con la cuenta conectada. No hay que crear una app privada ni copiar un token de acceso. Si el correo de tu tienda ya tiene cuenta acá, la tienda queda esperando a que entres y la reclames.',
-    art: <ArtInstall />,
+    body: 'Apretás instalar en tu tienda, autorizás los permisos y volvés con la cuenta conectada.',
+    points: [
+      'Sin crear una app privada ni copiar un token de acceso.',
+      'Los pedidos pagos entran apenas se cobran, por webhook.',
+      'Si el correo de tu tienda ya tiene cuenta acá, la tienda queda esperando a que entres y la reclames.',
+    ],
+    src: '/landing/configuracion-dac.png',
+    alt: 'Configuración con la tienda de Shopify conectada y la cuenta de DAC',
+    width: 2880,
+    height: 1800,
   },
+  {
+    title: 'Etiquetas del día en un PDF',
+    body: 'Seleccionás las etiquetas de la jornada y se descargan unidas en un solo archivo.',
+    points: [
+      'Hasta 50 etiquetas por vez.',
+      'Una impresión, no una por pedido.',
+      // El PDF NO se guarda para siempre: pdf-retention.job.ts lo borra a los
+      // 15 días (PDF_RETENTION_DAYS). Decir "queda guardado" sin el plazo
+      // prometía de más.
+      'El PDF queda disponible 15 días; después se borra.',
+    ],
+    src: '/landing/etiquetas-imprimir.png',
+    alt: '50 etiquetas del día seleccionadas, listas para imprimir de una vez',
+    width: 2880,
+    height: 1800,
+  },
+  {
+    title: 'Portal para el depósito, sin login',
+    body: 'Si tenés depósito propio o tercerizado, te armamos un link privado para quien empaqueta.',
+    points: [
+      'Ve sólo las etiquetas de tus tiendas, las descarga y marca las que ya imprimió.',
+      'Sin usuario ni contraseña. El link no se indexa en buscadores y uno inválido devuelve un 404 común.',
+      'El link lo generamos nosotros a pedido; todavía no se prende desde tu panel.',
+    ],
+    src: '/landing/portal-deposito.png',
+    alt: 'Portal del depósito: etiquetas del día, pendientes e impresas',
+    width: 2880,
+    height: 1800,
+  },
+  {
+    title: 'Reglas de envío gratis',
+    body: 'Cinco formas de decidir quién no paga el envío. Las configurás en el asistente.',
+    points: [
+      'Por monto mínimo del pedido o por cantidad de artículos.',
+      'Por pedidos seguidos del mismo cliente dentro de una ventana de tiempo.',
+      'Por el envío número N, o por etiqueta del cliente en Shopify.',
+    ],
+    src: '/landing/reglas-envio-gratis.png',
+    alt: 'Tres reglas de envío gratis: por monto, por cantidad y por etiqueta',
+    width: 2880,
+    height: 1260,
+  },
+];
+
+const FEATURES: { title: string; body: string; art: ReactNode }[] = [
   {
     title: 'La guía de DAC, hecha',
     body: 'La dirección del pedido se convierte en un envío de DAC con tu propia cuenta. Si la dirección viene ambigua o incompleta, se intenta resolver antes de emitir; si no hay forma de entregarla, el pedido queda marcado para que lo mires vos en vez de salir mal.',
     art: <ArtGuia />,
-  },
-  {
-    title: 'Etiquetas del día en un PDF',
-    body: 'Seleccionás las etiquetas de la jornada y se descargan unidas en un solo archivo, hasta 50 por vez. Una impresión, no una por pedido.',
-    art: <ArtPdf />,
-  },
-  {
-    title: 'Portal para el depósito, sin login',
-    body: 'Si tenés depósito propio o tercerizado, te armamos un link privado para quien empaqueta: ve sólo las etiquetas de tus tiendas, las descarga y marca las que ya imprimió. No necesita usuario ni contraseña, el link no se indexa en buscadores y uno inválido devuelve un 404 común. El link lo generamos nosotros a pedido; todavía no se prende desde tu panel.',
-    art: <ArtPortal />,
-  },
-  {
-    title: 'Reglas de envío gratis',
-    body: 'Cinco formas de decidir quién no paga el envío: por monto mínimo del pedido, por pedidos seguidos del mismo cliente dentro de una ventana de tiempo, por el envío número N, por etiqueta del cliente o por cantidad de artículos.',
-    art: <ArtReglas />,
   },
   {
     title: 'Nunca dos guías del mismo pedido',
@@ -795,6 +885,63 @@ function Step({
   );
 }
 
+/**
+ * Bloque ancho con captura real, alternando el lado en escritorio.
+ * En pantallas chicas SIEMPRE va el texto primero y la imagen después, sin
+ * importar de qué lado estaba: un bloque invertido en móvil se lee al revés.
+ */
+function FeatureShot({
+  title,
+  body,
+  points,
+  src,
+  alt,
+  width,
+  height,
+  flip,
+}: {
+  title: string;
+  body: string;
+  points: string[];
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+  flip: boolean;
+}) {
+  return (
+    <div className="reveal-item grid items-center gap-8 md:grid-cols-2 md:gap-12">
+      <div className={flip ? 'md:order-2' : undefined}>
+        <h3 className="font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">
+          {title}
+        </h3>
+        <p className="mt-3 text-[15px] leading-relaxed text-zinc-400">{body}</p>
+        <ul className="mt-5 space-y-2.5">
+          {points.map((punto) => (
+            <li key={punto} className="flex items-start gap-2.5 text-[14px] leading-relaxed text-zinc-300">
+              <Check className="mt-[3px] h-4 w-4 shrink-0 text-emerald-400" aria-hidden />
+              <span>{punto}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <figure className={flip ? 'md:order-1' : undefined}>
+        <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#08090b]">
+          <Image
+            src={src}
+            alt={alt}
+            width={width}
+            height={height}
+            loading="lazy"
+            sizes="(max-width: 768px) 100vw, 512px"
+            className="h-auto w-full"
+          />
+        </div>
+      </figure>
+    </div>
+  );
+}
+
 function Feature({ title, body, art }: { title: string; body: string; art: ReactNode }) {
   return (
     <article className="reveal-item card-lift flex flex-col rounded-2xl border border-white/[0.07] bg-white/[0.02] p-6">
@@ -844,29 +991,6 @@ function FooterAnchor({ href, children }: { href: string; children: ReactNode })
 
 const SVG = 'w-full h-[104px]';
 
-function ArtInstall() {
-  return (
-    <svg viewBox="0 0 260 104" className={SVG} role="presentation" aria-hidden focusable="false">
-      <rect x="8" y="26" width="86" height="52" rx="8" fill="none" stroke="#ffffff1f" />
-      <text x="51" y="48" textAnchor="middle" fill="#a1a1aa" fontSize="9" fontFamily="monospace">
-        tu tienda
-      </text>
-      <rect x="24" y="56" width="54" height="14" rx="4" fill="#22d3ee" opacity="0.85" />
-      <text x="51" y="66" textAnchor="middle" fill="#062028" fontSize="8" fontFamily="monospace">
-        Instalar
-      </text>
-      <path d="M100 52 h56" stroke="#22d3ee" strokeWidth="1.5" strokeDasharray="4 4" />
-      <path d="M150 47 l7 5 l-7 5" fill="none" stroke="#22d3ee" strokeWidth="1.5" />
-      <rect x="164" y="26" width="88" height="52" rx="8" fill="none" stroke="#22d3ee55" />
-      <circle cx="208" cy="48" r="9" fill="none" stroke="#34d399" strokeWidth="1.5" />
-      <path d="M204 48 l3 3 l6 -6" fill="none" stroke="#34d399" strokeWidth="1.5" />
-      <text x="208" y="70" textAnchor="middle" fill="#34d399" fontSize="8" fontFamily="monospace">
-        conectada
-      </text>
-    </svg>
-  );
-}
-
 function ArtGuia() {
   return (
     <svg viewBox="0 0 260 104" className={SVG} role="presentation" aria-hidden focusable="false">
@@ -897,102 +1021,6 @@ function ArtGuia() {
       <text x="168" y="78" fill="#71717a" fontSize="7" fontFamily="monospace">
         seguimiento
       </text>
-    </svg>
-  );
-}
-
-function ArtPdf() {
-  return (
-    <svg viewBox="0 0 260 104" className={SVG} role="presentation" aria-hidden focusable="false">
-      {[0, 1, 2, 3, 4].map((i) => (
-        <rect
-          key={i}
-          x={12 + i * 16}
-          y={20 + i * 4}
-          width="42"
-          height="54"
-          rx="5"
-          fill="#0d0f12"
-          stroke="#ffffff1a"
-        />
-      ))}
-      <path d="M110 52 h34" stroke="#22d3ee" strokeWidth="1.5" />
-      <path d="M138 47 l7 5 l-7 5" fill="none" stroke="#22d3ee" strokeWidth="1.5" />
-      <rect x="156" y="16" width="72" height="72" rx="8" fill="#0d0f12" stroke="#22d3ee66" />
-      <text x="192" y="48" textAnchor="middle" fill="#22d3ee" fontSize="13" fontFamily="monospace">
-        PDF
-      </text>
-      <text x="192" y="64" textAnchor="middle" fill="#71717a" fontSize="8" fontFamily="monospace">
-        1 archivo
-      </text>
-    </svg>
-  );
-}
-
-function ArtPortal() {
-  return (
-    <svg viewBox="0 0 260 104" className={SVG} role="presentation" aria-hidden focusable="false">
-      <rect x="10" y="18" width="240" height="68" rx="8" fill="none" stroke="#ffffff1f" />
-      <rect x="10" y="18" width="240" height="18" rx="8" fill="#ffffff08" />
-      <text x="22" y="31" fill="#71717a" fontSize="8" fontFamily="monospace">
-        /cliente/•••••••••
-      </text>
-      <rect x="196" y="23" width="42" height="9" rx="4" fill="#34d39926" />
-      <text x="217" y="30" textAnchor="middle" fill="#34d399" fontSize="6" fontFamily="monospace">
-        sin login
-      </text>
-      {[0, 1, 2].map((i) => (
-        <g key={i}>
-          <rect x="22" y={46 + i * 13} width="150" height="9" rx="3" fill="#ffffff12" />
-          <circle cx="188" cy={50 + i * 13} r="4" fill="none" stroke="#22d3ee" strokeWidth="1.2" />
-          {i < 2 && (
-            <path
-              d={`M186 ${50 + i * 13} l1.6 1.6 l3.2 -3.4`}
-              fill="none"
-              stroke="#22d3ee"
-              strokeWidth="1.2"
-            />
-          )}
-        </g>
-      ))}
-      <text x="212" y="53" fill="#52525b" fontSize="6.5" fontFamily="monospace">
-        impresa
-      </text>
-    </svg>
-  );
-}
-
-function ArtReglas() {
-  const rules = ['monto mínimo', 'pedidos seguidos', 'el envío N', 'etiqueta del cliente'];
-  return (
-    <svg viewBox="0 0 260 104" className={SVG} role="presentation" aria-hidden focusable="false">
-      {rules.map((r, i) => (
-        <g key={r}>
-          <rect
-            x="10"
-            y={12 + i * 21}
-            width="182"
-            height="16"
-            rx="5"
-            fill="#ffffff08"
-            stroke="#ffffff14"
-          />
-          <text x="20" y={23 + i * 21} fill="#a1a1aa" fontSize="8" fontFamily="monospace">
-            {r}
-          </text>
-          <rect x="202" y={12 + i * 21} width="48" height="16" rx="5" fill="#34d39918" />
-          <text
-            x="226"
-            y={23 + i * 21}
-            textAnchor="middle"
-            fill="#34d399"
-            fontSize="7"
-            fontFamily="monospace"
-          >
-            envío 0
-          </text>
-        </g>
-      ))}
     </svg>
   );
 }
