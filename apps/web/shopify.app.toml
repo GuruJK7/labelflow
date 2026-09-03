@@ -26,7 +26,11 @@
 
 client_id = "a4231e6cc6a41a79e1b01aebf3dd38b5"
 name = "AutoEnvía"
-handle = "autoenvia"
+# 🔴 `handle` NO se declara acá. Es el identificador público de la app y ya está
+# asignado del lado de Shopify; volver a declararlo hace que `app deploy` falle
+# con «app_handle: App handle must be unique» y NINGUNA otra parte de la
+# configuración llega a subirse — incluidos los webhooks de cumplimiento, que
+# son obligatorios para la revisión del App Store.
 application_url = "https://autoenvia.com/api/shopify/entry"
 
 # No es una app embebida: el comerciante vive en NUESTRO dashboard, va a Shopify
@@ -67,14 +71,26 @@ api_version = "2026-07"
   # Desinstalación → limpiar el token. Sin esto queda un token muerto y el cron
   # encolando trabajos que nunca van a servir.
 
-  # Obligatorios para cualquier app pública. Ya están implementados.
-  [webhooks.privacy_compliance]
-  customer_data_request_url = "https://autoenvia.com/api/webhooks/shopify/gdpr"
-  customer_deletion_url = "https://autoenvia.com/api/webhooks/shopify/gdpr"
-  shop_deletion_url = "https://autoenvia.com/api/webhooks/shopify/gdpr"
+  # 🔴 LOS DE CUMPLIMIENTO SÍ VAN ACÁ, y en ESTE formato.
+  #
+  # Son app-scoped: Shopify los llama sin que exista una tienda instalada, así
+  # que no se pueden registrar por tienda como los otros. Y son obligatorios
+  # para cualquier app del App Store.
+  #
+  # El bloque `[webhooks.privacy_compliance]` con `customer_data_request_url`
+  # está DEPRECADO. La CLI lo acepta sin chistar y no registra nada: la app
+  # queda sin webhooks de cumplimiento y la comprobación automática de Shopify
+  # falla con «Error en el webhook», sin decir por qué. Verificado contra la
+  # doc de configuración de la app el 2026-09-03.
+  #
+  # Va SIN `topics`: acá se declaran únicamente los de cumplimiento. Sumar
+  # `orders/paid` o `app/uninstalled` a este bloque los entregaría dos veces,
+  # porque esos ya se registran por tienda en el callback.
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+  uri = "https://autoenvia.com/api/webhooks/shopify/gdpr"
 
 [pos]
 embedded = false
 
 [build]
-include_config_on_deploy = true
