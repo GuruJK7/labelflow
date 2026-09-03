@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { db } from './db';
 import { getAuthenticatedUser } from './api-utils';
 import { isAdminEmail } from './admin';
+import { writeAuditLog } from './audit-log';
 
 /**
  * Alcance del Centro de Control (D32, revisión 2026-09-02).
@@ -47,4 +48,47 @@ export async function getControlActor(): Promise<ControlActor | null> {
 export function controlTenantWhere(actor: ControlActor): Prisma.TenantWhereInput {
   if (!actor.isAdmin) return { userId: actor.userId };
   return { OR: [{ userId: actor.userId }, { isActive: true }] };
+}
+
+/**
+ * Registra que un OPERADOR miró datos de un cliente que no es suyo.
+ *
+ * 🔴 POR QUÉ EXISTE. Shopify pregunta, en la solicitud de acceso a datos
+ * protegidos, «¿Registrás el acceso a los datos personales?». Hasta el
+ * 2026-09-03 la respuesta honesta era NO: `AuditLog` existía y su docblock
+ * mencionaba `admin.tenant.impersonate` como ejemplo, pero nadie lo escribía
+ * nunca — lo único registrado eran logins y cambios de contraseña. O sea,
+ * Adrian podía abrir Control y leer nombres, teléfonos y direcciones de los
+ * clientes de cualquier comerciante sin dejar rastro.
+ *
+ * QUÉ SE REGISTRA Y QUÉ NO. Sólo el acceso de un admin a un tenant AJENO. El
+ * comerciante mirando sus propios envíos no es un acceso de operador y
+ * registrarlo llenaría la tabla de ruido hasta volverla inútil — un log que
+ * nadie puede leer no protege a nadie.
+ *
+ * NUNCA TIRA. Igual que `writeAuditLog`: si la auditoría falla, la operación
+ * del operador sigue. Es defensa en profundidad, no un candado.
+ */
+export async function auditControlAccess(
+  actor: ControlActor,
+  tenantId: string,
+  action: string,
+): Promise<void> {
+  if (!actor.isAdmin) return;
+  try {
+    const propio = await db.tenant.findFirst({
+      where: { id: tenantId, userId: actor.userId },
+      select: { id: true },
+    });
+    if (propio) return;
+    void writeAuditLog({
+      action,
+      userId: actor.userId,
+      tenantId,
+      entityType: 'Tenant',
+      entityId: tenantId,
+    });
+  } catch {
+    // Ver el docblock: la auditoría no puede frenar la operación.
+  }
 }
