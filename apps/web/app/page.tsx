@@ -27,13 +27,12 @@ import { HeroChaos } from './_components/HeroChaos';
 import { TimelineFill } from './_components/TimelineFill';
 import { PricingSelector } from './_components/PricingSelector';
 import { TRIAL_SHIPMENTS } from '@/lib/trial';
-import { SELF_SERVE_PACK_SHIPMENTS, largePacksEnabled } from '@/lib/credit-packs';
+import { largePacksEnabled } from '@/lib/credit-packs';
 import {
   PRICING_TIERS,
   formatUsdUnitMilli,
   formatRate,
   getUsdUyuRateMilli,
-  unitPriceUsdMilliFor,
 } from '@/lib/pricing';
 import { ONBOARDING_STEPS } from '@/lib/onboarding-state';
 import { whatsappUrl } from '@/lib/contacto';
@@ -56,21 +55,12 @@ const BRAND = 'AutoEnvía';
  */
 const LIST_PRICE_USD = formatUsdUnitMilli(PRICING_TIERS[0].unitPriceUsdMilli);
 /**
- * DOS PISOS DISTINTOS, y la diferencia importa: decir uno solo hace que la
- * página se contradiga sola.
- *
- *   - `SELF_SERVE_PRICE_USD` es el escalón más barato que alguien puede comprar
- *     hoy apretando un botón (el techo del autoservicio).
- *   - `LOWEST_PRICE_USD` es el último escalón del tarifario, que existe y se
- *     cotiza a medida.
- *
- * El simulador deja elegir volúmenes que caen en el segundo, así que si el hero
- * llamara "el más barato" al primero, el visitante vería dos números distintos
- * presentados los dos como el piso de precio, con 37 % de diferencia entre sí.
+ * El último escalón del tarifario: existe y se cotiza a medida. NO es el techo
+ * del autoservicio, que es más caro — si alguna vez vuelve a la página un
+ * número presentado como "el más barato", hay que decir cuál de los dos es,
+ * porque entre ellos hay 37 % de diferencia y presentarlos igual contradice al
+ * simulador.
  */
-const SELF_SERVE_PRICE_USD = formatUsdUnitMilli(
-  unitPriceUsdMilliFor(SELF_SERVE_PACK_SHIPMENTS[SELF_SERVE_PACK_SHIPMENTS.length - 1]),
-);
 const LOWEST_PRICE_USD = formatUsdUnitMilli(
   PRICING_TIERS[PRICING_TIERS.length - 1].unitPriceUsdMilli,
 );
@@ -296,29 +286,6 @@ export default function LandingPage() {
                 detail="Sólo para que compres tus envíos. Pago único, no una suscripción."
               />
             </div>
-          </div>
-        </ScrollReveal>
-      </section>
-
-      {/* ── Tres números que sí se pueden sostener ─────────────────────────── */}
-      <section className="px-4 sm:px-6 py-12 sm:py-16">
-        <ScrollReveal>
-          <div className="max-w-4xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <BigStat
-              value={String(TRIAL_SHIPMENTS)}
-              label="envíos de prueba"
-              detail="Se acreditan solos al crear la cuenta."
-            />
-            <BigStat
-              value={String(SETUP_STEPS)}
-              label="pasos de configuración"
-              detail="El asistente te lleva por todos. Menos de 10 minutos."
-            />
-            <BigStat
-              value={`USD ${SELF_SERVE_PRICE_USD}`}
-              label="por envío comprando solo"
-              detail={`Baja de USD ${LIST_PRICE_USD} a USD ${SELF_SERVE_PRICE_USD} según el volumen, y hasta USD ${LOWEST_PRICE_USD} con precio a medida.`}
-            />
           </div>
         </ScrollReveal>
       </section>
@@ -835,20 +802,6 @@ function IntegrationCard({
         <span className="font-display text-[13px] font-bold text-white">{name}</span>
       </div>
       <p className="mt-2 text-[12.5px] leading-relaxed text-zinc-400">{detail}</p>
-    </div>
-  );
-}
-
-function BigStat({ value, label, detail }: { value: string; label: string; detail: string }) {
-  return (
-    <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-6 text-center">
-      <p className="font-mono text-[clamp(28px,4.5vw,40px)] font-semibold leading-none tracking-tight text-cyan-400 tabular">
-        {value}
-      </p>
-      <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">
-        {label}
-      </p>
-      <p className="mt-2.5 text-[13px] leading-relaxed text-zinc-400">{detail}</p>
     </div>
   );
 }
