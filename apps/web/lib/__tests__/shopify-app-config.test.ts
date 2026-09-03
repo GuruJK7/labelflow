@@ -41,12 +41,19 @@ describe('shopify.app.toml — coherencia con el código', () => {
     expect(new URL(appUrl as string).pathname).toBe('/api/shopify/entry');
   });
 
-  it('NO declara suscripciones de webhooks en el toml: las registra la app por tienda', () => {
-    // Declararlas en el toml (app-scoped) además de la mutación (shop-scoped)
-    // entrega cada orders/paid dos veces, y `webhookSubscriptions` no puede
-    // ver las app-scoped para deduplicar. Fuente única: lib/shopify-register-webhooks.ts.
-    expect(TOML).not.toContain('[[webhooks.subscriptions]]');
-    expect(TOML).toContain('[webhooks.privacy_compliance]');
+  it('el toml no declara topics de negocio: esos se registran por tienda', () => {
+    // Declarar `topics` en el toml (app-scoped) ADEMÁS de la mutación
+    // (shop-scoped) entrega cada orders/paid dos veces, y
+    // `webhookSubscriptions` no puede ver las app-scoped para deduplicar.
+    // Fuente única de los de negocio: lib/shopify-register-webhooks.ts.
+    //
+    // 🔴 Lo que sí va en el toml son los de CUMPLIMIENTO: Shopify los llama sin
+    // que exista una tienda instalada, así que no hay dónde registrarlos por
+    // tienda. Por eso el test ya no prohíbe `[[webhooks.subscriptions]]` — sólo
+    // prohíbe que ese bloque traiga `topics`.
+    const activo = TOML.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+    expect(activo).not.toMatch(/^\s*topics\s*=/m);
+    expect(activo).toContain('compliance_topics');
   });
 
   it('los endpoints que registra la app por tienda existen de verdad', () => {
@@ -61,10 +68,26 @@ describe('shopify.app.toml — coherencia con el código', () => {
     }
   });
 
-  it('declara los tres webhooks de privacidad, obligatorios para app pública', () => {
-    for (const k of ['customer_data_request_url', 'customer_deletion_url', 'shop_deletion_url']) {
-      expect(tomlValue(k), `falta ${k}`).toContain('/api/webhooks/shopify/gdpr');
+  it('declara los tres webhooks de cumplimiento en el formato VIGENTE', () => {
+    // 🔴 `[webhooks.privacy_compliance]` con `customer_data_request_url` está
+    // DEPRECADO. La CLI lo acepta sin error y NO registra nada: la app queda
+    // sin webhooks de cumplimiento y la comprobación automática de Shopify
+    // falla con «Error en el webhook», sin explicar por qué. Costó tres
+    // despliegues encontrarlo (2026-09-03). El formato vigente es una
+    // suscripción con `compliance_topics`.
+    // Sin los comentarios: el toml EXPLICA el formato deprecado, así que una
+    // aserción sobre el archivo crudo se dispara contra su propia
+    // documentación. Lo que importa es lo que la CLI lee.
+    const activo = TOML.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+    expect(activo).not.toContain('[webhooks.privacy_compliance]');
+    expect(activo).not.toContain('customer_data_request_url');
+
+    const bloque = activo.slice(activo.indexOf('compliance_topics'));
+    for (const t of ['customers/data_request', 'customers/redact', 'shop/redact']) {
+      expect(bloque, `falta el topic de cumplimiento ${t}`).toContain(t);
     }
+    expect(TOML).toContain('/api/webhooks/shopify/gdpr');
+
     const gdpr = path.join(__dirname, '..', '..', 'app', 'api/webhooks/shopify/gdpr/route.ts');
     expect(fs.existsSync(gdpr)).toBe(true);
   });
