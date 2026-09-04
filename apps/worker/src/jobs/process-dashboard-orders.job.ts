@@ -36,6 +36,8 @@ import { shadowRecordShipment } from '../billing/shadow';
 import { sleep } from '../utils';
 import { getConfirmedDashboardOrders, markDashboardOrdersLoaded, pushDashboardLabels, type DashboardLabelResult } from '../dashboard/orders';
 import { toShopifyOrder, stableNumericId } from '../dashboard/adapter';
+import { procesarPedidosCorreo } from '../correo/process';
+import type { CorreoAmbiente } from '../correo/client';
 
 const DELAY_BETWEEN_ORDERS_MS = 500;
 const DASHBOARD_FETCH_LIMIT = 100;
@@ -100,7 +102,10 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
       await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Missing dashboard config' } });
       return;
     }
-    if (!dacUsername || !dacPassword) {
+    // [03-sep-2026] Una tienda que eligió Correo Uruguayo no tiene por qué tener
+    // credenciales de DAC cargadas. Con correoEnabled en false (el default) el
+    // chequeo se comporta exactamente como antes.
+    if (!tenant.correoEnabled && (!dacUsername || !dacPassword)) {
       slog.error('config', 'DAC credentials not configured');
       await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Missing DAC config' } });
       return;
@@ -155,6 +160,136 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
     if (orders.length === 0) {
       await db.job.update({ where: { id: jobId }, data: { status: 'COMPLETED', totalOrders, successCount: 0, skippedCount, finishedAt: new Date(), durationMs: Date.now() - startTime } });
       slog.info('done', 'No hay órdenes confirmadas para procesar (tras filtros)');
+      return;
+    }
+
+    // ── CORREO URUGUAYO ─────────────────────────────────────────────── [03-sep-2026]
+    //
+    // Misma decisión y mismo lugar que en el job de Shopify: después del gate de
+    // créditos (los envíos de Correo consumen crédito igual que los de DAC) y
+    // ANTES de abrir el navegador. Si el comerciante eligió Correo, el flujo de
+    // DAC no llega a ejecutarse.
+    //
+    // Esta fuente —el panel: Kinevia, Todo a Mano, VentaFlow, y la carga por
+    // Excel— trae MEJORES datos que Shopify para Correo: `neighborhood` es
+    // exactamente la `localidad` que AHIVA pide en Montevideo, y es el dato que
+    // más ayuda a elegir la agencia. `dashboard/adapter.ts` lo descarta al
+    // aplanar la dirección para DAC, así que acá se lee del pedido crudo.
+    if (tenant.correoEnabled) {
+      const correoUser = decryptOrRaw(tenant.correoUser);
+      const correoPassword = decryptIfPresent(tenant.correoPassword);
+
+      if (!correoUser || !correoPassword) {
+        slog.error('correo-uruguayo', 'Credenciales de Correo Uruguayo no configuradas');
+        await db.job.update({
+          where: { id: jobId },
+          data: { status: 'FAILED', totalOrders, errorMessage: 'Falta configurar usuario y contraseña de Correo Uruguayo', finishedAt: new Date(), durationMs: Date.now() - startTime },
+        });
+        return;
+      }
+
+      const ambiente: CorreoAmbiente = tenant.correoAmbiente === 'prod' ? 'prod' : 'test';
+      const adaptadas = orders.map((d) => ({ crudo: d, ...toShopifyOrder(d) }));
+      const extrasPorPedido: Record<string, { barrio?: string | null; oficinaPreferida?: string | null }> = {};
+      for (const a of adaptadas) {
+        extrasPorPedido[a.order.name] = {
+          barrio: a.crudo.address?.neighborhood ?? null,
+          // `dac_text` es el texto libre que escribió el vendedor. Si nombra una
+          // agencia, la elección explícita del humano gana sobre la derivación
+          // automática — pero se valida contra el catálogo igual que todo lo demás.
+          oficinaPreferida: null,
+        };
+      }
+
+      slog.info('correo-uruguayo', `Despachando ${adaptadas.length} pedido(s) del panel por Correo Uruguayo (${ambiente})`);
+
+      const resultado = await procesarPedidosCorreo(
+        adaptadas.map((a) => a.order),
+        {
+          tenantId,
+          jobId,
+          // Los pedidos del panel no viven en Shopify.
+          shopifyClient: null,
+          ambiente,
+          credenciales: {
+            user: correoUser,
+            password: correoPassword,
+            cuenta: decryptIfPresent(tenant.correoCuenta) || undefined,
+            subcuenta: decryptIfPresent(tenant.correoSubcuenta) || undefined,
+          },
+          config: {
+            pesoDefaultKg: tenant.pesoDefaultKg,
+            oficinaDevolucion: tenant.correoOficinaDevolucion,
+            contraEntrega: tenant.codEnabled,
+          },
+          // El ambiente de prueba de AHIVA no emite guías reales.
+          testMode: ambiente !== 'prod',
+          // Los pedidos del panel NO viven en Shopify: no hay nada que marcar
+          // preparado ni ninguna tienda a la que etiquetar el pedido.
+          debeFulfillear: false,
+          forceAll: false,
+          extrasPorPedido,
+          log: {
+            info: (paso, msg, meta) => slog.info(paso, msg, meta as never),
+            warn: (paso, msg, meta) => slog.warn(paso, msg, meta as never),
+            error: (paso, msg, meta) => slog.error(paso, msg, meta as never),
+            success: (paso, msg, meta) => slog.success(paso, msg, meta as never),
+          },
+        },
+      );
+
+      // Sólo los despachos reales cuentan como éxito: una corrida en modo
+      // prueba no emite ninguna guía, y contarla infla el reporte del job.
+      successCount = resultado.procesados;
+      failedCount = resultado.fallidos + resultado.enRevision;
+      skippedCount += resultado.bloqueados;
+
+      // Marcar cargadas en el panel las que efectivamente salieron, para que no
+      // vuelvan en el próximo ciclo. Se mapea por id de pedido, NO por posición:
+      // los que van a revisión se intercalan con los que salen, así que "los
+      // primeros N" marcaría cargados pedidos que nunca se despacharon.
+      const idsDespachados = new Set(resultado.despachados.map((d) => d.shopifyOrderId));
+      const despachadas = adaptadas
+        .filter((a) => idsDespachados.has(String(a.order.id)))
+        .map((a) => a.dashboardId);
+      if (despachadas.length > 0) {
+        await markDashboardOrdersLoaded(dashboardUrl, dashboardToken, despachadas).catch((e) =>
+          slog.warn('dashboard', `No se pudieron marcar cargadas: ${(e as Error).message}`),
+        );
+      }
+
+      await db.job.update({
+        where: { id: jobId },
+        data: {
+          status: failedCount === 0 ? 'COMPLETED' : successCount > 0 ? 'PARTIAL' : 'FAILED',
+          totalOrders,
+          successCount,
+          failedCount,
+          skippedCount,
+          durationMs: Date.now() - startTime,
+          finishedAt: new Date(),
+        },
+      });
+      // Sólo se cobra lo que se despachó de verdad: contra el ambiente de
+      // prueba no se emitió ninguna guía.
+      if (ambiente === 'prod') {
+        await deductCreditsAndStamp(tenantId, successCount);
+      } else {
+        slog.info('correo-uruguayo', `No se descuenta crédito: ambiente ${ambiente}`);
+      }
+
+      slog.success('complete', `Correo Uruguayo (panel): ${resultado.procesados} despachados, ${resultado.simulados} simulados, ${resultado.enRevision} a revisión, ${resultado.fallidos} fallidos`);
+      return;
+    }
+
+    // A partir de acá el pedido va por DAC sí o sí: los tenants de Correo
+    // retornaron en el bloque anterior. Se vuelve a exigir las credenciales para
+    // que el compilador sepa que no son null, y como red: si una combinación de
+    // flags se colara hasta acá, es mejor fallar con un motivo legible que abrir
+    // el navegador de DAC sin usuario.
+    if (!dacUsername || !dacPassword) {
+      slog.error('config', 'DAC credentials not configured');
+      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', totalOrders, errorMessage: 'Missing DAC config', finishedAt: new Date(), durationMs: Date.now() - startTime } });
       return;
     }
 
@@ -215,7 +350,9 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
             dacGuia: result.guia,
             status: 'CREATED',
           },
-          update: { jobId, dacGuia: result.guia, status: 'CREATED', errorMessage: null, autoRetryCount: 0 },
+          // `carrier: 'DAC'` se re-estampa siempre: una etiqueta que antes pasó
+          // por el camino de Correo quedaría rotulada como Correo para siempre.
+          update: { jobId, dacGuia: result.guia, status: 'CREATED', errorMessage: null, autoRetryCount: 0, carrier: 'DAC' },
         });
         // Ledger en sombra (WALLET_SHADOW=1). Nunca lanza; no reemplaza el cobro real.
         await shadowRecordShipment({ tenantId, dacGuia: result.guia, labelId: labelRecord.id, jobId, at: labelRecord.createdAt });

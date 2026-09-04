@@ -402,6 +402,12 @@ export async function agentBulkUploadJob(job: {
             dacGuia: result.guia,
             status: 'CREATED',
             errorMessage: null,
+            // El transportista se re-estampa en CADA despacho de DAC. Sin esto,
+            // una etiqueta que antes tocó el camino de Correo (y quedó con
+            // carrier='CORREO') conserva ese valor para siempre: el portal del
+            // cliente y los mails le ofrecerían al comprador un rastreo de
+            // Correo Uruguayo para una guía que en realidad es de DAC.
+            carrier: 'DAC',
           },
         });
         // Ledger en sombra (WALLET_SHADOW=1). Ignora PENDING-; nunca lanza.

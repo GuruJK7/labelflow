@@ -163,12 +163,18 @@ export function createShopifyClient(
 export function getUnfulfilledOrders(
   client: ShopifyClient,
   sortDirection: 'oldest_first' | 'newest_first' = 'oldest_first',
+  /**
+   * `true` para tiendas que cobran al entregar (`Tenant.codEnabled`): suma los
+   * pedidos `pending`, que es como Shopify marca una venta contra entrega.
+   * Default `false` — el comportamiento de siempre, despachar sólo lo cobrado.
+   */
+  incluirNoPagados = false,
 ): Promise<ShopifyOrder[]> {
   return dispatch(
     client,
     'getUnfulfilledOrders',
-    (rest) => restOrders.getUnfulfilledOrders(rest, sortDirection),
-    (gql, mods) => mods.orders.getUnfulfilledOrders(gql, sortDirection),
+    (rest) => restOrders.getUnfulfilledOrders(rest, sortDirection, incluirNoPagados),
+    (gql, mods) => mods.orders.getUnfulfilledOrders(gql, sortDirection, incluirNoPagados),
   );
 }
 

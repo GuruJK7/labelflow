@@ -195,12 +195,25 @@ export function startScheduler(): void {
       // tenants without those filters, then in TS drop the ones whose
       // user holder has isActive=false OR balance=0.
       // Cost is negligible (worker runs every minute, < 1000 tenants).
+      // [03-sep-2026] El filtro pasó de "tiene DAC" a "tiene ALGÚN transportista
+      // con credenciales". El comerciante elige DAC o Correo Uruguayo en
+      // Configuración, y una tienda de Correo no tiene por qué tener cargadas
+      // las credenciales de DAC — con el filtro viejo nunca se encolaba y no
+      // había ningún error: simplemente no pasaba nada.
+      //
+      // El OR sólo AGREGA tenants; ninguno de los que entraban antes deja de
+      // entrar, porque la primera rama es el filtro anterior palabra por
+      // palabra. La rama nueva exige correoEnabled Y usuario Y contraseña, así
+      // que una tienda con el flag prendido pero sin credenciales tampoco se
+      // encola (fallaría en el job con "falta configurar").
       const tenants = await db.tenant.findMany({
         where: {
           shopifyStoreUrl: { not: null },
           shopifyToken: { not: null },
-          dacUsername: { not: null },
-          dacPassword: { not: null },
+          OR: [
+            { dacUsername: { not: null }, dacPassword: { not: null } },
+            { correoEnabled: true, correoUser: { not: null }, correoPassword: { not: null } },
+          ],
         },
         select: {
           id: true,
@@ -358,13 +371,19 @@ export function startScheduler(): void {
       // créditos (holder.balance>0 + isActive) y cron, pero por
       // dashboardSourceEnabled. Encola PROCESS_DASHBOARD_ORDERS con guarda
       // type-scoped (solo bloquea si ya hay un job de ESTA fuente).
+      // [03-sep-2026] Mismo criterio que la query de Shopify: "tiene algún
+      // transportista con credenciales", no "tiene DAC". La fuente panel es la
+      // que trae los pedidos de Excel/VentaFlow/Kinevia, y una tienda de esa
+      // fuente que despache por Correo no tiene por qué tener DAC cargado.
       const dashTenants = await db.tenant.findMany({
         where: {
           dashboardSourceEnabled: true,
           dashboardUrl: { not: null },
           dashboardToken: { not: null },
-          dacUsername: { not: null },
-          dacPassword: { not: null },
+          OR: [
+            { dacUsername: { not: null }, dacPassword: { not: null } },
+            { correoEnabled: true, correoUser: { not: null }, correoPassword: { not: null } },
+          ],
         },
         select: { id: true, userId: true, cronSchedule: true, timezone: true },
       });

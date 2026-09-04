@@ -424,6 +424,41 @@ model Tenant {
   /// el sistema se comporta exactamente como antes.
   codEnabled           Boolean @default(false)
 
+  /// CORREO URUGUAYO (plataforma AHIVA) — segundo transportista. [03-sep-2026]
+  ///
+  /// correoEnabled es el interruptor por tienda y esta APAGADO por default a
+  /// proposito: desplegar esto no cambia el comportamiento de ningun tenant
+  /// existente. Cuando esta en true, los pedidos de esa tienda se despachan por
+  /// Correo Uruguayo en vez de DAC — el comerciante elige el transportista en
+  /// Configuracion. Apagarlo es un UPDATE a esta columna, sin redeploy.
+  correoEnabled Boolean @default(false)
+
+  /// Credenciales de AHIVA. `cuenta`/`subcuenta` son EXCLUSIVAS de cuentas
+  /// credito; una cuenta contado (la que se saca por autogestion) deja las dos
+  /// en null. Se cifran con el mismo helper que dacPassword.
+  correoUser      String?
+  correoPassword  String? // Encrypted AES-256
+  correoCuenta    String? // Encrypted AES-256 — solo cuentas credito
+  correoSubcuenta String? // Encrypted AES-256 — solo cuentas credito
+
+  /// "test" | "prod". No es cosmetico: el catalogo de oficinas DIFIERE entre
+  /// ambientes (196 registros en prod vs 182 en test, verificado 03-09-2026), y
+  /// validar una sucursal contra el ambiente equivocado acepta oficinas que en
+  /// produccion no existen. Arranca en "test" para que una tienda mal
+  /// configurada no despache contra produccion por accidente.
+  correoAmbiente String @default("test")
+
+  /// Oficina a la que Correo devuelve el paquete si no se puede entregar.
+  /// Es el `nombre` textual del catalogo de obtenerLocalidadesCorreo(); el
+  /// portal la pide con asterisco en todos los envios.
+  correoOficinaDevolucion String?
+
+  /// Peso por defecto en kg. Correo EXIGE peso (> 0 y < 30) y DAC nunca lo
+  /// pidio, asi que las tiendas conectadas hoy no lo tienen cargado en Shopify.
+  /// Sin este default, todo pedido sin peso propio va a revision en vez de
+  /// despacharse con un peso inventado.
+  pesoDefaultKg Float?
+
   // Shipping rules (first-match-wins rule engine for REMITENTE/DESTINATARIO selection)
   shippingRules ShippingRule[]
 
@@ -547,6 +582,24 @@ model Label {
   paymentFailureReason String? // "3ds_required" | "card_rejected" | "timeout" | "saved_card_not_found" | "selector_failure"
   paymentAttemptedAt   DateTime?
   dacGuia              String?     @unique
+  /// Transportista que emitio esta etiqueta. [03-sep-2026]
+  ///
+  /// NULL = DAC. Se eligio null en vez de un default 'DAC' para no reescribir
+  /// las 11.621 filas historicas y para que toda consulta existente siga
+  /// comportandose igual: `carrier IS NULL OR carrier = 'DAC'` es DAC.
+  /// Valores en uso: null | "DAC" | "CORREO" | "PROPIO" (reparto propio).
+  ///
+  /// Existe porque cinco lugares distintos necesitan saber de quien es el envio
+  /// y hoy lo adivinan por el prefijo del string de dacGuia: el cupo diario
+  /// combinado (combined-daily-cap.ts), el ledger en sombra (billing/ledger.ts),
+  /// el link de rastreo que ve el comprador, la clasificacion de envios trabados
+  /// (lib/stuck-labels.ts) y las metricas del dashboard.
+  ///
+  /// El codigo de Correo (formato UPU S10, ej. "PC021042235UY") se guarda en
+  /// dacGuia igual que cualquier otra guia: asi hereda gratis el @unique, la
+  /// idempotencia del reprocesamiento y el filtro de reintentos. No colisiona
+  /// con las guias de DAC, que son numericas.
+  carrier              String?
   pdfPath              String?
   pdfUrl               String?
   status               LabelStatus @default(PENDING)
@@ -591,7 +644,12 @@ model Label {
 
   @@unique([tenantId, shopifyOrderId])
   @@index([tenantId, createdAt(sort: Desc)])
+  @@index([carrier])
   @@index([dacGuia])
+  // Transportista: lo consultan el cupo diario, el ledger y el contador de
+  // envíos trabados. Índice completo (no parcial) a propósito: Prisma no sabe
+  // expresar un índice parcial, y un índice que existe en la base pero no en el
+  // schema es exactamente la deriva que rompió el deploy de Render dos veces.
 }
 
 // Snapshot de los ítems del pedido en el momento en que se generó la etiqueta.

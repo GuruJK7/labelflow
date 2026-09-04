@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
+import { transportistaDe } from '@/lib/transportista';
 
 /**
  * POST /api/v1/labels/[id]/redo
@@ -51,11 +52,34 @@ export async function POST(
       shopifyOrderId: true,
       shopifyOrderName: true,
       dacGuia: true,
+      carrier: true,
       status: true,
     },
   });
 
   if (!label) return apiError('Etiqueta no encontrada', 404);
+
+  // 🔴 «Reenviar» borra el Label Y el PendingShipment, que son los DOS únicos
+  // frenos contra el doble despacho de Correo Uruguayo (la guía persistida no
+  // caduca; el marcador tiene TTL de 72 h). Con los dos borrados, la corrida
+  // siguiente emite una SEGUNDA guía real — y si el envío es contra entrega,
+  // un SEGUNDO cobro al mismo comprador, que se entera cuando le piden la plata
+  // por segunda vez en la puerta.
+  //
+  // A diferencia de DAC, acá no alcanza con avisar: Correo no tiene forma de
+  // anular una guía emitida desde la API, y la etiqueta perdida se recupera con
+  // `impresionEtiquetas` usando el mismo código, sin re-despachar nada.
+  const guia = (label.dacGuia ?? '').trim();
+  const esCorreoConGuia =
+    transportistaDe(label.carrier, guia) === 'CORREO' && guia !== '' && !guia.startsWith('PENDING-');
+  if (esCorreoConGuia) {
+    return apiError(
+      `El envío ${label.shopifyOrderName ?? ''} ya tiene la guía ${guia} de Correo Uruguayo. ` +
+        'Reenviarlo emitiría una segunda guía y, si cobra en destino, le cobraría dos veces al comprador. ' +
+        'Si lo que falta es la etiqueta impresa, se vuelve a pedir con ese mismo código.',
+      409,
+    );
+  }
 
   const result = await db.$transaction(async (tx) => {
     await tx.label.delete({ where: { id: label.id } });

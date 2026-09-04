@@ -5,7 +5,7 @@ import {
   apiError,
   apiSuccess,
 } from '@/lib/api-utils';
-import { storeConnection, hasDac } from '@/lib/onboarding-state';
+import { storeConnection, hasTransportista } from '@/lib/onboarding-state';
 
 /**
  * POST /api/v1/onboarding/complete
@@ -45,6 +45,9 @@ export async function POST() {
       dashboardToken: true,
       dacUsername: true,
       dacPassword: true,
+      correoEnabled: true,
+      correoUser: true,
+      correoPassword: true,
       onboardingComplete: true,
       user: { select: { email: true, emailVerified: true } },
     },
@@ -61,8 +64,12 @@ export async function POST() {
   if (!storeConnection(tenant).kind) {
     return apiError('Falta conectar una tienda (Shopify o Dashboard con Excel)', 422);
   }
-  if (!hasDac(tenant)) {
-    return apiError('Falta conectar DAC', 422);
+  // 🔴 Acepta CUALQUIER transportista, no sólo DAC. Exigir DAC dejaba a la
+  // tienda que eligió Correo Uruguayo sin poder activar la cuenta nunca:
+  // `onboardingComplete` no se sellaba, `isActive` quedaba en false, y no
+  // despachaba un pedido sin ningún mensaje que lo explicara.
+  if (!hasTransportista(tenant)) {
+    return apiError('Falta conectar un transportista: DAC o Correo Uruguayo', 422);
   }
   if (!tenant.user?.emailVerified) {
     return NextResponse.json(

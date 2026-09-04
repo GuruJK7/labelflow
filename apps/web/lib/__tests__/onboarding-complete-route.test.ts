@@ -27,6 +27,9 @@ const TENANT_LISTO = {
   dashboardUrl: null,
   dashboardToken: null,
   dacUsername: 'enc:user',
+  correoEnabled: false,
+  correoUser: null,
+  correoPassword: null,
   dacPassword: 'enc:pass',
   onboardingComplete: false,
   user: { email: 'juana@tienda.uy', emailVerified: new Date('2026-09-01T00:00:00Z') },
@@ -89,16 +92,54 @@ describe('POST /api/v1/onboarding/complete', () => {
     }
   });
 
-  it('faltan credenciales → 422 antes de mirar el email', async () => {
+  it('sin NINGÚN transportista → 422 antes de mirar el email', async () => {
     mocks.tenantFindUnique.mockResolvedValueOnce({
       ...TENANT_LISTO,
       dacUsername: null,
+      correoEnabled: false,
+      correoUser: null,
+      correoPassword: null,
       user: { email: 'juana@tienda.uy', emailVerified: null },
     });
     const res = await POST();
     expect(res.status).toBe(422);
-    expect((await res.json()).error).toBe('Falta conectar DAC');
+    expect((await res.json()).error).toBe('Falta conectar un transportista: DAC o Correo Uruguayo');
     expect(mocks.tenantUpdate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 El alta exigía DAC. Una tienda que elige Correo Uruguayo nunca podía
+   * sellar `onboardingComplete`, así que `isActive` quedaba en false y no
+   * despachaba un solo pedido — sin ningún mensaje que lo explicara.
+   */
+  it('con SÓLO Correo Uruguayo la cuenta se puede activar', async () => {
+    mocks.tenantFindUnique.mockResolvedValueOnce({
+      ...TENANT_LISTO,
+      dacUsername: null,
+      dacPassword: null,
+      correoEnabled: true,
+      correoUser: 'enc:usuario-ahiva',
+      correoPassword: 'enc:clave-ahiva',
+    });
+    const res = await POST();
+    expect(res.status).toBe(200);
+    expect(mocks.tenantUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ onboardingComplete: true, isActive: true }) }),
+    );
+  });
+
+  it('credenciales de Correo cargadas pero el transportista APAGADO no alcanza', async () => {
+    // Guardar usuario y clave sin prender el interruptor significa que la
+    // tienda despacha por DAC; si además no tiene DAC, no tiene con qué.
+    mocks.tenantFindUnique.mockResolvedValueOnce({
+      ...TENANT_LISTO,
+      dacUsername: null,
+      dacPassword: null,
+      correoEnabled: false,
+      correoUser: 'enc:usuario-ahiva',
+      correoPassword: 'enc:clave-ahiva',
+    });
+    expect((await POST()).status).toBe(422);
   });
 
   it('tenant ya completo → 200 alreadyComplete aunque el email no esté verificado (no rompe a los existentes)', async () => {

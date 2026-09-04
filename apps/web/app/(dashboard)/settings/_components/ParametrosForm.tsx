@@ -37,6 +37,15 @@ interface SettingsDTO {
   fulfillMode: 'off' | 'on' | 'always' | string;
   skuInObservations: boolean;
   codEnabled?: boolean;
+  correoAvailable?: boolean;
+  correoEnabled?: boolean;
+  correoUser?: string | null;
+  correoPasswordSet?: boolean;
+  correoCuenta?: string | null;
+  correoSubcuenta?: string | null;
+  correoAmbiente?: string | null;
+  correoOficinaDevolucion?: string | null;
+  pesoDefaultKg?: number | null;
   codAvailable?: boolean;
   emailHost: string | null;
   emailPort: number | null;
@@ -95,6 +104,16 @@ export function ParametrosForm({
   const [skuInObservations, setSkuInObservations] = useState(false);
   // 8. Contrareembolso
   const [codEnabled, setCodEnabled] = useState(false);
+  const [correoAvailable, setCorreoAvailable] = useState(false);
+  const [correoEnabled, setCorreoEnabled] = useState(false);
+  const [correoUser, setCorreoUser] = useState('');
+  const [correoPassword, setCorreoPassword] = useState('');
+  const [correoPasswordSet, setCorreoPasswordSet] = useState(false);
+  const [correoCuenta, setCorreoCuenta] = useState('');
+  const [correoSubcuenta, setCorreoSubcuenta] = useState('');
+  const [correoAmbiente, setCorreoAmbiente] = useState<'test' | 'prod'>('test');
+  const [correoOficinaDevolucion, setCorreoOficinaDevolucion] = useState('');
+  const [pesoDefaultKg, setPesoDefaultKg] = useState('');
   // Revisión 2026-09-02: el server dice si el worker desplegado honra el
   // toggle (COD_FEATURE_ENABLED). Sin eso se muestra como "Próximamente".
   const [codAvailable, setCodAvailable] = useState(false);
@@ -141,6 +160,15 @@ export function ParametrosForm({
         setFulfillMode(data.fulfillMode === 'off' || data.fulfillMode === 'always' ? data.fulfillMode : 'on');
         setSkuInObservations(!!data.skuInObservations);
         setCodEnabled(!!data.codEnabled);
+        setCorreoAvailable(!!data.correoAvailable);
+        setCorreoEnabled(!!data.correoEnabled);
+        setCorreoUser(data.correoUser ?? '');
+        setCorreoPasswordSet(!!data.correoPasswordSet);
+        setCorreoCuenta(data.correoCuenta ?? '');
+        setCorreoSubcuenta(data.correoSubcuenta ?? '');
+        setCorreoAmbiente(data.correoAmbiente === 'prod' ? 'prod' : 'test');
+        setCorreoOficinaDevolucion(data.correoOficinaDevolucion ?? '');
+        setPesoDefaultKg(data.pesoDefaultKg != null ? String(data.pesoDefaultKg) : '');
         setCodAvailable(data.codAvailable === true);
         setEmailHost(data.emailHost ?? '');
         setEmailPort(data.emailPort ?? 587);
@@ -544,6 +572,156 @@ export function ParametrosForm({
         footer={<SaveRow label="Guardar" busy={saving === 'sku'} onClick={() => save('sku', { skuInObservations })} msg={msgs.sku} />}
       >
         <Toggle checked={skuInObservations} onChange={setSkuInObservations} label="Escribir los SKU en la guía" hint={skuInObservations ? 'Los SKU van en Observaciones.' : 'Apagado: la guía no lleva SKU.'} />
+      </Bloque>
+
+      {/* ── TRANSPORTISTA ─────────────────────────────────────── [03-sep-2026]
+          El comerciante elige por dónde salen sus envíos. Prender Correo cambia
+          el transportista de TODOS los pedidos de la tienda: no hay selección
+          por pedido, igual que el contrareembolso. */}
+      <Bloque
+        id="transportista"
+        title="Transportista"
+        que="Elegís por qué empresa salen tus envíos: DAC o Correo Uruguayo. Correo entrega en agencia y el cliente retira ahí."
+        paraQuien="Tiendas que quieren despachar por Correo Uruguayo en vez de DAC."
+        ejemplo="Con Correo Uruguayo, tu pedido a Punta del Este sale con guía PC0210…UY y el cliente lo retira en la agencia de Punta del Este."
+        aviso={correoAvailable ? "Se aplica a TODOS los pedidos de la tienda mientras esté prendido, y cada envío consume un crédito igual que los de DAC. IMPORTANTE: el flete de Correo lo paga SIEMPRE quien recibe. Tus reglas de envío gratis y el pago por remitente NO se aplican a los envíos por Correo, aunque las tengas configuradas. Y si el total del pedido ya incluye el envío, el cliente lo termina pagando dos veces: una en el checkout y otra al retirar." : "Próximamente."}
+        footer={
+          correoAvailable ? (
+          <SaveRow
+            label="Guardar"
+            busy={saving === 'transportista'}
+            onClick={() =>
+              save('transportista', {
+                correoEnabled,
+                correoUser: correoUser || null,
+                ...(correoPassword ? { correoPassword } : {}),
+                correoCuenta: correoCuenta || null,
+                // Se manda SIEMPRE, igual que la cuenta: el vacío tiene que poder
+                // significar "borrala". Mandarla sólo cuando tiene texto la
+                // volvía imborrable desde la pantalla.
+                correoSubcuenta: correoSubcuenta || null,
+                correoAmbiente,
+                correoOficinaDevolucion: correoOficinaDevolucion || null,
+                pesoDefaultKg: pesoDefaultKg.trim() ? Number(pesoDefaultKg) : null,
+              })
+            }
+            msg={msgs.transportista}
+          />
+          ) : undefined
+        }
+      >
+        {!correoAvailable && (
+          <p className="text-xs text-zinc-500">
+            Próximamente. No hay nada que configurar por ahora: tus envíos salen por DAC.
+          </p>
+        )}
+        {correoAvailable && (
+          <>
+        <Toggle
+          checked={correoEnabled}
+          onChange={setCorreoEnabled}
+          label="Despachar por Correo Uruguayo"
+          hint={correoEnabled ? 'Todos los envíos salen por Correo Uruguayo.' : 'Apagado: tus envíos salen por DAC, como siempre.'}
+        />
+
+        {correoEnabled && (
+          <div className="mt-4 space-y-3 border-l-2 border-cyan-500/30 pl-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-400">Usuario de AhíVA</span>
+                <input
+                  value={correoUser}
+                  onChange={(e) => setCorreoUser(e.target.value)}
+                  placeholder="tu cédula, sin puntos ni guiones"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-cyan-500"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-400">
+                  Contraseña {correoPasswordSet && <span className="text-emerald-500">· ya guardada</span>}
+                </span>
+                <input
+                  type="password"
+                  value={correoPassword}
+                  onChange={(e) => setCorreoPassword(e.target.value)}
+                  placeholder={correoPasswordSet ? 'dejala vacía para no cambiarla' : 'contraseña de AhíVA'}
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-cyan-500"
+                />
+              </label>
+            </div>
+
+            {/* Cuenta y subcuenta existen SÓLO para cuentas crédito de Correo.
+                Una cuenta contado (la que se saca por autogestión) las deja vacías. */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-400">Cuenta <span className="text-zinc-600">· sólo cuentas crédito</span></span>
+                <input
+                  value={correoCuenta}
+                  onChange={(e) => setCorreoCuenta(e.target.value)}
+                  placeholder="vacío si tu cuenta es contado"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-cyan-500"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-400">Subcuenta <span className="text-zinc-600">· sólo cuentas crédito</span></span>
+                <input
+                  value={correoSubcuenta}
+                  onChange={(e) => setCorreoSubcuenta(e.target.value)}
+                  placeholder="vacío si tu cuenta es contado"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-cyan-500"
+                />
+              </label>
+            </div>
+
+            <label className="block">
+              <span className="mb-1 block text-xs text-zinc-400">Ambiente</span>
+              <select
+                value={correoAmbiente}
+                onChange={(e) => setCorreoAmbiente(e.target.value === 'prod' ? 'prod' : 'test')}
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-cyan-500"
+              >
+                <option value="test">Prueba — no emite guías reales</option>
+                <option value="prod">Producción — cada envío es real y se factura</option>
+              </select>
+              <span className="mt-1 block text-[11px] text-zinc-500">
+                El listado de agencias es distinto en cada ambiente, así que probá y despachá en el mismo.
+              </span>
+            </label>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-400">Agencia de devolución</span>
+                <input
+                  value={correoOficinaDevolucion}
+                  onChange={(e) => setCorreoOficinaDevolucion(e.target.value)}
+                  placeholder="ej. Maldonado"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-cyan-500"
+                />
+                <span className="mt-1 block text-[11px] text-zinc-500">
+                  Adónde vuelve el paquete si el cliente no lo retira.
+                </span>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-400">Peso por defecto (kg)</span>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.1"
+                  max="29.9"
+                  value={pesoDefaultKg}
+                  onChange={(e) => setPesoDefaultKg(e.target.value)}
+                  placeholder="ej. 1"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-cyan-500"
+                />
+                <span className="mt-1 block text-[11px] text-zinc-500">
+                  Correo exige el peso y Shopify casi nunca lo trae. Sin esto, los pedidos quedan en revisión.
+                </span>
+              </label>
+            </div>
+          </div>
+        )}
+          </>
+        )}
       </Bloque>
 
       <Bloque

@@ -32,7 +32,8 @@ export interface PendingCount {
 }
 
 /**
- * Returns the count of paid, open, unfulfilled Shopify orders for a tenant.
+ * Returns the count of open, unfulfilled Shopify orders for a tenant: the paid
+ * ones, plus the `pending` ones when the store charges on delivery (codEnabled).
  * Cached for CACHE_TTL_MS unless `force`. Never throws — a Shopify hiccup
  * yields { count: <last cached or null> } so the dashboard keeps rendering.
  */
@@ -44,7 +45,7 @@ export async function getUnfulfilledCount(tenantId: string, force = false): Prom
 
   const tenant = await db.tenant.findUnique({
     where: { id: tenantId },
-    select: { id: true, shopifyStoreUrl: true, shopifyToken: true },
+    select: { id: true, shopifyStoreUrl: true, shopifyToken: true, codEnabled: true },
   });
   if (!tenant?.shopifyStoreUrl || !tenant.shopifyToken) {
     return { tenantId, count: null, cached: false, skipped: 'no-token' };
@@ -63,19 +64,32 @@ export async function getUnfulfilledCount(tenantId: string, force = false): Prom
   }
 
   try {
-    const params = new URLSearchParams({
-      status: 'open',
-      financial_status: 'paid',
-      fulfillment_status: 'unfulfilled',
-    });
-    const url = `https://${tenant.shopifyStoreUrl}/admin/api/${SHOPIFY_API_VERSION}/orders/count.json?${params}`;
-    const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
-    if (!res.ok) {
-      // Keep the last good number if we have one; otherwise signal the error.
-      return { tenantId, count: hit?.count ?? null, cached: false, skipped: 'error' };
+    // Una tienda que COBRA AL ENTREGAR tiene sus pedidos en `pending`, no en
+    // `paid`: contando sólo los pagados el panel le mostraba 0 pendientes
+    // mientras el worker despachaba. Se cuentan los dos estados y se suman.
+    //
+    // Son dos llamadas y no una con `financial_status=any` porque `count.json`
+    // devuelve un número pelado: con `any` entrarían los reembolsados y
+    // anulados y no habría forma de descontarlos. El worker descarta esos
+    // mismos estados (ver ESTADOS_DESPACHABLES_CONTRAENTREGA), así que este
+    // número y el que despacha el worker coinciden.
+    const estados = tenant.codEnabled ? ['paid', 'pending'] : ['paid'];
+    let count = 0;
+    for (const financial of estados) {
+      const params = new URLSearchParams({
+        status: 'open',
+        financial_status: financial,
+        fulfillment_status: 'unfulfilled',
+      });
+      const url = `https://${tenant.shopifyStoreUrl}/admin/api/${SHOPIFY_API_VERSION}/orders/count.json?${params}`;
+      const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
+      if (!res.ok) {
+        // Keep the last good number if we have one; otherwise signal the error.
+        return { tenantId, count: hit?.count ?? null, cached: false, skipped: 'error' };
+      }
+      const data = (await res.json()) as { count?: number };
+      count += typeof data.count === 'number' ? data.count : 0;
     }
-    const data = (await res.json()) as { count?: number };
-    const count = typeof data.count === 'number' ? data.count : 0;
     cache.set(tenantId, { count, at: Date.now() });
     return { tenantId, count, cached: false };
   } catch {

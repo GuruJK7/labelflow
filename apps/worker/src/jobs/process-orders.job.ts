@@ -5,6 +5,7 @@ import { decryptIfPresent, decryptOrRaw } from '../encryption';
 import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify';
 import { resolveShopifyAccessForJob, shopifyTokenSourceForTenant } from '../shopify/access';
+import { yaEstaCobrado } from '../shopify/payment-state';
 import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify';
 import { resolveOrderPhone } from '../shopify/phone';
 import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify';
@@ -26,6 +27,8 @@ import { getDepartmentForCity, getDepartmentForCityAsync, getDepartmentFromZip }
 import { evaluarZonaRepartoPropio } from '../self-delivery/zone';
 import { procesarPedidosRepartoPropio } from '../self-delivery/process';
 import { cerrarRenderer } from '../self-delivery/render';
+import { procesarPedidosCorreo } from '../correo/process';
+import type { CorreoAmbiente } from '../correo/client';
 import { downloadLabel } from '../dac/label';
 import { determinePaymentType } from '../rules/payment';
 import {
@@ -220,7 +223,13 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       return;
     }
 
-    if (!dacUsername || !dacPassword) {
+    // [03-sep-2026] El transportista lo elige el comerciante en Configuración.
+    // Una tienda que despacha por Correo Uruguayo no necesita tener credenciales
+    // de DAC cargadas, así que este corte —que existe desde que DAC era el único
+    // transportista— la mataría antes de llegar al despacho. Cuando correoEnabled
+    // está en false (el default de las 33 tiendas de hoy) el chequeo se comporta
+    // exactamente como antes.
+    if (!tenant.correoEnabled && (!dacUsername || !dacPassword)) {
       slog.error('config', 'DAC credentials not configured');
       await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Missing DAC config' } });
       return;
@@ -236,7 +245,16 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       slug: tenant.slug,
     });
     const orderSortDirection = (tenant.orderSortDirection as 'oldest_first' | 'newest_first') ?? 'oldest_first';
-    let orders = await getUnfulfilledOrders(shopifyClient, orderSortDirection);
+    // `codEnabled` = la tienda COBRA AL ENTREGAR. Shopify deja esos pedidos en
+    // `financial_status: 'pending'`, así que sin este flag el pipeline no ve ni
+    // uno: una tienda 100% contra entrega quedaba con la cola siempre vacía y
+    // sin ningún error que lo explicara.
+    //
+    // Es opt-in explícito del comerciante y no cambia nada para las tiendas que
+    // ya existen: hoy ninguna tienda activa con Shopify lo tiene prendido
+    // (verificado contra producción el 04-09-2026). Los reembolsados y anulados
+    // se descartan igual — ver ESTADOS_DESPACHABLES_CONTRAENTREGA.
+    let orders = await getUnfulfilledOrders(shopifyClient, orderSortDirection, tenant.codEnabled);
 
     slog.info('shopify', `Fetched ${orders.length} unfulfilled orders from Shopify (sort: ${orderSortDirection})`);
 
@@ -634,6 +652,142 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       );
     }
 
+    // ── CORREO URUGUAYO ─────────────────────────────────────────────── [03-sep-2026]
+    //
+    // El comerciante elige el transportista en Configuración. Si eligió Correo,
+    // los pedidos se despachan por la API de AHIVA y el navegador de DAC NUNCA
+    // se abre: se sale antes del STEP 3.
+    //
+    // POR QUÉ ESTE LUGAR Y NO DONDE CORTA REPARTO PROPIO (:493). Reparto propio
+    // corta ANTES del límite y del gate de créditos porque NO consume crédito:
+    // no hay envío despachado por un transportista. Correo sí lo consume, así
+    // que tiene que pasar por exactamente los mismos controles que DAC —
+    // el límite por corrida (:575) y el saldo real (:604-635)— o una tienda con
+    // saldo 0 despacharía gratis por Correo.
+    //
+    // No se toca ni se lee un solo archivo de dac/: si el tenant es de Correo,
+    // el flujo de DAC no llega a ejecutarse.
+    if (tenant.correoEnabled) {
+      const correoUser = decryptOrRaw(tenant.correoUser);
+      const correoPassword = decryptIfPresent(tenant.correoPassword);
+
+      if (!correoUser || !correoPassword) {
+        slog.error('correo-uruguayo', 'Credenciales de Correo Uruguayo no configuradas');
+        await db.job.update({
+          where: { id: jobId },
+          data: {
+            status: 'FAILED',
+            totalOrders,
+            errorMessage: 'Falta configurar usuario y contraseña de Correo Uruguayo',
+            finishedAt: new Date(),
+            durationMs: Date.now() - startTime,
+          },
+        });
+        return;
+      }
+
+      const ambiente: CorreoAmbiente = tenant.correoAmbiente === 'prod' ? 'prod' : 'test';
+      slog.info('correo-uruguayo', `Despachando ${orders.length} pedido(s) por Correo Uruguayo (${ambiente})`);
+
+      const resultado = await procesarPedidosCorreo(orders, {
+        tenantId,
+        jobId,
+        shopifyClient,
+        ambiente,
+        credenciales: {
+          user: correoUser,
+          password: correoPassword,
+          cuenta: decryptIfPresent(tenant.correoCuenta) || undefined,
+          subcuenta: decryptIfPresent(tenant.correoSubcuenta) || undefined,
+        },
+        config: {
+          pesoDefaultKg: tenant.pesoDefaultKg,
+          oficinaDevolucion: tenant.correoOficinaDevolucion,
+          // La tienda cobra al entregar cuando tiene el contrareembolso
+          // prendido. Es el MISMO interruptor que usa DAC (tenant.codEnabled),
+          // así que el comerciante no tiene que configurarlo dos veces.
+          contraEntrega: tenant.codEnabled,
+        },
+        // El ambiente de PRUEBA de AHIVA no es un simulacro nuestro: emite guías
+        // reales contra ahivatest que producción no conoce. Sin este gate, el
+        // default `correoAmbiente='test'` despachaba de verdad, escribía ese
+        // código en Label.dacGuia, ETIQUETABA el pedido en el Shopify del
+        // comerciante (process.ts:414-423, que no mira ambiente) y lo dejaba
+        // bloqueado para siempre por el guard sin caducidad de process.ts:176.
+        // El job del panel ya lo hacía bien (process-dashboard-orders.job.ts:227).
+        testMode: testMode || ambiente !== 'prod',
+        // Marcar el pedido como preparado en Shopify (y avisarle al comprador que
+        // su paquete salió) sólo tiene sentido con una guía real de producción.
+        debeFulfillear: ambiente === 'prod' && !testMode && (tenant.fulfillMode ?? 'on') !== 'off',
+        forceAll: (tenant.fulfillMode ?? 'on') === 'always',
+        log: {
+          info: (paso, msg, meta) => slog.info(paso, msg, meta as never),
+          warn: (paso, msg, meta) => slog.warn(paso, msg, meta as never),
+          error: (paso, msg, meta) => slog.error(paso, msg, meta as never),
+          success: (paso, msg, meta) => slog.success(paso, msg, meta as never),
+        },
+      });
+
+      // Sólo los despachos reales cuentan como éxito: una corrida en modo
+      // prueba no emite ninguna guía, y contarla infla el reporte del job.
+      successCount = resultado.procesados;
+      failedCount = resultado.fallidos + resultado.enRevision;
+      skippedCount += resultado.bloqueados;
+
+      const estado = failedCount === 0 ? 'COMPLETED' : successCount > 0 ? 'PARTIAL' : 'FAILED';
+      await db.job.update({
+        where: { id: jobId },
+        data: {
+          status: estado,
+          totalOrders,
+          successCount,
+          failedCount,
+          skippedCount,
+          durationMs: Date.now() - startTime,
+          finishedAt: new Date(),
+        },
+      });
+
+      // Mismo cobro que DAC: un envío por Correo consume un crédito. Pero sólo
+      // si el envío existe de verdad: en el ambiente de prueba y en testMode no
+      // se emitió ninguna guía, así que cobrar sería vaciarle el saldo al
+      // comerciante por envíos que nunca salieron.
+      if (ambiente === 'prod' && !testMode) {
+        await deductCreditsAndStamp(tenantId, successCount);
+      } else {
+        slog.info('correo-uruguayo', `No se descuenta crédito: ambiente ${ambiente}${testMode ? ' + testMode' : ''}`);
+      }
+
+      slog.success(
+        'complete',
+        `Correo Uruguayo: ${resultado.procesados} despachados, ${resultado.simulados} simulados, ${resultado.enRevision} a revisión, ` +
+          `${resultado.fallidos} fallidos, ${resultado.bloqueados} bloqueados por intento previo`,
+        { codigos: resultado.codigos.slice(0, 20) },
+      );
+      return;
+    }
+
+    // A partir de acá el pedido va por DAC sí o sí. El chequeo de credenciales
+    // de arriba ahora deja pasar a los tenants de Correo (que retornan en el
+    // bloque anterior), así que se vuelve a exigir acá: es lo que le devuelve al
+    // compilador la certeza de que no son null, y es una red real — si alguna
+    // vez una combinación de flags se colara hasta acá, es preferible fallar con
+    // un motivo legible que abrir el navegador de DAC sin usuario.
+    if (!dacUsername || !dacPassword) {
+      slog.error('config', 'DAC credentials not configured');
+      await db.job.update({
+        where: { id: jobId },
+        data: {
+          status: 'FAILED',
+          totalOrders,
+          errorMessage: 'Missing DAC config',
+          finishedAt: new Date(),
+          durationMs: Date.now() - startTime,
+        },
+      });
+      return;
+    }
+
     // STEP 3: Start browser and login to DAC
     slog.info('dac-login', 'Starting browser and logging into DAC');
     const page = await dacBrowser.getPage();
@@ -805,9 +959,16 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         // (tenant.codEnabled, false por default). Sin ese flag queda null y todo el
         // flujo se comporta exactamente como antes. Se declara en el mismo scope que
         // paymentType porque lo usan los dos: el llenado del form y el upsert del Label.
-        const codAmount: number | null = tenant.codEnabled
-          ? Math.round(parseFloat(order.total_price) || 0) || null
-          : null;
+        // 🔴 `!yaEstaCobrado(order)` NO es opcional desde el 04-09-2026. Antes
+        // esta línea era segura porque el pipeline traía SÓLO pedidos `paid`, así
+        // que `codEnabled` no podía chocar con un pedido ya cobrado. Ahora una
+        // tienda que cobra al entregar recibe las dos clases mezcladas —el que
+        // pagó por MercadoPago y el que paga al recibir— y sin el chequeo DAC le
+        // cobraría de nuevo, en la puerta, a quien ya pagó en el checkout.
+        const codAmount: number | null =
+          tenant.codEnabled && !yaEstaCobrado(order)
+            ? Math.round(parseFloat(order.total_price) || 0) || null
+            : null;
 
         let paymentType: 'REMITENTE' | 'DESTINATARIO';
 
@@ -1017,6 +1178,12 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
             dacGuia: result.guia,
             status: 'CREATED',
             errorMessage: null,
+            // El transportista se re-estampa en CADA despacho de DAC. Sin esto,
+            // una etiqueta que antes tocó el camino de Correo (y quedó con
+            // carrier='CORREO') conserva ese valor para siempre: el portal del
+            // cliente y los mails le ofrecerían al comprador un rastreo de
+            // Correo Uruguayo para una guía que en realidad es de DAC.
+            carrier: 'DAC',
             paymentStatus: resolvedPaymentStatus,
             paymentFailureReason: resolvedPaymentFailureReason,
             paymentAttemptedAt,

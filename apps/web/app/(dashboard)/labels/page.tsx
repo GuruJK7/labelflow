@@ -16,12 +16,15 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { nombreTransportista, transportistaDe } from '@/lib/transportista';
 
 interface LabelFile {
   id: string;
   shopifyOrderName: string;
   customerName: string;
   dacGuia: string | null;
+  /** Transportista que emitió la guía. NULL en las filas históricas = DAC. */
+  carrier: string | null;
   status: string;
   pdfPath: string | null;
   pdfUrl: string | null;
@@ -362,7 +365,12 @@ export default function LabelsPage() {
 
                         <div className="flex items-center gap-3 mb-3 text-[11px] text-zinc-500">
                           {label.dacGuia && (
-                            <span className="font-mono text-cyan-400/80">DAC-{label.dacGuia}</span>
+                            <span className="font-mono text-cyan-400/80">
+                              {/* El prefijo sale del transportista real: rotular
+                                  como DAC una guía de Correo (o de reparto propio)
+                                  manda a buscar el envío al lugar equivocado. */}
+                              {nombreTransportista(transportistaDe(label.carrier, label.dacGuia))}-{label.dacGuia}
+                            </span>
                           )}
                           <span>{label.city}</span>
                         </div>

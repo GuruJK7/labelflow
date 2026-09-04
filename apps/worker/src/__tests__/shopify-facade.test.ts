@@ -150,6 +150,10 @@ describe('auto + slug del App Store: GraphQL directo', () => {
     expect(gqlOrders.getUnfulfilledOrders).toHaveBeenCalledWith(
       expect.objectContaining({ storeUrl: 'autoenvia-qa.myshopify.com' }),
       'oldest_first',
+      // El tercer argumento es `incluirNoPagados`, y su default TIENE que ser
+      // false: es lo que garantiza que abrir el filtro para las tiendas contra
+      // entrega no cambie nada para las que despachan sólo lo ya cobrado.
+      false,
     );
     expect(restAxios.get).not.toHaveBeenCalled();
   });

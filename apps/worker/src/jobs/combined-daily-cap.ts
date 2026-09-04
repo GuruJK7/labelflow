@@ -62,6 +62,16 @@ export async function combinedShippedToday(cfg: CombinedCapConfig): Promise<numb
     FROM "Label"
     WHERE "tenantId" = ANY(${cfg.cappedTenantIds})
       AND "status"::text = 'COMPLETED'
+      -- [03-sep-2026] Sólo los envíos de DAC. Este techo existe para limitar el
+      -- VOLUMEN CONTRA DAC del grupo (Kinevia + Todo a Mano), no la cantidad de
+      -- cajas que arma el comerciante: ver el docblock del archivo. Antes contaba
+      -- toda fila COMPLETED sin mirar transportista, así que un envío por Correo
+      -- —o una etiqueta de reparto propio, que ya rompía esto— le comía cupo a
+      -- DAC en silencio y el scheduler dejaba de encolar.
+      -- carrier NULL es DAC: las 11.600 filas históricas no se backfillearon.
+      -- Las etiquetas de reparto propio (carrier='PROPIO') quedan afuera por la
+      -- misma razón que las de Correo: no son envíos despachados por DAC.
+      AND ("carrier" IS NULL OR "carrier" = 'DAC')
       AND "createdAt" >= (date_trunc('day', (now() AT TIME ZONE ${cfg.timezone})) AT TIME ZONE ${cfg.timezone})
   `;
   return Number(rows[0]?.n ?? 0);

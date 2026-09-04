@@ -72,6 +72,7 @@ export async function GET(req: NextRequest) {
         errorMessage: true,
         paymentType: true,
         codAmount: true,
+        carrier: true,
         totalUyu: true,
         city: true,
         department: true,

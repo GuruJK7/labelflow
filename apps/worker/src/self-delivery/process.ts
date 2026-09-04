@@ -1,6 +1,7 @@
 import type { ShopifyClient } from '../shopify';
 import { db } from '../db';
 import type { ShopifyOrder } from '../shopify/types';
+import { montoACobrarAlEntregar } from '../shopify/payment-state';
 import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify';
 import { markOrderProcessed, addOrderNote } from '../shopify';
 import { uploadLabelPdf } from '../storage/upload';
@@ -122,11 +123,17 @@ export async function procesarPedidosRepartoPropio(
           paymentType: 'DESTINATARIO',
           paymentStatus: 'not_required',
           dacGuia: codigo,
+          // [03-sep-2026] Se estampa el transportista para que el cupo diario
+          // combinado, el ledger y las métricas puedan excluir lo que no es DAC.
+          // Hasta hoy una etiqueta propia contaba como envío de DAC y le comía
+          // cupo al tenant capado.
+          carrier: 'PROPIO',
           status: 'PENDING',
         },
         update: {
           jobId: ctx.jobId,
           dacGuia: codigo,
+          carrier: 'PROPIO',
           status: 'PENDING',
           errorMessage: null,
           deliveryAddress: fullAddress,
@@ -152,9 +159,14 @@ export async function procesarPedidosRepartoPropio(
           telefono: addr.phone || order.phone || null,
         },
         pedido: { nombre: order.name, fecha: new Date() },
-        // El worker solo recibe pedidos con financial_status=paid
-        // (ver getUnfulfilledOrders), asi que no hay nada que cobrar al entregar.
-        cobrarUyu: null,
+        // 🔴 ESTA LÍNEA DECÍA `null` CON EL COMENTARIO «el worker solo recibe
+        // pedidos con financial_status=paid, así que no hay nada que cobrar».
+        // Esa premisa dejó de ser cierta el 04-09-2026: las tiendas que cobran
+        // al entregar ahora reciben también los `pending` (ver
+        // shopify/orders.ts). Con `null`, la etiqueta imprime «NO COBRAR» —
+        // literalmente le dice a quien reparte que entregue sin cobrar una
+        // mercadería que nadie pagó.
+        cobrarUyu: montoACobrarAlEntregar(order),
         nota: [extraObs, order.note].map((x) => (x ?? '').trim()).filter(Boolean).join(' · ') || null,
       });
 

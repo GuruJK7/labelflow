@@ -135,6 +135,17 @@ export async function selectRetryable(tenantId: string, limit?: number): Promise
       tenantId,
       dacGuia: null, // no real guia minted
       status: { in: RETRYABLE_STATUSES },
+      // [03-sep-2026] Sólo envíos de DAC (carrier NULL = DAC: las filas
+      // históricas no se backfillearon).
+      //
+      // Este barrido es un rescate específico del flujo de DAC: classifyStuck
+      // decide qué es reintentable leyendo los mensajes de error de DAC, así que
+      // un envío de Correo trabado se clasificaría con heurísticas que no son las
+      // suyas. Y no hace falta: un envío de Correo que se frenó en el pre-vuelo
+      // (agencia ambigua, sin peso) no llegó a emitir guía, el pedido sigue sin
+      // preparar en su fuente, y la corrida siguiente lo vuelve a tomar sola.
+      // Los que SÍ emitieron guía ya están excluidos por `dacGuia: null`.
+      OR: [{ carrier: null }, { carrier: 'DAC' }],
     },
     orderBy: { createdAt: 'asc' }, // oldest-stuck first
     take: MAX_CANDIDATE_SCAN,
@@ -180,7 +191,14 @@ export interface StuckBreakdown {
  */
 export async function getStuckBreakdown(tenantId: string): Promise<StuckBreakdown> {
   const candidates = await db.label.findMany({
-    where: { tenantId, dacGuia: null, status: { in: RETRYABLE_STATUSES } },
+    // Mismo filtro de transportista que selectRetryable: si el contador
+    // incluyera envíos de Correo, prometería reintentos que el botón no hace.
+    where: {
+      tenantId,
+      dacGuia: null,
+      status: { in: RETRYABLE_STATUSES },
+      OR: [{ carrier: null }, { carrier: 'DAC' }],
+    },
     orderBy: { createdAt: 'asc' },
     take: MAX_CANDIDATE_SCAN,
     select: { errorMessage: true, deliveryAddress: true, paymentType: true, codAmount: true },

@@ -22,6 +22,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { rastreoDeLabel } from '@/lib/transportista';
 
 interface Label {
   id: string;
@@ -35,6 +36,7 @@ interface Label {
   errorMessage: string | null;
   paymentType: string;
   codAmount?: number | null;
+  carrier?: string | null;
   totalUyu: number;
   city: string;
   department: string;
@@ -340,17 +342,28 @@ export default function OrdersPage() {
                                   </p>
                                 </div>
                               )}
-                              {label.dacGuia && !label.dacGuia.startsWith('PENDING-') && (
-                                <a
-                                  href={`https://www.dac.com.uy/envios/rastrear?guia=${label.dacGuia}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5 mt-3 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
-                                >
-                                  <ExternalLink className="w-3 h-3" />
-                                  Rastrear en DAC
-                                </a>
-                              )}
+                              {/* [03-sep-2026] El link sale del transportista del
+                                  envío, no de DAC a secas: un código de Correo
+                                  Uruguayo en el rastreador de DAC da 404, y el
+                                  reparto propio no tiene rastreo público (por eso
+                                  urlRastreo puede devolver null y no se muestra
+                                  ningún botón en vez de uno roto). */}
+                              {(() => {
+                                if (!label.dacGuia || label.dacGuia.startsWith('PENDING-')) return null;
+                                const rastreo = rastreoDeLabel(label.carrier, label.dacGuia);
+                                if (!rastreo.url) return null;
+                                return (
+                                  <a
+                                    href={rastreo.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 mt-3 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                                  >
+                                    <ExternalLink className="w-3 h-3" />
+                                    Rastrear en {rastreo.nombre}
+                                  </a>
+                                );
+                              })()}
                             </td>
                           </tr>
                         )}

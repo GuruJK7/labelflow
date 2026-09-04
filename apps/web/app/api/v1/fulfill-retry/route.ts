@@ -2,6 +2,8 @@ import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { shopifyAccessForTenant } from '@/lib/shopify-access';
 
+import { rastreoDeLabel } from '@/lib/transportista';
+
 const DAC_TRACKING_BASE_URL = 'https://www.dac.com.uy/envios/rastrear';
 
 /**
@@ -57,6 +59,7 @@ export async function POST(req: Request) {
       shopifyOrderId: true,
       shopifyOrderName: true,
       dacGuia: true,
+      carrier: true,
     },
   });
 
@@ -109,7 +112,13 @@ export async function POST(req: Request) {
       }
 
       // Step 2: Create fulfillment with tracking
-      const trackingUrl = `${DAC_TRACKING_BASE_URL}?guia=${encodeURIComponent(guia)}`;
+      // [03-sep-2026] Antes esto era siempre el rastreador de DAC. Con
+      // notify_customer:true, un envío de reparto propio o de Correo le mandaba
+      // al comprador un link a un sitio que no conoce su código. Cuando el
+      // transportista no tiene rastreo público se manda el fulfillment SIN url,
+      // que es lo que Shopify espera para ese caso.
+      const rastreo = rastreoDeLabel(label.carrier, guia);
+      const trackingUrl = rastreo.url;
       const fulfillRes = await fetch(`${baseUrl}/fulfillments.json`, {
         method: 'POST',
         headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
@@ -120,8 +129,8 @@ export async function POST(req: Request) {
             })),
             tracking_info: {
               number: guia,
-              url: trackingUrl,
-              company: 'Other',
+              ...(trackingUrl ? { url: trackingUrl } : {}),
+              company: rastreo.nombre,
             },
             notify_customer: true,
           },

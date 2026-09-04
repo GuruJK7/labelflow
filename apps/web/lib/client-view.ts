@@ -35,6 +35,8 @@ export interface ClientViewLabel {
   storeId: string;
   orderName: string | null;
   dacGuia: string | null;
+  /** Transportista que emitió la guía. NULL en las filas históricas = DAC. */
+  carrier: string | null;
   city: string | null;
   department: string | null;
   status: string;
@@ -227,6 +229,7 @@ export async function loadClientView(tenantIds: string[]): Promise<{
         tenantId: true,
         shopifyOrderName: true,
         dacGuia: true,
+        carrier: true,
         city: true,
         department: true,
         status: true,
@@ -273,6 +276,7 @@ export async function loadClientView(tenantIds: string[]): Promise<{
     storeId: r.tenantId,
     orderName: r.shopifyOrderName,
     dacGuia: r.dacGuia,
+    carrier: r.carrier,
     city: r.city,
     department: r.department,
     status: r.status,

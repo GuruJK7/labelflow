@@ -32,13 +32,38 @@ const GUIA_NOTE_PREFIX = 'LabelFlow-GUIA:';
  * reason; a `fulfillMode=off` tenant would need a dedicated opt-in guard
  * added later.
  */
+/**
+ * Estados de pago que se pueden despachar cuando la tienda COBRA AL ENTREGAR.
+ *
+ * `pending` es el estado en el que Shopify deja un pedido contra entrega: no se
+ * cobró nada todavía y se cobra al entregar. Una tienda que vende así genera
+ * TODOS sus pedidos en `pending`, así que con el filtro fijo en `paid` el
+ * pipeline no veía ni uno.
+ *
+ * 🔴 `refunded`, `voided` y `partially_refunded` quedan AFUERA a propósito: son
+ * pedidos que se cancelaron o se devolvieron, y despacharlos es mandar
+ * mercadería por una venta que no existe.
+ */
+const ESTADOS_DESPACHABLES_CONTRAENTREGA = new Set(['paid', 'pending']);
+
 export async function getUnfulfilledOrders(
   client: AxiosInstance,
   sortDirection: 'oldest_first' | 'newest_first' = 'oldest_first',
+  /**
+   * `true` SÓLO para tiendas que cobran al entregar (`Tenant.codEnabled`).
+   *
+   * Default `false` a propósito: el comportamiento histórico —y el de las 33
+   * tiendas que hay hoy— es despachar únicamente lo ya cobrado. Prenderlo es
+   * una decisión explícita del comerciante, no algo que se deduzca.
+   */
+  incluirNoPagados = false,
 ): Promise<ShopifyOrder[]> {
   const { data } = await client.get('/orders.json', {
     params: {
-      financial_status: 'paid',
+      // REST no acepta dos valores en `financial_status`, así que para el caso
+      // contra entrega se pide `any` y se filtra abajo con la lista blanca.
+      // Pedir `any` sin filtrar traería reembolsados y anulados.
+      financial_status: incluirNoPagados ? 'any' : 'paid',
       fulfillment_status: 'unfulfilled',
       status: 'open',
       limit: 250,
@@ -46,7 +71,17 @@ export async function getUnfulfilledOrders(
     },
   });
 
-  const orders: ShopifyOrder[] = data.orders ?? [];
+  const crudas: ShopifyOrder[] = data.orders ?? [];
+  const orders: ShopifyOrder[] = incluirNoPagados
+    ? crudas.filter((o) => ESTADOS_DESPACHABLES_CONTRAENTREGA.has((o.financial_status ?? '').toLowerCase()))
+    : crudas;
+
+  if (incluirNoPagados && crudas.length !== orders.length) {
+    logger.info(
+      { descartados: crudas.length - orders.length, total: crudas.length },
+      'Contra entrega: se descartaron pedidos reembolsados/anulados que Shopify devolvió con financial_status=any',
+    );
+  }
 
   // Telemetry: log when we're handing back orders that were previously
   // processed (carry our tag or note). This used to be a skip condition;

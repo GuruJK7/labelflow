@@ -6,6 +6,13 @@ export interface ShopifyOrder {
   currency: string;
   tags: string;
   fulfillment_status?: string | null;
+  /**
+   * Estado de pago del pedido ("paid", "pending", "refunded", "voided"...).
+   * Se declara porque el camino CONTRA ENTREGA lo lee para descartar los
+   * reembolsados y anulados: ahí se le pide a Shopify `financial_status=any`
+   * y la lista blanca se aplica de este lado.
+   */
+  financial_status?: string | null;
   // Top-level order phone (checkout / SMS-notification number). Shopify
   // returns it on the order object; we declare it so resolveOrderPhone()
   // can fall back to it when shipping_address.phone is empty.

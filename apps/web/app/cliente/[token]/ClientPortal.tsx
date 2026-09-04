@@ -42,6 +42,7 @@ import { cn } from '@/lib/cn';
 // `Tenant.portalSplitZonas`): con el gate apagado devuelve un solo grupo y el
 // portal se comporta exactamente como antes de la feature.
 import { zonasDelDia } from '@/lib/portal-zonas';
+import { nombreTransportista, transportistaDe } from '@/lib/transportista';
 import type {
   ClientViewStore,
   ClientViewLabel,
@@ -1150,7 +1151,10 @@ export function ClientPortal({
                                           <div className="flex items-center gap-1.5">
                                             <Truck className="h-3.5 w-3.5 shrink-0 text-white/30" />
                                             <span className="truncate font-mono text-xs">
-                                              DAC {l.dacGuia}
+                                              {/* El rótulo sale del transportista real: una guía de
+                                                  Correo Uruguayo etiquetada "DAC" manda al comprador
+                                                  a rastrear al sitio equivocado. */}
+                                              {nombreTransportista(transportistaDe(l.carrier, l.dacGuia))} {l.dacGuia}
                                             </span>
                                           </div>
                                         )}

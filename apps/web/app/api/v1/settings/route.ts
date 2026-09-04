@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
+import { correoFeatureEnabled } from '@/lib/correo-feature';
+import { normalizarNombreOficina, obtenerNombresOficinas, verificarOficina } from '@/lib/correo-catalogo';
 import { codFeatureEnabled } from '@/lib/cod-feature';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { encryptIfPresent, decryptOrRaw } from '@/lib/encryption';
@@ -57,6 +59,18 @@ const updateSchema = z.object({
   consolidationWindowMinutes: z.number().min(1).max(1440).optional(),
   // Contrareembolso (D33/H7): columna existente, sin UI hasta ahora.
   codEnabled: z.boolean().optional(),
+  // Correo Uruguayo (AHIVA) como transportista. correoEnabled es el selector:
+  // false = la tienda despacha por DAC (como siempre), true = por Correo.
+  correoEnabled: z.boolean().optional(),
+  correoUser: z.string().max(120).nullable().optional(),
+  correoPassword: z.string().max(200).nullable().optional(),
+  correoCuenta: z.string().max(60).nullable().optional(),
+  correoSubcuenta: z.string().max(60).nullable().optional(),
+  correoAmbiente: z.enum(['test', 'prod']).optional(),
+  correoOficinaDevolucion: z.string().max(120).nullable().optional(),
+  // Correo exige peso (>0 y <30 kg) y DAC nunca lo pidió: sin un default por
+  // tienda, todo pedido sin peso propio va a revisión.
+  pesoDefaultKg: z.number().positive().lt(30).nullable().optional(),
   defaultPrinter: z.string().max(200).optional(),
   autoPrintEnabled: z.boolean().optional(),
   orderSortDirection: z.enum(['oldest_first', 'newest_first']).optional(),
@@ -115,6 +129,14 @@ export async function GET() {
       consolidateConsecutiveOrders: true,
       consolidationWindowMinutes: true,
       codEnabled: true,
+      correoEnabled: true,
+      correoUser: true,
+      correoPassword: true,
+      correoCuenta: true,
+      correoSubcuenta: true,
+      correoAmbiente: true,
+      correoOficinaDevolucion: true,
+      pesoDefaultKg: true,
       paymentAutoEnabled: true,
       paymentCardBrand: true,
       paymentCardLast4: true,
@@ -216,6 +238,22 @@ export async function GET() {
     consolidateConsecutiveOrders: tenant.consolidateConsecutiveOrders,
     consolidationWindowMinutes: tenant.consolidationWindowMinutes,
     codEnabled: tenant.codEnabled,
+    // El secreto nunca vuelve: sólo si está cargado, igual que dacPasswordSet.
+    correoAvailable: correoFeatureEnabled(),
+    correoEnabled: tenant.correoEnabled,
+    correoUser: decryptOrRaw(tenant.correoUser),
+    correoPasswordSet: !!tenant.correoPassword,
+    correoCuenta: decryptOrRaw(tenant.correoCuenta),
+    // Se devuelve el VALOR, no sólo un booleano: la cuenta ya se devolvía así y
+    // la subcuenta es del mismo tipo de dato (identificador de la cuenta en
+    // AHIVA, no un secreto). Con sólo el booleano el campo era invisible y
+    // —peor— imborrable: el form sólo lo mandaba si tenía texto, así que una vez
+    // cargado se seguía enviando en cada envelope para siempre.
+    correoSubcuenta: decryptOrRaw(tenant.correoSubcuenta),
+    correoSubcuentaSet: !!tenant.correoSubcuenta,
+    correoAmbiente: tenant.correoAmbiente,
+    correoOficinaDevolucion: tenant.correoOficinaDevolucion,
+    pesoDefaultKg: tenant.pesoDefaultKg,
     // Revisión 2026-09-02: el toggle sólo se ofrece si el worker desplegado lo
     // honra (COD_FEATURE_ENABLED). Ver lib/cod-feature.ts.
     codAvailable: codFeatureEnabled(),
@@ -292,6 +330,117 @@ export async function PUT(req: NextRequest) {
     data.codEnabled = input.codEnabled;
   }
 
+  if (input.correoAmbiente !== undefined) data.correoAmbiente = input.correoAmbiente;
+
+  // La oficina de devolución se valida ACÁ, contra el catálogo de Correo.
+  //
+  // 🔴 Es una configuración POR TIENDA que el worker chequea POR PEDIDO: un
+  // nombre que no existe hace que `construirEnvio` devuelva motivo y el pedido
+  // vaya a NEEDS_REVIEW. Como el valor es de la tienda, un solo nombre mal
+  // escrito manda el 100% de sus envíos a revisión, corrida tras corrida, sin
+  // que nadie entienda por qué. Se valida cuando hay una persona mirando la
+  // pantalla, y se guarda el nombre CANÓNICO del catálogo (AHIVA identifica la
+  // sucursal por el texto exacto, con su acentuación propia).
+  if (input.correoOficinaDevolucion !== undefined) {
+    const pedida = (input.correoOficinaDevolucion ?? '').trim();
+    if (!pedida) {
+      data.correoOficinaDevolucion = null;
+    } else {
+      // El form manda SIEMPRE el bloque completo del transportista, así que este
+      // campo llega también cuando el comerciante sólo quiso apagar Correo o
+      // corregir sus credenciales. Se lee el estado guardado para decidir si
+      // hace falta salir a la red.
+      const tenantCorreo = await db.tenant.findUnique({
+        where: { id: auth.tenantId },
+        select: { correoAmbiente: true, correoOficinaDevolucion: true, correoEnabled: true },
+      });
+
+      // 🔴 APAGAR CORREO NO PUEDE DEPENDER DE QUE CORREO ESTÉ VIVO. Si el PUT
+      // deja el transportista apagado, o ya estaba apagado y no se prende, el
+      // valor se guarda tal cual sin verificarlo: no se despacha nada por esa
+      // vía, así que un nombre inválido no puede romper ningún envío, y exigir
+      // el catálogo justo cuando AHIVA está caído convertía el interruptor de
+      // emergencia en un candado — el 503 abortaba el PUT entero y ni siquiera
+      // dejaba corregir las credenciales.
+      const quedaraApagado =
+        input.correoEnabled === false || (input.correoEnabled === undefined && !tenantCorreo?.correoEnabled);
+      // Y si el nombre no cambió respecto del que ya estaba guardado, tampoco
+      // hay nada que verificar: ya pasó por acá cuando se guardó.
+      const sinCambios =
+        !!tenantCorreo?.correoOficinaDevolucion &&
+        normalizarNombreOficina(tenantCorreo.correoOficinaDevolucion) === normalizarNombreOficina(pedida);
+
+      if (quedaraApagado || sinCambios) {
+        data.correoOficinaDevolucion = sinCambios ? tenantCorreo!.correoOficinaDevolucion : pedida;
+      } else {
+        const ambienteActual = input.correoAmbiente ?? tenantCorreo?.correoAmbiente;
+        const ambiente = ambienteActual === 'prod' ? 'prod' : 'test';
+        let catalogo: string[];
+        try {
+          catalogo = await obtenerNombresOficinas(ambiente);
+        } catch {
+          // Fail-closed sólo acá: se está PRENDIENDO o cambiando la agencia de
+          // una tienda que va a despachar por Correo. Aceptarla sin verificar
+          // manda el 100% de sus envíos a revisión, corrida tras corrida.
+          return apiError(
+            'No se pudo verificar la oficina de devolución contra el catálogo de Correo Uruguayo. ' +
+              'Probá de nuevo en un momento.',
+            503,
+          );
+        }
+        const chequeo = verificarOficina(pedida, catalogo);
+        if (!chequeo.ok) {
+          return apiError(
+            `La oficina de devolución "${pedida}" no existe en el catálogo de Correo Uruguayo` +
+              (chequeo.sugerencias.length ? `. ¿Quisiste decir: ${chequeo.sugerencias.join(' · ')}?` : '.'),
+            422,
+          );
+        }
+        data.correoOficinaDevolucion = chequeo.nombre;
+      }
+    }
+  }
+  if (input.pesoDefaultKg !== undefined) data.pesoDefaultKg = input.pesoDefaultKg;
+  if (input.correoEnabled !== undefined) {
+    // Se leen las credenciales guardadas para poder validar "prender Correo"
+    // cuando el usuario prende el toggle sin re-tipear la contraseña (el GET
+    // nunca devuelve el secreto, así que el form manda sólo el flag).
+    const tenantActual = input.correoEnabled
+      ? await db.tenant.findUnique({
+          where: { id: auth.tenantId },
+          select: { correoUser: true, correoPassword: true, pesoDefaultKg: true },
+        })
+      : null;
+    // Prender Correo cambia el transportista de TODOS los envíos de la tienda.
+    // Sin credenciales, el job fallaría entero en cada corrida y el comerciante
+    // vería "falló" sin entender por qué, así que se rechaza acá con el motivo.
+    if (input.correoEnabled) {
+      if (!correoFeatureEnabled()) {
+        return apiError('Correo Uruguayo todavía no está disponible. Avisamos cuando se pueda prender.', 422);
+      }
+      const userFinal = input.correoUser !== undefined ? input.correoUser : decryptOrRaw(tenantActual?.correoUser);
+      const passFinal = input.correoPassword !== undefined ? input.correoPassword : tenantActual?.correoPassword;
+      if (!userFinal || !passFinal) {
+        return apiError(
+          'Para despachar por Correo Uruguayo hay que cargar primero el usuario y la contraseña de AHIVA.',
+          422,
+        );
+      }
+      // Sin peso por defecto, Correo rechaza TODOS los pedidos que no traigan el
+      // suyo — que en la práctica son todos, porque DAC nunca pidió peso y
+      // ninguna tienda lo tiene cargado en Shopify. Prender el transportista sin
+      // esto deja la tienda sin despachar nada y sin entender por qué.
+      const pesoFinal = input.pesoDefaultKg !== undefined ? input.pesoDefaultKg : tenantActual?.pesoDefaultKg;
+      if (!pesoFinal || pesoFinal <= 0) {
+        return apiError(
+          'Correo Uruguayo exige el peso de cada paquete. Cargá un peso por defecto (en kg) antes de prenderlo.',
+          422,
+        );
+      }
+    }
+    data.correoEnabled = input.correoEnabled;
+  }
+
   // Auto-payment (plain fields)
   if (input.paymentAutoEnabled !== undefined) data.paymentAutoEnabled = input.paymentAutoEnabled;
   if (input.paymentCardBrand !== undefined) data.paymentCardBrand = input.paymentCardBrand;
@@ -302,6 +451,10 @@ export async function PUT(req: NextRequest) {
   if (input.dashboardToken !== undefined) data.dashboardToken = encryptIfPresent(input.dashboardToken);
   if (input.dacUsername !== undefined) data.dacUsername = encryptIfPresent(input.dacUsername);
   if (input.dacPassword !== undefined) data.dacPassword = encryptIfPresent(input.dacPassword);
+  if (input.correoUser !== undefined) data.correoUser = encryptIfPresent(input.correoUser);
+  if (input.correoPassword !== undefined) data.correoPassword = encryptIfPresent(input.correoPassword);
+  if (input.correoCuenta !== undefined) data.correoCuenta = encryptIfPresent(input.correoCuenta);
+  if (input.correoSubcuenta !== undefined) data.correoSubcuenta = encryptIfPresent(input.correoSubcuenta);
   if (input.emailPass !== undefined) data.emailPass = encryptIfPresent(input.emailPass);
   if (input.paymentCardCvc !== undefined) data.paymentCardCvc = encryptIfPresent(input.paymentCardCvc);
 

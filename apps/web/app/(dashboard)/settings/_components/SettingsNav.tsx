@@ -3,14 +3,14 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Store, KeyRound, Truck, SlidersHorizontal, CreditCard } from 'lucide-react';
+import { Store, KeyRound, Truck, SlidersHorizontal, CreditCard, Send } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 /**
  * Barra de Configuración (D32). Para el usuario normal, Configuración es el
  * único lugar donde vive todo lo que no es Dashboard ni Etiquetas, así que
- * acá se agrupan sus cinco partes: Tiendas, Cuenta DAC, Reglas de envío,
- * Parámetros y Comprar envíos. Se renderiza igual para el admin.
+ * acá se agrupan sus partes: Tiendas, Cuenta DAC, Transportista, Reglas de
+ * envío, Parámetros y Comprar envíos. Se renderiza igual para el admin.
  *
  * Las entradas con `#` apuntan a tarjetas de /settings (ids `tiendas`, `dac`,
  * `parametros`); las otras dos son páginas propias. La activa se decide por
@@ -19,6 +19,7 @@ import { cn } from '@/lib/cn';
 export const SETTINGS_NAV: Array<{ href: string; label: string; icon: typeof Store }> = [
   { href: '/settings#tiendas', label: 'Tiendas', icon: Store },
   { href: '/settings#dac', label: 'Cuenta DAC', icon: KeyRound },
+  { href: '/settings#transportista', label: 'Transportista', icon: Send },
   { href: '/settings/shipping-rules', label: 'Reglas de envío', icon: Truck },
   { href: '/settings#parametros', label: 'Parámetros', icon: SlidersHorizontal },
   { href: '/settings/billing', label: 'Comprar envíos', icon: CreditCard },

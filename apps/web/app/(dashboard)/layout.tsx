@@ -55,6 +55,10 @@ export default async function DashboardLayout({
       dashboardToken: true,
       dacUsername: true,
       dacPassword: true,
+      // El alta se puede completar con DAC O con Correo Uruguayo.
+      correoEnabled: true,
+      correoUser: true,
+      correoPassword: true,
       cronSchedule: true,
       isActive: true,
       // Email verification gate — only checked when EMAIL_VERIFICATION_REQUIRED

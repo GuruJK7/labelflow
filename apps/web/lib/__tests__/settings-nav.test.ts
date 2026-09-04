@@ -1,14 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { SETTINGS_NAV, isSettingsNavActive } from '@/app/(dashboard)/settings/_components/SettingsNav';
 
-/** Configuración agrupa las 5 partes del usuario (D32). */
+/** Configuración agrupa las partes del usuario (D32) + Transportista (03-09-2026). */
 describe('SettingsNav', () => {
-  it('cinco entradas: Tiendas, Cuenta DAC, Reglas de envío, Parámetros, Comprar envíos', () => {
+  it('seis entradas: Tiendas, Cuenta DAC, Transportista, Reglas de envío, Parámetros, Comprar envíos', () => {
     expect(SETTINGS_NAV.map((i) => i.label)).toEqual([
-      'Tiendas', 'Cuenta DAC', 'Reglas de envío', 'Parámetros', 'Comprar envíos',
+      'Tiendas', 'Cuenta DAC',
+      'Transportista', 'Reglas de envío', 'Parámetros', 'Comprar envíos',
     ]);
     expect(SETTINGS_NAV.map((i) => i.href)).toEqual([
-      '/settings#tiendas', '/settings#dac', '/settings/shipping-rules', '/settings#parametros', '/settings/billing',
+      '/settings#tiendas', '/settings#dac',
+      '/settings#transportista', '/settings/shipping-rules', '/settings#parametros', '/settings/billing',
     ]);
   });
 

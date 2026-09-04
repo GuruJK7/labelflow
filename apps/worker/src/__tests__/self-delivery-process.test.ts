@@ -127,12 +127,38 @@ describe('pipeline de reparto propio', () => {
     expect(opts).toEqual({ company: 'Reparto propio', sinUrl: true });
   });
 
-  it('la etiqueta no pide cobrar (el worker solo ve pedidos ya pagados)', async () => {
-    await procesarPedidosRepartoPropio([{ order: pedido(), veredicto }], ctx());
+  it('un pedido YA PAGADO sale con «NO COBRAR»', async () => {
+    await procesarPedidosRepartoPropio(
+      [{ order: pedido({ financial_status: 'paid' }), veredicto }],
+      ctx(),
+    );
     expect(render.mock.calls[0][0].cobrarUyu).toBeNull();
     expect(render.mock.calls[0][0].remitente).toBe('Mi Tienda');
     expect(render.mock.calls[0][0].destinatario.nombre).toBe('Ana Pérez');
     expect(render.mock.calls[0][0].destinatario.telefono).toBe('099111222');
+  });
+
+  /**
+   * 🔴 Hasta el 04-09-2026 este archivo asumía que "el worker sólo ve pedidos
+   * pagados" y mandaba `cobrarUyu: null` siempre. Desde que las tiendas que
+   * cobran al entregar reciben también los `pending`, esa premisa es falsa: con
+   * null la etiqueta imprime «NO COBRAR» y el repartidor entrega sin cobrar.
+   */
+  it('un pedido SIN PAGAR sale con el monto a cobrar, no con «NO COBRAR»', async () => {
+    await procesarPedidosRepartoPropio(
+      [{ order: pedido({ financial_status: 'pending' }), veredicto }],
+      ctx(),
+    );
+    expect(render.mock.calls[0][0].cobrarUyu).toBe(2490);
+  });
+
+  it('no inventa un monto si el pedido está en otra moneda', async () => {
+    // Reparto propio cobra en pesos; convertir a ojo sería peor que no cobrar.
+    await procesarPedidosRepartoPropio(
+      [{ order: pedido({ financial_status: 'pending', currency: 'USD' }), veredicto }],
+      ctx(),
+    );
+    expect(render.mock.calls[0][0].cobrarUyu).toBeNull();
   });
 
   it('NO pierde el apartamento: la calle va en direccion y el acceso en la nota', async () => {

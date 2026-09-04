@@ -25,6 +25,10 @@ export async function loadOnboardingState(tenantId: string): Promise<OnboardingS
       dashboardToken: true,
       dacUsername: true,
       dacPassword: true,
+      // El alta se puede completar con DAC O con Correo Uruguayo.
+      correoEnabled: true,
+      correoUser: true,
+      correoPassword: true,
       onboardingComplete: true,
       cronSchedule: true,
       isActive: true,

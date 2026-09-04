@@ -22,6 +22,10 @@ export interface OnboardingRow {
   dashboardToken: string | null;
   dacUsername: string | null;
   dacPassword: string | null;
+  /** Transportista alternativo: Correo Uruguayo. Ver `hasCorreo`. */
+  correoEnabled: boolean;
+  correoUser: string | null;
+  correoPassword: string | null;
   onboardingComplete: boolean;
   cronSchedule: string | null;
 }
@@ -51,9 +55,37 @@ export function hasDac(r: Pick<OnboardingRow, 'dacUsername' | 'dacPassword'>): b
   return !!r.dacUsername && !!r.dacPassword;
 }
 
+/**
+ * Correo Uruguayo cargado y elegido como transportista.
+ *
+ * Se exige `correoEnabled` además de las credenciales: tener usuario y clave
+ * guardados pero el interruptor apagado significa que la tienda despacha por
+ * DAC, no por Correo.
+ */
+export function hasCorreo(
+  r: Pick<OnboardingRow, 'correoEnabled' | 'correoUser' | 'correoPassword'>,
+): boolean {
+  return !!r.correoEnabled && !!r.correoUser && !!r.correoPassword;
+}
+
+/**
+ * ¿La tienda tiene CON QUÉ despachar?
+ *
+ * 🔴 Antes esto era `hasDac` a secas, y era correcto mientras DAC fuera el
+ * único transportista. Desde que se puede elegir Correo Uruguayo, exigir DAC
+ * dejaba a una tienda que eligió Correo sin poder terminar el alta nunca:
+ * `onboardingComplete` no se sellaba, `isActive` quedaba en false y no
+ * despachaba un solo pedido, sin ningún mensaje que explicara por qué.
+ */
+export function hasTransportista(
+  r: Pick<OnboardingRow, 'dacUsername' | 'dacPassword' | 'correoEnabled' | 'correoUser' | 'correoPassword'>,
+): boolean {
+  return hasDac(r) || hasCorreo(r);
+}
+
 /** Regla del gate del dashboard: sin esto, al wizard. */
 export function isConnected(r: OnboardingRow): boolean {
-  return storeConnection(r).kind !== null && hasDac(r);
+  return storeConnection(r).kind !== null && hasTransportista(r);
 }
 
 /* ─── Modo de procesamiento (paso 5) sobre `cronSchedule` (H8) ─────────── */
@@ -106,7 +138,9 @@ export interface DerivedOnboarding {
  */
 export function deriveOnboarding(r: OnboardingRow): DerivedOnboarding {
   const store = storeConnection(r);
-  const dac = hasDac(r);
+  // `dac` acá significa "tiene transportista": el wizard muestra un solo paso
+  // de transportista y lo da por cumplido con DAC O con Correo.
+  const dac = hasTransportista(r);
   const mode = processingModeFromCron(r.cronSchedule);
   const complete = !!r.onboardingComplete;
   let currentStep: OnboardingStep;

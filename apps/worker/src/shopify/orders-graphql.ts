@@ -174,6 +174,19 @@ export const ORDER_NOTE_UPDATE_MUTATION = `mutation LabelFlowOrderNoteUpdate($in
 export const UNFULFILLED_QUERY_STRING = 'financial_status:paid status:open';
 
 /**
+ * Variante para tiendas que COBRAN AL ENTREGAR: suma los `pending`, que es el
+ * estado en el que Shopify deja un pedido contra entrega. `refunded`, `voided`
+ * y `partially_refunded` siguen afuera — despachar uno de ésos sería mandar
+ * mercadería por una venta cancelada.
+ *
+ * La sintaxis de búsqueda de Shopify sí acepta OR entre valores del mismo
+ * campo, así que acá no hace falta el filtro del lado nuestro que sí necesita
+ * REST (REST no admite dos valores en `financial_status`).
+ */
+export const UNFULFILLED_QUERY_STRING_CONTRAENTREGA =
+  '(financial_status:paid OR financial_status:pending) status:open';
+
+/**
  * Réplica del filtro REST `fulfillment_status=unfulfilled`: pedidos con
  * `fulfillment_status` null (UNFULFILLED, ON_HOLD, SCHEDULED, IN_PROGRESS,
  * OPEN, PENDING_FULFILLMENT, REQUEST_DECLINED) o `partial`. FULFILLED y
@@ -351,9 +364,11 @@ async function listOrders(
 export async function getUnfulfilledOrders(
   client: ShopifyGraphqlClient,
   sortDirection: 'oldest_first' | 'newest_first' = 'oldest_first',
+  /** `true` sólo para tiendas con `Tenant.codEnabled`. Ver orders.ts. */
+  incluirNoPagados = false,
 ): Promise<ShopifyOrder[]> {
   const orders = await listOrders(client, {
-    query: UNFULFILLED_QUERY_STRING,
+    query: incluirNoPagados ? UNFULFILLED_QUERY_STRING_CONTRAENTREGA : UNFULFILLED_QUERY_STRING,
     reverse: sortDirection === 'newest_first',
     limit: REST_LIST_LIMIT,
     keep: isRestUnfulfilled,
