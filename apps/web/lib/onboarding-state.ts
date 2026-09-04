@@ -114,7 +114,8 @@ export type OnboardingStep = 1 | 2 | 3 | 4 | 5 | 6;
 
 export interface DerivedOnboarding {
   store: StoreConnection;
-  dac: boolean;
+  /** Tiene con qué despachar: DAC o Correo Uruguayo. */
+  transportista: boolean;
   mode: ProcessingMode;
   complete: boolean;
   currentStep: OnboardingStep;
@@ -138,16 +139,14 @@ export interface DerivedOnboarding {
  */
 export function deriveOnboarding(r: OnboardingRow): DerivedOnboarding {
   const store = storeConnection(r);
-  // `dac` acá significa "tiene transportista": el wizard muestra un solo paso
-  // de transportista y lo da por cumplido con DAC O con Correo.
-  const dac = hasTransportista(r);
+  const transportista = hasTransportista(r);
   const mode = processingModeFromCron(r.cronSchedule);
   const complete = !!r.onboardingComplete;
   let currentStep: OnboardingStep;
-  if (!store.kind) currentStep = complete || dac ? 2 : 1;
-  else if (!dac) currentStep = 3;
+  if (!store.kind) currentStep = complete || transportista ? 2 : 1;
+  else if (!transportista) currentStep = 3;
   else currentStep = complete ? 6 : 4;
-  return { store, dac, mode, complete, currentStep };
+  return { store, transportista, mode, complete, currentStep };
 }
 
 /**
@@ -157,11 +156,11 @@ export function deriveOnboarding(r: OnboardingRow): DerivedOnboarding {
  * algo del wizard.
  */
 export function shouldRedirectToDashboard(
-  state: Pick<OnboardingState, 'onboardingComplete' | 'store' | 'dac'>,
+  state: Pick<OnboardingState, 'onboardingComplete' | 'store' | 'transportista'>,
   opts: { requestedStep: OnboardingStep | null; shopifyReturn: boolean },
 ): boolean {
   if (opts.requestedStep || opts.shopifyReturn) return false;
-  return state.onboardingComplete && state.store.kind !== null && state.dac.connected;
+  return state.onboardingComplete && state.store.kind !== null && state.transportista.conectado;
 }
 
 /* ─── Metadatos de los pasos (título, tiempo estimado) ─────────────────── */
@@ -179,7 +178,7 @@ export interface OnboardingStepMeta {
 export const ONBOARDING_STEPS: readonly OnboardingStepMeta[] = [
   { number: 1, title: 'Bienvenida', estimate: '2 min de lectura', summary: 'Qué vamos a configurar y cuánto tarda.' },
   { number: 2, title: 'Tu tienda', estimate: '2 min', summary: 'Shopify con un botón, o tu Dashboard con Excel.' },
-  { number: 3, title: 'Cuenta DAC', estimate: '1 min', summary: 'Usuario y contraseña con los que entrás a dac.com.uy.' },
+  { number: 3, title: 'Transportista', estimate: '1 min', summary: 'Elegís DAC o Correo Uruguayo y cargás esa cuenta.' },
   { number: 4, title: 'Parámetros', estimate: '3 min', summary: 'Quién paga el envío, envío gratis, qué productos, aviso al cliente.' },
   { number: 5, title: 'Cada cuánto', estimate: '30 seg', summary: 'Al instante o una vez por hora.' },
   { number: 6, title: 'Listo', estimate: '', summary: 'Tus envíos de prueba y el primer procesamiento.' },
@@ -203,7 +202,17 @@ export interface OnboardingState {
     dashboardConnected: boolean;
     dashboardUrl: string | null;
   };
-  dac: { connected: boolean; username: string | null };
+  /**
+   * El transportista con el que la tienda va a despachar. `conectado` es lo que
+   * habilita el paso 3 y el alta: se cumple con DAC O con Correo Uruguayo.
+   * Antes esto se llamaba `dac` y era el único posible.
+   */
+  transportista: {
+    conectado: boolean;
+    cual: 'DAC' | 'CORREO' | null;
+    dacUsername: string | null;
+    correoUser: string | null;
+  };
   processingMode: ProcessingMode;
   cronSchedule: string;
   onboardingComplete: boolean;

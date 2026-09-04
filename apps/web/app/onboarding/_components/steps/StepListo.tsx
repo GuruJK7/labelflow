@@ -133,7 +133,19 @@ export function StepListo({
 
       <ul className="space-y-2 mb-6 max-w-md mx-auto text-left">
         <Resumen icon={ShoppingBag} label="Tienda" value={tiendaLabel} />
-        <Resumen icon={Truck} label="DAC" value={state.dac.username ? `Usuario ${state.dac.username}` : 'Cuenta guardada'} />
+        <Resumen
+          icon={Truck}
+          label={state.transportista.cual === 'CORREO' ? 'Correo Uruguayo' : 'DAC'}
+          value={
+            state.transportista.cual === 'CORREO'
+              ? state.transportista.correoUser
+                ? `Usuario ${state.transportista.correoUser}`
+                : 'Cuenta guardada'
+              : state.transportista.dacUsername
+                ? `Usuario ${state.transportista.dacUsername}`
+                : 'Cuenta guardada'
+          }
+        />
         <Resumen icon={Clock} label="Modo" value={modoLabel} />
       </ul>
 

@@ -88,7 +88,7 @@ describe('GET /api/v1/onboarding/state', () => {
         dashboardConnected: true,
         dashboardUrl: 'https://autoenvia-dash.vercel.app',
       },
-      dac: { connected: true, username: '12345678' },
+      transportista: { conectado: true, cual: 'DAC', dacUsername: '12345678', correoUser: null },
       processingMode: 'cada_hora',
       cronSchedule: '0 * * * *',
       onboardingComplete: false,
@@ -146,7 +146,7 @@ describe('GET /api/v1/onboarding/state', () => {
     const { data } = await (await GET()).json();
     expect(data.currentStep).toBe(1);
     expect(data.store.kind).toBeNull();
-    expect(data.dac).toEqual({ connected: false, username: null });
+    expect(data.transportista).toEqual({ conectado: false, cual: null, dacUsername: null, correoUser: null });
     expect(data.processingMode).toBe('inmediato');
     expect(data.emailVerified).toBe(false);
     expect(data.balance.total).toBe(5);

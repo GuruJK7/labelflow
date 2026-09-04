@@ -13,7 +13,7 @@ import { StepCard, StepHeader, PrimaryButton } from '../wizard-ui';
 export function StepBienvenida({ state, onStart }: { state: OnboardingState; onStart: () => void }) {
   const items: Array<{ title: string; estimate: string; text: string; done: boolean }> = [
     { title: 'Conectar tu tienda', estimate: '2 min', text: 'Shopify con un botón, o tu Dashboard con Excel.', done: state.store.kind !== null },
-    { title: 'Tu cuenta de DAC', estimate: '1 min', text: 'Usuario y contraseña con los que entrás a dac.com.uy.', done: state.dac.connected },
+    { title: 'Tu transportista', estimate: '1 min', text: 'Elegís DAC o Correo Uruguayo y cargás la cuenta de ese.', done: state.transportista.conectado },
     { title: 'Cómo querés que se procesen los pedidos', estimate: '3 min', text: 'Quién paga el envío, envío gratis, qué productos, aviso al cliente.', done: false },
     { title: 'Cada cuánto', estimate: '30 seg', text: 'Al instante o una vez por hora.', done: false },
     { title: 'Listo', estimate: '', text: `Te regalamos ${state.trialShipments} envíos para probar. Procesás el primero ahí mismo.`, done: state.onboardingComplete },
@@ -24,7 +24,7 @@ export function StepBienvenida({ state, onStart }: { state: OnboardingState; onS
       <StepHeader
         icon={Rocket}
         title="Vamos a dejar tus envíos en automático"
-        text="Son 5 pasos cortos. Cuando termines, cada pedido pago de tu tienda va a salir solo con su guía de DAC y su etiqueta lista para imprimir."
+        text="Son 5 pasos cortos. Cuando termines, cada pedido de tu tienda va a salir solo con su guía y su etiqueta lista para imprimir, por el transportista que elijas."
       />
 
       <ol className="space-y-2">
@@ -59,7 +59,7 @@ export function StepBienvenida({ state, onStart }: { state: OnboardingState; onS
       </div>
 
       <p className="text-xs text-zinc-500 mt-5 leading-relaxed">
-        Necesitás una cuenta de DAC activa. Si todavía no tenés, la pedís en dac.com.uy y volvés cuando la tengas: lo que cargues acá queda guardado.
+        Necesitás una cuenta activa del transportista que elijas: DAC (dac.com.uy) o Correo Uruguayo (AhíVA). Si todavía no la tenés, la pedís y volvés cuando esté: lo que cargues acá queda guardado.
       </p>
     </StepCard>
   );

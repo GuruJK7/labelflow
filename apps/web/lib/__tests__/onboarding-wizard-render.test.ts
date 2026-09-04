@@ -20,7 +20,7 @@ import type { OnboardingState } from '../onboarding-state';
 const BASE: OnboardingState = {
   currentStep: 1,
   store: { kind: null, shopifyConnected: false, shopifyStoreUrl: null, dashboardConnected: false, dashboardUrl: null },
-  dac: { connected: false, username: null },
+  transportista: { conectado: false, cual: null, dacUsername: null, correoUser: null },
   processingMode: 'inmediato',
   cronSchedule: '*/15 * * * *',
   onboardingComplete: false,
@@ -63,10 +63,38 @@ describe('<OnboardingWizard>', () => {
 
   it('la barra de progreso tiene los 6 pasos y sólo los alcanzables son clickeables', () => {
     const html = render(BASE);
-    for (const t of ['Bienvenida', 'Tu tienda', 'Cuenta DAC', 'Parámetros', 'Cada cuánto', 'Listo']) expect(html).toContain(t);
+    for (const t of ['Bienvenida', 'Tu tienda', 'Transportista', 'Parámetros', 'Cada cuánto', 'Listo']) expect(html).toContain(t);
     // Paso 1 alcanzable (activo); del 2 al 6, deshabilitados.
     const disabled = (html.match(/<button[^>]*disabled=""[^>]*>/g) ?? []).length;
     expect(disabled).toBeGreaterThanOrEqual(5);
+  });
+
+  /**
+   * El paso 3 dejó de ser "Cuenta DAC". Quien elige Correo Uruguayo tiene que
+   * poder cargarlo acá: antes no había dónde, el alta exigía DAC y la cuenta
+   * no se activaba nunca.
+   */
+  it('el paso 3 ofrece los DOS transportistas, no sólo DAC', () => {
+    const html = render({
+      ...BASE,
+      currentStep: 3,
+      store: { kind: 'shopify', shopifyConnected: true, shopifyStoreUrl: 'acme.myshopify.com', dashboardConnected: false, dashboardUrl: null },
+    });
+    expect(html).toContain('DAC');
+    expect(html).toContain('Correo Uruguayo');
+    expect(html).toContain('Entrega en agencia');
+  });
+
+  it('con Correo ya conectado el paso 3 lo muestra como hecho, sin pedir DAC', () => {
+    const html = render({
+      ...BASE,
+      currentStep: 3,
+      store: { kind: 'shopify', shopifyConnected: true, shopifyStoreUrl: 'acme.myshopify.com', dashboardConnected: false, dashboardUrl: null },
+      transportista: { conectado: true, cual: 'CORREO', dacUsername: null, correoUser: '51654286' },
+    });
+    expect(html).toContain('Correo Uruguayo conectado');
+    expect(html).toContain('51654286');
+    expect(html).not.toContain('No podemos probar el ingreso a DAC');
   });
 
   it('con tienda pero sin DAC aterriza en el paso 3 y muestra la tienda como hecha en la barra', () => {
@@ -75,7 +103,7 @@ describe('<OnboardingWizard>', () => {
       currentStep: 3,
       store: { kind: 'shopify', shopifyConnected: true, shopifyStoreUrl: 'acme.myshopify.com', dashboardConnected: false, dashboardUrl: null },
     });
-    expect(html).toContain('Tu cuenta de DAC');
+    expect(html).toContain('Tu transportista');
     expect(html).toContain('No podemos probar el ingreso a DAC');
     expect(html).not.toContain('Vamos a dejar tus envíos');
   });
@@ -101,7 +129,7 @@ describe('<OnboardingWizard>', () => {
         ...BASE,
         currentStep: 4,
         store: { kind: 'dashboard', shopifyConnected: false, shopifyStoreUrl: null, dashboardConnected: true, dashboardUrl: 'https://d.uy' },
-        dac: { connected: true, username: '12345678' },
+        transportista: { conectado: true, cual: 'DAC', dacUsername: '12345678', correoUser: null },
       },
       4,
     );
@@ -122,7 +150,7 @@ describe('<OnboardingWizard>', () => {
         ...BASE,
         currentStep: 4,
         store: { kind: 'shopify', shopifyConnected: true, shopifyStoreUrl: 'acme.myshopify.com', dashboardConnected: false, dashboardUrl: null },
-        dac: { connected: true, username: '12345678' },
+        transportista: { conectado: true, cual: 'DAC', dacUsername: '12345678', correoUser: null },
       },
       4,
     );
@@ -136,7 +164,7 @@ describe('<OnboardingWizard>', () => {
         ...BASE,
         currentStep: 4,
         store: { kind: 'dashboard', shopifyConnected: false, shopifyStoreUrl: null, dashboardConnected: true, dashboardUrl: 'https://d.uy' },
-        dac: { connected: true, username: '12345678' },
+        transportista: { conectado: true, cual: 'DAC', dacUsername: '12345678', correoUser: null },
       },
       5,
     );
@@ -147,7 +175,7 @@ describe('<OnboardingWizard>', () => {
   });
 
   it('paso 5 con cron heredado muestra "Horario personalizado"', () => {
-    const html = render({ ...BASE, currentStep: 4, processingMode: 'personalizado', cronSchedule: '0 9 * * 1-5', dac: { connected: true, username: 'u' } }, 5);
+    const html = render({ ...BASE, currentStep: 4, processingMode: 'personalizado', cronSchedule: '0 9 * * 1-5', transportista: { conectado: true, cual: 'DAC', dacUsername: 'u', correoUser: null } }, 5);
     expect(html).toContain('Horario personalizado (configurado por soporte)');
   });
 
@@ -157,7 +185,7 @@ describe('<OnboardingWizard>', () => {
         ...BASE,
         currentStep: 4,
         store: { kind: 'shopify', shopifyConnected: true, shopifyStoreUrl: 'acme.myshopify.com', dashboardConnected: false, dashboardUrl: null },
-        dac: { connected: true, username: '12345678' },
+        transportista: { conectado: true, cual: 'DAC', dacUsername: '12345678', correoUser: null },
         balance: { shipmentCredits: 0, referralBonusCredits: 0, total: 0 },
       },
       6,
@@ -172,7 +200,7 @@ describe('<OnboardingWizard>', () => {
   });
 
   it('paso 6 sin email verificado: banner y botón principal deshabilitado', () => {
-    const html = render({ ...BASE, currentStep: 4, emailVerified: false, dac: { connected: true, username: 'u' } }, 6);
+    const html = render({ ...BASE, currentStep: 4, emailVerified: false, transportista: { conectado: true, cual: 'DAC', dacUsername: 'u', correoUser: null } }, 6);
     expect(html).toContain('Confirmá tu email para activar la cuenta');
     expect(html).toContain('/verify-email?email=juana%40tienda.uy');
   });
@@ -185,7 +213,7 @@ describe('<OnboardingWizard>', () => {
         onboardingComplete: true,
         isActive: true,
         store: { kind: 'shopify', shopifyConnected: true, shopifyStoreUrl: 'acme.myshopify.com', dashboardConnected: false, dashboardUrl: null },
-        dac: { connected: true, username: 'u' },
+        transportista: { conectado: true, cual: 'DAC', dacUsername: 'u', correoUser: null },
       },
       6,
     );
@@ -201,7 +229,7 @@ describe('<OnboardingWizard>', () => {
       onboardingComplete: true,
       isActive: true,
       store: { kind: null, shopifyConnected: false, shopifyStoreUrl: 'acme.myshopify.com', dashboardConnected: false, dashboardUrl: null },
-      dac: { connected: true, username: 'u' },
+      transportista: { conectado: true, cual: 'DAC', dacUsername: 'u', correoUser: null },
     });
     expect(html).toContain('Falta un dato para volver a procesar');
     expect(html).not.toContain('Volver a Configuración');

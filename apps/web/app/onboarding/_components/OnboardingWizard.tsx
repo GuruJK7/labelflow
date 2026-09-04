@@ -7,7 +7,7 @@ import { track } from '@/lib/analytics';
 import { ONBOARDING_STEPS, type OnboardingState, type OnboardingStep } from '@/lib/onboarding-state';
 import { StepBienvenida } from './steps/StepBienvenida';
 import { StepTienda, type OAuthReturn } from './steps/StepTienda';
-import { StepDac } from './steps/StepDac';
+import { StepTransportista } from './steps/StepDac';
 import { StepParametros } from './steps/StepParametros';
 import { StepModo } from './steps/StepModo';
 import { StepListo } from './steps/StepListo';
@@ -111,13 +111,13 @@ export function OnboardingWizard({
 
   // Tienda y DAC se marcan hechos por lo que hay en la base, incluso para un
   // tenant completo: si desinstaló la app, el paso 2 tiene que verse pendiente.
-  const conectado = state.store.kind !== null && state.dac.connected;
+  const conectado = state.store.kind !== null && state.transportista.conectado;
 
   function done(n: OnboardingStep): boolean {
     if (n === 2) return state.store.kind !== null;
-    if (n === 3) return state.dac.connected;
+    if (n === 3) return state.transportista.conectado;
     if (state.onboardingComplete) return true;
-    if (n === 1) return step > 1 || state.store.kind !== null || state.dac.connected;
+    if (n === 1) return step > 1 || state.store.kind !== null || state.transportista.conectado;
     if (n === 4) return maxVisited > 4;
     if (n === 5) return maxVisited > 5;
     return false;
@@ -210,7 +210,7 @@ export function OnboardingWizard({
           )}
 
           {step === 3 && (
-            <StepDac
+            <StepTransportista
               state={state}
               onSaved={() => afterSave('dac', 3)}
               onFailed={(code) => stepFailed('dac', 3, code)}

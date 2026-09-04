@@ -28,6 +28,9 @@ const VACIO: OnboardingRow = {
   dashboardToken: null,
   dacUsername: null,
   dacPassword: null,
+  correoEnabled: false,
+  correoUser: null,
+  correoPassword: null,
   onboardingComplete: false,
   cronSchedule: null,
 };
@@ -128,7 +131,7 @@ describe('deriveOnboarding', () => {
     expect(d.complete).toBe(true);
     expect(d.mode).toBe('inmediato');
     expect(d.store.kind).toBe('shopify');
-    expect(d.dac).toBe(true);
+    expect(d.transportista).toBe(true);
   });
   it('completo pero desinstaló la app (shopifyToken null, como deja `uninstalled`) → paso 2, no 6', () => {
     // Si devolviera 6, la página mandaría al dashboard y el gate del dashboard
@@ -148,14 +151,14 @@ describe('deriveOnboarding', () => {
 });
 
 describe('shouldRedirectToDashboard (regla de /onboarding)', () => {
-  const ok = { onboardingComplete: true, store: { kind: 'shopify' as const, shopifyConnected: true, shopifyStoreUrl: 'a', dashboardConnected: false, dashboardUrl: null }, dac: { connected: true, username: 'u' } };
+  const ok = { onboardingComplete: true, store: { kind: 'shopify' as const, shopifyConnected: true, shopifyStoreUrl: 'a', dashboardConnected: false, dashboardUrl: null }, transportista: { conectado: true, cual: 'DAC', dacUsername: 'u', correoUser: null } };
   const sinParams = { requestedStep: null, shopifyReturn: false };
   it('completo y conectado, sin params → al dashboard', () => {
     expect(shouldRedirectToDashboard(ok, sinParams)).toBe(true);
   });
   it('completo pero sin tienda o sin DAC → se queda en el wizard (evita el loop con el gate del dashboard)', () => {
     expect(shouldRedirectToDashboard({ ...ok, store: { ...ok.store, kind: null, shopifyConnected: false } }, sinParams)).toBe(false);
-    expect(shouldRedirectToDashboard({ ...ok, dac: { connected: false, username: null } }, sinParams)).toBe(false);
+    expect(shouldRedirectToDashboard({ ...ok, transportista: { conectado: false, cual: null, dacUsername: null, correoUser: null } }, sinParams)).toBe(false);
   });
   it('no completo → wizard', () => {
     expect(shouldRedirectToDashboard({ ...ok, onboardingComplete: false }, sinParams)).toBe(false);

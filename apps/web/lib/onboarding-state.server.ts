@@ -76,7 +76,15 @@ export async function loadOnboardingState(tenantId: string): Promise<OnboardingS
       dashboardConnected: derived.store.dashboard,
       dashboardUrl: tenant.dashboardUrl,
     },
-    dac: { connected: derived.dac, username: derived.dac ? decryptOrRaw(tenant.dacUsername) : null },
+    transportista: {
+      conectado: derived.transportista,
+      // Cuál se está usando: el interruptor de Correo manda, porque es el que
+      // decide por dónde sale el envío. Con los dos cargados y Correo apagado,
+      // despacha DAC.
+      cual: tenant.correoEnabled && tenant.correoUser ? 'CORREO' : tenant.dacUsername ? 'DAC' : null,
+      dacUsername: tenant.dacUsername ? decryptOrRaw(tenant.dacUsername) : null,
+      correoUser: tenant.correoUser ? decryptOrRaw(tenant.correoUser) : null,
+    },
     processingMode: derived.mode,
     cronSchedule: tenant.cronSchedule ?? '',
     onboardingComplete: derived.complete,

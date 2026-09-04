@@ -27,7 +27,7 @@ import type { OnboardingState } from '../onboarding-state';
 const COMPLETO_CONECTADO: OnboardingState = {
   currentStep: 6,
   store: { kind: 'shopify', shopifyConnected: true, shopifyStoreUrl: 'acme.myshopify.com', dashboardConnected: false, dashboardUrl: null },
-  dac: { connected: true, username: '12345678' },
+  transportista: { conectado: true, cual: 'DAC', dacUsername: '12345678', correoUser: null },
   processingMode: 'inmediato',
   cronSchedule: '*/15 * * * *',
   onboardingComplete: true,
@@ -82,7 +82,7 @@ describe('/onboarding (server component)', () => {
   });
 
   it('completo pero sin DAC → NO redirige: wizard en el paso 3', async () => {
-    const el = await render({ ...COMPLETO_CONECTADO, currentStep: 3, dac: { connected: false, username: null } });
+    const el = await render({ ...COMPLETO_CONECTADO, currentStep: 3, transportista: { conectado: false, cual: null, dacUsername: null, correoUser: null } });
     expect(mocks.redirect).not.toHaveBeenCalled();
     expect(el.props.initial.currentStep).toBe(3);
   });
