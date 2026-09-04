@@ -44,7 +44,7 @@ const BASE: OnboardingState = {
 };
 
 function render(initial: OnboardingState, requestedStep: 1 | 2 | 3 | 4 | 5 | 6 | null = null) {
-  return renderToStaticMarkup(createElement(OnboardingWizard, { initial, requestedStep }));
+  return renderToStaticMarkup(createElement(OnboardingWizard, { initial, requestedStep, tenantIdActual: 't-actual' }));
 }
 
 const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F900}-\u{1F9FF}]/u;
@@ -67,6 +67,17 @@ describe('<OnboardingWizard>', () => {
     // Paso 1 alcanzable (activo); del 2 al 6, deshabilitados.
     const disabled = (html.match(/<button[^>]*disabled=""[^>]*>/g) ?? []).length;
     expect(disabled).toBeGreaterThanOrEqual(5);
+  });
+
+  /**
+   * 🔴 El wizard era una trampa: `/dashboard` rebota a `/onboarding` cuando a la
+   * tienda le falta algo, y `/onboarding` sólo dejaba salir con TODO completo.
+   * Una tienda a medio configurar dejaba al usuario encerrado, y el selector de
+   * tienda vive en el layout del dashboard — al que no podía llegar.
+   */
+  it('siempre ofrece una salida: cerrar sesión', () => {
+    const html = render({ ...BASE, currentStep: 3 });
+    expect(html).toContain('Cerrar sesión');
   });
 
   /**

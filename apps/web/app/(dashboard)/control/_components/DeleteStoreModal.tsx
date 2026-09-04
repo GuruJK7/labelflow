@@ -37,16 +37,54 @@ export function DeleteStoreModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, deleting]);
 
+  const borrar = () =>
+    fetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: confirm.trim() }),
+    });
+
+  /**
+   * Cambia a otra tienda del usuario. Hace falta cuando se quiere borrar la
+   * que está activa: el id de la activa vive en el JWT de la sesión y el
+   * servidor se niega a borrarla para no dejar la sesión apuntando a un
+   * fantasma. Antes eso era un callejón — el error decía "cambiá de tienda"
+   * y el usuario tenía que ir a buscar el selector a otra pantalla.
+   */
+  async function cambiarAOtraTienda(): Promise<boolean> {
+    const r = await fetch('/api/v1/tenants');
+    if (!r.ok) return false;
+    const d = await r.json().catch(() => ({}));
+    const lista = (d?.data?.tenants ?? []) as Array<{ id: string }>;
+    // La primera (más vieja) es la que guarda los créditos y nunca es
+    // borrable, así que es el destino más seguro para pararse.
+    const destino = lista.find((t) => t.id !== tenantId);
+    if (!destino) return false;
+    const sw = await fetch('/api/v1/tenants/switch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: destino.id }),
+    });
+    return sw.ok;
+  }
+
   const handleDelete = async () => {
     if (!match || deleting) return;
     setDeleting(true);
     setError('');
     try {
-      const res = await fetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: confirm.trim() }),
-      });
+      let res = await borrar();
+
+      // 409 por ser la tienda activa: se cambia de tienda y se reintenta una
+      // sola vez. Cualquier otro 409 (única tienda, tienda principal, corrida
+      // en curso) es una negativa legítima y se muestra tal cual.
+      if (res.status === 409) {
+        const j = await res.clone().json().catch(() => ({}));
+        if (typeof j.error === 'string' && j.error.includes('tienda activa')) {
+          if (await cambiarAOtraTienda()) res = await borrar();
+        }
+      }
+
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(json.error ?? 'No se pudo eliminar la tienda');

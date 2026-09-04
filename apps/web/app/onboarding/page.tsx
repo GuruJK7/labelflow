@@ -38,5 +38,5 @@ export default async function OnboardingPage({
   const shopifyReturn = !!(Array.isArray(searchParams?.shopify) ? searchParams?.shopify[0] : searchParams?.shopify);
   if (shouldRedirectToDashboard(state, { requestedStep: requested, shopifyReturn })) redirect('/dashboard');
 
-  return <OnboardingWizard initial={state} requestedStep={requested} />;
+  return <OnboardingWizard initial={state} requestedStep={requested} tenantIdActual={auth.tenantId} />;
 }

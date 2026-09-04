@@ -8,6 +8,7 @@ import { ONBOARDING_STEPS, type OnboardingState, type OnboardingStep } from '@/l
 import { StepBienvenida } from './steps/StepBienvenida';
 import { StepTienda, type OAuthReturn } from './steps/StepTienda';
 import { StepTransportista } from './steps/StepDac';
+import { SalidaDelWizard } from './SalidaDelWizard';
 import { StepParametros } from './steps/StepParametros';
 import { StepModo } from './steps/StepModo';
 import { StepListo } from './steps/StepListo';
@@ -27,9 +28,12 @@ import { StepListo } from './steps/StepListo';
 export function OnboardingWizard({
   initial,
   requestedStep,
+  tenantIdActual,
 }: {
   initial: OnboardingState;
   requestedStep: OnboardingStep | null;
+  /** La tienda que se está configurando, para poder ofrecer cambiar a otra. */
+  tenantIdActual: string;
 }) {
   const [state, setState] = useState<OnboardingState>(initial);
   const [oauthReturn, setOauthReturn] = useState<OAuthReturn | null>(null);
@@ -267,6 +271,8 @@ export function OnboardingWizard({
               Tus credenciales se guardan cifradas (AES-256). Sólo el automatizador las usa para iniciar sesión.
             </p>
           </div>
+
+          <SalidaDelWizard tenantIdActual={tenantIdActual} />
         </div>
       </div>
     </div>
