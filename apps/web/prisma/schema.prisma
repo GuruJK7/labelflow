@@ -646,6 +646,8 @@ model Label {
   @@index([tenantId, createdAt(sort: Desc)])
   @@index([carrier])
   @@index([dacGuia])
+  // Mismo motivo que RunLog.jobId: FK a Job validada por cada Job borrado.
+  @@index([jobId])
   // Transportista: lo consultan el cupo diario, el ledger y el contador de
   // envíos trabados. Índice completo (no parcial) a propósito: Prisma no sabe
   // expresar un índice parcial, y un índice que existe en la base pero no en el
@@ -716,6 +718,12 @@ model RunLog {
   job    Job?   @relation(fields: [jobId], references: [id])
 
   @@index([tenantId, createdAt(sort: Desc)])
+  // 🔴 SIN ESTE ÍNDICE NO SE PUEDE BORRAR UNA TIENDA. `jobId` es una FK a Job y
+  // Postgres valida esa FK por CADA Job borrado; sin índice hace un Seq Scan de
+  // la tabla entera cada vez. Medido en producción el 05-09-2026 con 1.559.508
+  // filas: 13.268 ms UNA búsqueda. Borrar una tienda con 2.590 jobs mataba la
+  // función de Vercel por timeout a los 60 s, siempre. Con el índice: 0,669 ms.
+  @@index([jobId])
 }
 
 enum LogLevel {
