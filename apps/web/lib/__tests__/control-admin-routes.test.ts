@@ -29,6 +29,9 @@ interface TenantRow {
   shopifyToken: string | null;
   dacUsername: string | null;
   dacPassword: string | null;
+  dashboardSourceEnabled: boolean;
+  dashboardUrl: string | null;
+  dashboardToken: string | null;
   lastRunAt: Date | null;
   maxOrdersPerRun: number;
 }
@@ -52,6 +55,9 @@ function tenant(p: Partial<TenantRow> & Pick<TenantRow, 'id' | 'userId' | 'isAct
     shopifyToken: null,
     dacUsername: null,
     dacPassword: null,
+    dashboardSourceEnabled: false,
+    dashboardUrl: null,
+    dashboardToken: null,
     lastRunAt: null,
     maxOrdersPerRun: 10,
     ...p,
@@ -61,9 +67,9 @@ function tenant(p: Partial<TenantRow> & Pick<TenantRow, 'id' | 'userId' | 'isAct
 const TENANTS: TenantRow[] = [
   tenant({ id: 't-admin-1', userId: 'u-admin', isActive: true, createdAt: new Date('2026-01-01'), shipmentCredits: 20 }),
   tenant({ id: 't-admin-2', userId: 'u-admin', isActive: false, createdAt: new Date('2026-02-01') }),
-  tenant({ id: 't-cli-1', userId: 'u-cli', isActive: true, createdAt: new Date('2026-03-01'), shipmentCredits: 5 }),
+  tenant({ id: 't-cli-1', userId: 'u-cli', isActive: true, createdAt: new Date('2026-03-01'), shipmentCredits: 5, shopifyStoreUrl: 'cli.myshopify.com', shopifyToken: 'tok' }),
   tenant({ id: 't-cli-2', userId: 'u-cli', isActive: false, createdAt: new Date('2026-04-01') }),
-  tenant({ id: 't-otro', userId: 'u-otro', isActive: true, createdAt: new Date('2026-05-01'), shipmentCredits: 1 }),
+  tenant({ id: 't-otro', userId: 'u-otro', isActive: true, createdAt: new Date('2026-05-01'), shipmentCredits: 1, dashboardSourceEnabled: true, dashboardUrl: 'https://depo.example', dashboardToken: 'dtok' }),
 ];
 const LABELS = [{ id: 'lbl-cli', tenantId: 't-cli-1', pdfPath: 'labels/cli.pdf' }];
 
@@ -288,14 +294,14 @@ describe('POST /api/v1/control/run', () => {
     loginAs('u-cli');
     const res = await post(run, { tenantId: 't-cli-1', maxOrders: 5 });
     expect(res.status).toBe(200);
-    expect(mocks.enqueueProcessOrders).toHaveBeenCalledWith('t-cli-1', 'MANUAL');
+    expect(mocks.enqueueProcessOrders).toHaveBeenCalledWith('t-cli-1', 'MANUAL', { type: 'PROCESS_ORDERS' });
   });
 
   it('admin sobre la tienda activa de un cliente → encola, con el gate evaluado sobre el holder del cliente', async () => {
     loginAs('u-admin');
     const res = await post(run, { tenantId: 't-cli-1', maxOrders: 3 });
     expect(res.status).toBe(200);
-    expect(mocks.enqueueProcessOrders).toHaveBeenCalledWith('t-cli-1', 'MANUAL');
+    expect(mocks.enqueueProcessOrders).toHaveBeenCalledWith('t-cli-1', 'MANUAL', { type: 'PROCESS_ORDERS' });
     expect(mocks.getCreditHolderTenantId).toHaveBeenCalledWith('t-cli-1');
     expect(mocks.runLogCreate.mock.calls[0][0].data).toMatchObject({ tenantId: 't-cli-1', message: 'maxOrdersOverride=3' });
   });
@@ -315,6 +321,37 @@ describe('POST /api/v1/control/run', () => {
     const sinSaldo = await post(run, { tenantId: 't-otro' });
     expect(sinSaldo.status).toBe(403);
     expect(await sinSaldo.json()).toEqual({ error: 'Te quedaste sin envíos. Comprá un pack para seguir despachando.' });
+  });
+
+  // ── Lo que estaba roto hasta 2026-09-05 ────────────────────────────────────
+  // Esta ruta encolaba SIEMPRE `PROCESS_ORDERS` (el procesador de Shopify). Para
+  // una tienda de la fuente dashboard —VentaFlow, y las cuentas que opera el
+  // depósito— el botón contestaba 200 "Job encolado" y no despachaba nada,
+  // porque ese job no tiene de dónde leer pedidos. Sin error, sin señal.
+  it('tienda de la fuente dashboard → encola PROCESS_DASHBOARD_ORDERS y no toca Shopify', async () => {
+    loginAs('u-admin');
+    const res = await post(run, { tenantId: 't-otro' });
+    expect(res.status).toBe(200);
+    expect(mocks.enqueueProcessOrders).toHaveBeenCalledWith('t-otro', 'MANUAL', {
+      type: 'PROCESS_DASHBOARD_ORDERS',
+    });
+    // No hay token de Shopify que renovar: pedirlo sería una llamada al pedo
+    // que además puede fallar y ensuciar el log.
+    expect(mocks.warmShopifyToken).not.toHaveBeenCalled();
+  });
+
+  it('fuente dashboard con límite por corrida → 422 (ese job despacharía todo igual)', async () => {
+    loginAs('u-admin');
+    const res = await post(run, { tenantId: 't-otro', maxOrders: 1 });
+    expect(res.status).toBe(422);
+    expect(mocks.enqueueProcessOrders).not.toHaveBeenCalled();
+  });
+
+  it('tienda sin ninguna fuente conectada → 422 en vez de un job que no despacha nada', async () => {
+    loginAs('u-admin');
+    const res = await post(run, { tenantId: 't-admin-1' });
+    expect(res.status).toBe(422);
+    expect(mocks.enqueueProcessOrders).not.toHaveBeenCalled();
   });
 });
 

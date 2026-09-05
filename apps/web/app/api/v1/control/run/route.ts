@@ -23,6 +23,7 @@ import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { getPlanLimit } from '@/lib/mercadopago';
 import { checkRunGate, checkPlanLimit } from '@/lib/can-run';
 import { warmShopifyToken } from '@/lib/shopify-access';
+import { storeConnection } from '@/lib/onboarding-state';
 
 export async function POST(req: Request) {
   const actor = await getControlActor();
@@ -46,7 +47,18 @@ export async function POST(req: Request) {
   // or does not exist (no-leak posture, mirrors tenants/switch).
   const owned = await db.tenant.findFirst({
     where: { id: tenantId, ...controlTenantWhere(actor) },
-    select: { id: true, name: true, labelsThisMonth: true },
+    select: {
+      id: true,
+      name: true,
+      labelsThisMonth: true,
+      // Con qué fuente está conectada esta tienda. Sin esto no se puede saber
+      // qué job encolar — ver el bloque de `kind` más abajo.
+      shopifyStoreUrl: true,
+      shopifyToken: true,
+      dashboardSourceEnabled: true,
+      dashboardUrl: true,
+      dashboardToken: true,
+    },
   });
   if (!owned) return apiError('Tienda no encontrada', 403);
 
@@ -87,10 +99,38 @@ export async function POST(req: Request) {
     return apiError('Ya hay un job en ejecucion para esta tienda.', 409);
   }
 
-  // Token fresco ANTES de encolar (D29), mismo motivo que en /api/v1/jobs.
-  await warmShopifyToken(tenantId);
+  // ── Qué job encolar, según con qué está conectada la tienda ──────────────
+  //
+  // 🔴 ESTO FALTABA, y era la mitad de una promesa rota. Hasta acá esta ruta
+  // encolaba SIEMPRE `PROCESS_ORDERS`, que es el procesador de Shopify. Para
+  // una tienda de la fuente dashboard —las que aprovisiona
+  // `/api/provisioning/dac-tenant`, o sea VentaFlow y las cuentas operadas por
+  // el depósito— eso creaba un job que no tenía de dónde leer pedidos: el
+  // botón "Ejecutar" contestaba "Job encolado" y no despachaba NADA, sin un
+  // solo error a la vista. `POST /api/v1/jobs` ya routeaba bien desde D33;
+  // esta ruta se quedó atrás. Mismo criterio, mismo helper.
+  const kind = storeConnection(owned).kind;
+  if (!kind) return apiError('Esa tienda no tiene ninguna fuente conectada.', 422);
+  const type = kind === 'shopify' ? 'PROCESS_ORDERS' : 'PROCESS_DASHBOARD_ORDERS';
 
-  const jobId = await enqueueProcessOrders(tenantId, 'MANUAL');
+  // El límite por corrida sólo lo entiende el procesador de Shopify: el job de
+  // la fuente dashboard no lee el RunLog `maxOrdersOverride` y despacharía TODO
+  // igual. Mismo rechazo explícito que hace /api/v1/jobs, por el mismo motivo:
+  // aceptarlo en silencio quemaría envíos que nadie pidió gastar.
+  if (kind === 'dashboard' && maxOrders > 0) {
+    return apiError(
+      'El límite por corrida sólo aplica a tiendas Shopify. Con la fuente dashboard se procesan todos los pedidos confirmados: ejecutá sin límite.',
+      422,
+    );
+  }
+
+  if (kind === 'shopify') {
+    // Token fresco ANTES de encolar (D29), mismo motivo que en /api/v1/jobs.
+    // Una tienda de la fuente dashboard no tiene token de Shopify que renovar.
+    await warmShopifyToken(tenantId);
+  }
+
+  const jobId = await enqueueProcessOrders(tenantId, 'MANUAL', { type });
   if (maxOrders > 0) {
     await db.runLog.create({
       data: {

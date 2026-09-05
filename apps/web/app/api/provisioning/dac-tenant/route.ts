@@ -30,6 +30,27 @@ export const dynamic = 'force-dynamic';
  * webhook de suscripción MP → por eso acá se setea `isActive:true` EXPLÍCITO,
  * sino el job nunca se encola. shipmentCredits queda en el default 10 (bono).
  *
+ * ── CUENTAS OPERADAS POR EL DEPÓSITO (DEPO) — dos campos OPCIONALES ─────────
+ * `operacion` y `envios` existen para un caso concreto: las marcas que guardan
+ * mercadería en DEPO y despachan con su propia cuenta de DAC. Ahí el que aprieta
+ * el botón es el depósito, no el comerciante — que ni siquiera puede entrar a
+ * LabelFlow (el User que se crea abajo no tiene passwordHash).
+ *
+ *   · `operacion: 'manual'` → escribe `cronSchedule: 'manual'`. NO es un valor
+ *     mágico ni un flag nuevo: el scheduler descarta cualquier tenant cuyo cron
+ *     no tenga los 5 campos (`scheduler.ts`, `cronSchedule.trim().split(...).length < 5`),
+ *     así que un cron de una sola palabra lo deja fuera del barrido automático
+ *     sin tocar una línea del worker. El disparo manual (`/api/v1/control/run`)
+ *     NO mira el cron, así que sigue andando.
+ *   · `envios: N` → `shipmentCredits`. Estas cuentas las factura el depósito,
+ *     no AutoEnvía, así que el saldo no es un límite de cobro sino un tope
+ *     técnico que no tiene que llegar nunca a cero (el job de la fuente
+ *     dashboard RECORTA la tanda por saldo, no sólo se frena).
+ *
+ * 🔴 LOS DOS SON OPCIONALES Y SIN ELLOS NO CAMBIA NADA. Es deliberado: el
+ * tenant de VentaFlow (`ae-adrijk7-cr`) se aprovisionó por esta misma ruta y
+ * DEBE seguir despachando solo cada 15 minutos con su saldo real.
+ *
  * Auth (máquina-a-máquina):
  *   Authorization: Bearer <AUTOENVIA_PROVISION_TOKEN>        (obligatorio, fail-closed)
  *   Si AUTOENVIA_PROVISION_SIGNING_KEY está seteada, exige además (opt-in):
@@ -114,6 +135,16 @@ export async function POST(req: Request) {
   // dacAccount: AutoEnvía lo manda, pero LabelFlow no tiene columna ni concepto de
   // sub-cuenta (el login DAC es username+password). Se acepta y se IGNORA.
 
+  // Cuentas operadas por el depósito (ver el encabezado). Los dos son opcionales
+  // y cualquier valor raro se ignora en silencio: un provisioning que rebota por
+  // un campo accesorio deja al cliente sin cuenta por nada.
+  const soloManual = str(body.operacion).toLowerCase() === 'manual';
+  const enviosPedidos = typeof body.envios === 'number' && Number.isInteger(body.envios) ? body.envios : null;
+  // Tope en el máximo de un int4 de Postgres menos margen: `shipmentCredits` es
+  // Int, y un número más grande revienta el insert con un error de rango que no
+  // dice nada útil. El piso es 0 (no negativos: el gate compara `> 0`).
+  const envios = enviosPedidos === null ? null : Math.min(Math.max(enviosPedidos, 0), 2_000_000_000);
+
   if (!ownerEmail || !EMAIL_RE.test(ownerEmail)) return json({ error: 'ownerEmail inválido' }, 400);
   if (!dacUsername || !dacPassword) return json({ error: 'faltan credenciales DAC' }, 400);
   if (!dashboardToken) return json({ error: 'falta dashboardToken' }, 400);
@@ -128,6 +159,11 @@ export async function POST(req: Request) {
     dacUsername: encrypt(dacUsername),
     dacPassword: encrypt(dacPassword),
     isActive: true,
+    // Sólo se agregan si vinieron. Omitidos, Prisma no toca la columna: un
+    // re-aprovisionamiento sin estos campos no le pisa el cron ni el saldo a
+    // una cuenta que ya estaba andando.
+    ...(soloManual ? { cronSchedule: 'manual' } : {}),
+    ...(envios !== null ? { shipmentCredits: envios } : {}),
   };
 
   const slug = `ae-${slugify(sellerSlug || ownerEmail.split('@')[0])}`;
@@ -157,7 +193,8 @@ export async function POST(req: Request) {
       return json({ tenantId: t.id });
     }
 
-    // 3) Alta. shipmentCredits queda en el default (10 = bono de bienvenida).
+    // 3) Alta. `shipmentCredits` sale de `config` cuando vino `envios`; si no,
+    //    queda en el default (10 = bono de bienvenida).
     try {
       const t = await db.tenant.create({
         data: {

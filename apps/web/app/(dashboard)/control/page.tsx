@@ -59,6 +59,8 @@ interface StoreRow {
   maxOrdersPerRun: number;
   /** Sólo en la vista admin: dueño de la tienda. */
   owner?: { email: string; own: boolean };
+  /** Alta hecha desde DEPO (slug `ae-depo-*`). Agrupa aparte en la vista admin. */
+  depo?: boolean;
   running: null | {
     jobId: string;
     status: string;
@@ -101,6 +103,9 @@ interface PendingItem {
 
 const BATCH_OPTIONS = [1, 3, 5, 10, 20, 0]; // 0 = Todos
 const batchLabel = (n: number) => (n === 0 ? 'Todos' : String(n));
+
+/** Clave del grupo de DEPO. No es un email, y por eso no puede chocar con uno. */
+const DEPO = '\u0000depo';
 
 export default function ControlPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -326,16 +331,24 @@ export default function ControlPage() {
     if (!adminView) return [{ key: 'all', title: null as string | null, own: true, stores }];
     const byOwner = new Map<string, StoreRow[]>();
     for (const s of stores) {
-      const key = s.owner?.own ? '' : s.owner?.email ?? '—';
+      // Las de DEPO van TODAS juntas y no una por dueño: cada marca del
+      // depósito tiene su propio User sintético (`ae-depo-x@autoenvia.provision`),
+      // así que agrupadas por email serían N secciones de una tienda cada una,
+      // con un mail que no le sirve a nadie porque nadie puede entrar con él.
+      // Son las cuentas que opera el depósito, y se miran como un bloque.
+      const key = s.depo ? DEPO : s.owner?.own ? '' : s.owner?.email ?? '—';
       const list = byOwner.get(key);
       if (list) list.push(s);
       else byOwner.set(key, [s]);
     }
+    // Orden: primero las propias, después el bloque de DEPO, después cada
+    // cliente por email.
+    const rango = (k: string) => (k === '' ? 0 : k === DEPO ? 1 : 2);
     return Array.from(byOwner.entries())
-      .sort(([a], [b]) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)))
+      .sort(([a], [b]) => rango(a) - rango(b) || a.localeCompare(b))
       .map(([email, list]) => ({
         key: email || 'own',
-        title: email === '' ? 'Tus tiendas' : email,
+        title: email === '' ? 'Tus tiendas' : email === DEPO ? 'DEPO · tiendas del depósito' : email,
         own: email === '',
         stores: list,
       }));

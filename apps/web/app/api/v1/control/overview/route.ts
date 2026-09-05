@@ -156,6 +156,14 @@ export async function GET() {
       slug: t.slug,
       shopifyConnected: !!t.shopifyStoreUrl && !!t.shopifyToken,
       dacConnected: !!t.dacUsername && !!t.dacPassword,
+      // Tienda dada de alta desde DEPO (el depósito). El marcador es el slug:
+      // `/api/provisioning/dac-tenant` arma `ae-<sellerSlug>` y DEPO manda
+      // siempre `depo-<marca>`, así que estas cuentas —y sólo estas— empiezan
+      // con `ae-depo-`. No hay columna nueva a propósito: agregar una a Tenant
+      // es una migración de Prisma sobre la base de producción para un dato
+      // que el slug ya lleva, y el slug es único e inmutable.
+      // Las de VentaFlow (`ae-adrijk7-cr`) NO matchean, que es lo correcto.
+      depo: typeof t.slug === 'string' && t.slug.startsWith('ae-depo-'),
       stuck: {
         total: stuck.total,
         retryable: stuck.retryable,
