@@ -24,19 +24,22 @@ import { getPlanLimit } from '@/lib/mercadopago';
 import { checkRunGate, checkPlanLimit } from '@/lib/can-run';
 import { warmShopifyToken } from '@/lib/shopify-access';
 import { storeConnection } from '@/lib/onboarding-state';
+import { leerLimitePedido, hayOverride, etiquetaDeLimite, TODOS } from '@/lib/limite-por-corrida';
 
 export async function POST(req: Request) {
   const actor = await getControlActor();
   if (!actor) return apiError('No autorizado', 401);
 
   let tenantId = '';
-  let maxOrders = 0; // 0 = tenant default (all)
+  // 🔴 El comentario que estaba acá decía "0 = tenant default (all)" y las dos
+  // mitades se contradecían: 0 caía al default de la tienda (5 o 20), que NO es
+  // "all". Ahora `undefined` = default de la tienda y `0` = TODOS de verdad.
+  // Ver lib/limite-por-corrida.ts.
+  let maxOrders: number | undefined;
   try {
     const body = await req.json();
     tenantId = typeof body?.tenantId === 'string' ? body.tenantId : '';
-    if (body?.maxOrders && Number.isInteger(body.maxOrders) && body.maxOrders > 0 && body.maxOrders <= 50) {
-      maxOrders = body.maxOrders;
-    }
+    maxOrders = leerLimitePedido(body);
   } catch {
     return apiError('Body invalido', 400);
   }
@@ -117,7 +120,8 @@ export async function POST(req: Request) {
   // la fuente dashboard no lee el RunLog `maxOrdersOverride` y despacharía TODO
   // igual. Mismo rechazo explícito que hace /api/v1/jobs, por el mismo motivo:
   // aceptarlo en silencio quemaría envíos que nadie pidió gastar.
-  if (kind === 'dashboard' && maxOrders > 0) {
+  // `TODOS` (0) pasa: es lo único que sabe hacer ese job. Un tope > 0 no.
+  if (kind === 'dashboard' && maxOrders !== undefined && maxOrders > TODOS) {
     return apiError(
       'El límite por corrida sólo aplica a tiendas Shopify. Con la fuente dashboard se procesan todos los pedidos confirmados: ejecutá sin límite.',
       422,
@@ -131,7 +135,7 @@ export async function POST(req: Request) {
   }
 
   const jobId = await enqueueProcessOrders(tenantId, 'MANUAL', { type });
-  if (maxOrders > 0) {
+  if (hayOverride(maxOrders)) {
     await db.runLog.create({
       data: {
         jobId,
@@ -143,7 +147,7 @@ export async function POST(req: Request) {
     });
   }
 
-  const label = maxOrders === 1 ? '1 pedido' : maxOrders > 0 ? `${maxOrders} pedidos` : 'todos los pedidos';
+  const label = etiquetaDeLimite(maxOrders);
   // NOTE: apiSuccess serializes its 2nd arg into the BODY as `meta` — it does
   // NOT set the HTTP status. Return a clean 200 (no bogus meta.status); the
   // client only checks res.ok and reads .data.
@@ -151,7 +155,7 @@ export async function POST(req: Request) {
     jobId,
     tenantId,
     tenantName: owned.name,
-    maxOrders,
+    maxOrders: maxOrders ?? TODOS,
     message: `Job encolado para ${owned.name}: ${label}`,
   });
 }

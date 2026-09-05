@@ -21,6 +21,7 @@ export { ShopifyProtectedDataError, isShopifyProtectedDataError } from './errors
 export type { ShopifyOrder } from './types';
 export type { ShopifyApiContext, ShopifyApiMode } from './mode';
 export type { ShopifyTokenProvider, ShopifyTokenSource } from './graphql-client';
+export { TOPE_TRAIDA_TODOS, PAGINA_REST } from './orders';
 
 /**
  * Fachada de Shopify del worker (D27).
@@ -169,12 +170,18 @@ export function getUnfulfilledOrders(
    * Default `false` — el comportamiento de siempre, despachar sólo lo cobrado.
    */
   incluirNoPagados = false,
+  /**
+   * Cuántos pedidos traer como máximo. Sin pasar nada = 250, el tope histórico.
+   * Una corrida "Todos" pasa `TOPE_TRAIDA_TODOS` y los dos backends paginan
+   * hasta ahí. Ver orders.ts.
+   */
+  tope?: number,
 ): Promise<ShopifyOrder[]> {
   return dispatch(
     client,
     'getUnfulfilledOrders',
-    (rest) => restOrders.getUnfulfilledOrders(rest, sortDirection, incluirNoPagados),
-    (gql, mods) => mods.orders.getUnfulfilledOrders(gql, sortDirection, incluirNoPagados),
+    (rest) => restOrders.getUnfulfilledOrders(rest, sortDirection, incluirNoPagados, tope),
+    (gql, mods) => mods.orders.getUnfulfilledOrders(gql, sortDirection, incluirNoPagados, tope),
   );
 }
 

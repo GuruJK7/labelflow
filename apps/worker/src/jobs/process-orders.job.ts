@@ -6,7 +6,7 @@ import { getConfig } from '../config';
 import { createShopifyClient } from '../shopify';
 import { resolveShopifyAccessForJob, shopifyTokenSourceForTenant } from '../shopify/access';
 import { yaEstaCobrado } from '../shopify/payment-state';
-import { getUnfulfilledOrders, markOrderProcessed, addOrderNote } from '../shopify';
+import { getUnfulfilledOrders, markOrderProcessed, addOrderNote, TOPE_TRAIDA_TODOS } from '../shopify';
 import { resolveOrderPhone } from '../shopify/phone';
 import { fulfillOrderWithTracking, ShopifyAlreadyFulfilledError, ShopifyMissingScopesError } from '../shopify';
 import { dacBrowser } from '../dac/browser';
@@ -137,6 +137,12 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
   let successCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
+  /**
+   * Por qué quedaron pedidos afuera, en palabras. Se vuelca en `Job.skipReason`.
+   * Sin esto, `skippedCount` es un número que el usuario no puede interpretar —
+   * y con una corrida "Todos" es una promesa incumplida sin explicación.
+   */
+  const motivosOmision: string[] = [];
   let totalOrders = 0;
 
   const slog = createStepLogger(jobId, tenantId);
@@ -254,9 +260,38 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     // ya existen: hoy ninguna tienda activa con Shopify lo tiene prendido
     // (verificado contra producción el 04-09-2026). Los reembolsados y anulados
     // se descartan igual — ver ESTADOS_DESPACHABLES_CONTRAENTREGA.
-    let orders = await getUnfulfilledOrders(shopifyClient, orderSortDirection, tenant.codEnabled);
+    // Cuánto traer. 🔴 Antes esto era SIEMPRE 250 (una sola página REST, sin
+    // paginar), así que una corrida "Todos" con 400 pendientes despachaba 250 y
+    // las otras 150 no existían para el job. El tope de la corrida se conoce acá
+    // (`maxOrdersOverride` se leyó del RunLog mucho antes del fetch), así que se
+    // pide exactamente lo que hace falta: los filtros de abajo descartan, nunca
+    // agregan, y por eso alcanza con pedir el límite y no más.
+    const limitePrevisto =
+      maxOrdersOverride !== undefined ? maxOrdersOverride : tenant.maxOrdersPerRun;
+    const topeTraida = limitePrevisto === 0 ? TOPE_TRAIDA_TODOS : undefined;
 
-    slog.info('shopify', `Fetched ${orders.length} unfulfilled orders from Shopify (sort: ${orderSortDirection})`);
+    let orders = await getUnfulfilledOrders(
+      shopifyClient,
+      orderSortDirection,
+      tenant.codEnabled,
+      topeTraida,
+    );
+
+    if (topeTraida !== undefined && orders.length >= topeTraida) {
+      motivosOmision.push(
+        `la corrida trae hasta ${topeTraida} pedidos y Shopify devolvió esa cantidad: puede haber más pendientes, volvé a ejecutar`,
+      );
+    }
+
+    // Lo que Shopify devolvió, ANTES de que ningún filtro toque nada. Es la
+    // base honesta contra la que se cuenta lo omitido: `totalOrders` se calcula
+    // recién después de todos los filtros y por eso escondía los descartes.
+    const traidosDeShopify = orders.length;
+
+    slog.info(
+      'shopify',
+      `Fetched ${orders.length} unfulfilled orders from Shopify (sort: ${orderSortDirection}${topeTraida ? `, tope Todos: ${topeTraida}` : ''})`,
+    );
 
     // Targeted retry (B): narrow to exactly the unblocked orders. Intersecting
     // with the unfulfilled+paid+open fetch is deliberate — it guarantees we
@@ -576,6 +611,16 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       return;
     }
 
+    // Todo lo que los filtros de arriba sacaron del lote. Hasta hoy nada de esto
+    // llegaba a `skippedCount` —se calculaba `totalOrders` recién después— así
+    // que el resumen de la corrida escondía los descartes.
+    const descartadosPorFiltros = traidosDeShopify - orders.length;
+    if (descartadosPorFiltros > 0) {
+      motivosOmision.push(
+        `${descartadosPorFiltros} descartado(s) por los filtros de la tienda (ya despachados, bloqueados, tipo de producto, regla de pago o reparto propio)`,
+      );
+    }
+
     // Apply limit (override from UI takes priority over tenant default).
     //
     // Three cases:
@@ -593,6 +638,9 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     if (!isUnlimited && orders.length > effectiveLimit) {
       skippedCount = orders.length - effectiveLimit;
       orders = orders.slice(0, effectiveLimit);
+      motivosOmision.push(
+        `${skippedCount} fuera del tope de esta corrida (${effectiveLimit}): elegí "Todos" para despacharlos`,
+      );
       slog.warn('limit', `Limited to ${effectiveLimit} orders, ${skippedCount} skipped`);
     } else if (isUnlimited) {
       slog.info('limit', `UNLIMITED run: processing all ${orders.length} pending orders (subject to credit balance)`);
@@ -645,6 +693,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
     if (orders.length > availableCredits) {
       const droppedByCredits = orders.length - availableCredits;
       skippedCount += droppedByCredits;
+      motivosOmision.push(`${droppedByCredits} sin despachar por saldo (quedan ${availableCredits} envíos)`);
       orders = orders.slice(0, availableCredits);
       slog.warn(
         'credits',
@@ -1648,6 +1697,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         successCount,
         failedCount,
         skippedCount,
+        skipReason: motivosOmision.length > 0 ? motivosOmision.join(' · ').slice(0, 500) : null,
         durationMs,
         finishedAt: new Date(),
       },
@@ -1697,6 +1747,7 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         successCount,
         failedCount,
         skippedCount,
+        skipReason: motivosOmision.length > 0 ? motivosOmision.join(' · ').slice(0, 500) : null,
         durationMs: Date.now() - startTime,
         finishedAt: new Date(),
         errorMessage: errorMsg,

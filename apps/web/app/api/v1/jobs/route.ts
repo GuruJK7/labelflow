@@ -6,19 +6,21 @@ import { getCreditHolderTenantId } from '@/lib/credit-holder';
 import { checkRunGate, checkPlanLimit } from '@/lib/can-run';
 import { warmShopifyToken } from '@/lib/shopify-access';
 import { storeConnection } from '@/lib/onboarding-state';
+import { leerLimitePedido, limiteEfectivo, hayOverride, etiquetaDeLimite, TODOS } from '@/lib/limite-por-corrida';
 
 export async function POST(req: Request) {
   const auth = await getAuthenticatedTenant();
   if (!auth) return apiError('No autorizado', 401);
 
   let testMode = false;
-  let maxOrders = 0; // 0 = use tenant default
+  // `undefined` = el usuario no pidió límite (manda el default de la tienda);
+  // `0` = TODOS. Ver lib/limite-por-corrida.ts: hasta el 05-09-2026 estos dos
+  // casos se colapsaban en uno y "Todos" despachaba 5 o 20 pedidos.
+  let limitePedido: number | undefined;
   try {
     const body = await req.json();
     testMode = body?.testMode === true;
-    if (body?.maxOrders && Number.isInteger(body.maxOrders) && body.maxOrders > 0 && body.maxOrders <= 50) {
-      maxOrders = body.maxOrders;
-    }
+    limitePedido = leerLimitePedido(body);
   } catch {
     // No body or invalid JSON — default to normal mode
   }
@@ -97,7 +99,7 @@ export async function POST(req: Request) {
   }
 
   // Store maxOrders override in RunLog so the worker reads it
-  const effectiveMax = maxOrders || (testMode ? 1 : 0);
+  const effectiveMax = limiteEfectivo(limitePedido, testMode);
 
   // Revisión 2026-09-02: el job de Dashboard con Excel
   // (apps/worker/src/jobs/process-dashboard-orders.job.ts) trae hasta
@@ -106,7 +108,9 @@ export async function POST(req: Request) {
   // Encolar "1 pedido" ahí despacharía todos y quemaría créditos que el
   // usuario no pidió gastar. Hasta que ese job lea el override (worker, otro
   // turno), el límite se rechaza antes de crear el job.
-  if (kind === 'dashboard' && effectiveMax > 0) {
+  // `TODOS` (0) SÍ se acepta para esta fuente: es exactamente lo único que ese
+  // job sabe hacer. Lo que se rechaza es un tope > 0, que ignoraría en silencio.
+  if (kind === 'dashboard' && effectiveMax !== undefined && effectiveMax > TODOS) {
     return apiError(
       'El límite de pedidos sólo aplica a tiendas Shopify. Con Dashboard con Excel se procesan todos los pedidos confirmados: ejecutá sin límite.',
       422,
@@ -115,7 +119,7 @@ export async function POST(req: Request) {
 
   const jobId = await enqueueProcessOrders(auth.tenantId, 'MANUAL', { type });
 
-  if (effectiveMax > 0) {
+  if (hayOverride(effectiveMax)) {
     await db.runLog.create({
       data: {
         jobId,
@@ -127,8 +131,11 @@ export async function POST(req: Request) {
     });
   }
 
-  const label = effectiveMax === 1 ? '1 pedido' : effectiveMax > 0 ? `${effectiveMax} pedidos` : 'todos los pedidos';
-  return apiSuccess({ jobId, type, maxOrders: effectiveMax, message: `Job encolado: ${label}` }, { status: 202 });
+  const label = etiquetaDeLimite(effectiveMax);
+  // `maxOrders` en la respuesta se mantiene numérico por compatibilidad con el
+  // cliente: sin override devuelve 0, que para el lector significa "sin tope
+  // propio". El override real (incluido el 0 explícito) ya quedó en el RunLog.
+  return apiSuccess({ jobId, type, maxOrders: effectiveMax ?? TODOS, message: `Job encolado: ${label}` }, { status: 202 });
 }
 
 export async function GET() {
@@ -147,6 +154,7 @@ export async function GET() {
       successCount: true,
       failedCount: true,
       skippedCount: true,
+      skipReason: true,
       startedAt: true,
       finishedAt: true,
       durationMs: true,

@@ -506,6 +506,13 @@ model Job {
   failedCount  Int @default(0)
   skippedCount Int @default(0)
 
+  /// Por qué quedaron pedidos sin despachar, en una línea para el usuario.
+  /// 🔴 `skippedCount` era un número pelado: el comerciante veía "180 omitidos"
+  /// y no tenía forma de saber si fue el tope de la corrida, el saldo, un filtro
+  /// de producto o pedidos ya despachados. Con "Todos" eso es directamente una
+  /// promesa incumplida y muda. Null = no se omitió nada.
+  skipReason String?
+
   // Agent-based bulk flow: Render generates xlsx, Agent (Adrian's Mac) uploads to DAC
   xlsxStoragePath String?
   agentPickedAt   DateTime?

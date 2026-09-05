@@ -39,20 +39,46 @@ export interface DashboardOrder {
 const TIMEOUT_MS = 20000;
 const trim = (u: string) => u.replace(/\/+$/, '');
 
-/** Trae las órdenes confirmadas (con dirección) listas para cargar en DAC. */
-export async function getConfirmedDashboardOrders(
+/** Lo que devuelve la traída, con lo que se perdió por el camino. */
+export interface TraidaDashboard {
+  orders: DashboardOrder[];
+  /** El origen devolvió exactamente `limit`: es muy probable que haya más. */
+  saturado: boolean;
+  /** Confirmadas que llegaron SIN dirección — no se pueden cargar en DAC. */
+  sinDireccion: number;
+}
+
+/**
+ * Trae las órdenes confirmadas (con dirección) listas para cargar en DAC.
+ *
+ * 🔴 Antes devolvía el array pelado y se perdían dos cosas en silencio: que el
+ * origen hubiera truncado en `limit`, y cuántas confirmadas venían sin
+ * dirección. Las dos hacían que "todos los pedidos confirmados" fuera mentira
+ * sin dejar rastro. Ahora las dos vuelven y el job las reporta.
+ */
+export async function traerConfirmadasDelDashboard(
   baseUrl: string,
   token: string,
   limit = 100,
-): Promise<DashboardOrder[]> {
+): Promise<TraidaDashboard> {
   const res = await axios.get(`${trim(baseUrl)}/api/v1/orders`, {
     params: { status: 'confirmed', limit },
     headers: { Authorization: `Bearer ${token}` },
     timeout: TIMEOUT_MS,
   });
-  const orders = (res.data?.orders ?? []) as DashboardOrder[];
+  const crudas = (res.data?.orders ?? []) as DashboardOrder[];
   // Solo las que tienen dirección (sin dirección no hay nada para cargar en DAC).
-  return orders.filter((o) => o && o.address);
+  const orders = crudas.filter((o) => o && o.address);
+  return { orders, saturado: crudas.length >= limit, sinDireccion: crudas.length - orders.length };
+}
+
+/** Compat: la forma vieja, para los llamadores que sólo quieren la lista. */
+export async function getConfirmedDashboardOrders(
+  baseUrl: string,
+  token: string,
+  limit = 100,
+): Promise<DashboardOrder[]> {
+  return (await traerConfirmadasDelDashboard(baseUrl, token, limit)).orders;
 }
 
 /** Marca como cargadas (loaded) las órdenes ya procesadas en DAC. Devuelve cuántas. */

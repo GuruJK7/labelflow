@@ -299,10 +299,14 @@ async function listOrders(
   let lineItemsFirst = DEFAULT_LINE_ITEMS;
   let after: string | null = null;
 
+  // 🔴 `MAX_SCANNED` fijo en 1000 alcanzaba mientras el tope era 250. Con una
+  // corrida "Todos" el escaneo tiene que poder llegar más lejos, si no el tope
+  // real vuelve a ser 1000 escaneados y se corta sin que nadie lo pida.
+  const topeEscaneo = Math.max(MAX_SCANNED, opts.limit * 4);
   while (out.length < opts.limit) {
-    if (scanned >= MAX_SCANNED) {
+    if (scanned >= topeEscaneo) {
       logger.warn(
-        { storeUrl: client.storeUrl, scanned, kept: out.length, limit: opts.limit },
+        { storeUrl: client.storeUrl, scanned, kept: out.length, limit: opts.limit, topeEscaneo },
         'Shopify GraphQL orders: scanned cap reached before filling the page (auto-archive off?), returning what was kept',
       );
       break;
@@ -366,11 +370,13 @@ export async function getUnfulfilledOrders(
   sortDirection: 'oldest_first' | 'newest_first' = 'oldest_first',
   /** `true` sólo para tiendas con `Tenant.codEnabled`. Ver orders.ts. */
   incluirNoPagados = false,
+  /** Mismo contrato que el backend REST: default 250, "Todos" pasa más. */
+  tope: number = REST_LIST_LIMIT,
 ): Promise<ShopifyOrder[]> {
   const orders = await listOrders(client, {
     query: incluirNoPagados ? UNFULFILLED_QUERY_STRING_CONTRAENTREGA : UNFULFILLED_QUERY_STRING,
     reverse: sortDirection === 'newest_first',
-    limit: REST_LIST_LIMIT,
+    limit: Math.max(1, Math.floor(tope)),
     keep: isRestUnfulfilled,
   });
 

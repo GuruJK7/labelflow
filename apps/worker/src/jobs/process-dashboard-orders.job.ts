@@ -34,7 +34,7 @@ import { createStepLogger } from '../logger';
 import logger from '../logger';
 import { shadowRecordShipment } from '../billing/shadow';
 import { sleep } from '../utils';
-import { getConfirmedDashboardOrders, markDashboardOrdersLoaded, pushDashboardLabels, type DashboardLabelResult } from '../dashboard/orders';
+import { traerConfirmadasDelDashboard, markDashboardOrdersLoaded, pushDashboardLabels, type DashboardLabelResult } from '../dashboard/orders';
 import { toShopifyOrder, stableNumericId } from '../dashboard/adapter';
 import { procesarPedidosCorreo } from '../correo/process';
 import type { CorreoAmbiente } from '../correo/client';
@@ -65,6 +65,8 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
   let failedCount = 0;
   let reviewCount = 0;
   let skippedCount = 0;
+  /** Por qué quedaron órdenes afuera. Se vuelca en `Job.skipReason`. */
+  const motivosOmision: string[] = [];
   let totalOrders = 0;
   let browserOpen = false;
   let billed = false; // true tras un deduct exitoso -> el catch NO vuelve a cobrar
@@ -124,9 +126,23 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
     }
 
     // STEP 3: traer confirmadas del dashboard
-    let orders = await getConfirmedDashboardOrders(dashboardUrl, dashboardToken, DASHBOARD_FETCH_LIMIT);
+    const traida = await traerConfirmadasDelDashboard(dashboardUrl, dashboardToken, DASHBOARD_FETCH_LIMIT);
+    let orders = traida.orders;
     totalOrders = orders.length;
     slog.info('dashboard', `Fetched ${orders.length} confirmed orders from dashboard`);
+
+    // 🔴 Las dos formas en que esta traída mentía sin dejar rastro.
+    if (traida.saturado) {
+      motivosOmision.push(
+        `el origen devolvió el máximo de ${DASHBOARD_FETCH_LIMIT} confirmadas: puede haber más, volvé a ejecutar`,
+      );
+      slog.warn('dashboard', `La traída se saturó en ${DASHBOARD_FETCH_LIMIT}: probablemente hay más confirmadas.`);
+    }
+    if (traida.sinDireccion > 0) {
+      skippedCount += traida.sinDireccion;
+      motivosOmision.push(`${traida.sinDireccion} confirmada(s) sin dirección: no se pueden despachar`);
+      slog.warn('dashboard', `${traida.sinDireccion} confirmada(s) llegaron sin dirección y no se pueden cargar.`);
+    }
 
     // STEP 3.1: filtro de stuck-PendingShipment (C-4) — una orden con
     // PendingShipment PENDING/ORPHANED necesita reconciliación del operador y NO
@@ -145,6 +161,7 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
         orders = orders.filter((d) => !stuckSet.has(String(stableNumericId(d.id))));
         const dropped = before - orders.length;
         skippedCount += dropped;
+        motivosOmision.push(`${dropped} bloqueada(s) por un envío previo sin reconciliar`);
         slog.warn('filter', `Skipped ${dropped} orden(es) con PendingShipment PENDING/ORPHANED (C-4): requieren reconciliación del operador (revisar historial DAC / desbloquear). No consumen slots, así fluyen las nuevas.`);
       }
     }
@@ -154,11 +171,12 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
       const dropped = orders.length - availableCredits;
       skippedCount += dropped;
       orders = orders.slice(0, availableCredits);
+      motivosOmision.push(`${dropped} sin despachar por saldo (quedan ${availableCredits} envíos)`);
       slog.warn('credits', `Saldo de ${availableCredits} envíos: limitando a ${orders.length} órdenes, ${dropped} aplazadas hasta próxima recarga.`);
     }
 
     if (orders.length === 0) {
-      await db.job.update({ where: { id: jobId }, data: { status: 'COMPLETED', totalOrders, successCount: 0, skippedCount, finishedAt: new Date(), durationMs: Date.now() - startTime } });
+      await db.job.update({ where: { id: jobId }, data: { status: 'COMPLETED', totalOrders, successCount: 0, skippedCount, skipReason: motivosOmision.length ? motivosOmision.join(' · ').slice(0, 500) : null, finishedAt: new Date(), durationMs: Date.now() - startTime } });
       slog.info('done', 'No hay órdenes confirmadas para procesar (tras filtros)');
       return;
     }
@@ -452,7 +470,7 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
     await db.job.update({
       where: { id: jobId },
       // successCount NO se setea acá: ya quedó persistido por el checkpoint por-orden.
-      data: { status: 'COMPLETED', totalOrders, failedCount, skippedCount, finishedAt: new Date(), durationMs: Date.now() - startTime },
+      data: { status: 'COMPLETED', totalOrders, failedCount, skippedCount, skipReason: motivosOmision.length ? motivosOmision.join(' · ').slice(0, 500) : null, finishedAt: new Date(), durationMs: Date.now() - startTime },
     });
 
     // FACTURAR — última sentencia del try. El flag `billed` evita que el catch

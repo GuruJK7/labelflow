@@ -149,6 +149,34 @@ describe('POST /api/v1/jobs — tipo de job según la tienda (D33/H10)', () => {
       expect(mocks.runLogCreate).not.toHaveBeenCalled();
     });
 
+    /**
+     * 🔴 EL BUG QUE ESTO FIJA: el botón "Todos" manda `maxOrders: 0`. La ruta
+     * lo perdía (`body?.maxOrders &&` corta en 0) y no escribía el RunLog, así
+     * que el worker caía a `tenant.maxOrdersPerRun` — 5 en Curvadivina, 20 en
+     * las otras 31 tiendas. "Todos" despachaba 5 o 20.
+     */
+    it('Shopify con maxOrders=0 (Todos) → RunLog con maxOrdersPerRun=0, que el worker lee como SIN TOPE', async () => {
+      const res = await post({ maxOrders: 0 });
+      expect(res.status).toBe(200);
+      expect((await res.json()).data).toMatchObject({
+        type: 'PROCESS_ORDERS',
+        maxOrders: 0,
+        message: 'Job encolado: todos los pedidos',
+      });
+      expect(mocks.runLogCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.runLogCreate.mock.calls[0][0].data).toMatchObject({
+        message: 'maxOrdersOverride=0',
+        meta: { maxOrdersPerRun: 0 },
+      });
+    });
+
+    it('Excel con maxOrders=0 (Todos) NO se rechaza: es lo único que ese job sabe hacer', async () => {
+      originating = EXCEL_STORE;
+      const res = await post({ maxOrders: 0 });
+      expect(res.status).toBe(200);
+      expect((await res.json()).data).toMatchObject({ type: 'PROCESS_DASHBOARD_ORDERS' });
+    });
+
     it('Shopify con maxOrders=1 sigue igual: job + RunLog maxOrdersOverride=1', async () => {
       const res = await post({ maxOrders: 1 });
       expect(res.status).toBe(200);

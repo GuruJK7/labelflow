@@ -154,6 +154,9 @@ describe('auto + slug del App Store: GraphQL directo', () => {
       // false: es lo que garantiza que abrir el filtro para las tiendas contra
       // entrega no cambie nada para las que despachan sólo lo ya cobrado.
       false,
+      // El cuarto es el tope de la traída. `undefined` = el default del backend
+      // (250, el de siempre): sólo una corrida "Todos" manda un número.
+      undefined,
     );
     expect(restAxios.get).not.toHaveBeenCalled();
   });

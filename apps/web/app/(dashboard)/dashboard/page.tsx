@@ -51,6 +51,8 @@ interface JobSummary {
   successCount: number;
   failedCount: number;
   skippedCount: number;
+  /** Por qué quedaron pedidos sin despachar. Null = no quedó ninguno. */
+  skipReason: string | null;
   createdAt: string;
   durationMs: number | null;
 }
@@ -319,19 +321,24 @@ export default function DashboardPage() {
             <span className="text-[11px] text-zinc-500">Se procesan todos los pedidos confirmados del Dashboard (hasta donde alcance el saldo).</span>
           ) : (
           <div className="flex items-center gap-1.5">
-            {[1, 3, 5, 10, 20].map((n) => (
+            {/* `0` = TODOS. Faltaba: el comerciante sólo podía pedir hasta 20
+                pedidos por click y no tenía forma de decir "despachá todo lo que
+                tengo pendiente". Ver lib/limite-por-corrida.ts. */}
+            {[1, 3, 5, 10, 20, 0].map((n) => (
               <button
                 key={n}
                 onClick={() => setOrderCount(n)}
                 disabled={triggering}
+                title={n === 0 ? 'Despachar todos los pedidos pendientes' : `Despachar ${n} pedido(s)`}
                 className={cn(
-                  'w-9 h-9 rounded-lg text-xs font-semibold transition-all border',
+                  'h-9 rounded-lg text-xs font-semibold transition-all border',
+                  n === 0 ? 'px-3' : 'w-9',
                   orderCount === n
                     ? 'bg-cyan-600 border-cyan-500 text-white shadow-lg shadow-cyan-500/20'
                     : 'bg-white/[0.03] border-white/[0.06] text-zinc-400 hover:text-white hover:border-white/[0.15]'
                 )}
               >
-                {n}
+                {n === 0 ? 'Todos' : n}
               </button>
             ))}
           </div>
@@ -351,10 +358,31 @@ export default function DashboardPage() {
             ) : (
               <Play className="w-4 h-4" />
             )}
-            {esDashboardExcel ? 'Ejecutar pedidos confirmados' : `Ejecutar ${orderCount === 1 ? '1 pedido' : `${orderCount} pedidos`}`}
+            {esDashboardExcel
+              ? 'Ejecutar pedidos confirmados'
+              : orderCount === 0
+                ? 'Ejecutar todos los pedidos'
+                : `Ejecutar ${orderCount === 1 ? '1 pedido' : `${orderCount} pedidos`}`}
           </button>
         </div>
       </div>
+
+      {/* 🔴 Lo que faltaba: si la última corrida dejó pedidos sin despachar, se
+          dice acá y con el motivo. Antes el único rastro era una columna
+          "Omitidos" con un número, y una corrida "Todos" podía dejar 180
+          pedidos afuera sin que nada lo dijera. */}
+      {(() => {
+        const ultima = jobs.find((j) => j.status !== 'RUNNING' && j.status !== 'PENDING');
+        if (!ultima || ultima.skippedCount <= 0 || !ultima.skipReason) return null;
+        return (
+          <div className="bg-amber-500/10 border border-amber-500/20 text-amber-200 px-4 py-3 rounded-xl text-sm mb-6 animate-fade-in flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>
+              La última corrida dejó <strong>{ultima.skippedCount} pedido(s) sin despachar</strong>: {ultima.skipReason}.
+            </span>
+          </div>
+        );
+      })()}
 
       {error && (
         <div className="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-xl text-sm mb-6 animate-fade-in flex items-center gap-2">
@@ -828,7 +856,13 @@ export default function DashboardPage() {
                         <span className={job.failedCount > 0 ? 'text-red-400' : 'text-zinc-600'}>{job.failedCount}</span>
                       </td>
                       <td className="px-6 py-3.5 text-sm font-medium">
-                        <span className={job.skippedCount > 0 ? 'text-zinc-400' : 'text-zinc-700'}>{job.skippedCount}</span>
+                        {/* El número solo no dice nada: el motivo va al lado. */}
+                        <span
+                          className={job.skippedCount > 0 ? 'text-amber-400 cursor-help' : 'text-zinc-700'}
+                          title={job.skipReason ?? undefined}
+                        >
+                          {job.skippedCount}
+                        </span>
                       </td>
                       <td className="px-6 py-3.5 text-xs text-zinc-500 font-mono">
                         {job.durationMs ? formatDuration(job.durationMs) : '-'}

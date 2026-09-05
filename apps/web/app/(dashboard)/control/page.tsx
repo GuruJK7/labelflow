@@ -106,6 +106,9 @@ interface PendingItem {
 const BATCH_OPTIONS = [1, 3, 5, 10, 20, 0]; // 0 = Todos
 const batchLabel = (n: number) => (n === 0 ? 'Todos' : String(n));
 
+/** Resultado de encolar una tienda. `ocupada` = 409, se puede reintentar solo. */
+interface RunResult { ok: boolean; ocupada: boolean; motivo: string }
+
 /** Clave del grupo de DEPO. No es un email, y por eso no puede chocar con uno. */
 const DEPO = '\u0000depo';
 
@@ -113,7 +116,21 @@ export default function ControlPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [pending, setPending] = useState<Record<string, PendingItem>>({});
   const [loadingPending, setLoadingPending] = useState(false);
+  // 🔴 El lote volvía a 10 en cada carga. Quien quiere despachar TODO tenía que
+  // acordarse de tocar "Todos" cada vez, y olvidarse significaba despachar 10 y
+  // creer que había despachado todo. Ahora se recuerda.
   const [lote, setLote] = useState(10);
+  const [progreso, setProgreso] = useState('');
+  useEffect(() => {
+    try {
+      const g = window.localStorage.getItem('autoenvia.lote');
+      if (g !== null && BATCH_OPTIONS.includes(Number(g))) setLote(Number(g));
+    } catch { /* modo privado: queda el default */ }
+  }, []);
+  const elegirLote = useCallback((n: number) => {
+    setLote(n);
+    try { window.localStorage.setItem('autoenvia.lote', String(n)); } catch { /* ignorar */ }
+  }, []);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Record<string, 'run' | 'retry'>>({});
   const [bulkRunning, setBulkRunning] = useState(false);
@@ -182,8 +199,14 @@ export default function ControlPage() {
     return () => clearInterval(i);
   }, [fetchPending]);
 
+  /**
+   * Encola una tienda. Devuelve el resultado CON EL MOTIVO, no un booleano:
+   * "ya está corriendo" (reintentable, la tienda va a poder en un rato) no es
+   * lo mismo que "sin saldo" (no va a poder nunca sin comprar), y colapsar los
+   * dos en `false` era lo que hacía que el lote mintiera.
+   */
   const postRun = useCallback(
-    async (tenantId: string, maxOrders: number, silent = false): Promise<boolean> => {
+    async (tenantId: string, maxOrders: number, silent = false): Promise<RunResult> => {
       try {
         const res = await fetch('/api/v1/control/run', {
           method: 'POST',
@@ -193,12 +216,13 @@ export default function ControlPage() {
         const json = await res.json();
         if (!res.ok) {
           if (!silent) setError(json.error ?? 'No se pudo ejecutar la tienda');
-          return false;
+          // 409 = hay un job en curso para esa tienda: se puede reintentar solo.
+          return { ok: false, ocupada: res.status === 409, motivo: json.error ?? `error ${res.status}` };
         }
-        return true;
+        return { ok: true, ocupada: false, motivo: '' };
       } catch {
         if (!silent) setError('Error de conexión');
-        return false;
+        return { ok: false, ocupada: false, motivo: 'error de conexión' };
       }
     },
     [],
@@ -225,7 +249,7 @@ export default function ControlPage() {
     async (tenantId: string) => {
       setError('');
       setBusy((b) => ({ ...b, [tenantId]: 'run' }));
-      const ok = await postRun(tenantId, loteDe(tenantId));
+      const { ok } = await postRun(tenantId, loteDe(tenantId));
       setBusy((b) => {
         const n = { ...b };
         delete n[tenantId];
@@ -308,33 +332,91 @@ export default function ControlPage() {
       return next;
     });
 
-  // Enqueue the selected stores IN DISPLAY ORDER. The single worker drains
-  // PENDING jobs by createdAt, so firing them sequentially = run order.
+  /**
+   * Encola TODAS las tiendas seleccionadas. En orden de pantalla: el worker
+   * drena los PENDING por `createdAt`, así que disparar en serie = orden de corrida.
+   *
+   * 🔴 Antes esto perdía tiendas de dos maneras y las dos eran mudas:
+   *   1. `eligible = chosen.filter(s => !s.running && !busy[s.id])` sacaba del
+   *      lote a las que estaban corriendo — con una foto de hasta 10 s de atraso—
+   *      y esas tiendas NO se encolaban nunca. Seleccionabas 10, se ejecutaban 7.
+   *   2. Las que fallaban quedaban como una lista de nombres sin motivo, y el
+   *      código las deseleccionaba salvo las fallidas, así que "ejecutar todo
+   *      otra vez" tampoco las recuperaba.
+   *
+   * Ahora se intenta con TODAS, y a las que contestan 409 ("ya hay un job en
+   * ejecución") se las reintenta hasta que el worker las libera. Una tienda
+   * ocupada es una tienda que va a poder en un minuto, no una tienda descartada.
+   */
   const runSelected = useCallback(async () => {
     const all = overview?.stores ?? [];
     const chosen = all.filter((s) => selected.has(s.id));
-    // Skip stores already running/queued or mid-action — the server would 409.
-    const eligible = chosen.filter((s) => !s.running && !busy[s.id]);
-    if (eligible.length === 0) {
-      setError('Las tiendas seleccionadas ya están en ejecución o en cola.');
-      return;
-    }
+    if (chosen.length === 0) return;
+
     setError('');
     setBulkRunning(true);
-    const failed: { id: string; name: string }[] = [];
-    for (const s of eligible) {
-      const ok = await postRun(s.id, loteDe(s.id), true); // silent + sequential -> createdAt order
-      if (!ok) failed.push({ id: s.id, name: s.name });
+    setProgreso(`Encolando ${chosen.length} tienda(s)…`);
+
+    const encoladas: string[] = [];
+    const rechazadas: { id: string; name: string; motivo: string }[] = [];
+    let pendientes = chosen;
+
+    // Hasta VUELTAS_MAX pasadas: cada vuelta encola lo que puede y deja para la
+    // siguiente sólo lo que estaba ocupado. Un error que no es 409 no se reintenta.
+    const VUELTAS_MAX = 12;
+    for (let vuelta = 0; vuelta < VUELTAS_MAX && pendientes.length > 0; vuelta++) {
+      if (vuelta > 0) {
+        setProgreso(`Esperando a que se liberen ${pendientes.length} tienda(s)… (intento ${vuelta + 1})`);
+        await new Promise((r) => setTimeout(r, 10000));
+      }
+      const ocupadas: typeof pendientes = [];
+      for (const s of pendientes) {
+        const r = await postRun(s.id, loteDe(s.id), true); // silencioso + en serie -> orden de createdAt
+        if (r.ok) {
+          encoladas.push(s.id);
+          setProgreso(`Encoladas ${encoladas.length} de ${chosen.length}…`);
+        } else if (r.ocupada) {
+          ocupadas.push(s);
+        } else {
+          rechazadas.push({ id: s.id, name: s.name, motivo: r.motivo });
+        }
+      }
+      pendientes = ocupadas;
     }
+
+    // Lo que sigue ocupado después de todas las vueltas se reporta como tal.
+    for (const s of pendientes) {
+      rechazadas.push({ id: s.id, name: s.name, motivo: 'siguió ocupada' });
+    }
+
     setBulkRunning(false);
-    if (failed.length > 0) {
-      setError(`No se pudieron encolar ${failed.length} tienda(s): ${failed.map((f) => f.name).join(', ')}`);
-      setSelected(new Set(failed.map((f) => f.id))); // keep only the failures selected
+    setProgreso('');
+
+    if (rechazadas.length > 0) {
+      // Con motivo, agrupado. Antes era una lista de nombres pelada.
+      const porMotivo = new Map<string, string[]>();
+      for (const r of rechazadas) {
+        const l = porMotivo.get(r.motivo) ?? [];
+        l.push(r.name);
+        porMotivo.set(r.motivo, l);
+      }
+      const detalle = [...porMotivo.entries()].map(([m, ns]) => `${ns.join(', ')}: ${m}`).join(' · ');
+      setError(
+        `Se encolaron ${encoladas.length} de ${chosen.length} tienda(s). Quedaron afuera ${rechazadas.length}: ${detalle}`,
+      );
+      setSelected(new Set(rechazadas.map((r) => r.id))); // quedan tildadas para reintentar
     } else {
+      setNotice(`${encoladas.length} tienda(s) encoladas. Se despachan en orden.`);
       setSelected(new Set());
     }
     await fetchOverview();
-  }, [overview, selected, busy, loteDe, postRun, fetchOverview]);
+  }, [overview, selected, loteDe, postRun, fetchOverview]);
+
+  /** Seleccionar / limpiar todas de una. Con 32 tiendas, tildar de a una es un olvido esperando pasar. */
+  const toggleSelectAll = useCallback(() => {
+    const all = overview?.stores ?? [];
+    setSelected((prev) => (prev.size === all.length ? new Set() : new Set(all.map((s) => s.id))));
+  }, [overview]);
 
   const stores = overview?.stores ?? [];
   const queue = overview?.queue ?? [];
@@ -467,7 +549,7 @@ export default function ControlPage() {
             {BATCH_OPTIONS.map((n) => (
               <button
                 key={n}
-                onClick={() => setLote(n)}
+                onClick={() => elegirLote(n)}
                 className={cn(
                   'px-3 py-1.5 text-xs font-medium transition-colors',
                   lote === n ? 'bg-cyan-500 text-zinc-950' : 'bg-white/[0.02] text-zinc-400 hover:text-white',
@@ -485,6 +567,13 @@ export default function ControlPage() {
         >
           <RefreshCw className={cn('w-3.5 h-3.5', loadingPending && 'animate-spin')} /> Actualizar pendientes
         </button>
+        <button
+          onClick={toggleSelectAll}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.03] border border-white/[0.07] text-zinc-300 hover:text-white hover:border-white/[0.15] transition-colors"
+        >
+          {selectedCount === stores.length && stores.length > 0 ? 'Deseleccionar todas' : `Seleccionar todas (${stores.length})`}
+        </button>
+        {progreso && <span className="text-xs text-cyan-300">{progreso}</span>}
         <div className="ml-auto flex items-center gap-2">
           {totalRetryable > 0 && (
             <button
@@ -503,7 +592,7 @@ export default function ControlPage() {
               className="inline-flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-semibold bg-cyan-500 text-zinc-950 hover:bg-cyan-400 transition-colors disabled:opacity-50"
             >
               {bulkRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ListOrdered className="w-3.5 h-3.5" />}
-              Ejecutar {selectedCount} en orden
+              Ejecutar {selectedCount} {lote === 0 ? '· TODOS los pedidos' : 'en orden'}
             </button>
           )}
         </div>

@@ -79,6 +79,7 @@ export async function GET(req: NextRequest) {
       successCount: true,
       failedCount: true,
       skippedCount: true,
+      skipReason: true,
       durationMs: true,
       startedAt: true,
       finishedAt: true,

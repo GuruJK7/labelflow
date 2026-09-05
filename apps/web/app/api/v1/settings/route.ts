@@ -42,7 +42,10 @@ const updateSchema = z.object({
       return true;
     }, 'Minimum interval is 15 minutes')
     .optional(),
-  maxOrdersPerRun: z.number().min(1).max(50).optional(),
+  // 🔴 `min(1)` hacía inalcanzable el centinela `0` = sin tope que el worker
+  // SÍ entiende (`process-orders.job.ts`, `isUnlimited`). Una tienda no podía
+  // dejar su default en "todos" ni aunque quisiera. Ver lib/limite-por-corrida.ts.
+  maxOrdersPerRun: z.number().int().min(0).max(50).optional(),
   scheduleSlots: z.array(z.object({
     time: z.string().regex(/^\d{2}:\d{2}$/),
     maxOrders: z.number().min(0).max(50),

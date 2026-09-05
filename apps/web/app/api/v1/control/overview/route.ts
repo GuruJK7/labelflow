@@ -127,6 +127,7 @@ export async function GET() {
         successCount: true,
         failedCount: true,
         skippedCount: true,
+      skipReason: true,
         startedAt: true,
         createdAt: true,
       },

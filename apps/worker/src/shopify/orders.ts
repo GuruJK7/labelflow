@@ -46,6 +46,49 @@ const GUIA_NOTE_PREFIX = 'LabelFlow-GUIA:';
  */
 const ESTADOS_DESPACHABLES_CONTRAENTREGA = new Set(['paid', 'pending']);
 
+/**
+ * Cuántos pedidos trae una corrida cuando NO se pidió "Todos".
+ *
+ * Es el tope histórico y se mantiene tal cual: una corrida con tope de 5, 10 o
+ * 20 nunca necesitó más de una página.
+ */
+export const PAGINA_REST = 250;
+
+/**
+ * Techo de una corrida "Todos". Existe para que un error de filtro no barra la
+ * tienda entera; cuando se toca, se AVISA (no se corta en silencio).
+ * `SHOPIFY_TOPE_TODOS` lo sube si alguna tienda lo necesita.
+ */
+export const TOPE_TRAIDA_TODOS = (() => {
+  const n = Number.parseInt((process.env.SHOPIFY_TOPE_TODOS ?? '').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : 1000;
+})();
+
+/**
+ * El `page_info` de la página siguiente, leído del header `Link` de Shopify.
+ *
+ * 🔴 Sin esto, `getUnfulfilledOrders` hacía UNA sola llamada con `limit=250` y
+ * devolvía lo que entrara. Una tienda con 400 pendientes veía 250 y las otras
+ * 150 no existían para el job — sin un log, sin un contador, sin nada. El
+ * usuario apretaba "Todos" y se despachaban 250.
+ *
+ * Formato real: `<https://x.myshopify.com/admin/api/2026-07/orders.json?limit=250&page_info=abc>; rel="next"`
+ * (puede venir junto al `rel="previous"`, separados por coma).
+ */
+export function siguientePageInfo(link: unknown): string | null {
+  if (typeof link !== 'string' || !link) return null;
+  for (const parte of link.split(',')) {
+    const m = parte.match(/<([^>]+)>\s*;\s*rel="?next"?/i);
+    if (!m) continue;
+    try {
+      return new URL(m[1]).searchParams.get('page_info');
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export async function getUnfulfilledOrders(
   client: AxiosInstance,
   sortDirection: 'oldest_first' | 'newest_first' = 'oldest_first',
@@ -57,21 +100,60 @@ export async function getUnfulfilledOrders(
    * una decisión explícita del comerciante, no algo que se deduzca.
    */
   incluirNoPagados = false,
+  /**
+   * Cuántos pedidos como máximo devolver. Default `PAGINA_REST` (250) = el
+   * comportamiento histórico exacto. Una corrida "Todos" pasa
+   * `TOPE_TRAIDA_TODOS` y entonces SÍ se paginan las páginas siguientes.
+   */
+  tope: number = PAGINA_REST,
 ): Promise<ShopifyOrder[]> {
-  const { data } = await client.get('/orders.json', {
-    params: {
-      // REST no acepta dos valores en `financial_status`, así que para el caso
-      // contra entrega se pide `any` y se filtra abajo con la lista blanca.
-      // Pedir `any` sin filtrar traería reembolsados y anulados.
-      financial_status: incluirNoPagados ? 'any' : 'paid',
-      fulfillment_status: 'unfulfilled',
-      status: 'open',
-      limit: 250,
-      order: sortDirection === 'newest_first' ? 'created_at desc' : 'created_at asc',
-    },
-  });
+  const limite = Math.max(1, Math.floor(tope));
+  const paramsBase = {
+    // REST no acepta dos valores en `financial_status`, así que para el caso
+    // contra entrega se pide `any` y se filtra abajo con la lista blanca.
+    // Pedir `any` sin filtrar traería reembolsados y anulados.
+    financial_status: incluirNoPagados ? 'any' : 'paid',
+    fulfillment_status: 'unfulfilled',
+    status: 'open',
+    limit: Math.min(limite, PAGINA_REST),
+    order: sortDirection === 'newest_first' ? 'created_at desc' : 'created_at asc',
+  };
 
-  const crudas: ShopifyOrder[] = data.orders ?? [];
+  const crudas: ShopifyOrder[] = [];
+  // Shopify sólo acepta `limit`, `fields` y `page_info` en las páginas
+  // siguientes: mandarle de nuevo los filtros devuelve 400. Por eso la primera
+  // request lleva `paramsBase` y las demás sólo el cursor.
+  let params: Record<string, unknown> = paramsBase;
+  let paginas = 0;
+  let cortadoPorTope = false;
+
+  while (crudas.length < limite) {
+    const res = await client.get('/orders.json', { params });
+    const pagina: ShopifyOrder[] = res.data?.orders ?? [];
+    crudas.push(...pagina);
+    paginas++;
+
+    const cursor = siguientePageInfo(res.headers?.link ?? (res.headers as Record<string, unknown>)?.Link);
+    if (pagina.length === 0 || !cursor) break;
+    if (crudas.length >= limite) {
+      // Hay más páginas del otro lado y no las vamos a pedir: eso es un recorte
+      // y se dice en voz alta.
+      cortadoPorTope = true;
+      break;
+    }
+    params = { limit: paramsBase.limit, page_info: cursor };
+  }
+
+  if (crudas.length > limite) crudas.length = limite;
+
+  if (cortadoPorTope) {
+    logger.warn(
+      { traidos: crudas.length, tope: limite, paginas },
+      'Shopify tiene MÁS pedidos sin despachar de los que entra esta corrida: se cortó en el tope. ' +
+        'Volvé a ejecutar para seguir, o subí SHOPIFY_TOPE_TODOS.',
+    );
+  }
+
   const orders: ShopifyOrder[] = incluirNoPagados
     ? crudas.filter((o) => ESTADOS_DESPACHABLES_CONTRAENTREGA.has((o.financial_status ?? '').toLowerCase()))
     : crudas;
@@ -82,6 +164,11 @@ export async function getUnfulfilledOrders(
       'Contra entrega: se descartaron pedidos reembolsados/anulados que Shopify devolvió con financial_status=any',
     );
   }
+
+  logger.info(
+    { traidos: orders.length, paginas, tope: limite, cortadoPorTope },
+    'Shopify REST: pedidos sin despachar traídos',
+  );
 
   // Telemetry: log when we're handing back orders that were previously
   // processed (carry our tag or note). This used to be a skip condition;
