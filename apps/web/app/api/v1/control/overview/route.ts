@@ -28,6 +28,7 @@ import { db } from '@/lib/db';
 import { LabelStatus, JobStatus } from '@prisma/client';
 import { apiError, apiSuccess } from '@/lib/api-utils';
 import { getControlActor, controlTenantWhere } from '@/lib/control-scope';
+import { storeConnection } from '@/lib/onboarding-state';
 import { getStuckBreakdown } from '@/lib/stuck-labels';
 import { startOfDayUy, startOfMonthUy } from '@/lib/uy-time';
 
@@ -69,6 +70,11 @@ export async function GET() {
       referralBonusCredits: true,
       lastRunAt: true,
       maxOrdersPerRun: true,
+      // Con qué fuente está conectada. No son secretos que se devuelvan: abajo
+      // sólo sale el `fuente` derivado, igual que `shopifyConnected`.
+      dashboardSourceEnabled: true,
+      dashboardUrl: true,
+      dashboardToken: true,
     },
   });
 
@@ -164,6 +170,12 @@ export async function GET() {
       // que el slug ya lleva, y el slug es único e inmutable.
       // Las de VentaFlow (`ae-adrijk7-cr`) NO matchean, que es lo correcto.
       depo: typeof t.slug === 'string' && t.slug.startsWith('ae-depo-'),
+      // De dónde salen los pedidos de esta tienda. El panel lo necesita para no
+      // mandarle un "lote por corrida" a una tienda de la fuente dashboard: ese
+      // job no lee el override y la ruta lo rechaza con un 422. Sin esto, con el
+      // selector en 10 (que es el default de la barra), apretar Ejecutar en una
+      // tienda del depósito devolvía un error en vez de despachar.
+      fuente: storeConnection(t).kind,
       stuck: {
         total: stuck.total,
         retryable: stuck.retryable,

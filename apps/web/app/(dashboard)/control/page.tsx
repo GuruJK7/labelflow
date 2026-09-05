@@ -61,6 +61,8 @@ interface StoreRow {
   owner?: { email: string; own: boolean };
   /** Alta hecha desde DEPO (slug `ae-depo-*`). Agrupa aparte en la vista admin. */
   depo?: boolean;
+  /** Con qué está conectada: 'shopify' | 'dashboard' | null (sin conectar). */
+  fuente?: 'shopify' | 'dashboard' | null;
   running: null | {
     jobId: string;
     status: string;
@@ -202,11 +204,28 @@ export default function ControlPage() {
     [],
   );
 
+  /**
+   * El lote por corrida SÓLO lo entiende el procesador de Shopify: el job de la
+   * fuente dashboard despacha todos los pedidos confirmados y no lee el
+   * override, así que la ruta lo rechaza con un 422. Mandarle el valor de la
+   * barra a una tienda de esa fuente devolvía un error en vez de despachar —
+   * y con el selector en 10, que es lo que queda elegido casi siempre, eso
+   * pasaba SIEMPRE. Para esas tiendas se manda 0 = todos, que es lo único que
+   * ese job sabe hacer.
+   */
+  const loteDe = useCallback(
+    (tenantId: string) => {
+      const s = overview?.stores.find((x) => x.id === tenantId);
+      return s?.fuente === 'dashboard' ? 0 : lote;
+    },
+    [overview, lote],
+  );
+
   const runStore = useCallback(
     async (tenantId: string) => {
       setError('');
       setBusy((b) => ({ ...b, [tenantId]: 'run' }));
-      const ok = await postRun(tenantId, lote);
+      const ok = await postRun(tenantId, loteDe(tenantId));
       setBusy((b) => {
         const n = { ...b };
         delete n[tenantId];
@@ -214,7 +233,7 @@ export default function ControlPage() {
       });
       if (ok) await fetchOverview();
     },
-    [lote, postRun, fetchOverview],
+    [loteDe, postRun, fetchOverview],
   );
 
   const postRetry = useCallback(
@@ -304,7 +323,7 @@ export default function ControlPage() {
     setBulkRunning(true);
     const failed: { id: string; name: string }[] = [];
     for (const s of eligible) {
-      const ok = await postRun(s.id, lote, true); // silent + sequential -> createdAt order
+      const ok = await postRun(s.id, loteDe(s.id), true); // silent + sequential -> createdAt order
       if (!ok) failed.push({ id: s.id, name: s.name });
     }
     setBulkRunning(false);
@@ -315,7 +334,7 @@ export default function ControlPage() {
       setSelected(new Set());
     }
     await fetchOverview();
-  }, [overview, selected, busy, lote, postRun, fetchOverview]);
+  }, [overview, selected, busy, loteDe, postRun, fetchOverview]);
 
   const stores = overview?.stores ?? [];
   const queue = overview?.queue ?? [];
