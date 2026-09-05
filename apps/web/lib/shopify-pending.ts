@@ -16,6 +16,7 @@
 
 import { db } from '@/lib/db';
 import { shopifyAccessForTenant } from '@/lib/shopify-access';
+import { decrypt } from '@/lib/encryption';
 
 const SHOPIFY_API_VERSION = '2024-01';
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 min — a backlog number this stale is fine.
@@ -45,8 +46,32 @@ export async function getUnfulfilledCount(tenantId: string, force = false): Prom
 
   const tenant = await db.tenant.findUnique({
     where: { id: tenantId },
-    select: { id: true, shopifyStoreUrl: true, shopifyToken: true, codEnabled: true },
+    select: {
+      id: true,
+      shopifyStoreUrl: true,
+      shopifyToken: true,
+      codEnabled: true,
+      dashboardSourceEnabled: true,
+      dashboardUrl: true,
+      dashboardToken: true,
+    },
   });
+
+  // ── Fuente dashboard (VentaFlow, y las cuentas que opera el depósito) ──────
+  // Estas tiendas no tienen Shopify, así que hasta acá el panel mostraba un
+  // guion para siempre. Para las cuentas del depósito eso es peor que un hueco
+  // cosmético: como su cron está apagado a propósito, el ÚNICO disparo es el
+  // botón "Ejecutar" de esta misma pantalla — y sin el número, apretarlo es
+  // adivinar si hay algo para despachar.
+  if (!tenant?.shopifyStoreUrl && tenant?.dashboardSourceEnabled && tenant.dashboardUrl && tenant.dashboardToken) {
+    const contado = await contarEnDashboard(tenant.dashboardUrl, tenant.dashboardToken);
+    if (contado === null) {
+      return { tenantId, count: hit?.count ?? null, cached: false, skipped: 'error' };
+    }
+    cache.set(tenantId, { count: contado, at: Date.now() });
+    return { tenantId, count: contado, cached: false };
+  }
+
   if (!tenant?.shopifyStoreUrl || !tenant.shopifyToken) {
     return { tenantId, count: null, cached: false, skipped: 'no-token' };
   }
@@ -94,5 +119,65 @@ export async function getUnfulfilledCount(tenantId: string, force = false): Prom
     return { tenantId, count, cached: false };
   } catch {
     return { tenantId, count: hit?.count ?? null, cached: false, skipped: 'error' };
+  }
+}
+
+/** Cuántos pedidos entran como mucho en una corrida de la fuente dashboard. */
+const TOPE_DASHBOARD = 250;
+
+/**
+ * Cuenta los pedidos listos de una tienda de la fuente dashboard, con la MISMA
+ * llamada que hace el worker (`apps/worker/src/dashboard/orders.ts`): si esto
+ * devuelve 12, una corrida trabaja sobre esos 12.
+ *
+ * Devuelve `null` ante cualquier problema — quien llama conserva el último
+ * número bueno. Nunca tira: un dashboard caído no puede dejar sin pintar el
+ * panel entero.
+ *
+ * 🔴 Defensa en profundidad sobre la URL, por el mismo motivo que el allowlist
+ * de `*.myshopify.com` de arriba: `dashboardUrl` lo escriben dos caminos
+ * (`onboarding/test-dashboard` y `provisioning/dac-tenant`) y sólo el primero
+ * valida el host. Exigir https y descartar los destinos internos ACÁ significa
+ * que ningún camino de escritura futuro puede convertir esta función en un
+ * SSRF. El worker corre en Render con su propia red; esto corre en Vercel.
+ */
+async function contarEnDashboard(baseUrl: string, tokenCifrado: string): Promise<number | null> {
+  let url: URL;
+  try {
+    url = new URL(baseUrl.replace(/\/+$/, '') + '/api/v1/orders');
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:') return null;
+  const host = url.hostname.toLowerCase();
+  if (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host === '0.0.0.0' ||
+    /^\d{1,3}(\.\d{1,3}){3}$/.test(host) ||
+    host.includes(':')
+  ) {
+    return null;
+  }
+
+  let token: string;
+  try {
+    token = decrypt(tokenCifrado);
+  } catch {
+    return null;
+  }
+
+  url.searchParams.set('status', 'confirmed');
+  url.searchParams.set('limit', String(TOPE_DASHBOARD));
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { orders?: unknown[] };
+    return Array.isArray(data?.orders) ? data.orders.length : null;
+  } catch {
+    return null;
   }
 }
