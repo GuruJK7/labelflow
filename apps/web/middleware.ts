@@ -57,6 +57,12 @@ export async function middleware(request: NextRequest) {
   // ruta nueva se olvida de llamar getAuthenticatedTenant(), el middleware
   // la rebota con 401 antes de tocar la DB.
   const protectedPaths = [
+    '/tutorial',  // 2026-09-05 — requisito 2.3.1. /tutorial/shopify-token enseña
+                  // a crearse una app privada y copiar un Admin API token. No
+                  // alcanzaba con sacarlo de publicPaths: el middleware es una
+                  // allowlist de PROTECCIÓN, así que lo que no está en ninguna
+                  // de las dos listas queda accesible igual. Va acá para que
+                  // exija sesión de verdad.
     '/dashboard',
     '/orders',
     '/labels',
