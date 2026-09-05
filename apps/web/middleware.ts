@@ -13,10 +13,13 @@ export async function middleware(request: NextRequest) {
     '/reset-password',            // 2026-05-15 — /reset-password/[token]
     '/pricing',                   // 2026-05-15 — public pricing page
     '/onboarding',
-    '/tutorial', // Public step-by-step guides (Shopify token, etc.) — these
-                 // are linked from /onboarding so they MUST be reachable
-                 // without a session (some users open them in a fresh
-                 // window before signing up).
+    // '/tutorial' — SACADO 2026-09-05 por el requisito 2.3.1 del App Store.
+    // /tutorial/shopify-token enseña paso a paso a crearse una app privada y
+    // copiar un Admin API token, que es justo el flujo que 2.3.1 prohíbe
+    // ofrecer. Siendo ruta pública, un revisor la encuentra aunque la UI que la
+    // linkeaba esté apagada. Deja de ser pública; el contenido no se borra
+    // porque sigue sirviendo para soporte de los tenants viejos, que tienen
+    // sesión.
     '/terminos',
     '/privacidad',
     '/cliente',                   // 2026-06-02 — tokenized client label portal

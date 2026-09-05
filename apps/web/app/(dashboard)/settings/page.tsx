@@ -1,5 +1,6 @@
 'use client';
 
+import { MANUAL_SHOPIFY_ENABLED } from '@/lib/shopify-manual';
 import { useEffect, useState, useCallback } from 'react';
 import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar, Printer, FlaskConical, Play } from 'lucide-react';
 import { PrinterSetup } from '@/components/printing/PrinterSetup';
@@ -339,27 +340,42 @@ export default function SettingsPage() {
           <div className="space-y-3">
             <ShopifyOAuthStatus />
 
-            <div>
-              <label className={labelClass}>Tu tienda</label>
-              <input value={shopifyUrl} onChange={(e) => setShopifyUrl(e.target.value)} className={inputClass} placeholder="mitienda.myshopify.com" />
-            </div>
+            {/* Requisito 2.3.1: ni en instalación ni en configuración se puede
+                pedir el dominio .myshopify.com a mano. Este input salía sin
+                ninguna condición y además quedó en la captura que se mandó a
+                revisión. El estado de la conexión lo sigue mostrando
+                <ShopifyOAuthStatus /> acá arriba. */}
+            {MANUAL_SHOPIFY_ENABLED && (
+              <div>
+                <label className={labelClass}>Tu tienda</label>
+                <input value={shopifyUrl} onChange={(e) => setShopifyUrl(e.target.value)} className={inputClass} placeholder="mitienda.myshopify.com" />
+              </div>
+            )}
 
-            <button
-              onClick={() => {
-                const shop = shopifyUrl.trim();
-                if (!shop) return;
-                window.location.href = `/api/shopify/install?shop=${encodeURIComponent(shop)}`;
-              }}
-              disabled={!shopifyUrl.trim()}
-              className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-              <CheckCircle className="w-3 h-3" />
-              {settings?.shopifyTokenSet ? 'Reconectar con Shopify' : 'Conectar con Shopify'}
-            </button>
-            <p className="text-[11px] text-zinc-500 leading-relaxed">
-              Te lleva a Shopify para que autorices los permisos. Volvés conectado — no hace falta
-              crear ninguna app ni copiar tokens.
-            </p>
+            {/* Este botón leía el input de arriba: escondido el input, quedaba
+                siempre deshabilitado. Va detrás de la misma flag. */}
+            {MANUAL_SHOPIFY_ENABLED && (
+              <>
+                <button
+                  onClick={() => {
+                    const shop = shopifyUrl.trim();
+                    if (!shop) return;
+                    window.location.href = `/api/shopify/install?shop=${encodeURIComponent(shop)}`;
+                  }}
+                  disabled={!shopifyUrl.trim()}
+                  className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                  <CheckCircle className="w-3 h-3" />
+                  {settings?.shopifyTokenSet ? 'Reconectar con Shopify' : 'Conectar con Shopify'}
+                </button>
+                <p className="text-[11px] text-zinc-500 leading-relaxed">
+                  Te lleva a Shopify para que autorices los permisos. Volvés conectado — no hace falta
+                  crear ninguna app ni copiar tokens.
+                </p>
+              </>
+            )}
 
+            {/* Requisito 2.3.1 — mismo motivo que en el wizard. */}
+            {MANUAL_SHOPIFY_ENABLED && (
             <details className="pt-2 border-t border-white/[0.06]">
               <summary className="text-[11px] text-zinc-500 cursor-pointer hover:text-zinc-400">
                 Conectar a mano con un token (método viejo)
@@ -379,6 +395,7 @@ export default function SettingsPage() {
                 <InlineMessage section="shopify" />
               </div>
             </details>
+            )}
           </div>
         </div>
 

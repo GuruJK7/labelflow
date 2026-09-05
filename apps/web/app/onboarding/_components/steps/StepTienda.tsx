@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import type { OnboardingState } from '@/lib/onboarding-state';
 import { SHOPIFY_OAUTH_MESSAGES } from '@/lib/shopify-messages';
 import { ShopifyTutorial } from '../ShopifyTutorial';
+import { MANUAL_SHOPIFY_ENABLED } from '@/lib/shopify-manual';
 import { StepCard, StepHeader, PrimaryButton, SecondaryButton, Notice, DoneCard, StepFooter, inputClass, labelClass } from '../wizard-ui';
 
 /**
@@ -162,31 +163,57 @@ export function StepTienda({
             <p className="text-xs text-zinc-400 leading-relaxed mb-4">
               Te lleva a Shopify para que autorices la app. Volvés conectado, sin copiar tokens. Los pedidos pagos entran al instante.
             </p>
-            <label className={labelClass}>Tu tienda</label>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                value={shopDomain}
-                onChange={(e) => setShopDomain(e.target.value)}
-                className={inputClass}
-                placeholder="mitienda.myshopify.com"
-                autoComplete="off"
-              />
-              <PrimaryButton onClick={goShopify} className="sm:w-auto whitespace-nowrap" arrow={false}>
-                Conectar con Shopify
-              </PrimaryButton>
-            </div>
-            <p className="text-[11px] text-zinc-500 mt-1.5">El dominio que termina en .myshopify.com, no el dominio personalizado.</p>
-            {appStoreUrl && (
+            {/* Requisito 2.3.1: no se puede pedir el dominio .myshopify.com a mano. */}
+            {MANUAL_SHOPIFY_ENABLED && (
+              <>
+                <label className={labelClass}>Tu tienda</label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    value={shopDomain}
+                    onChange={(e) => setShopDomain(e.target.value)}
+                    className={inputClass}
+                    placeholder="mitienda.myshopify.com"
+                    autoComplete="off"
+                  />
+                  <PrimaryButton onClick={goShopify} className="sm:w-auto whitespace-nowrap" arrow={false}>
+                    Conectar con Shopify
+                  </PrimaryButton>
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-1.5">El dominio que termina en .myshopify.com, no el dominio personalizado.</p>
+              </>
+            )}
+            {/* Con el camino manual apagado (2.3.1), instalar desde el App Store
+                deja de ser una alternativa y pasa a ser EL camino, así que sube
+                de link chiquito a botón principal. Si todavía no hay URL de App
+                Store —la app no está publicada— se dice qué hacer en vez de
+                dejar la tarjeta muda. */}
+            {appStoreUrl ? (
               <a
                 href={appStoreUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 mt-3"
+                className={
+                  MANUAL_SHOPIFY_ENABLED
+                    ? 'inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 mt-3'
+                    : 'inline-flex items-center justify-center gap-2 w-full sm:w-auto bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2.5 rounded-lg text-xs font-medium transition-colors'
+                }
               >
-                o instalala desde el App Store de Shopify <ExternalLink className="w-3 h-3" />
+                {MANUAL_SHOPIFY_ENABLED
+                  ? 'o instalala desde el App Store de Shopify'
+                  : 'Instalar desde el App Store de Shopify'}{' '}
+                <ExternalLink className="w-3 h-3" />
               </a>
+            ) : (
+              !MANUAL_SHOPIFY_ENABLED && (
+                <p className="text-[11px] text-zinc-500 leading-relaxed">
+                  Buscá <span className="text-zinc-300">AutoEnvía</span> en el App Store de Shopify e
+                  instalala desde ahí. Shopify te trae de vuelta acá ya conectado.
+                </p>
+              )
             )}
 
+            {/* Requisito 2.3.1: pegar un Admin API token empuja a crear una app privada. */}
+            {MANUAL_SHOPIFY_ENABLED && (
             <details className="mt-4 pt-3 border-t border-white/[0.06]">
               <summary className="text-[11px] text-zinc-500 cursor-pointer hover:text-zinc-300">
                 Conectar a mano con un token (método viejo)
@@ -214,6 +241,7 @@ export function StepTienda({
                 </form>
               </div>
             </details>
+            )}
           </div>
 
           {/* Opción B — Dashboard con Excel */}
