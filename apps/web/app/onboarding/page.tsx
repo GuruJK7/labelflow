@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getAuthenticatedTenant } from '@/lib/api-utils';
+import { getControlActor } from '@/lib/control-scope';
 import { loadOnboardingState } from '@/lib/onboarding-state.server';
 import { parseRequestedStep, shouldRedirectToDashboard } from '@/lib/onboarding-state';
 import { OnboardingWizard } from './_components/OnboardingWizard';
@@ -38,5 +39,19 @@ export default async function OnboardingPage({
   const shopifyReturn = !!(Array.isArray(searchParams?.shopify) ? searchParams?.shopify[0] : searchParams?.shopify);
   if (shouldRedirectToDashboard(state, { requestedStep: requested, shopifyReturn })) redirect('/dashboard');
 
-  return <OnboardingWizard initial={state} requestedStep={requested} tenantIdActual={auth.tenantId} />;
+  // Si es admin, el paso 2 le ofrece el camino manual (dominio + token). Un
+  // comerciante —y el revisor de Shopify, que se registra como uno— no lo ve.
+  // Ver lib/shopify-manual.ts.
+  const esAdmin = await getControlActor()
+    .then((a) => a?.isAdmin === true)
+    .catch(() => false);
+
+  return (
+    <OnboardingWizard
+      initial={state}
+      requestedStep={requested}
+      tenantIdActual={auth.tenantId}
+      esAdmin={esAdmin}
+    />
+  );
 }

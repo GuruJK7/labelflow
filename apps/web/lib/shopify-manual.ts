@@ -33,3 +33,30 @@
  */
 export const MANUAL_SHOPIFY_ENABLED =
   process.env.NEXT_PUBLIC_ALLOW_MANUAL_SHOPIFY === 'true';
+
+/**
+ * ¿Se le puede ofrecer a ESTE usuario el camino manual?
+ *
+ * 🔴 EL PROBLEMA QUE ESTO RESUELVE (05-09-2026). Apagar la UI manual dejó al
+ * dueño de AutoEnvía sin forma de conectar una tienda Shopify: el único camino
+ * que queda es «instalá desde el App Store», y la app todavía está EN REVISIÓN,
+ * así que `NEXT_PUBLIC_SHOPIFY_APP_STORE_URL` no existe y la tarjeta del paso 2
+ * termina en un texto que no lleva a ningún lado. Alta imposible.
+ *
+ * Prender `NEXT_PUBLIC_ALLOW_MANUAL_SHOPIFY` en producción resolvería el alta y
+ * rompería justo lo que se está cuidando: el revisor de Shopify entra a
+ * autoenvia.com como un comerciante cualquiera y vería el input de dominio y el
+ * campo del token — que es textualmente lo que 2.3.1 prohíbe.
+ *
+ * La salida es que el camino manual dependa de QUIÉN mira, no sólo de una env
+ * var global. Un admin (`ADMIN_EMAILS`) lo ve siempre; cualquier otro
+ * —incluido el revisor, que se registra como un comerciante más— sigue viendo
+ * exactamente lo que veía antes de este cambio. La regla que se está cumpliendo
+ * es sobre el flujo de instalación que se le OFRECE a un comerciante, y un
+ * admin operando su propio panel no es ese flujo.
+ *
+ * Sigue siendo fail-closed: sin flag y sin admin, apagado.
+ */
+export function puedeConectarShopifyAMano(esAdmin: boolean | undefined): boolean {
+  return MANUAL_SHOPIFY_ENABLED || esAdmin === true;
+}

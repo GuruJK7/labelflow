@@ -5,6 +5,7 @@ import { correoFeatureEnabled } from '@/lib/correo-feature';
 import { normalizarNombreOficina, obtenerNombresOficinas, verificarOficina } from '@/lib/correo-catalogo';
 import { codFeatureEnabled } from '@/lib/cod-feature';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
+import { getControlActor } from '@/lib/control-scope';
 import { encryptIfPresent, decryptOrRaw } from '@/lib/encryption';
 import { shopDomainChangeConflicts, SHOP_DOMAIN_TAKEN_MESSAGE } from '@/lib/shop-domain-taken';
 import { startOfDayUy, startOfMonthUy } from '@/lib/uy-time';
@@ -197,8 +198,20 @@ export async function GET() {
       ? Math.round((successThisMonth / resolvedThisMonth) * 1000) / 10
       : 100;
 
+  // Requisito 2.3.1 del App Store: el alta manual de Shopify (dominio + token)
+  // no se le ofrece a un comerciante. A un admin sí — si no, el dueño de
+  // AutoEnvía no puede dar de alta ninguna tienda mientras la app esté en
+  // revisión. Ver lib/shopify-manual.ts.
+  // Fail-closed y a prueba de excepciones: si no se puede resolver quién es,
+  // NO es admin. Nunca vale tumbar el GET entero de Configuración por no poder
+  // decidir si mostrar un campo.
+  const esAdmin = await getControlActor()
+    .then((a) => a?.isAdmin === true)
+    .catch(() => false);
+
   // Never return encrypted values, return booleans instead
   return apiSuccess({
+    esAdmin,
     shopifyStoreUrl: tenant.shopifyStoreUrl,
     shopifyTokenSet: !!tenant.shopifyToken,
     dacUsername: decryptOrRaw(tenant.dacUsername),

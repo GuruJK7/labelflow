@@ -1,6 +1,6 @@
 'use client';
 
-import { MANUAL_SHOPIFY_ENABLED } from '@/lib/shopify-manual';
+import { puedeConectarShopifyAMano } from '@/lib/shopify-manual';
 import { useEffect, useState, useCallback } from 'react';
 import { Save, Loader2, CheckCircle, ExternalLink, Clock, Plus, X, Calendar, Printer, FlaskConical, Play } from 'lucide-react';
 import { PrinterSetup } from '@/components/printing/PrinterSetup';
@@ -66,6 +66,8 @@ function ShopifyOAuthStatus() {
 }
 
 interface SettingsData {
+  /** Admin (`ADMIN_EMAILS`): ve el alta manual de Shopify. Ver lib/shopify-manual.ts. */
+  esAdmin?: boolean;
   shopifyStoreUrl: string;
   shopifyTokenSet: boolean;
   dacUsername: string;
@@ -104,6 +106,8 @@ interface SettingsData {
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<SettingsData | null>(null);
+  // Requisito 2.3.1: un comerciante no ve el alta manual; un admin sí.
+  const manualOk = puedeConectarShopifyAMano(settings?.esAdmin);
   const [shopifyUrl, setShopifyUrl] = useState('');
   const [shopifyToken, setShopifyToken] = useState('');
   const [dacUsername, setDacUsername] = useState('');
@@ -345,7 +349,7 @@ export default function SettingsPage() {
                 ninguna condición y además quedó en la captura que se mandó a
                 revisión. El estado de la conexión lo sigue mostrando
                 <ShopifyOAuthStatus /> acá arriba. */}
-            {MANUAL_SHOPIFY_ENABLED && (
+            {manualOk && (
               <div>
                 <label className={labelClass}>Tu tienda</label>
                 <input value={shopifyUrl} onChange={(e) => setShopifyUrl(e.target.value)} className={inputClass} placeholder="mitienda.myshopify.com" />
@@ -354,7 +358,7 @@ export default function SettingsPage() {
 
             {/* Este botón leía el input de arriba: escondido el input, quedaba
                 siempre deshabilitado. Va detrás de la misma flag. */}
-            {MANUAL_SHOPIFY_ENABLED && (
+            {manualOk && (
               <>
                 <button
                   onClick={() => {
@@ -375,7 +379,7 @@ export default function SettingsPage() {
             )}
 
             {/* Requisito 2.3.1 — mismo motivo que en el wizard. */}
-            {MANUAL_SHOPIFY_ENABLED && (
+            {manualOk && (
             <details className="pt-2 border-t border-white/[0.06]">
               <summary className="text-[11px] text-zinc-500 cursor-pointer hover:text-zinc-400">
                 Conectar a mano con un token (método viejo)

@@ -6,7 +6,7 @@ import { cn } from '@/lib/cn';
 import type { OnboardingState } from '@/lib/onboarding-state';
 import { SHOPIFY_OAUTH_MESSAGES } from '@/lib/shopify-messages';
 import { ShopifyTutorial } from '../ShopifyTutorial';
-import { MANUAL_SHOPIFY_ENABLED } from '@/lib/shopify-manual';
+import { puedeConectarShopifyAMano } from '@/lib/shopify-manual';
 import { StepCard, StepHeader, PrimaryButton, SecondaryButton, Notice, DoneCard, StepFooter, inputClass, labelClass } from '../wizard-ui';
 
 /**
@@ -23,6 +23,7 @@ export interface OAuthReturn {
 
 export function StepTienda({
   state,
+  esAdmin = false,
   oauthReturn,
   onSaved,
   onFailed,
@@ -30,6 +31,8 @@ export function StepTienda({
   onBack,
 }: {
   state: OnboardingState;
+  /** Un admin ve el alta manual aunque la env var esté apagada. */
+  esAdmin?: boolean;
   oauthReturn: OAuthReturn | null;
   onSaved: () => Promise<void>;
   onFailed: (code: string | number) => void;
@@ -41,6 +44,9 @@ export function StepTienda({
   const [busy, setBusy] = useState<'' | 'shopify-token' | 'dashboard'>('');
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
+
+  // Requisito 2.3.1: un comerciante NO puede ver el alta manual. Un admin sí.
+  const manualOk = puedeConectarShopifyAMano(esAdmin);
 
   const [shopDomain, setShopDomain] = useState(state.store.shopifyStoreUrl ?? '');
   const [manualToken, setManualToken] = useState('');
@@ -164,7 +170,7 @@ export function StepTienda({
               Te lleva a Shopify para que autorices la app. Volvés conectado, sin copiar tokens. Los pedidos pagos entran al instante.
             </p>
             {/* Requisito 2.3.1: no se puede pedir el dominio .myshopify.com a mano. */}
-            {MANUAL_SHOPIFY_ENABLED && (
+            {manualOk && (
               <>
                 <label className={labelClass}>Tu tienda</label>
                 <div className="flex flex-col sm:flex-row gap-2">
@@ -193,18 +199,18 @@ export function StepTienda({
                 target="_blank"
                 rel="noopener noreferrer"
                 className={
-                  MANUAL_SHOPIFY_ENABLED
+                  manualOk
                     ? 'inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 mt-3'
                     : 'inline-flex items-center justify-center gap-2 w-full sm:w-auto bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2.5 rounded-lg text-xs font-medium transition-colors'
                 }
               >
-                {MANUAL_SHOPIFY_ENABLED
+                {manualOk
                   ? 'o instalala desde el App Store de Shopify'
                   : 'Instalar desde el App Store de Shopify'}{' '}
                 <ExternalLink className="w-3 h-3" />
               </a>
             ) : (
-              !MANUAL_SHOPIFY_ENABLED && (
+              !manualOk && (
                 <p className="text-[11px] text-zinc-500 leading-relaxed">
                   Buscá <span className="text-zinc-300">AutoEnvía</span> en el App Store de Shopify e
                   instalala desde ahí. Shopify te trae de vuelta acá ya conectado.
@@ -213,7 +219,7 @@ export function StepTienda({
             )}
 
             {/* Requisito 2.3.1: pegar un Admin API token empuja a crear una app privada. */}
-            {MANUAL_SHOPIFY_ENABLED && (
+            {manualOk && (
             <details className="mt-4 pt-3 border-t border-white/[0.06]">
               <summary className="text-[11px] text-zinc-500 cursor-pointer hover:text-zinc-300">
                 Conectar a mano con un token (método viejo)

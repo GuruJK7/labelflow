@@ -29,11 +29,14 @@ export function OnboardingWizard({
   initial,
   requestedStep,
   tenantIdActual,
+  esAdmin = false,
 }: {
   initial: OnboardingState;
   requestedStep: OnboardingStep | null;
   /** La tienda que se está configurando, para poder ofrecer cambiar a otra. */
   tenantIdActual: string;
+  /** Un admin ve el alta manual de Shopify. Ver lib/shopify-manual.ts. */
+  esAdmin?: boolean;
 }) {
   const [state, setState] = useState<OnboardingState>(initial);
   const [oauthReturn, setOauthReturn] = useState<OAuthReturn | null>(null);
@@ -202,6 +205,7 @@ export function OnboardingWizard({
           {step === 2 && (
             <StepTienda
               state={state}
+              esAdmin={esAdmin}
               oauthReturn={oauthReturn}
               onSaved={() => afterSave('tienda', 2)}
               onFailed={(code) => stepFailed('tienda', 2, code)}
