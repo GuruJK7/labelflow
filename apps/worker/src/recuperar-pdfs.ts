@@ -136,6 +136,17 @@ async function main() {
 
     console.log(`\n--- ${lista[0].tienda} (${lista.length}) ---`);
     const page = await dacBrowser.getPage();
+
+    // 🔴 Reusar la sesión que el worker YA guardó en `DacSession`.
+    // Sin esto, `downloadLabel` hace un login completo, que en DAC exige
+    // resolver un reCAPTCHA — y esa clave (`CAPTCHA_API_KEY`) sólo vive en
+    // Render. Corriendo desde afuera, cada descarga fallaba en el login.
+    // Con las cookies puestas, `ensureLoggedIn` ve la sesión viva y no
+    // vuelve a autenticar.
+    const conSesion = await dacBrowser.loadCookies(tenantId).catch(() => false);
+    console.log(conSesion
+      ? '  (sesión de DAC reutilizada, sin login)'
+      : '  (sin sesión guardada: va a intentar login — necesita CAPTCHA_API_KEY)');
     try {
       for (const p of lista) {
         try {
