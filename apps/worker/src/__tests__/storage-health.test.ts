@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// Import estático: `vi.mock` se hoistea, así que los mocks de arriba ya están
+// puestos cuando esto se resuelve. Un `await import()` de nivel superior
+// compila en vitest pero rompe el `tsc` del build de producción (TS1378).
+import { verificarStorage, motivoStorageCaido } from '../storage/health';
 
 /**
  * 🔴 EL INCIDENTE (06-09-2026). Supabase restringió el proyecto por cuota de
@@ -26,7 +30,6 @@ const config = {
 vi.mock('../config', () => ({ getConfig: () => config }));
 vi.mock('../logger', () => ({ default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() } }));
 
-const { verificarStorage, motivoStorageCaido } = await import('../storage/health');
 
 beforeEach(() => {
   vi.clearAllMocks();
