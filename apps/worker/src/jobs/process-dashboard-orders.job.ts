@@ -28,6 +28,7 @@ import { reconcileOrphansForTenant } from '../dac/orphan-reconcile';
 import { withTenantDacLock, DacLockHeldError } from '../dac/tenant-lock';
 import { downloadLabel } from '../dac/label';
 import { uploadLabelPdf } from '../storage/upload';
+import { verificarStorage, motivoStorageCaido } from '../storage/health';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { persistLabelItems } from './label-items';
 import { createStepLogger } from '../logger';
@@ -122,6 +123,31 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
     if (availableCredits <= 0) {
       slog.warn('credits', `Tenant sin créditos al iniciar el run (saldo=${availableCredits}). Abortando sin procesar.`);
       await db.job.update({ where: { id: jobId }, data: { status: 'COMPLETED', totalOrders: 0, errorMessage: 'Sin créditos disponibles. Comprá un pack para continuar.', finishedAt: new Date(), durationMs: Date.now() - startTime } });
+      return;
+    }
+
+
+    // ── STORAGE: la guarda que faltaba ──────────────────────────────── [06-sep-2026]
+    //
+    // No emitir una guía que no vamos a poder entregar. Con Supabase caído por
+    // cuota, el despacho igual creaba la guía en DAC (real y facturada) y recién
+    // fallaba al guardar el PDF: 120 guías en un día sin etiqueta imprimible.
+    // Ver storage/health.ts. Cuesta una subida de 5 bytes; abortar acá no cuesta
+    // nada y no deja rastro en DAC.
+    const estadoStorage = await verificarStorage();
+    if (!estadoStorage.escribible) {
+      const motivo = motivoStorageCaido(estadoStorage.error);
+      slog.error('storage', motivo);
+      await db.job.update({
+        where: { id: jobId },
+        data: {
+          status: 'FAILED',
+          totalOrders: 0,
+          errorMessage: motivo.slice(0, 500),
+          finishedAt: new Date(),
+          durationMs: Date.now() - startTime,
+        },
+      });
       return;
     }
 

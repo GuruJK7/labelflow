@@ -44,6 +44,7 @@ import {
 } from './order-dedup-filter';
 import { sendShipmentNotification } from '../notifier/email';
 import { uploadLabelPdf } from '../storage/upload';
+import { verificarStorage, motivoStorageCaido } from '../storage/health';
 import { createStepLogger } from '../logger';
 import { shadowRecordShipment } from '../billing/shadow';
 import logger from '../logger';
@@ -644,6 +645,31 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
       slog.warn('limit', `Limited to ${effectiveLimit} orders, ${skippedCount} skipped`);
     } else if (isUnlimited) {
       slog.info('limit', `UNLIMITED run: processing all ${orders.length} pending orders (subject to credit balance)`);
+    }
+
+
+    // ── STORAGE: la guarda que faltaba ──────────────────────────────── [06-sep-2026]
+    //
+    // No emitir una guía que no vamos a poder entregar. Con Supabase caído por
+    // cuota, el despacho igual creaba la guía en DAC (real y facturada) y recién
+    // fallaba al guardar el PDF: 120 guías en un día sin etiqueta imprimible.
+    // Ver storage/health.ts. Cuesta una subida de 5 bytes; abortar acá no cuesta
+    // nada y no deja rastro en DAC.
+    const estadoStorage = await verificarStorage();
+    if (!estadoStorage.escribible) {
+      const motivo = motivoStorageCaido(estadoStorage.error);
+      slog.error('storage', motivo);
+      await db.job.update({
+        where: { id: jobId },
+        data: {
+          status: 'FAILED',
+          totalOrders: 0,
+          errorMessage: motivo.slice(0, 500),
+          finishedAt: new Date(),
+          durationMs: Date.now() - startTime,
+        },
+      });
+      return;
     }
 
     // ── CREDIT-PACK GATE ──
