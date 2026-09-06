@@ -57,6 +57,7 @@ interface Pendiente {
   orderName: string;
   guia: string;
   codAmount: number | null;
+  status: string;
   dacUsername: string | null;
   dacPassword: string | null;
 }
@@ -66,10 +67,14 @@ async function main() {
 
   const pendientes = await db.$queryRawUnsafe<Pendiente[]>(`
     SELECT l.id, l."tenantId", t.name AS tienda, l."shopifyOrderName" AS "orderName",
-           l."dacGuia" AS guia, l."codAmount",
+           l."dacGuia" AS guia, l."codAmount", l.status,
            t."dacUsername", t."dacPassword"
     FROM "Label" l JOIN "Tenant" t ON t.id = l."tenantId"
-    WHERE l.status = 'NEEDS_REVIEW'
+    -- Los dos estados que acepta el camino manual del dashboard
+    -- (labels/[id]/upload-pdf): en revision, o creada pero sin PDF. El cobro
+    -- distingue despues: solo NEEDS_REVIEW se cobra, porque es el unico que el
+    -- worker dejo explicitamente sin cobrar.
+    WHERE l.status IN ('NEEDS_REVIEW', 'CREATED')
       AND l."dacGuia" IS NOT NULL
       AND l."dacGuia" NOT LIKE 'PENDING-%'
       AND l."pdfPath" IS NULL
@@ -92,7 +97,12 @@ async function main() {
   console.log(`${pendientes.length} etiqueta(s) para recuperar, en ${porTienda.size} tienda(s):`);
   for (const [, lista] of porTienda) {
     const cod = lista.filter((x) => x.codAmount !== null).length;
-    console.log(`  · ${lista[0].tienda}: ${lista.length}${cod ? ` (${cod} contrareembolso)` : ''}`);
+    const aCobrar = lista.filter((x) => x.status === 'NEEDS_REVIEW').length;
+    console.log(
+      `  · ${lista[0].tienda}: ${lista.length}` +
+      ` (${aCobrar} se cobran, ${lista.length - aCobrar} ya estaban cobradas)` +
+      `${cod ? ` · ${cod} contrareembolso` : ''}`,
+    );
   }
 
   // Preflight: sin storage no tiene sentido tocar DAC.
@@ -159,7 +169,7 @@ async function main() {
                 message: 'label-manual-pdf-upload',
                 meta: {
                   labelId: p.id, shopifyOrderName: p.orderName,
-                  previousStatus: 'NEEDS_REVIEW', previousPdfPath: null,
+                  previousStatus: actual.status, previousPdfPath: null,
                   newPdfPath: subida.path, billed: eraNeedsReview,
                   triggeredBy: 'recuperar-pdfs-2026-09-06',
                 },
