@@ -533,6 +533,11 @@ enum JobType {
   RETRY_FAILED
   TEST_DAC
   PROCESS_DASHBOARD_ORDERS
+  /// Re-baja de DAC los PDFs de guías ya emitidas cuya etiqueta no está en el
+  /// bucket. Existe como job —y no sólo como script— porque el login de DAC
+  /// exige un reCAPTCHA y esa clave sólo vive en Render: desde afuera no se
+  /// puede correr. Ver apps/worker/src/recuperar-pdfs.ts.
+  RECOVER_PDFS
 }
 
 enum JobStatus {

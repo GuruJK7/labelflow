@@ -10,6 +10,7 @@ import { getConfig } from './config';
 import { processOrdersJob } from './jobs/process-orders.job';
 import { processOrdersBulkJob } from './jobs/process-orders-bulk.job';
 import { processDashboardOrdersJob } from './jobs/process-dashboard-orders.job';
+import { recuperarPdfs } from './recuperar-pdfs';
 import { testDacJob } from './jobs/test-dac.job';
 import { pollAgentBulkJobs } from './jobs/agent-bulk-upload.job';
 import { startScheduler } from './jobs/scheduler';
@@ -122,6 +123,58 @@ async function claimPendingJob(): Promise<
   return rows.length > 0 ? rows[0] : null;
 }
 
+/**
+ * Procesador del job RECOVER_PDFS.
+ *
+ * Lee sus opciones del RunLog `recoverPdfsOpts` que dejó quien lo encoló
+ * (`{ dias, tope, tienda }`), corre la recuperación y escribe el progreso en
+ * el RunLog del propio job para que se vea desde el panel.
+ */
+async function ejecutarRecuperacionPdfs(tenantId: string, jobId: string): Promise<void> {
+  const fila = await db.runLog.findFirst({
+    where: { jobId, message: { contains: 'recoverPdfsOpts' } },
+    select: { meta: true },
+  });
+  const opts = (fila?.meta ?? {}) as { dias?: number; tope?: number; tienda?: string | null };
+  const dias = typeof opts.dias === 'number' && opts.dias > 0 ? opts.dias : 20;
+
+  const escribir = async (linea: string) => {
+    logger.info({ jobId, linea }, '[recover-pdfs]');
+    await db.runLog
+      .create({ data: { jobId, tenantId, level: 'INFO', message: `[recover-pdfs] ${linea}`.slice(0, 900) } })
+      .catch(() => {});
+  };
+
+  try {
+    const r = await recuperarPdfs({
+      aplicar: true,
+      dias,
+      tope: typeof opts.tope === 'number' && opts.tope > 0 ? opts.tope : undefined,
+      soloTienda: opts.tienda ?? null,
+      log: escribir,
+    });
+    await db.job.update({
+      where: { id: jobId },
+      data: {
+        status: r.fallidas > 0 && r.recuperadas === 0 ? 'FAILED' : 'COMPLETED',
+        totalOrders: r.candidatas,
+        successCount: r.recuperadas,
+        failedCount: r.fallidas,
+        skippedCount: r.yaEstaban,
+        finishedAt: new Date(),
+        errorMessage: r.storageOk ? null : 'El storage no acepta escrituras: no se recuperó nada.',
+      },
+    });
+  } catch (err) {
+    const msg = (err as Error).message;
+    await escribir(`falló: ${msg}`);
+    await db.job.update({
+      where: { id: jobId },
+      data: { status: 'FAILED', errorMessage: msg.slice(0, 500), finishedAt: new Date() },
+    }).catch(() => {});
+  }
+}
+
 async function pollForJobs(): Promise<void> {
   // Graceful-shutdown guard: when SIGTERM has been received, stop claiming
   // new jobs. The poll loop's `while (true)` keeps spinning until
@@ -154,6 +207,13 @@ async function pollForJobs(): Promise<void> {
     } else if (claimed.type === 'PROCESS_DASHBOARD_ORDERS') {
       logger.info({ jobId: claimed.id }, 'Routing to DASHBOARD processor');
       await processDashboardOrdersJob(claimed.tenantId, claimed.id);
+    } else if (claimed.type === 'RECOVER_PDFS') {
+      // Recuperación de PDFs de guías ya emitidas. Corre acá —y no como script
+      // externo— porque el login de DAC exige un reCAPTCHA y `CAPTCHA_API_KEY`
+      // sólo existe en este servicio. Los parámetros vienen en un RunLog que
+      // deja quien encola (mismo patrón que `maxOrdersOverride`).
+      logger.info({ jobId: claimed.id }, 'Routing to RECOVER_PDFS processor');
+      await ejecutarRecuperacionPdfs(claimed.tenantId, claimed.id);
     } else {
       await processOrdersJob(claimed.tenantId, claimed.id);
     }
