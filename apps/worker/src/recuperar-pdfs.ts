@@ -42,13 +42,23 @@ import { db } from './db';
 import { decryptOrRaw, decryptIfPresent } from './encryption';
 import { dacBrowser } from './dac/browser';
 import { downloadLabel } from './dac/label';
-import { uploadLabelPdf } from './storage/upload';
+import { uploadLabelPdf, existeEnStorage } from './storage/upload';
 import { verificarStorage } from './storage/health';
 import { deductCreditsAndStamp } from './credits';
 import logger from './logger';
 
 const APLICAR = process.argv.includes('--aplicar');
 const SOLO_TIENDA = process.argv.find((a) => a.startsWith('--tienda='))?.split('=')[1] ?? null;
+/**
+ * Ventana en días. Default 20: `PdfRetention` borra los PDFs a los 15 días, así
+ * que re-bajar algo más viejo es trabajo tirado — el portal no lo muestra y el
+ * propio worker lo va a borrar.
+ */
+const DIAS = (() => {
+  const v = process.argv.find((a) => a.startsWith('--dias='))?.split('=')[1];
+  const n = Number.parseInt(v ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 20;
+})();
 
 interface Pendiente {
   id: string;
@@ -58,6 +68,7 @@ interface Pendiente {
   guia: string;
   codAmount: number | null;
   status: string;
+  pdfPath: string | null;
   dacUsername: string | null;
   dacPassword: string | null;
 }
@@ -67,19 +78,24 @@ async function main() {
 
   const pendientes = await db.$queryRawUnsafe<Pendiente[]>(`
     SELECT l.id, l."tenantId", t.name AS tienda, l."shopifyOrderName" AS "orderName",
-           l."dacGuia" AS guia, l."codAmount", l.status,
+           l."dacGuia" AS guia, l."codAmount", l.status, l."pdfPath",
            t."dacUsername", t."dacPassword"
     FROM "Label" l JOIN "Tenant" t ON t.id = l."tenantId"
-    -- Los dos estados que acepta el camino manual del dashboard
-    -- (labels/[id]/upload-pdf): en revision, o creada pero sin PDF. El cobro
-    -- distingue despues: solo NEEDS_REVIEW se cobra, porque es el unico que el
-    -- worker dejo explicitamente sin cobrar.
-    WHERE l.status IN ('NEEDS_REVIEW', 'CREATED')
-      AND l."dacGuia" IS NOT NULL
+    -- Candidatas: cualquier etiqueta con guia REAL emitida en DAC, dentro de la
+    -- ventana de retencion. Incluye tres casos:
+    --   · NEEDS_REVIEW sin PDF  -> el incidente de storage (se cobra al recuperar)
+    --   · CREATED sin PDF       -> viejas, ya cobradas
+    --   · COMPLETED con pdfPath -> la ruta apunta al bucket ANTERIOR a la mudanza,
+    --     asi que el archivo no esta donde el portal lo busca. Ya cobradas.
+    -- Cual de esas realmente falta se decide despues, preguntandole al bucket:
+    -- las que ya estan se saltean.
+    WHERE l."dacGuia" IS NOT NULL
       AND l."dacGuia" NOT LIKE 'PENDING-%'
-      AND l."pdfPath" IS NULL
+      AND l.status IN ('NEEDS_REVIEW', 'CREATED', 'COMPLETED')
+      AND l."createdAt" > NOW() - INTERVAL '${DIAS} days'
       ${SOLO_TIENDA ? `AND t.name = '${SOLO_TIENDA.replace(/'/g, "''")}'` : ''}
-    ORDER BY t.name, l."createdAt"
+    -- Mas nuevas primero: son las que el comerciante necesita imprimir hoy.
+    ORDER BY t.name, l."createdAt" DESC
   `);
 
   if (pendientes.length === 0) {
@@ -94,7 +110,8 @@ async function main() {
     porTienda.set(p.tenantId, l);
   }
 
-  console.log(`${pendientes.length} etiqueta(s) para recuperar, en ${porTienda.size} tienda(s):`);
+  console.log(`${pendientes.length} etiqueta(s) candidatas (últimos ${DIAS} días), en ${porTienda.size} tienda(s).`);
+  console.log('Las que ya estén en el bucket se saltean sin bajar nada.\n');
   for (const [, lista] of porTienda) {
     const cod = lista.filter((x) => x.codAmount !== null).length;
     const aCobrar = lista.filter((x) => x.status === 'NEEDS_REVIEW').length;
@@ -124,6 +141,7 @@ async function main() {
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'recuperar-pdfs-'));
   let ok = 0;
+  let yaEstaban = 0;
   const fallidas: Array<{ orderName: string; guia: string; motivo: string }> = [];
 
   for (const [tenantId, lista] of porTienda) {
@@ -150,10 +168,15 @@ async function main() {
     try {
       for (const p of lista) {
         try {
-          // Re-chequeo por si otra corrida la resolvió mientras tanto.
           const actual = await db.label.findUnique({ where: { id: p.id }, select: { pdfPath: true, status: true } });
-          if (!actual || actual.pdfPath) {
-            console.log(`  ${p.orderName}: ya tenía PDF, se saltea`);
+          if (!actual) continue;
+
+          // 🔴 Tener `pdfPath` ya NO significa que el archivo esté: después de
+          // la mudanza de proyecto, todas las rutas viejas apuntan al bucket
+          // anterior. Se le pregunta al bucket actual, que además hace esto
+          // reanudable: una corrida cortada a la mitad no repite lo hecho.
+          if (actual.pdfPath && (await existeEnStorage(actual.pdfPath))) {
+            yaEstaban++;
             continue;
           }
 
@@ -208,7 +231,7 @@ async function main() {
   await dacBrowser.close().catch(() => {});
   fs.rmSync(tmp, { recursive: true, force: true });
 
-  console.log(`\n=== RESULTADO: ${ok} recuperada(s), ${fallidas.length} sin recuperar ===`);
+  console.log(`\n=== RESULTADO: ${ok} recuperada(s), ${yaEstaban} ya estaban, ${fallidas.length} sin recuperar ===`);
   for (const f of fallidas) console.log(`  ${f.orderName} (guía ${f.guia}): ${f.motivo}`);
   if (fallidas.length > 0) {
     console.log('\nLas que fallaron siguen en NEEDS_REVIEW y no se cobraron: se puede volver a correr.');

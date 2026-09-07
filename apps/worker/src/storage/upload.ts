@@ -217,3 +217,24 @@ export async function removeLabelPdfs(
   );
   return { deleted, error: null };
 }
+
+/**
+ * ¿Este objeto ya está en el bucket? Sin descargarlo.  [06-09-2026]
+ *
+ * Se usa para que la recuperación sea idempotente y reanudable después de la
+ * mudanza de proyecto: las rutas viejas apuntan al bucket anterior, así que
+ * "tiene pdfPath" ya no significa "el archivo está". `createSignedUrl` falla
+ * si el objeto no existe y NO transfiere el contenido, así que preguntar es
+ * barato — a diferencia de `download()`, que gastaría egress por cada chequeo.
+ */
+export async function existeEnStorage(path: string): Promise<boolean> {
+  const config = getConfig();
+  try {
+    const { error } = await getSupabase().storage
+      .from(config.SUPABASE_STORAGE_BUCKET)
+      .createSignedUrl(path, 60);
+    return !error;
+  } catch {
+    return false;
+  }
+}
