@@ -23,6 +23,7 @@ import { processRecoverMessage } from './recover/process-message';
 import { startReconciliationLoop, runReconciliation } from './jobs/reconcile.job';
 import { runPdfRetention, startPdfRetentionLoop } from './jobs/pdf-retention.job';
 import { runPiiRetention, startPiiRetentionLoop } from './jobs/pii-retention.job';
+import { runRunLogRetention, startRunLogRetentionLoop } from './jobs/runlog-retention.job';
 import { flushWorkerAnalytics } from './analytics';
 
 // Emit memory usage every 60 s so we can catch leaks / OOM risk in Render
@@ -501,6 +502,14 @@ async function main(): Promise<void> {
     logger.error({ error: (err as Error).message }, '[PiiRetention] Boot-time run failed'),
   );
   startPiiRetentionLoop();
+
+  // Retención de RunLog. Es la que evita que la base vuelva a los 769 MB: la
+  // traza de pasos de DAC se sigue escribiendo (el panel "En vivo" la necesita)
+  // pero caduca a los 7 días. Los mensajes de negocio no se tocan.
+  runRunLogRetention().catch((err) =>
+    logger.error({ error: (err as Error).message }, '[RunLogRetention] La corrida de arranque falló'),
+  );
+  startRunLogRetentionLoop();
 
   // Memory telemetry so we can spot leaks / OOM risk in Render logs.
   startMemoryLogging();

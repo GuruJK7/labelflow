@@ -9,6 +9,22 @@
  * never goes down. After 15 days the shipment is already dispatched, so the
  * (now deleted) printable PDF is no longer needed.
  *
+ * LA REGLA (2026-09-08). Un PDF se borra cuando pasa CUALQUIERA de las dos:
+ *   a) el cliente ya lo imprimió hace más de PDF_PRINTED_RETENTION_DAYS (3), o
+ *   b) se creó hace más de PDF_RETENTION_DAYS (15) — el tope de siempre.
+ *
+ * (a) sale de Adrian: «los usuarios al imprimir las etiquetas, y pasan 2 días
+ * de que imprimieron eso, no las necesitan más». Es cierto y se puede medir,
+ * porque `printedAt` lo sella el server cada vez que sirve el PDF por el portal
+ * (`api/public/label-pdf` y `/bulk`). Son 3 días y no 2 para cubrir imprimir un
+ * viernes y reimprimir el lunes.
+ *
+ * 🔴 POR QUÉ (b) NO SE PUEDE SACAR. `printedAt` lo sella SÓLO el portal del
+ * cliente, nunca el panel de admin. Medido el 08-09: Curvadivina (288 PDFs
+ * vivos), Enerva Ventas (132) y Enerva (39) tienen printedAt en CERO — esas
+ * etiquetas las imprime Adrian desde el panel. Con una regla sólo por
+ * `printedAt` sus PDFs vivirían para siempre. El OR es lo que lo evita.
+ *
  * Idempotent + crash-safe:
  *   - Only labels with pdfPath != null AND createdAt < cutoff are touched.
  *   - We delete the Storage object FIRST, then null pdfPath. If the DB update
@@ -24,25 +40,37 @@ import { db } from '../db';
 import logger from '../logger';
 import { removeLabelPdfs } from '../storage/upload';
 
-/** Days a label PDF is kept before deletion. Override with PDF_RETENTION_DAYS. */
-const RETENTION_DAYS = (() => {
-  const n = Number(process.env.PDF_RETENTION_DAYS);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 15;
-})();
+const dias = (nombre: string, porDefecto: number): number => {
+  const n = Number(process.env[nombre]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : porDefecto;
+};
+
+/** Tope duro: a los tantos días de creada, el PDF se va SIEMPRE. */
+export const RETENTION_DAYS = dias('PDF_RETENTION_DAYS', 15);
+/** Atajo: si el cliente ya la imprimió, se va mucho antes. */
+export const PRINTED_RETENTION_DAYS = dias('PDF_PRINTED_RETENTION_DAYS', 3);
 
 const RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000; // run once a day
 const BATCH_SIZE = 200; // rows (and Storage keys) per batch — well under the 1000 cap
 const MAX_BATCHES_PER_RUN = 60; // backstop: ≤12k PDFs/run; remainder next run
 
 export async function runPdfRetention(): Promise<void> {
-  const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const dia = 24 * 60 * 60 * 1000;
+  const cutoff = new Date(Date.now() - RETENTION_DAYS * dia);
+  const cutoffImpresa = new Date(Date.now() - PRINTED_RETENTION_DAYS * dia);
   let totalDeleted = 0;
   let batches = 0;
 
   try {
     for (; batches < MAX_BATCHES_PER_RUN; ) {
       const rows = await db.label.findMany({
-        where: { pdfPath: { not: null }, createdAt: { lt: cutoff } },
+        where: {
+          pdfPath: { not: null },
+          // `printedAt: { lt }` NO matchea las filas con printedAt NULL —las que
+          // nunca se sirvieron por el portal—, que es justo lo que queremos: a
+          // ésas las sigue cubriendo el tope duro por createdAt y nada más.
+          OR: [{ printedAt: { lt: cutoffImpresa } }, { createdAt: { lt: cutoff } }],
+        },
         select: { id: true, pdfPath: true },
         orderBy: { createdAt: 'asc' },
         take: BATCH_SIZE,
@@ -85,7 +113,7 @@ export async function runPdfRetention(): Promise<void> {
     }
     if (totalDeleted > 0) {
       logger.info(
-        { totalDeleted, retentionDays: RETENTION_DAYS },
+        { totalDeleted, retentionDays: RETENTION_DAYS, printedRetentionDays: PRINTED_RETENTION_DAYS },
         '[PdfRetention] Deleted expired label PDFs (rows kept for billing)',
       );
     }
@@ -107,7 +135,7 @@ export function startPdfRetentionLoop(): void {
     );
   }, RETENTION_INTERVAL_MS);
   logger.info(
-    { intervalMs: RETENTION_INTERVAL_MS, retentionDays: RETENTION_DAYS },
+    { intervalMs: RETENTION_INTERVAL_MS, retentionDays: RETENTION_DAYS, printedRetentionDays: PRINTED_RETENTION_DAYS },
     '[PdfRetention] Loop started',
   );
 }
