@@ -15,6 +15,7 @@ import {
   Truck,
   Gift,
   Shield,
+  Warehouse,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -74,6 +75,7 @@ export function navSectionsFor(isAdmin: boolean): NavSection[] {
         { href: '/control', label: 'Control', icon: LayoutGrid },
         { href: '/orders', label: 'Pedidos', icon: Package },
         { href: '/labels', label: 'Etiquetas', icon: Tags },
+        { href: '/deposito', label: 'Depósito', icon: Warehouse },
       ],
     },
     {
