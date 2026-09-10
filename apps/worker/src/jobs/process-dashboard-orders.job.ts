@@ -38,6 +38,7 @@ import { sleep } from '../utils';
 import { traerConfirmadasDelDashboard, markDashboardOrdersLoaded, pushDashboardLabels, codDeLaFuenteDashboard, type DashboardLabelResult } from '../dashboard/orders';
 import { toShopifyOrder, stableNumericId } from '../dashboard/adapter';
 import { procesarPedidosCorreo } from '../correo/process';
+import type { ExtrasPedido } from '../correo/adapter';
 import type { CorreoAmbiente } from '../correo/client';
 
 const DELAY_BETWEEN_ORDERS_MS = 500;
@@ -234,9 +235,20 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
 
       const ambiente: CorreoAmbiente = tenant.correoAmbiente === 'prod' ? 'prod' : 'test';
       const adaptadas = orders.map((d) => ({ crudo: d, ...toShopifyOrder(d) }));
-      const extrasPorPedido: Record<string, { barrio?: string | null; oficinaPreferida?: string | null }> = {};
+      const extrasPorPedido: Record<string, ExtrasPedido> = {};
       for (const a of adaptadas) {
         extrasPorPedido[a.order.name] = {
+          // El cobro es del PEDIDO, no de la tienda: la marca marca "cobrar al
+          // entregar" uno por uno. Es la MISMA decisión que toma el camino de
+          // DAC más abajo, con la misma función, para que los dos
+          // transportistas no puedan divergir.
+          //
+          // Sin esto Correo caía al total del pedido salteando a los ya pagos
+          // por `financial_status` — un campo que esta fuente no manda, así que
+          // ninguno figuraba como pago y se cobraba todo, y de más.
+          codPorPedido: {
+            monto: codDeLaFuenteDashboard({ codEnabled: tenant.codEnabled, order: a.crudo }),
+          },
           barrio: a.crudo.address?.neighborhood ?? null,
           // `dac_text` es el texto libre que escribió el vendedor. Si nombra una
           // agencia, la elección explícita del humano gana sobre la derivación

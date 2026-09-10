@@ -60,6 +60,25 @@ export interface ExtrasPedido {
   pesoKg?: number | null;
   /** Nº de referencia/remito propio para el contra reembolso. Default: el nombre del pedido. */
   nroReferencia?: string | null;
+  /**
+   * Cobro decidido POR PEDIDO por la fuente, para las fuentes que lo saben.
+   *
+   * 🔴 CUANDO ESTA CLAVE ESTÁ PRESENTE ES LA ÚNICA AUTORIDAD SOBRE EL MONTO, y
+   * el total del pedido deja de mirarse. `{ monto: 1990 }` es "cobrá 1990";
+   * `{ monto: null }` es "este pedido NO lleva cobro" — y eso NO es lo mismo
+   * que la clave ausente, que significa "esta fuente no sabe por pedido, caé al
+   * total" (el camino de Shopify, que no cambia).
+   *
+   * Existe porque la fuente panel dejó de ser homogénea. `payment-state.ts`
+   * documentaba que «la fuente panel no manda el campo porque sus pedidos son
+   * contra entrega por definición», y eso era cierto cuando DEPO sólo mandaba
+   * pedidos a cobrar. Hoy manda las dos clases: la marca marca "cobrar al
+   * entregar" pedido por pedido. Sin esto, `yaEstaCobrado` devuelve false para
+   * TODOS los pedidos del panel (no traen `financial_status`) y `montoAcobrar`
+   * devuelve el TOTAL, así que una tienda con el cobro prendido despacharía
+   * contra reembolso hasta los pedidos ya pagos, y por el importe equivocado.
+   */
+  codPorPedido?: { monto: number | null };
 }
 
 export type ResultadoAdaptacion =
@@ -214,8 +233,24 @@ export function pedidoDesdeOrden(
   //
   // No es un motivo de revisión: el pedido pagado se despacha perfecto, sólo
   // que sin cobro en destino, que es exactamente lo correcto.
+  //
+  // DOS CAMINOS, según si la FUENTE sabe decidir por pedido:
+  //
+  //  · La fuente sabe (panel/DEPO, `extras.codPorPedido`): manda el pedido. La
+  //    marca marcó "cobrar al entregar" y escribió el importe, así que ni el
+  //    total ni `financial_status` tienen nada que aportar — de hecho el panel
+  //    no manda `financial_status`, así que `yaEstaCobrado` diría que NINGUNO
+  //    está pago y se cobraría de más.
+  //  · La fuente no sabe (Shopify): se conserva exactamente lo de siempre —
+  //    interruptor de la tienda, salteando los que ya pagaron, por el total.
+  //
+  // `cfg.contraEntrega` se sigue exigiendo en los dos: es el interruptor de la
+  // tienda y es fail-closed. Con el cobro apagado no sale cobro por ningún
+  // camino, aunque la fuente mande un monto.
   let codAmount: number | null = null;
-  if (cfg.contraEntrega && !yaEstaCobrado(order)) {
+  if (extras.codPorPedido) {
+    if (cfg.contraEntrega) codAmount = extras.codPorPedido.monto;
+  } else if (cfg.contraEntrega && !yaEstaCobrado(order)) {
     const monto = montoAcobrar(order);
     if ('error' in monto) motivos.push(monto.error);
     else codAmount = monto.monto;
