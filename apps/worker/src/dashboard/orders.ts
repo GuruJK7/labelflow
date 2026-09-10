@@ -34,6 +34,19 @@ export interface DashboardOrder {
   items: Array<{ name: string; qty: number; price: number | null }>;
   address: DashboardOrderAddress | null;
   dac_text?: string | null;
+  /**
+   * Contrareembolso: pesos a cobrar contra entrega. [09-sep-2026]
+   *
+   * OPCIONAL Y AUSENTE POR DEFECTO, a propósito: un dashboard que no lo manda
+   * —cualquiera hasta hoy— se comporta EXACTAMENTE como antes. La clave sólo
+   * viaja cuando ese pedido lleva cobro.
+   *
+   * El origen (DEPO) ya recorta contra las MISMAS reglas de `planDeCod`
+   * (entero, > 0, hasta COD_MONTO_MAX) para no mandar algo que acá se descarte
+   * en silencio, pero acá no se confía en eso: `planDeCod` vuelve a validar y
+   * ante cualquier duda el envío sale como flete común, que es el default seguro.
+   */
+  cod_amount?: number | null;
 }
 
 const TIMEOUT_MS = 20000;
@@ -141,4 +154,31 @@ export async function pushDashboardLabels(
     labeled += (res.data?.labeled as number) ?? (res.data?.updated as number) ?? 0;
   }
   return labeled;
+}
+
+/**
+ * ¿Cuánto se cobra contra entrega en un pedido de la fuente dashboard?
+ *
+ * Vive acá, es PURA y tiene tests por la misma razón que
+ * `dac/contrarreembolso.ts`: es una decisión sobre PLATA que se toma en medio de
+ * un job de 500 líneas con Playwright y base de datos, donde no se puede probar
+ * nada. Acá se puede.
+ *
+ * 🔴 EL INTERRUPTOR MANDA, Y FALLA CERRADO. `Tenant.codEnabled` nace en `false`
+ * (schema.prisma) y mientras esté apagado esto devuelve `null` SIEMPRE, aunque
+ * el dashboard mande un monto: el envío sale como flete común, exactamente como
+ * salía antes de que este campo existiera. Prender el contrareembolso para una
+ * tienda es una decisión explícita, no algo que se active solo porque del otro
+ * lado alguien empezó a mandar la clave.
+ *
+ * No valida el número: de eso se encarga `planDeCod` justo antes de tocar el
+ * formulario de DAC, que es donde tiene que estar la última palabra.
+ */
+export function codDeLaFuenteDashboard(e: {
+  codEnabled: boolean | null | undefined;
+  order: Pick<DashboardOrder, 'cod_amount'>;
+}): number | null {
+  if (!e.codEnabled) return null;
+  const m = e.order.cod_amount;
+  return m === null || m === undefined ? null : m;
 }

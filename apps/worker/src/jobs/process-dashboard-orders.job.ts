@@ -35,7 +35,7 @@ import { createStepLogger } from '../logger';
 import logger from '../logger';
 import { shadowRecordShipment } from '../billing/shadow';
 import { sleep } from '../utils';
-import { traerConfirmadasDelDashboard, markDashboardOrdersLoaded, pushDashboardLabels, type DashboardLabelResult } from '../dashboard/orders';
+import { traerConfirmadasDelDashboard, markDashboardOrdersLoaded, pushDashboardLabels, codDeLaFuenteDashboard, type DashboardLabelResult } from '../dashboard/orders';
 import { toShopifyOrder, stableNumericId } from '../dashboard/adapter';
 import { procesarPedidosCorreo } from '../correo/process';
 import type { CorreoAmbiente } from '../correo/client';
@@ -368,8 +368,24 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
       const customerName = `${addr.first_name ?? ''} ${addr.last_name ?? ''}`.trim() || 'Cliente';
       slog.info('order', `(${i + 1}/${orders.length}) ${order.name} — ${customerName} — ${addr.province || 'sin depto'}`);
 
+      // ── CONTRAREEMBOLSO ─────────────────────────────────────── [09-sep-2026]
+      //
+      // El monto viaja desde el dashboard (`cod_amount`) y sólo se usa si la
+      // tienda tiene el contrareembolso prendido. `codEnabled` nace en false
+      // (schema.prisma), así que mientras nadie lo prenda esto es null y
+      // `planDeCod` devuelve `esCod:false`: el envío sale EXACTAMENTE como
+      // salía antes de este cambio. Ese es el motivo de que sea seguro.
+      //
+      // Se lee de `orders[i]` y no del `order` convertido porque el adaptador
+      // habla el dialecto de Shopify y no tiene dónde poner esto — meterlo ahí
+      // obligaría a inventarle un campo a un shape ajeno.
+      const codAmount = codDeLaFuenteDashboard({ codEnabled: tenant.codEnabled, order: orders[i] });
+      if (codAmount !== null) {
+        slog.info('order', `Contrareembolso: $${codAmount} a cobrar al entregar`);
+      }
+
       try {
-        const result = await createShipment(page, order, 'DESTINATARIO', dacUsername, dacPassword, tenantId, jobId, usedGuias, override);
+        const result = await createShipment(page, order, 'DESTINATARIO', dacUsername, dacPassword, tenantId, jobId, usedGuias, override, undefined, { codAmount });
         if (result.guia && !result.guia.startsWith('PENDING-')) usedGuias.add(result.guia);
         slog.success('order-shipment', `DAC guía ${result.guia} para ${order.name}`);
 
@@ -392,11 +408,14 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
             paymentFailureReason: result.paymentFailureReason ?? null,
             paymentAttemptedAt: null,
             dacGuia: result.guia,
+            codAmount,
             status: 'CREATED',
           },
           // `carrier: 'DAC'` se re-estampa siempre: una etiqueta que antes pasó
           // por el camino de Correo quedaría rotulada como Correo para siempre.
-          update: { jobId, dacGuia: result.guia, status: 'CREATED', errorMessage: null, autoRetryCount: 0, carrier: 'DAC' },
+          // `codAmount` se re-estampa por lo mismo que `carrier`: un reintento
+          // tiene que dejar la etiqueta describiendo lo que se emitió AHORA.
+          update: { jobId, dacGuia: result.guia, codAmount, status: 'CREATED', errorMessage: null, autoRetryCount: 0, carrier: 'DAC' },
         });
         // Ledger en sombra (WALLET_SHADOW=1). Nunca lanza; no reemplaza el cobro real.
         await shadowRecordShipment({ tenantId, dacGuia: result.guia, labelId: labelRecord.id, jobId, at: labelRecord.createdAt });
