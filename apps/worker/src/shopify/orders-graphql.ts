@@ -137,6 +137,18 @@ export const ORDER_BY_ID_QUERY = `query LabelFlowOrderById($id: ID!, $lineItemsF
   }
 }`;
 
+export const TAGS_REMOVE_MUTATION = `mutation LabelFlowTagsRemove($id: ID!, $tags: [String!]!) {
+  tagsRemove(id: $id, tags: $tags) {
+    node {
+      id
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}`;
+
 export const TAGS_ADD_MUTATION = `mutation LabelFlowTagsAdd($id: ID!, $tags: [String!]!) {
   tagsAdd(id: $id, tags: $tags) {
     node {
@@ -461,6 +473,24 @@ export async function addOrderTag(client: ShopifyGraphqlClient, orderId: number,
     tags: [tag],
   });
   assertNoUserErrors('tagsAdd', data.tagsAdd?.userErrors);
+}
+
+interface TagsRemoveData {
+  tagsRemove: { node: { id: string } | null; userErrors: UserError[] };
+}
+
+/**
+ * Saca un tag. `tagsRemove` es idempotente del lado de Shopify: sacar un tag que
+ * no esta no es un error. Por eso devuelve siempre true en esta capa — el que
+ * necesita saber si hubo cambio real es el camino REST, que hace GET antes.
+ */
+export async function removeOrderTag(client: ShopifyGraphqlClient, orderId: number, tag: string): Promise<boolean> {
+  const data = await client.request<TagsRemoveData>(TAGS_REMOVE_MUTATION, {
+    id: orderGid(orderId),
+    tags: [tag],
+  });
+  assertNoUserErrors('tagsRemove', data.tagsRemove?.userErrors);
+  return true;
 }
 
 interface OrderUpdateData {

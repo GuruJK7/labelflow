@@ -228,6 +228,27 @@ export async function addOrderTag(client: AxiosInstance, orderId: number, tag: s
   });
 }
 
+/**
+ * Saca un tag del pedido si esta puesto. Devuelve true si hubo cambio.
+ *
+ * Hace GET primero y solo PUTea si el tag realmente estaba: asi una corrida sobre
+ * pedidos sanos no escribe nada en Shopify. Igual que addOrderTag, nunca toca los
+ * otros tags del pedido.
+ */
+export async function removeOrderTag(client: AxiosInstance, orderId: number, tag: string): Promise<boolean> {
+  const { data } = await client.get(`/orders/${orderId}.json`);
+  const currentTags: string = data.order?.tags ?? '';
+  const tagList = currentTags.split(',').map((t: string) => t.trim()).filter(Boolean);
+
+  const quedan = tagList.filter((t: string) => t.toLowerCase() !== tag.toLowerCase());
+  if (quedan.length === tagList.length) return false; // no estaba: no escribimos
+
+  await client.put(`/orders/${orderId}.json`, {
+    order: { id: orderId, tags: quedan.join(', ') },
+  });
+  return true;
+}
+
 export async function addOrderNote(client: AxiosInstance, orderId: number, noteText: string): Promise<void> {
   const { data } = await client.get(`/orders/${orderId}.json`);
   const currentNote: string = data.order?.note ?? '';

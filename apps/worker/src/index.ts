@@ -24,6 +24,7 @@ import { startReconciliationLoop, runReconciliation } from './jobs/reconcile.job
 import { runPdfRetention, startPdfRetentionLoop } from './jobs/pdf-retention.job';
 import { runPiiRetention, startPiiRetentionLoop } from './jobs/pii-retention.job';
 import { runRunLogRetention, startRunLogRetentionLoop } from './jobs/runlog-retention.job';
+import { runSinEtiquetaTagging, startSinEtiquetaTaggingLoop } from './jobs/sin-etiqueta-tag.job';
 import { flushWorkerAnalytics } from './analytics';
 
 // Emit memory usage every 60 s so we can catch leaks / OOM risk in Render
@@ -510,6 +511,15 @@ async function main(): Promise<void> {
     logger.error({ error: (err as Error).message }, '[RunLogRetention] La corrida de arranque falló'),
   );
   startRunLogRetentionLoop();
+
+  // Marca en Shopify con "SIN ETIQUETA" los pedidos cuya guia se emitio pero cuya
+  // etiqueta no se puede imprimir. Sin esto el comerciante ve "preparado" y se
+  // entera del problema recien por el reclamo del comprador. Solo lee Label y
+  // escribe un tag: no toca DAC, ni el fulfillment, ni el estado de las etiquetas.
+  runSinEtiquetaTagging().catch((err) =>
+    logger.error({ error: (err as Error).message }, '[SinEtiqueta] La corrida de arranque fallo'),
+  );
+  startSinEtiquetaTaggingLoop();
 
   // Memory telemetry so we can spot leaks / OOM risk in Render logs.
   startMemoryLogging();

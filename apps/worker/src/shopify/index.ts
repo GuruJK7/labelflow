@@ -203,6 +203,15 @@ export function addOrderTag(client: ShopifyClient, orderId: number, tag: string)
   );
 }
 
+export function removeOrderTag(client: ShopifyClient, orderId: number, tag: string): Promise<boolean> {
+  return dispatch(
+    client,
+    'removeOrderTag',
+    (rest) => restOrders.removeOrderTag(rest, orderId, tag),
+    (gql, mods) => mods.orders.removeOrderTag(gql, orderId, tag),
+  );
+}
+
 export function addOrderNote(client: ShopifyClient, orderId: number, noteText: string): Promise<void> {
   return dispatch(
     client,
