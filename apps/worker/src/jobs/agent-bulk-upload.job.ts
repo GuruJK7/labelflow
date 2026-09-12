@@ -24,6 +24,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 import { db } from '../db';
+import { etiquetaEsImprimible } from '../fulfill-solo-con-etiqueta';
 import { deductCreditsAndStamp } from '../credits';
 import { decryptIfPresent } from '../encryption';
 import { getConfig } from '../config';
@@ -463,7 +464,11 @@ export async function agentBulkUploadJob(job: {
         }
         const shouldFulfill = fulfillMode !== 'off';
         const forceAll = fulfillMode === 'always';
-        if (!skipShopify && shouldFulfill && result.guia && !result.guia.startsWith('PENDING-')) {
+        // [fix etiqueta 11-09] Mismo criterio que process-orders.job.ts: sin PDF
+        // imprimible el pedido NO se marca preparado, así queda visible en
+        // Shopify en vez de aparentar que salió. Ver fulfill-solo-con-etiqueta.ts.
+        const etiquetaImprimible = etiquetaEsImprimible(pdfUploaded, job.tenantId);
+        if (!skipShopify && shouldFulfill && etiquetaImprimible && result.guia && !result.guia.startsWith('PENDING-')) {
           try {
             await fulfillOrderWithTracking(
               shopifyClient,
@@ -487,6 +492,12 @@ export async function agentBulkUploadJob(job: {
           }
         } else if (skipShopify) {
           slog.info('order-fulfill', `SKIP_SHOPIFY: not fulfilling ${order.name} (guia=${result.guia})`);
+        } else if (!etiquetaImprimible && result.guia && !result.guia.startsWith('PENDING-')) {
+          slog.warn(
+            'order-fulfill',
+            `${order.name} NO se marca preparado: la guía salió pero la etiqueta no se pudo imprimir (sin PDF). Queda SIN PREPARAR en Shopify a propósito.`,
+            { guia: result.guia, pdfUploaded },
+          );
         }
 
         // Shopify tag

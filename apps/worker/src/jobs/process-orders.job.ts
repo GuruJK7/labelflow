@@ -30,6 +30,7 @@ import { cerrarRenderer } from '../self-delivery/render';
 import { procesarPedidosCorreo } from '../correo/process';
 import type { CorreoAmbiente } from '../correo/client';
 import { downloadLabel } from '../dac/label';
+import { etiquetaEsImprimible } from '../fulfill-solo-con-etiqueta';
 import { determinePaymentType } from '../rules/payment';
 import {
   buildAllowedSet,
@@ -1336,12 +1337,19 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
         } catch { /* fallback to 'on' */ }
         const shouldFulfill = fulfillMode !== 'off';
         const forceAll = fulfillMode === 'always';
+        // [fix etiqueta 11-09] "Preparado" significa que la etiqueta se puede
+        // imprimir, no sólo que DAC devolvió una guía. `pdfUploaded` lo sabe 40
+        // líneas más arriba, y la guarda de facturación de abajo ya lo usa para
+        // marcar NEEDS_REVIEW y NO cobrar. Sin esto, el mismo pedido que el
+        // sistema considera fallido le quedaba al comerciante en verde y el
+        // paquete no salía. Ver fulfill-solo-con-etiqueta.ts.
+        const etiquetaImprimible = etiquetaEsImprimible(pdfUploaded, tenantId);
         // Tracks whether Shopify fulfillment ended in a real failure (not "already
         // fulfilled" which is a benign skip). Used downstream to suppress the
         // misleading "Order processed successfully" log when fulfillment actually
         // failed — DAC has the guia and the customer has nothing in Shopify.
         let fulfillFailedFatally = false;
-        if (!testMode && shouldFulfill && result.guia && !result.guia.startsWith('PENDING-')) {
+        if (!testMode && shouldFulfill && etiquetaImprimible && result.guia && !result.guia.startsWith('PENDING-')) {
           try {
             slog.info('order-fulfill', `Marking order ${order.name} as Prepared in Shopify (mode: ${fulfillMode})...`, { trackingUrl: result.trackingUrl ?? 'fallback' });
             await fulfillOrderWithTracking(shopifyClient, order.id, result.guia, result.trackingUrl, forceAll);
@@ -1370,6 +1378,16 @@ async function processOrdersJobInner(tenantId: string, jobId: string): Promise<v
           slog.info('order-fulfill', `TEST MODE: Skipping Shopify fulfillment for ${order.name}`);
         } else if (!shouldFulfill) {
           slog.info('order-fulfill', `Fulfill DISABLED: Order ${order.name} NOT marked as Prepared (guia: ${result.guia})`);
+        } else if (!etiquetaImprimible && result.guia && !result.guia.startsWith('PENDING-')) {
+          // [fix etiqueta 11-09] A propósito queda SIN PREPARAR: así aparece en
+          // amarillo en la lista de Shopify y el comerciante lo ve. El tag
+          // SIN ETIQUETA lo marca además desde sin-etiqueta-tag.job.ts, y
+          // finalize-recovered-guias.ts lo fulfillea cuando la etiqueta aparece.
+          slog.warn(
+            'order-fulfill',
+            `Order ${order.name} NOT marked as Prepared: la guía DAC salió pero la etiqueta no se pudo imprimir (sin PDF). Queda SIN PREPARAR en Shopify a propósito, para que se vea.`,
+            { guia: result.guia, pdfUploaded },
+          );
         }
 
         // f) Mark order as processed in Shopify — tag + note (skip in testMode, skip if PENDING guia)
