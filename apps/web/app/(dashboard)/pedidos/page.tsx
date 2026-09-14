@@ -17,6 +17,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, Package, Trash2, Pencil, Send, AlertCircle } from 'lucide-react';
 import { DEPARTAMENTOS_CANONICOS } from '@/lib/departamentos';
+import { ImportarExcel } from './ImportarExcel';
 
 interface ItemPedido {
   nombre: string;
@@ -132,7 +133,13 @@ export default function PedidosPage() {
             Cargá tus pedidos acá y nosotros les sacamos la guía.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportarExcel
+            onImportado={(texto) => {
+              setAviso({ tipo: 'ok', texto });
+              void cargar();
+            }}
+          />
           {pendientes > 0 && (
             <button
               onClick={despacharAhora}
@@ -172,7 +179,7 @@ export default function PedidosPage() {
           <Package className="w-8 h-8 text-zinc-600 mx-auto mb-3" />
           <p className="text-sm text-zinc-300 font-medium">Todavía no cargaste ningún pedido</p>
           <p className="text-xs text-zinc-500 mt-1.5 max-w-sm mx-auto leading-relaxed">
-            Cargá el primero a mano. Cuando lo despaches, la guía y la etiqueta para imprimir aparecen en Etiquetas.
+            Cargá el primero a mano, o importá un Excel con todos juntos. Cuando los despaches, la guía y la etiqueta para imprimir aparecen en Etiquetas.
           </p>
           <button
             onClick={() => setModal({ abierto: true, editando: null })}
