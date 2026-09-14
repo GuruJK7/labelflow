@@ -196,8 +196,9 @@ describe('POST /api/auth/signup', () => {
         return [[null, counts[pendiente]], [null, 1]];
       }),
     };
-    mocks.getRedis.mockReturnValue({ pipeline: () => pipeline });
-    return { counts, pipeline };
+    const expire = vi.fn(async () => 1);
+    mocks.getRedis.mockReturnValue({ pipeline: () => pipeline, expire });
+    return { counts, pipeline, expire };
   }
 
   it('rate limit por IP: el sexto intento en la hora → 429', async () => {
@@ -211,6 +212,28 @@ describe('POST /api/auth/signup', () => {
     expect(mocks.userCreate).toHaveBeenCalledTimes(1);
     // La IP bloqueada NO consume el tope global: sólo el alta que pasó.
     expect(counts['signup:rl:global']).toBe(1);
+  });
+
+  it('🔴 reintentar NO reinicia la hora de castigo', async () => {
+    // El mensaje promete "esperá una hora e intentá de nuevo". Si el TTL se
+    // refrescara en cada llamada —incluidas las que se rechazan— la hora
+    // volvería a empezar con cada intento y el usuario no saldría NUNCA del
+    // bloqueo. Peor acá: con el CGNAT de Antel varios clientes comparten una
+    // misma IP pública, así que uno solo reintentando dejaría afuera al resto.
+    const { expire } = redisFalso({ 'signup:rl:ip:203.0.113.9': 9 });
+
+    const res = await post(BODY_OK, { 'x-forwarded-for': '203.0.113.9' });
+    expect(res.status).toBe(429);
+
+    // Sobre un contador que YA existe no se vuelve a estampar el vencimiento.
+    expect(expire).not.toHaveBeenCalled();
+  });
+
+  it('el primer intento sí le pone vencimiento al contador', async () => {
+    // Sin esto el contador quedaría para siempre y la IP nunca se destrabaría.
+    const { expire } = redisFalso();
+    expect((await post(BODY_OK, { 'x-forwarded-for': '198.51.100.7' })).status).toBe(201);
+    expect(expire).toHaveBeenCalledWith('signup:rl:ip:198.51.100.7', 60 * 60);
   });
 
   it('IPv6: todo el /64 comparte el contador (D26)', async () => {
