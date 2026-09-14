@@ -20,8 +20,15 @@
  * componente cliente y lo importa, así que no puede arrastrar nada de servidor.
  */
 
-/** Los 19 departamentos, en la grafía canónica que usa uruguay-geo (sin tildes). */
-const DEPARTAMENTOS_CANONICOS = [
+/**
+ * Los 19 departamentos, en la grafía canónica que usa uruguay-geo (sin tildes).
+ *
+ * Exportada para poder dibujar un desplegable con la MISMA lista contra la que
+ * después valida `normalizarDepartamento`. Antes era privada y cada pantalla que
+ * necesitaba las opciones se la copiaba — así es como una lista se desincroniza
+ * de su validador sin que nadie lo note.
+ */
+export const DEPARTAMENTOS_CANONICOS = [
   'Artigas', 'Canelones', 'Cerro Largo', 'Colonia', 'Durazno', 'Flores',
   'Florida', 'Lavalleja', 'Maldonado', 'Montevideo', 'Paysandu', 'Rio Negro',
   'Rivera', 'Rocha', 'Salto', 'San Jose', 'Soriano', 'Tacuarembo',

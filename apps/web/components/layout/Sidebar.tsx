@@ -15,9 +15,9 @@ import { navSectionsFor } from './nav';
  * admin ve todo (D32). `isAdmin` lo resuelve el layout del dashboard en el
  * server con ADMIN_EMAILS; default `false` para no mostrar de más nunca.
  */
-export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
+export function Sidebar({ isAdmin = false, cargaPropia = false }: { isAdmin?: boolean; cargaPropia?: boolean }) {
   const pathname = usePathname();
-  const navSections = navSectionsFor(isAdmin);
+  const navSections = navSectionsFor(isAdmin, cargaPropia);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   // Which "Coming Soon" sections are expanded to reveal their sub-items.

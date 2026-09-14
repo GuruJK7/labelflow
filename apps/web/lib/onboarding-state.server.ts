@@ -23,6 +23,7 @@ export async function loadOnboardingState(tenantId: string): Promise<OnboardingS
       dashboardSourceEnabled: true,
       dashboardUrl: true,
       dashboardToken: true,
+      internalSourceEnabled: true,
       dacUsername: true,
       dacPassword: true,
       // El alta se puede completar con DAC O con Correo Uruguayo.
@@ -75,6 +76,7 @@ export async function loadOnboardingState(tenantId: string): Promise<OnboardingS
       shopifyStoreUrl: tenant.shopifyStoreUrl,
       dashboardConnected: derived.store.dashboard,
       dashboardUrl: tenant.dashboardUrl,
+      internaConnected: derived.store.interna,
     },
     transportista: {
       conectado: derived.transportista,

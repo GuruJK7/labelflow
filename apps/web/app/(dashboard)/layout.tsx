@@ -53,6 +53,7 @@ export default async function DashboardLayout({
       dashboardSourceEnabled: true,
       dashboardUrl: true,
       dashboardToken: true,
+      internalSourceEnabled: true,
       dacUsername: true,
       dacPassword: true,
       // El alta se puede completar con DAC O con Correo Uruguayo.
@@ -155,7 +156,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-[#050505]">
-      <Sidebar isAdmin={isAdmin} />
+      <Sidebar isAdmin={isAdmin} cargaPropia={tenant.internalSourceEnabled} />
       <main className="lg:ml-60 min-h-screen">
         <TopBar credits={paidCredits} bonusCredits={bonusCredits} />
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">

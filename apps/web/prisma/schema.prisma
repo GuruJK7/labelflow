@@ -246,6 +246,13 @@ model Tenant {
   dashboardToken         String? // Encrypted AES-256
   dashboardSourceEnabled Boolean @default(false)
 
+  // Fuente INTERNA (tercera fuente, aditiva). A diferencia de la de arriba no
+  // depende de nada externo: los pedidos se cargan a mano o se importan de un
+  // Excel desde la propia web y viven en PedidoInterno. No hay URL ni token que
+  // configurar — con el flag prendido alcanza para que el scheduler la levante.
+  internalSourceEnabled Boolean         @default(false)
+  pedidosInternos       PedidoInterno[]
+
   // Email
   emailHost String?
   emailPort Int?    @default(587)
@@ -422,7 +429,7 @@ model Tenant {
   /// monto desde el total de Shopify convertiria TODOS los envios de TODOS los
   /// clientes en contrareembolso de golpe. Con false, Label.codAmount queda null y
   /// el sistema se comporta exactamente como antes.
-  codEnabled           Boolean @default(false)
+  codEnabled Boolean @default(false)
 
   /// CORREO URUGUAYO (plataforma AHIVA) — segundo transportista. [03-sep-2026]
   ///
@@ -538,6 +545,11 @@ enum JobType {
   /// exige un reCAPTCHA y esa clave sólo vive en Render: desde afuera no se
   /// puede correr. Ver apps/worker/src/recuperar-pdfs.ts.
   RECOVER_PDFS
+  /// Despacha los pedidos de la fuente INTERNA (tabla PedidoInterno): los que
+  /// el comerciante cargó a mano o importó de un Excel en la propia web. Corre
+  /// el mismo job que la fuente dashboard, con otra implementación de
+  /// FuenteDePedidos. Ver apps/worker/src/fuentes/.
+  PROCESS_INTERNAL_ORDERS
 }
 
 enum JobStatus {
@@ -653,6 +665,10 @@ model Label {
   tenant Tenant      @relation(fields: [tenantId], references: [id])
   job    Job?        @relation(fields: [jobId], references: [id])
   items  LabelItem[]
+  // Transportista: lo consultan el cupo diario, el ledger y el contador de
+  // envíos trabados. Índice completo (no parcial) a propósito: Prisma no sabe
+  // expresar un índice parcial, y un índice que existe en la base pero no en el
+  // schema es exactamente la deriva que rompió el deploy de Render dos veces.
 
   @@unique([tenantId, shopifyOrderId])
   @@index([tenantId, createdAt(sort: Desc)])
@@ -660,10 +676,6 @@ model Label {
   @@index([dacGuia])
   // Mismo motivo que RunLog.jobId: FK a Job validada por cada Job borrado.
   @@index([jobId])
-  // Transportista: lo consultan el cupo diario, el ledger y el contador de
-  // envíos trabados. Índice completo (no parcial) a propósito: Prisma no sabe
-  // expresar un índice parcial, y un índice que existe en la base pero no en el
-  // schema es exactamente la deriva que rompió el deploy de Render dos veces.
 }
 
 // Snapshot de los ítems del pedido en el momento en que se generó la etiqueta.
@@ -1543,12 +1555,12 @@ model WalletEntry {
   //   settle:v1:<walletId>:<YYYY-MM>:<seq>
   idemKey String @unique
 
-  dacGuia String?
-  labelId String?
-  jobId   String?
+  dacGuia        String?
+  labelId        String?
+  jobId          String?
   // Período contable YYYY-MM en hora Uruguay (UTC-3, sin DST). Lo llevan
   // todos los asientos que participan de la liquidación.
-  periodYm String?
+  periodYm       String?
   // Precio efectivo por envío al momento de liquidar (para recibos).
   unitPriceMilli BigInt?
 
@@ -1568,4 +1580,66 @@ model WalletEntry {
   @@index([walletId, periodYm])
   @@index([walletId, createdAt(sort: Desc)])
   @@index([tenantId, dacGuia])
+}
+
+// --- FUENTE INTERNA DE PEDIDOS ---
+
+/// Un pedido cargado dentro de AutoEnvía — a mano desde /pedidos o importado
+/// de un Excel. Es la tercera fuente, y la única que no depende de nada
+/// externo: Shopify necesita la tienda, la fuente `dashboard` necesita una URL
+/// y un token de otro sistema, y quien no tiene ninguno de los dos no podía
+/// completar el onboarding ni despachar un envío.
+///
+/// Guarda los campos EN CRUDO, como los tipeó o los trajo el Excel. La
+/// traducción a lo que DAC entiende (departamento sin tildes, agencia,
+/// contrareembolso) vive en el adaptador del worker, igual que para las otras
+/// fuentes: acá no se decide nada de logística.
+model PedidoInterno {
+  id       String              @id @default(cuid())
+  tenantId String
+  tenant   Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  estado   EstadoPedidoInterno @default(PENDIENTE)
+
+  // Destinatario
+  nombre       String
+  telefono     String
+  documento    String? /// Cédula — va al RUT del destinatario en DAC.
+  departamento String
+  localidad    String?
+  direccion    String? /// Vacío SÓLO si hay `agencia`: ahí se retira en sucursal.
+  agencia      String? /// Nombre de la sucursal DAC donde se retira.
+  referencia   String?
+
+  /// [{ nombre, cantidad, precio }] — precio EN PESOS, no en centavos.
+  items         Json
+  totalUyu      Float    @default(0)
+  /// Contra entrega: el cartero cobra al entregar. Prende TipoGuia=6 en DAC.
+  contraEntrega Boolean  @default(false)
+  fechaVenta    DateTime @default(now())
+  observaciones String?
+
+  /// Vínculo explícito con la etiqueta emitida. La fuente externa no lo tiene
+  /// —ata por `stableNumericId`, que es un hash de una sola vía— así que desde
+  /// una etiqueta no se puede volver al pedido. Acá sí.
+  labelId String?
+  dacGuia String?
+
+  /// Por qué no se pudo despachar, cuando el intento falló.
+  errorMessage String?
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  despachadoAt DateTime?
+
+  @@index([tenantId, estado])
+  @@index([tenantId, createdAt(sort: Desc)])
+}
+
+enum EstadoPedidoInterno {
+  /// Cargado y esperando que el worker lo despache. Editable y borrable.
+  PENDIENTE
+  /// Ya tiene guía de DAC. Congelado: una guía emitida no se deshace.
+  DESPACHADO
+  /// El comerciante lo dio de baja antes de que saliera.
+  CANCELADO
 }

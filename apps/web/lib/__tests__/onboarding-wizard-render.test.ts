@@ -129,7 +129,7 @@ describe('<OnboardingWizard>', () => {
       },
       2,
     );
-    expect(html).toContain('Dashboard con Excel conectado');
+    expect(html).toContain('Panel externo conectado');
     expect(html).toContain('https://autoenvia-dash.vercel.app');
     expect(html).not.toContain('App Store de Shopify');
   });

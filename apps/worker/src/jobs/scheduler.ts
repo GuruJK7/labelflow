@@ -425,6 +425,67 @@ export function startScheduler(): void {
           logger.info({ tenantId: tenant.id, jobId: dbJob.id, cron: tenant.cronSchedule }, 'Dashboard cron job created');
         }
       }
+
+      // ── PASADA 3: fuente INTERNA ────────────────────────────── [14-09-2026]
+      //
+      // Los pedidos que el comerciante cargó a mano o importó de un Excel en la
+      // propia web. Calcada de la pasada de arriba salvo en el WHERE (no hay URL
+      // ni token que exigir: alcanza el flag) y en el tipo de job.
+      const internTenants = await db.tenant.findMany({
+        where: {
+          internalSourceEnabled: true,
+          OR: [
+            { dacUsername: { not: null }, dacPassword: { not: null } },
+            { correoEnabled: true, correoUser: { not: null }, correoPassword: { not: null } },
+          ],
+        },
+        select: { id: true, userId: true, cronSchedule: true, timezone: true },
+      });
+      if (internTenants.length > 0) {
+        const internUserIds = Array.from(new Set(internTenants.map((t) => t.userId)));
+        const internHolderState = new Map(
+          await Promise.all(
+            internUserIds.map(async (uid) => {
+              const holder = await db.tenant.findFirst({
+                where: { userId: uid },
+                orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+                select: { shipmentCredits: true, referralBonusCredits: true, isActive: true },
+              });
+              return [
+                uid,
+                { balance: (holder?.shipmentCredits ?? 0) + (holder?.referralBonusCredits ?? 0), isActive: holder?.isActive ?? false },
+              ] as const;
+            }),
+          ),
+        );
+        const internEligible = internTenants.filter((t) => {
+          const s = internHolderState.get(t.userId);
+          return s !== undefined && s.isActive && s.balance > 0;
+        });
+        for (const tenant of internEligible) {
+          if (!tenant.cronSchedule || tenant.cronSchedule.trim().split(/\s+/).length < 5) continue;
+          const tz = tenant.timezone ?? 'America/Montevideo';
+          if (!cronMatchesNow(tenant.cronSchedule, now, tz)) continue;
+          // Sin pedidos pendientes no hay nada que hacer: encolar igual llenaría
+          // el historial de corridas vacías. La fuente remota no puede saberlo
+          // sin salir a la red; esta sí, con un count local.
+          const pendientes = await db.pedidoInterno.count({
+            where: { tenantId: tenant.id, estado: 'PENDIENTE' },
+          });
+          if (pendientes === 0) continue;
+          const existingInternJob = await db.job.findFirst({
+            where: { tenantId: tenant.id, type: 'PROCESS_INTERNAL_ORDERS', status: { in: ['PENDING', 'RUNNING'] } },
+          });
+          if (existingInternJob) {
+            logger.debug({ tenantId: tenant.id }, 'Internal job already running/pending, skipping cron');
+            continue;
+          }
+          const dbJob = await db.job.create({
+            data: { tenantId: tenant.id, trigger: 'CRON', type: 'PROCESS_INTERNAL_ORDERS', status: 'PENDING' },
+          });
+          logger.info({ tenantId: tenant.id, jobId: dbJob.id, pendientes, cron: tenant.cronSchedule }, 'Internal cron job created');
+        }
+      }
     } catch (err) {
       logger.error({ error: (err as Error).message }, 'Scheduler error');
     }

@@ -20,6 +20,8 @@ export interface OnboardingRow {
   dashboardSourceEnabled: boolean;
   dashboardUrl: string | null;
   dashboardToken: string | null;
+  /** Carga propia de pedidos (a mano o por Excel). No necesita URL ni token. */
+  internalSourceEnabled: boolean;
   dacUsername: string | null;
   dacPassword: string | null;
   /** Transportista alternativo: Correo Uruguayo. Ver `hasCorreo`. */
@@ -30,25 +32,41 @@ export interface OnboardingRow {
   cronSchedule: string | null;
 }
 
-export type StoreKind = 'shopify' | 'dashboard' | null;
+export type StoreKind = 'shopify' | 'dashboard' | 'interna' | null;
 
 export interface StoreConnection {
   kind: StoreKind;
   shopify: boolean;
   dashboard: boolean;
+  /** Carga propia: pedidos a mano o importados de un Excel, dentro de AutoEnvía. */
+  interna: boolean;
 }
 
 /**
- * Tienda conectada = Shopify (dominio + token) O Dashboard con Excel
- * (fuente prendida + URL + token). Si hay las dos, manda Shopify: es la que
- * tiene aviso instantáneo y la que el worker procesa por la cola.
+ * Tienda conectada = Shopify (dominio + token) O Dashboard externo (fuente
+ * prendida + URL + token) O la carga propia (sólo el flag: no hay nada externo
+ * que configurar, los pedidos viven en `PedidoInterno`).
+ *
+ * Con más de una prendida manda Shopify y después el dashboard: son las que
+ * traen pedidos de afuera y no dependen de que alguien los cargue. La carga
+ * propia queda última a propósito — es la de último recurso, la que siempre
+ * está disponible.
  */
 export function storeConnection(
-  r: Pick<OnboardingRow, 'shopifyStoreUrl' | 'shopifyToken' | 'dashboardSourceEnabled' | 'dashboardUrl' | 'dashboardToken'>,
+  r: Pick<
+    OnboardingRow,
+    'shopifyStoreUrl' | 'shopifyToken' | 'dashboardSourceEnabled' | 'dashboardUrl' | 'dashboardToken' | 'internalSourceEnabled'
+  >,
 ): StoreConnection {
   const shopify = !!r.shopifyStoreUrl && !!r.shopifyToken;
   const dashboard = !!r.dashboardSourceEnabled && !!r.dashboardUrl && !!r.dashboardToken;
-  return { kind: shopify ? 'shopify' : dashboard ? 'dashboard' : null, shopify, dashboard };
+  const interna = !!r.internalSourceEnabled;
+  return {
+    kind: shopify ? 'shopify' : dashboard ? 'dashboard' : interna ? 'interna' : null,
+    shopify,
+    dashboard,
+    interna,
+  };
 }
 
 export function hasDac(r: Pick<OnboardingRow, 'dacUsername' | 'dacPassword'>): boolean {
@@ -201,6 +219,8 @@ export interface OnboardingState {
     shopifyStoreUrl: string | null;
     dashboardConnected: boolean;
     dashboardUrl: string | null;
+    /** La carga propia está activada (pedidos a mano o por Excel). */
+    internaConnected: boolean;
   };
   /**
    * El transportista con el que la tienda va a despachar. `conectado` es lo que

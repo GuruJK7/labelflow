@@ -35,8 +35,10 @@ import { createStepLogger } from '../logger';
 import logger from '../logger';
 import { shadowRecordShipment } from '../billing/shadow';
 import { sleep } from '../utils';
-import { traerConfirmadasDelDashboard, markDashboardOrdersLoaded, pushDashboardLabels, codDeLaFuenteDashboard, type DashboardLabelResult } from '../dashboard/orders';
+import { codDeLaFuenteDashboard, type DashboardLabelResult } from '../dashboard/orders';
 import { toShopifyOrder, stableNumericId } from '../dashboard/adapter';
+import { fuenteDashboard } from '../fuentes/dashboard';
+import type { FuenteDePedidos } from '../fuentes/tipos';
 import { procesarPedidosCorreo } from '../correo/process';
 import type { ExtrasPedido } from '../correo/adapter';
 import type { CorreoAmbiente } from '../correo/client';
@@ -45,10 +47,20 @@ const DELAY_BETWEEN_ORDERS_MS = 500;
 const DASHBOARD_FETCH_LIMIT = 100;
 
 /** Entry point (router). Toma el lease DAC del tenant; si está ocupado, re-encola.
- *  Es exactamente el mismo patrón que processOrdersJob (Shopify). */
-export async function processDashboardOrdersJob(tenantId: string, jobId: string): Promise<void> {
+ *  Es exactamente el mismo patrón que processOrdersJob (Shopify).
+ *
+ *  `fuente` decide de DÓNDE salen los pedidos; por default la remota, que es el
+ *  comportamiento que este job tuvo siempre. Todo lo demás —cobro, dedup, DAC,
+ *  Correo, PDF, manejo de errores— corre igual para cualquier fuente, a
+ *  propósito: es lo que impide que una fuente nueva divergía en lo delicado.
+ *  Ver apps/worker/src/fuentes/tipos.ts. */
+export async function processDashboardOrdersJob(
+  tenantId: string,
+  jobId: string,
+  fuente: FuenteDePedidos<never> = fuenteDashboard as unknown as FuenteDePedidos<never>,
+): Promise<void> {
   try {
-    await withTenantDacLock(tenantId, jobId, () => processDashboardOrdersJobInner(tenantId, jobId));
+    await withTenantDacLock(tenantId, jobId, () => processDashboardOrdersJobInner(tenantId, jobId, fuente));
   } catch (err) {
     if (err instanceof DacLockHeldError) {
       logger.warn({ tenantId, jobId, heldBy: err.holderId }, '[DAC-Lock] Tenant lease busy — re-queueing dashboard job to PENDING');
@@ -61,7 +73,11 @@ export async function processDashboardOrdersJob(tenantId: string, jobId: string)
   }
 }
 
-async function processDashboardOrdersJobInner(tenantId: string, jobId: string): Promise<void> {
+async function processDashboardOrdersJobInner(
+  tenantId: string,
+  jobId: string,
+  fuente: FuenteDePedidos<never>,
+): Promise<void> {
   const startTime = Date.now();
   let successCount = 0;
   let failedCount = 0;
@@ -74,8 +90,7 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
   let billed = false; // true tras un deduct exitoso -> el catch NO vuelve a cobrar
 
   // Hoisted para el drain del path de crash (mirror del job de Shopify):
-  let dashboardUrl: string | null = null;
-  let dashboardToken: string | null = null;
+  let ctxFuente: never | null = null;
   const loadedIds: string[] = [];
   // Órdenes con guía + PDF imprimible → writeback ENRIQUECIDO (guía + PDF) a
   // AutoEnvía, para que el cliente imprima desde su dashboard. El resto va legacy.
@@ -95,17 +110,17 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
       return;
     }
 
-    dashboardUrl = tenant.dashboardUrl;
-    dashboardToken = decryptIfPresent(tenant.dashboardToken);
-    const dashboardEnabled = !!tenant.dashboardSourceEnabled;
     const dacUsername = decryptOrRaw(tenant.dacUsername);
     const dacPassword = decryptIfPresent(tenant.dacPassword);
 
-    if (!dashboardEnabled || !dashboardUrl || !dashboardToken) {
-      slog.error('config', 'Dashboard source not configured');
-      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: 'Missing dashboard config' } });
+    const conf = fuente.configurar(tenant);
+    if (!conf.ok) {
+      slog.error('config', `Fuente "${fuente.nombre}" no configurada: ${conf.motivo}`);
+      await db.job.update({ where: { id: jobId }, data: { status: 'FAILED', errorMessage: conf.motivo } });
       return;
     }
+    ctxFuente = conf.ctx;
+    const ctx = conf.ctx;
     // [03-sep-2026] Una tienda que eligió Correo Uruguayo no tiene por qué tener
     // credenciales de DAC cargadas. Con correoEnabled en false (el default) el
     // chequeo se comporta exactamente como antes.
@@ -152,11 +167,11 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
       return;
     }
 
-    // STEP 3: traer confirmadas del dashboard
-    const traida = await traerConfirmadasDelDashboard(dashboardUrl, dashboardToken, DASHBOARD_FETCH_LIMIT);
+    // STEP 3: traer los pedidos listos para despachar
+    const traida = await fuente.traer(ctx, DASHBOARD_FETCH_LIMIT);
     let orders = traida.orders;
     totalOrders = orders.length;
-    slog.info('dashboard', `Fetched ${orders.length} confirmed orders from dashboard`);
+    slog.info('dashboard', `Fetched ${orders.length} confirmed orders (fuente: ${fuente.nombre})`);
 
     // 🔴 Las dos formas en que esta traída mentía sin dejar rastro.
     if (traida.saturado) {
@@ -309,7 +324,7 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
         .filter((a) => idsDespachados.has(String(a.order.id)))
         .map((a) => a.dashboardId);
       if (despachadas.length > 0) {
-        await markDashboardOrdersLoaded(dashboardUrl, dashboardToken, despachadas).catch((e) =>
+        await fuente.marcarCargadas(ctx, despachadas).catch((e) =>
           slog.warn('dashboard', `No se pudieron marcar cargadas: ${(e as Error).message}`),
         );
       }
@@ -499,16 +514,19 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
     //      que el cliente imprima desde AutoEnvía.
     //  6b: el resto (duplicados, PDF que no descargó) → writeback LEGACY { ids },
     //      comportamiento actual sin cambios.
+    //  Una fuente sin `publicarEtiquetas` (la interna: el PDF ya está en su
+    //  propio storage) manda TODO por el camino de marcar cargadas.
     if (loadedIds.length) {
-      const enrichedIds = new Set(labelResults.map((r) => r.order_id));
+      const puedePublicar = typeof fuente.publicarEtiquetas === 'function' && labelResults.length > 0;
+      const enrichedIds = puedePublicar ? new Set(labelResults.map((r) => r.order_id)) : new Set<string>();
       const legacyIds = loadedIds.filter((id) => !enrichedIds.has(id));
       try {
-        if (labelResults.length) {
-          const labeled = await pushDashboardLabels(dashboardUrl, dashboardToken, labelResults);
+        if (puedePublicar) {
+          const labeled = await fuente.publicarEtiquetas!(ctx, labelResults);
           slog.info('dashboard', `Etiquetas enviadas a AutoEnvía con PDF: ${labeled}`);
         }
         if (legacyIds.length) {
-          const updated = await markDashboardOrdersLoaded(dashboardUrl, dashboardToken, legacyIds);
+          const updated = await fuente.marcarCargadas(ctx, legacyIds);
           slog.info('dashboard', `Marcadas como cargadas (sin PDF): ${updated}`);
         }
       } catch (markErr) {
@@ -545,8 +563,8 @@ async function processDashboardOrdersJobInner(tenantId: string, jobId: string): 
     if (successCount > 0 && !billed) {
       await deductCreditsAndStamp(tenantId, successCount).catch((deductErr) =>
         logger.error({ tenantId, jobId, successCount, error: (deductErr as Error).message }, '[credits] Failed to drain credits in crash path — manual reconciliation needed'));
-      if (dashboardUrl && dashboardToken && loadedIds.length) {
-        await markDashboardOrdersLoaded(dashboardUrl, dashboardToken, loadedIds).catch(() => { /* best-effort: el dedup de DAC evita doble-envío el próximo run */ });
+      if (ctxFuente !== null && loadedIds.length) {
+        await fuente.marcarCargadas(ctxFuente, loadedIds).catch(() => { /* best-effort: el dedup de DAC evita doble-envío el próximo run */ });
       }
     }
 

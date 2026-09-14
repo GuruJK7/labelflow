@@ -52,6 +52,7 @@ export async function POST(req: Request) {
         dashboardSourceEnabled: true,
         dashboardUrl: true,
         dashboardToken: true,
+      internalSourceEnabled: true,
       },
     }),
   ]);
@@ -89,7 +90,12 @@ export async function POST(req: Request) {
   // poller del worker lo rutea por tipo. Sin tienda no hay qué procesar.
   const kind = storeConnection(originating).kind;
   if (!kind) return apiError('Conectá una tienda antes de procesar', 422);
-  const type = kind === 'shopify' ? 'PROCESS_ORDERS' : 'PROCESS_DASHBOARD_ORDERS';
+  const type =
+    kind === 'shopify'
+      ? 'PROCESS_ORDERS'
+      : kind === 'interna'
+        ? 'PROCESS_INTERNAL_ORDERS'
+        : 'PROCESS_DASHBOARD_ORDERS';
 
   if (kind === 'shopify') {
     // Token fresco ANTES de encolar (D29): el worker no tiene el secret de la
@@ -110,9 +116,12 @@ export async function POST(req: Request) {
   // turno), el límite se rechaza antes de crear el job.
   // `TODOS` (0) SÍ se acepta para esta fuente: es exactamente lo único que ese
   // job sabe hacer. Lo que se rechaza es un tope > 0, que ignoraría en silencio.
-  if (kind === 'dashboard' && effectiveMax !== undefined && effectiveMax > TODOS) {
+  // La fuente interna corre el MISMO job, así que hereda la misma limitación.
+  if (kind !== 'shopify' && effectiveMax !== undefined && effectiveMax > TODOS) {
     return apiError(
-      'El límite de pedidos sólo aplica a tiendas Shopify. Con Dashboard con Excel se procesan todos los pedidos confirmados: ejecutá sin límite.',
+      kind === 'interna'
+        ? 'El límite de pedidos sólo aplica a tiendas Shopify. Con la carga propia se despachan todos los pedidos pendientes: ejecutá sin límite.'
+        : 'El límite de pedidos sólo aplica a tiendas Shopify. Con Dashboard con Excel se procesan todos los pedidos confirmados: ejecutá sin límite.',
       422,
     );
   }

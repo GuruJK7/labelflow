@@ -33,20 +33,43 @@ const VACIO: OnboardingRow = {
   correoPassword: null,
   onboardingComplete: false,
   cronSchedule: null,
+  internalSourceEnabled: false,
 };
 const SHOPIFY = { shopifyStoreUrl: 'acme.myshopify.com', shopifyToken: 'enc:tok' };
 const DASHBOARD = { dashboardSourceEnabled: true, dashboardUrl: 'https://dash.uy', dashboardToken: 'enc:tok' };
+const INTERNA = { internalSourceEnabled: true };
 const DAC = { dacUsername: 'enc:u', dacPassword: 'enc:p' };
 
 describe('storeConnection', () => {
   it('sólo Shopify → shopify', () => {
-    expect(storeConnection({ ...VACIO, ...SHOPIFY })).toEqual({ kind: 'shopify', shopify: true, dashboard: false });
+    expect(storeConnection({ ...VACIO, ...SHOPIFY })).toEqual({ kind: 'shopify', shopify: true, dashboard: false, interna: false });
   });
   it('sólo Dashboard con Excel → dashboard', () => {
-    expect(storeConnection({ ...VACIO, ...DASHBOARD })).toEqual({ kind: 'dashboard', shopify: false, dashboard: true });
+    expect(storeConnection({ ...VACIO, ...DASHBOARD })).toEqual({ kind: 'dashboard', shopify: false, dashboard: true, interna: false });
   });
   it('las dos → manda Shopify, pero dashboard sigue en true', () => {
-    expect(storeConnection({ ...VACIO, ...SHOPIFY, ...DASHBOARD })).toEqual({ kind: 'shopify', shopify: true, dashboard: true });
+    expect(storeConnection({ ...VACIO, ...SHOPIFY, ...DASHBOARD })).toEqual({ kind: 'shopify', shopify: true, dashboard: true, interna: false });
+  });
+
+  // ── Fuente interna: pedidos cargados a mano o por Excel en la propia web ──
+  it('sólo la carga propia → interna (no necesita ni URL ni token)', () => {
+    expect(storeConnection({ ...VACIO, ...INTERNA })).toEqual({ kind: 'interna', shopify: false, dashboard: false, interna: true });
+  });
+  it('carga propia apagada → null', () => {
+    expect(storeConnection({ ...VACIO, internalSourceEnabled: false }).kind).toBeNull();
+  });
+  it('Shopify le gana a la carga propia', () => {
+    // Las que traen pedidos de afuera mandan: la carga propia es la de último
+    // recurso, la que siempre está disponible.
+    expect(storeConnection({ ...VACIO, ...SHOPIFY, ...INTERNA }).kind).toBe('shopify');
+  });
+  it('el dashboard externo también le gana a la carga propia', () => {
+    expect(storeConnection({ ...VACIO, ...DASHBOARD, ...INTERNA }).kind).toBe('dashboard');
+  });
+  it('un dashboard MAL configurado no tapa a la carga propia', () => {
+    // Sin token el dashboard no cuenta, así que la tienda igual puede despachar
+    // por la carga propia en vez de quedar sin ninguna fuente.
+    expect(storeConnection({ ...VACIO, ...DASHBOARD, dashboardToken: null, ...INTERNA }).kind).toBe('interna');
   });
   it('dashboard con URL y token pero fuente apagada → null', () => {
     expect(storeConnection({ ...VACIO, ...DASHBOARD, dashboardSourceEnabled: false }).kind).toBeNull();

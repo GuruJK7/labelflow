@@ -10,11 +10,20 @@ import { puedeConectarShopifyAMano } from '@/lib/shopify-manual';
 import { StepCard, StepHeader, PrimaryButton, SecondaryButton, Notice, DoneCard, StepFooter, inputClass, labelClass } from '../wizard-ui';
 
 /**
- * Paso 2 — Conectar tu tienda. Dos caminos, los dos existentes en el producto:
+ * Paso 2 — De dónde salen tus pedidos. Tres caminos:
  *   A) Shopify: el botón lleva al OAuth (`/api/shopify/install?next=/onboarding`)
  *      y vuelve acá con `?shopify=connected`; el token manual queda plegado.
- *   B) Dashboard con Excel: URL + API token, probados con la misma llamada
- *      que hace el worker (`POST /api/v1/onboarding/test-dashboard`).
+ *   B) Carga propia: un botón y listo (`POST /api/v1/onboarding/usar-fuente-interna`).
+ *      Los pedidos se cargan a mano o por Excel desde /pedidos.
+ *   C) Panel externo: URL + API token, probados con la misma llamada que hace
+ *      el worker (`POST /api/v1/onboarding/test-dashboard`).
+ *
+ * 🔴 (B) va ANTES que (C) en pantalla a propósito. Hasta el 14-09-2026 las
+ * únicas dos opciones exigían algo de afuera —una tienda de Shopify, o el panel
+ * de otro sistema con su token— y la tarjeta que decía "Dashboard con Excel" no
+ * importaba ningún Excel: pedía la URL de un panel ajeno. Quien no tenía ninguno
+ * de los dos quedaba sin salida, y se nota en la base: ninguna cuenta orgánica
+ * llegó jamás a completar el alta.
  */
 export interface OAuthReturn {
   motivo: string;
@@ -41,7 +50,7 @@ export function StepTienda({
 }) {
   const connected = state.store.kind !== null;
   const [editing, setEditing] = useState(!connected);
-  const [busy, setBusy] = useState<'' | 'shopify-token' | 'dashboard'>('');
+  const [busy, setBusy] = useState<'' | 'shopify-token' | 'dashboard' | 'interna'>('');
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
 
@@ -92,6 +101,33 @@ export function StepTienda({
       }
       setOk(`Conectado${data.data?.shopName ? ` a ${data.data.shopName}` : ''}.`);
       setManualToken('');
+      setEditing(false);
+      await onSaved();
+    } catch {
+      onFailed('network');
+      setError('Error de conexión. Probá de nuevo.');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  /**
+   * Elegir la carga propia. No hay nada que probar ni que pedirle al usuario:
+   * es justamente la opción para quien no tiene ningún sistema que conectar.
+   */
+  async function usarFuenteInterna() {
+    setError('');
+    setOk('');
+    setBusy('interna');
+    try {
+      const res = await fetch('/api/v1/onboarding/usar-fuente-interna', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        onFailed(res.status);
+        setError(data.error ?? 'No se pudo activar la carga de pedidos');
+        return;
+      }
+      setOk('Listo. Vas a cargar tus pedidos desde la sección Pedidos, a mano o con un Excel.');
       setEditing(false);
       await onSaved();
     } catch {
@@ -154,8 +190,20 @@ export function StepTienda({
 
       {connected && !editing ? (
         <DoneCard
-          title={state.store.kind === 'shopify' ? 'Tienda Shopify conectada' : 'Dashboard con Excel conectado'}
-          detail={state.store.kind === 'shopify' ? state.store.shopifyStoreUrl : state.store.dashboardUrl}
+          title={
+            state.store.kind === 'shopify'
+              ? 'Tienda Shopify conectada'
+              : state.store.kind === 'interna'
+                ? 'Vas a cargar los pedidos acá'
+                : 'Panel externo conectado'
+          }
+          detail={
+            state.store.kind === 'shopify'
+              ? state.store.shopifyStoreUrl
+              : state.store.kind === 'interna'
+                ? 'A mano o importando un Excel, desde Pedidos'
+                : state.store.dashboardUrl
+          }
           onChange={() => setEditing(true)}
         />
       ) : (
@@ -251,13 +299,40 @@ export function StepTienda({
           </div>
 
           {/* Opción B — Dashboard con Excel */}
+          {/* Opción B — Carga propia. Va ANTES del panel externo a propósito: es
+              la única que no depende de tener otra cosa andando, así que es la
+              respuesta para quien no vende por Shopify. */}
+          <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/[0.04] p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <FileSpreadsheet className="w-4 h-4 text-cyan-400" />
+              <h3 className="text-sm font-semibold text-white">Cargar los pedidos acá</h3>
+            </div>
+            <p className="text-xs text-zinc-400 leading-relaxed mb-4">
+              Si no vendés por Shopify. Cargás cada pedido a mano o importás un Excel, dentro de AutoEnvía. No hace falta conectar nada.
+            </p>
+            <PrimaryButton
+              type="button"
+              onClick={usarFuenteInterna}
+              busy={busy === 'interna'}
+              busyLabel="Activando…"
+              arrow={false}
+              className="w-full sm:w-auto"
+            >
+              Usar esta opción
+            </PrimaryButton>
+            <p className="text-[11px] text-zinc-500 mt-3 leading-relaxed">
+              Después vas a tener una sección <span className="text-zinc-400">Pedidos</span> para cargarlos y despacharlos cuando quieras.
+            </p>
+          </div>
+
+          {/* Opción C — panel externo (DEPO, VentaFlow, el panel de tu proveedor) */}
           <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-5">
             <div className="flex items-center gap-2 mb-1">
               <FileSpreadsheet className="w-4 h-4 text-zinc-300" />
-              <h3 className="text-sm font-semibold text-white">Dashboard con Excel</h3>
+              <h3 className="text-sm font-semibold text-white">Conectar un panel que ya usás</h3>
             </div>
             <p className="text-xs text-zinc-400 leading-relaxed mb-4">
-              Si no vendés por Shopify: cargás tus pedidos en el Dashboard de AutoEnvía (desde un Excel) y nosotros los levantamos de ahí.
+              Si tus pedidos ya viven en otro sistema (VentaFlow, el panel de tu depósito): nos das su dirección y su token, y los levantamos de ahí.
             </p>
             <form onSubmit={saveDashboard} className="space-y-3">
               <div>

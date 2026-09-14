@@ -16,6 +16,7 @@ import {
   Gift,
   Shield,
   Warehouse,
+  ClipboardList,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -50,13 +51,20 @@ export interface NavSection {
  * server-side (lib/admin.ts → requireAdminOrNotFound): esconder el link no
  * es el control de acceso, es sólo el menú.
  */
-export function navSectionsFor(isAdmin: boolean): NavSection[] {
+export function navSectionsFor(isAdmin: boolean, cargaPropia = false): NavSection[] {
+  // La carga propia sólo tiene sentido para quien la eligió como fuente: al
+  // resto le sobraría una sección que siempre estaría vacía.
+  const misPedidos: NavItem[] = cargaPropia
+    ? [{ href: '/pedidos', label: 'Mis pedidos', icon: ClipboardList }]
+    : [];
+
   if (!isAdmin) {
     return [
       {
         label: 'Principal',
         items: [
           { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+          ...misPedidos,
           { href: '/labels', label: 'Etiquetas', icon: Tags },
         ],
       },
@@ -74,6 +82,7 @@ export function navSectionsFor(isAdmin: boolean): NavSection[] {
         { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
         { href: '/control', label: 'Control', icon: LayoutGrid },
         { href: '/orders', label: 'Pedidos', icon: Package },
+        ...misPedidos,
         { href: '/labels', label: 'Etiquetas', icon: Tags },
         { href: '/deposito', label: 'Depósito', icon: Warehouse },
       ],

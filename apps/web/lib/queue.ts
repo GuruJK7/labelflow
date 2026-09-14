@@ -1,6 +1,9 @@
 import { db } from './db';
 
-export type ProcessOrdersJobType = 'PROCESS_ORDERS' | 'PROCESS_DASHBOARD_ORDERS';
+export type ProcessOrdersJobType =
+  | 'PROCESS_ORDERS'
+  | 'PROCESS_DASHBOARD_ORDERS'
+  | 'PROCESS_INTERNAL_ORDERS';
 
 export interface EnqueueProcessOrdersOptions {
   /**
@@ -9,6 +12,10 @@ export interface EnqueueProcessOrdersOptions {
    * crea en la base — la cola `labelflow:process-orders` es del procesador
    * de Shopify; el poller de DB del worker rutea por `type`
    * (apps/worker/src/index.ts), igual que hace el scheduler con el cron.
+   * `PROCESS_INTERNAL_ORDERS`: los pedidos cargados a mano o importados de un
+   * Excel en la propia web. Corre el MISMO procesador que el de dashboard con
+   * otra fuente (apps/worker/src/fuentes/), así que vale lo mismo: sólo base,
+   * nunca BullMQ.
    */
   type?: ProcessOrdersJobType;
 }

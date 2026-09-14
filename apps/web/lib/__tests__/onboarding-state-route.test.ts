@@ -87,6 +87,7 @@ describe('GET /api/v1/onboarding/state', () => {
         shopifyStoreUrl: null,
         dashboardConnected: true,
         dashboardUrl: 'https://autoenvia-dash.vercel.app',
+        internaConnected: false,
       },
       transportista: { conectado: true, cual: 'DAC', dacUsername: '12345678', correoUser: null },
       processingMode: 'cada_hora',

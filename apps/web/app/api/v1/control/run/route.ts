@@ -61,6 +61,7 @@ export async function POST(req: Request) {
       dashboardSourceEnabled: true,
       dashboardUrl: true,
       dashboardToken: true,
+      internalSourceEnabled: true,
     },
   });
   if (!owned) return apiError('Tienda no encontrada', 403);
@@ -114,16 +115,22 @@ export async function POST(req: Request) {
   // esta ruta se quedó atrás. Mismo criterio, mismo helper.
   const kind = storeConnection(owned).kind;
   if (!kind) return apiError('Esa tienda no tiene ninguna fuente conectada.', 422);
-  const type = kind === 'shopify' ? 'PROCESS_ORDERS' : 'PROCESS_DASHBOARD_ORDERS';
+  const type =
+    kind === 'shopify'
+      ? 'PROCESS_ORDERS'
+      : kind === 'interna'
+        ? 'PROCESS_INTERNAL_ORDERS'
+        : 'PROCESS_DASHBOARD_ORDERS';
 
   // El límite por corrida sólo lo entiende el procesador de Shopify: el job de
   // la fuente dashboard no lee el RunLog `maxOrdersOverride` y despacharía TODO
   // igual. Mismo rechazo explícito que hace /api/v1/jobs, por el mismo motivo:
   // aceptarlo en silencio quemaría envíos que nadie pidió gastar.
   // `TODOS` (0) pasa: es lo único que sabe hacer ese job. Un tope > 0 no.
-  if (kind === 'dashboard' && maxOrders !== undefined && maxOrders > TODOS) {
+  // La fuente interna corre ese MISMO job, así que hereda la misma limitación.
+  if (kind !== 'shopify' && maxOrders !== undefined && maxOrders > TODOS) {
     return apiError(
-      'El límite por corrida sólo aplica a tiendas Shopify. Con la fuente dashboard se procesan todos los pedidos confirmados: ejecutá sin límite.',
+      'El límite por corrida sólo aplica a tiendas Shopify. Con las otras fuentes se procesan todos los pedidos pendientes: ejecutá sin límite.',
       422,
     );
   }

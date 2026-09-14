@@ -75,6 +75,7 @@ export async function GET() {
       dashboardSourceEnabled: true,
       dashboardUrl: true,
       dashboardToken: true,
+      internalSourceEnabled: true,
     },
   });
 

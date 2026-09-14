@@ -80,7 +80,7 @@ describe('requisito 2.3.1 — nada de dominio ni token a mano', () => {
 
   it('la opción del Excel sigue viva: apagar lo manual no rompe el otro camino', async () => {
     const html = await renderPaso2();
-    expect(html).toContain('Dashboard con Excel');
+    expect(html).toContain('Conectar un panel que ya usás');
   });
 
   it('con la flag prendida vuelve el camino manual, para soporte', async () => {

@@ -10,6 +10,7 @@ import { getConfig } from './config';
 import { processOrdersJob } from './jobs/process-orders.job';
 import { processOrdersBulkJob } from './jobs/process-orders-bulk.job';
 import { processDashboardOrdersJob } from './jobs/process-dashboard-orders.job';
+import { fuenteInterna } from './fuentes/interna';
 import { recuperarPdfs } from './recuperar-pdfs';
 import { testDacJob } from './jobs/test-dac.job';
 import { pollAgentBulkJobs } from './jobs/agent-bulk-upload.job';
@@ -209,6 +210,17 @@ async function pollForJobs(): Promise<void> {
     } else if (claimed.type === 'PROCESS_DASHBOARD_ORDERS') {
       logger.info({ jobId: claimed.id }, 'Routing to DASHBOARD processor');
       await processDashboardOrdersJob(claimed.tenantId, claimed.id);
+    } else if (claimed.type === 'PROCESS_INTERNAL_ORDERS') {
+      // Mismo procesador, otra fuente: los pedidos que el comerciante cargó a
+      // mano o importó de un Excel en la propia web (tabla PedidoInterno). Todo
+      // lo que sigue —DAC, créditos, dedup, PDF— es idéntico; sólo cambia de
+      // dónde salen los pedidos. Ver apps/worker/src/fuentes/.
+      logger.info({ jobId: claimed.id }, 'Routing to INTERNAL processor');
+      await processDashboardOrdersJob(
+        claimed.tenantId,
+        claimed.id,
+        fuenteInterna as unknown as Parameters<typeof processDashboardOrdersJob>[2],
+      );
     } else if (claimed.type === 'RECOVER_PDFS') {
       // Recuperación de PDFs de guías ya emitidas. Corre acá —y no como script
       // externo— porque el login de DAC exige un reCAPTCHA y `CAPTCHA_API_KEY`

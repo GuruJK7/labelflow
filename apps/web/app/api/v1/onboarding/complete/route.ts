@@ -43,6 +43,7 @@ export async function POST() {
       dashboardSourceEnabled: true,
       dashboardUrl: true,
       dashboardToken: true,
+      internalSourceEnabled: true,
       dacUsername: true,
       dacPassword: true,
       correoEnabled: true,
