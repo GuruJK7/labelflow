@@ -98,9 +98,40 @@ export const authOptions: NextAuthOptions = {
     newUser: '/onboarding',
   },
   callbacks: {
-    async jwt({ token, user, trigger, session: updateSession }) {
+    async jwt({ token, user, account, trigger, session: updateSession }) {
       if (user) {
-        token.id = user.id;
+        // 🔴 El `user.id` NO significa lo mismo según por dónde entró:
+        //   - credentials → `authorize()` devuelve nuestro `User.id` (cuid).
+        //   - google      → next-auth usa el `profile()` por defecto del
+        //                   provider, que hace `id: profile.sub`. Ese `sub`
+        //                   es un entero de 21 dígitos de Google, NO un id
+        //                   de nuestra base.
+        //
+        // Guardar el `sub` tal cual dejaba el token con un `id` fantasma:
+        // todas las consultas de abajo (`userId: token.id`) no encontraban
+        // nada, el token quedaba sin `tenantId`, `getAuthenticatedTenant()`
+        // devolvía null y el usuario rebotaba a /login. El alta por Google
+        // SÍ creaba User + Tenant (signIn callback), así que la persona
+        // terminaba con cuenta creada y sin poder entrar: al reintentar por
+        // email le decíamos "ya existe una cuenta", y al querer entrar con
+        // contraseña fallaba porque nunca tuvo una.
+        //
+        // Verificado en prod el 2026-09-14: de las 8 cuentas nacidas por
+        // Google desde 2026-05-01, cero completaron el onboarding.
+        // Test: lib/__tests__/auth-google-tenant.test.ts
+        //
+        // El email es la clave que compartimos con el proveedor y la que usa
+        // el signIn callback para crear/encontrar la cuenta, así que es el
+        // puente correcto entre el `sub` y nuestro `User.id`.
+        if (account?.provider === 'google' && user.email) {
+          const dbUser = await db.user.findUnique({
+            where: { email: user.email.toLowerCase() },
+            select: { id: true },
+          });
+          token.id = dbUser?.id ?? user.id;
+        } else {
+          token.id = user.id;
+        }
       }
 
       // ── Multi-store tenant switch ──
