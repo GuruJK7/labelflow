@@ -57,6 +57,17 @@ const EXCEL_STORE = {
   dashboardToken: 'enc:tok',
 };
 
+/** Carga propia: pedidos cargados a mano o por Excel dentro de AutoEnvía. */
+const CARGA_PROPIA = {
+  labelsThisMonth: 0,
+  shopifyStoreUrl: null,
+  shopifyToken: null,
+  dashboardSourceEnabled: false,
+  dashboardUrl: null,
+  dashboardToken: null,
+  internalSourceEnabled: true,
+};
+
 let originating: Record<string, unknown> = SHOPIFY_STORE;
 
 function post(body?: unknown) {
@@ -112,6 +123,39 @@ describe('POST /api/v1/jobs — tipo de job según la tienda (D33/H10)', () => {
       tenantId: 'tenant-1', trigger: 'MANUAL', type: 'PROCESS_DASHBOARD_ORDERS', status: 'PENDING',
     });
     expect(mocks.warmShopifyToken).not.toHaveBeenCalled();
+  });
+
+  it('carga propia → PROCESS_INTERNAL_ORDERS, sin warm-up de Shopify', async () => {
+    originating = CARGA_PROPIA;
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.type).toBe('PROCESS_INTERNAL_ORDERS');
+    expect(mocks.warmShopifyToken).not.toHaveBeenCalled();
+  });
+
+  it('el botón "Despachar ahora" manda {} y NO se rechaza por límite', async () => {
+    // El botón de /pedidos postea un body vacío. Si `limiteEfectivo` devolviera
+    // el default de la tienda en vez de undefined, la guarda de más abajo lo
+    // tomaría como un límite explícito y contestaría 422: el botón principal de
+    // la pantalla no haría nada y el mensaje hablaría de Shopify.
+    originating = CARGA_PROPIA;
+    const res = await post({});
+    expect(res.status).toBe(200);
+    expect(mocks.jobCreate.mock.calls[0][0].data.type).toBe('PROCESS_INTERNAL_ORDERS');
+  });
+
+  it('carga propia con maxOrders=1 → 422: ese job no lee el override', async () => {
+    originating = CARGA_PROPIA;
+    const res = await post({ maxOrders: 1 });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toMatch(/carga propia/);
+    expect(mocks.jobCreate).not.toHaveBeenCalled();
+  });
+
+  it('Shopify le gana a la carga propia', async () => {
+    originating = { ...SHOPIFY_STORE, internalSourceEnabled: true };
+    await post({});
+    expect(mocks.jobCreate.mock.calls[0][0].data.type).toBe('PROCESS_ORDERS');
   });
 
   it('las dos fuentes → manda Shopify', async () => {
