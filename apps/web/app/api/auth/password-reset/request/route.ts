@@ -21,6 +21,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { getRedis } from '@/lib/redis';
+import { contarEnVentanaFija } from '@/lib/rate-limit';
 import { issueAndSendPasswordResetEmail } from '@/lib/password-reset';
 import { resolveAppOrigin } from '@/lib/verify-email';
 
@@ -42,8 +43,8 @@ async function checkResetRateLimit(email: string): Promise<boolean> {
 
   const key = `password-reset:rl:${email.toLowerCase()}`;
   try {
-    const results = await redis.pipeline().incr(key).expire(key, RATE_LIMIT_TTL).exec();
-    const count = (results?.[0]?.[1] as number) ?? 1;
+    // Ventana fija: reintentar no corre el vencimiento. Ver lib/rate-limit.ts.
+    const count = await contarEnVentanaFija(redis, key, RATE_LIMIT_TTL);
     return count <= RATE_LIMIT_MAX;
   } catch {
     return true;

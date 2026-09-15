@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { db } from '@/lib/db';
 import { getRedis } from '@/lib/redis';
+import { contarEnVentanaFija } from '@/lib/rate-limit';
 import {
   isValidReferralCodeShape,
   readReferralCookieValue,
@@ -65,34 +66,6 @@ const RATE_LIMIT_GLOBAL_MAX = 40;
 
 type RateLimitVerdict = 'ok' | 'ip' | 'global';
 
-/**
- * Suma uno al contador y le pone vencimiento SÓLO si acaba de nacer.
- *
- * 🔴 Antes se llamaba `expire` en cada request, incluidos los que estaban por
- * rechazarse, así que la hora volvía a empezar con cada intento. El mensaje
- * promete «esperá una hora e intentá de nuevo», pero quien probaba a los 55
- * minutos reiniciaba el castigo y no salía NUNCA del bloqueo.
- *
- * Pega más fuerte acá que en otros lados: con el CGNAT de Antel varios clientes
- * comparten una misma IP pública, así que una sola persona reintentando dejaba
- * afuera a todos los demás de esa red.
- *
- * Ahora la ventana es fija: nace con el primer intento y vence una hora después,
- * pase lo que pase. `INCR` devuelve 1 exactamente cuando la clave no existía.
- */
-async function contarEnVentanaFija(
-  redis: NonNullable<ReturnType<typeof getRedis>>,
-  key: string,
-): Promise<number> {
-  const res = await redis.pipeline().incr(key).exec();
-  const count = (res?.[0]?.[1] as number) ?? 1;
-  if (count === 1) {
-    // Sin esto el contador quedaría para siempre y la IP no se destrabaría nunca.
-    await redis.expire(key, RATE_LIMIT_TTL);
-  }
-  return count;
-}
-
 async function checkSignupRateLimit(ip: string): Promise<RateLimitVerdict> {
   const redis = getRedis();
   if (!redis) {
@@ -103,10 +76,10 @@ async function checkSignupRateLimit(ip: string): Promise<RateLimitVerdict> {
   const ipKey = `signup:rl:ip:${rateLimitBucketForIp(ip)}`;
   const globalKey = 'signup:rl:global';
   try {
-    const ipCount = await contarEnVentanaFija(redis, ipKey);
+    const ipCount = await contarEnVentanaFija(redis, ipKey, RATE_LIMIT_TTL);
     if (ipCount > RATE_LIMIT_MAX) return 'ip';
 
-    const globalCount = await contarEnVentanaFija(redis, globalKey);
+    const globalCount = await contarEnVentanaFija(redis, globalKey, RATE_LIMIT_TTL);
     return globalCount > RATE_LIMIT_GLOBAL_MAX ? 'global' : 'ok';
   } catch (err) {
     console.warn('[signup] rate limit fail-open: Redis no respondió', {

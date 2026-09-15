@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { getRedis } from '@/lib/redis';
+import { contarEnVentanaFija } from '@/lib/rate-limit';
 import { issueAndSendVerificationEmail, resolveAppOrigin } from '@/lib/verify-email';
 import { getRequestIp, rateLimitBucketForIp } from '@/lib/rate-limit-ip';
 
@@ -60,19 +61,15 @@ async function checkSendRateLimit(email: string, ip: string): Promise<SendVerdic
   try {
     // La IP va primero y aparte: una red bloqueada no gasta la cuota del
     // email de nadie.
-    const perIp = await redis.pipeline().incr(ipKey).expire(ipKey, RATE_LIMIT_TTL).exec();
-    const ipCount = (perIp?.[0]?.[1] as number) ?? 1;
+    // 🔴 Ventana FIJA: apretar "Reenviar" no puede correr el propio castigo.
+    // Antes cada clic re-estampaba el vencimiento, así que quien insistía
+    // —lo primero que hace cualquiera cuando un mail no llega— se encerraba
+    // solo, para siempre. Ver lib/rate-limit.ts.
+    const ipCount = await contarEnVentanaFija(redis, ipKey, RATE_LIMIT_TTL);
     if (ipCount > RATE_LIMIT_IP_MAX) return 'ip';
 
-    const perEmail = await redis
-      .pipeline()
-      .incr(hourKey)
-      .expire(hourKey, RATE_LIMIT_TTL)
-      .incr(dayKey)
-      .expire(dayKey, RATE_LIMIT_DAY_TTL)
-      .exec();
-    const hourCount = (perEmail?.[0]?.[1] as number) ?? 1;
-    const dayCount = (perEmail?.[2]?.[1] as number) ?? 1;
+    const hourCount = await contarEnVentanaFija(redis, hourKey, RATE_LIMIT_TTL);
+    const dayCount = await contarEnVentanaFija(redis, dayKey, RATE_LIMIT_DAY_TTL);
     if (hourCount > RATE_LIMIT_MAX) return 'hour';
     if (dayCount > RATE_LIMIT_DAY_MAX) return 'day';
     return 'ok';

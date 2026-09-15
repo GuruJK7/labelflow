@@ -46,18 +46,15 @@ function redisFalso(inicial: Record<string, number> = {}) {
       cola.push(() => (counts[key] = (counts[key] ?? 0) + 1));
       return pipeline;
     }),
-    expire: vi.fn(() => {
-      cola.push(() => 1);
-      return pipeline;
-    }),
     exec: vi.fn(async () => {
       const out = cola.map((f) => [null, f()]);
       cola = [];
       return out;
     }),
   };
-  mocks.getRedis.mockReturnValue({ pipeline: () => pipeline });
-  return { counts, pipeline };
+  const expire = vi.fn(async () => 1);
+  mocks.getRedis.mockReturnValue({ pipeline: () => pipeline, expire });
+  return { counts, pipeline, expire };
 }
 
 beforeEach(() => {
@@ -107,13 +104,24 @@ describe('POST /api/auth/verify-email/send', () => {
   });
 
   it('5/día por email: con la hora fresca pero 5 reenvíos en el día → 429 (D26)', async () => {
-    const { counts, pipeline } = redisFalso({ [`verify-email:rl:day:${EMAIL}`]: 5 });
+    const { counts, expire } = redisFalso({ [`verify-email:rl:day:${EMAIL}`]: 5 });
     const res = await post({ email: EMAIL });
     expect(res.status).toBe(429);
     expect((await res.json()).error).toMatch(/varias veces hoy/);
-    expect(pipeline.expire).toHaveBeenCalledWith(`verify-email:rl:day:${EMAIL}`, 24 * 60 * 60);
     expect(counts[`verify-email:rl:day:${EMAIL}`]).toBe(6);
     expect(mocks.issueAndSend).not.toHaveBeenCalled();
+    // 🔴 Sobre un contador que YA existía NO se vuelve a estampar el
+    // vencimiento: si se re-estampara, apretar "Reenviar" correría el castigo
+    // otras 24 h y el usuario no saldría nunca. Ver lib/rate-limit.ts.
+    expect(expire).not.toHaveBeenCalledWith(`verify-email:rl:day:${EMAIL}`, 24 * 60 * 60);
+  });
+
+  it('el contador del día nace con vencimiento de 24 h', async () => {
+    // Sin esto la clave quedaría para siempre y el email no se liberaría nunca.
+    const { expire } = redisFalso();
+    expect((await post({ email: EMAIL })).status).toBe(200);
+    expect(expire).toHaveBeenCalledWith(`verify-email:rl:day:${EMAIL}`, 24 * 60 * 60);
+    expect(expire).toHaveBeenCalledWith(`verify-email:rl:${EMAIL}`, 60 * 60);
   });
 
   it('5/día: el quinto del día todavía sale', async () => {

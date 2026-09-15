@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { getAuthenticatedTenant, apiError } from '@/lib/api-utils';
 import { getRedis } from '@/lib/redis';
+import { contarEnVentanaFija } from '@/lib/rate-limit';
 
 const SYSTEM_PROMPT = `Sos el asistente de soporte de AutoEnvía, una plataforma SaaS que automatiza el envio de paquetes en Uruguay conectando Shopify con DAC Uruguay.
 
@@ -147,8 +148,8 @@ async function checkRateLimit(tenantId: string): Promise<boolean> {
     // be left with a count but no TTL. If the connection drops between two
     // separate commands the key would have no expiry and permanently block
     // the tenant — the pipeline failure mode is "both commands fail" instead.
-    const results = await redis.pipeline().incr(key).expire(key, RATE_LIMIT_TTL).exec();
-    const count = (results?.[0]?.[1] as number) ?? 1;
+    // Ventana fija: reintentar no corre el vencimiento. Ver lib/rate-limit.ts.
+    const count = await contarEnVentanaFija(redis, key, RATE_LIMIT_TTL);
     return count <= RATE_LIMIT_MAX;
   } catch {
     // Redis error — fail open rather than blocking all chat

@@ -24,6 +24,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getRedis } from '@/lib/redis';
+import { diagnosticoDeCorreo } from '@/lib/email-system';
 
 export const runtime = 'nodejs';
 
@@ -125,13 +126,20 @@ export async function GET() {
     checkBridge(),
   ]);
 
+  // El correo no se prueba con una llamada a Resend (costaría un envío por cada
+  // health-check): se revisa la CONFIGURACIÓN, que es donde estuvo el problema.
+  // Ver lib/email-system.ts.
+  const emailResult = diagnosticoDeCorreo();
+
   // DB is the only HARD dependency. If Redis is down we fall open on rate
   // limits; if the bridge is down the worker uses the API. Without the
   // DB, NOTHING works — so that's the only check that flips overall to 503.
   const overall: 'ok' | 'degraded' | 'fail' =
     dbResult.status === 'fail'
       ? 'fail'
-      : redisResult.status === 'degraded' || bridgeResult.status === 'degraded'
+      : redisResult.status === 'degraded' ||
+          bridgeResult.status === 'degraded' ||
+          emailResult.status === 'degraded'
         ? 'degraded'
         : 'ok';
 
@@ -146,6 +154,7 @@ export async function GET() {
         db: dbResult,
         redis: redisResult,
         bridge: bridgeResult,
+        email: emailResult,
       },
       timestamp: new Date().toISOString(),
       latencyMs: Date.now() - startedAt,

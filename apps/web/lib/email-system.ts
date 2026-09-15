@@ -23,7 +23,19 @@
 
 const RESEND_API = 'https://api.resend.com/emails';
 
-/** Default sender — verified at the Resend dashboard for autoenvia.com. */
+/**
+ * Remitente por defecto.
+ *
+ * 🔴 `autoenvia.com` NO está verificado en Resend (al 14-09-2026 el dominio no
+ * tiene ni SPF ni DKIM). Por eso producción pisa esto con `RESEND_FROM` y manda
+ * desde `labelflowsas.com` — que sí está verificado, pero es OTRA marca, y Gmail
+ * lo castiga: un dominio desconocido mandando links a autoenvia.com.
+ *
+ * Este default queda apuntando al dominio correcto a propósito: el día que se
+ * verifique `autoenvia.com` en Resend, alcanza con BORRAR `RESEND_FROM` de
+ * Vercel y los mails salen bien, sin tocar código. `diagnosticoDeCorreo()` avisa
+ * en /api/health mientras tanto.
+ */
 const DEFAULT_FROM = 'AutoEnvía <noreply@autoenvia.com>';
 
 export type SendResult =
@@ -49,6 +61,8 @@ export interface SendEmailOpts {
   text?: string;
   /** Override the default sender. Must be a verified Resend identity. */
   from?: string;
+  /** A dónde contesta quien aprieta "Responder". Default: `RESEND_REPLY_TO`. */
+  replyTo?: string;
   /**
    * Tag for Resend analytics — bucket by flow ("verify_email", "welcome",
    * "low_credits", etc.). Helps slice deliverability per use case later.
@@ -56,12 +70,113 @@ export interface SendEmailOpts {
   tag?: string;
 }
 
+/** El dominio que hay adentro de un "Nombre <mail@dominio>" o de un mail pelado. */
+export function dominioDelRemitente(from: string): string | null {
+  const m = from.match(/<([^>]+)>/);
+  const mail = (m ? m[1] : from).trim();
+  const i = mail.lastIndexOf('@');
+  return i === -1 ? null : mail.slice(i + 1).toLowerCase();
+}
+
+export type DiagnosticoCorreo =
+  | { status: 'ok'; remitente: string }
+  | { status: 'degraded'; remitente: string | null; reason: string }
+  | { status: 'not_configured' };
+
+/**
+ * Cómo está parado el correo saliente. NO manda nada: un health-check que
+ * enviara un mail de prueba costaría un envío por cada ping.
+ *
+ * 🔴 La comprobación que importa es la última, y es la que faltaba: que el
+ * dominio DESDE el que mandamos sea el mismo al que apunta la app. El 14-09-2026
+ * el sitio era `autoenvia.com` y los mails salían de `labelflowsas.com`. Para
+ * Gmail eso es un dominio desconocido mandando links a otro dominio —señal
+ * clásica de phishing— y los filtra. Llegaban a buzones permisivos y se perdían
+ * en Google Workspace, sin una sola línea de error en ningún lado.
+ *
+ * No devuelve nunca la clave ni nada sensible: sólo el remitente, que ya viaja
+ * en la cabecera de cada mail que mandamos.
+ */
+export function diagnosticoDeCorreo(): DiagnosticoCorreo {
+  if (!process.env.RESEND_API_KEY) return { status: 'not_configured' };
+
+  const from = process.env.RESEND_FROM ?? DEFAULT_FROM;
+  const dominioFrom = dominioDelRemitente(from);
+  if (!dominioFrom) {
+    return { status: 'degraded', remitente: from, reason: 'el remitente no tiene un dominio válido' };
+  }
+
+  const appUrl = process.env.NEXTAUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? '';
+  let dominioApp: string | null = null;
+  try {
+    dominioApp = appUrl ? new URL(appUrl).hostname.toLowerCase().replace(/^www\./, '') : null;
+  } catch {
+    dominioApp = null;
+  }
+
+  // Se compara el dominio registrable, así `mail.autoenvia.com` cuenta como
+  // propio: lo que penaliza Gmail es mandar desde OTRA marca, no desde un
+  // subdominio de la misma.
+  const raiz = (d: string) => d.split('.').slice(-2).join('.');
+  if (dominioApp && raiz(dominioFrom) !== raiz(dominioApp)) {
+    return {
+      status: 'degraded',
+      remitente: from,
+      reason: `los mails salen de ${dominioFrom} pero la app es ${dominioApp}: Gmail lo trata como sospechoso`,
+    };
+  }
+
+  return { status: 'ok', remitente: from };
+}
+
+/**
+ * El dominio del destinatario, nunca la dirección.
+ *
+ * Es el único dato del receptor que se loguea, y es a propósito: con
+ * "gmail.com" o "vittoriaco.com" alcanza para ver que TODOS los envíos a un
+ * proveedor están rebotando —que es la falla que importa— sin guardar el mail
+ * de nadie en los logs.
+ */
+function dominioDe(email: string): string {
+  const i = email.lastIndexOf('@');
+  return i === -1 ? 'sin-dominio' : email.slice(i + 1).toLowerCase();
+}
+
+/**
+ * 🔴 Todo envío deja rastro, falle o no.
+ *
+ * Antes esta función devolvía el error prolijamente y NINGUNO de los dos que la
+ * llaman lo miraba: el endpoint de reenvío contesta `{ok:true}` siempre (es
+ * anti-enumeración, está bien) y el alta se lo traga para no tirar abajo el
+ * registro. Resultado: si Resend rechazaba un envío, no quedaba una sola línea
+ * en ningún lado. Pasó de verdad el 14-09-2026 — un mail que no llegaba y los
+ * logs de Vercel mudos.
+ *
+ * Por eso el log vive ACÁ y no en los callers: es el único punto por donde pasa
+ * todo el correo saliente, así que un caller nuevo no puede olvidarse.
+ */
+function logEnvio(opts: SendEmailOpts, res: SendResult): void {
+  const base = { flujo: opts.tag ?? 'sin-tag', dominio: dominioDe(opts.to ?? '') };
+  if (res.ok) {
+    // El id es el que figura en resend.com/emails: permite cruzar un reclamo
+    // concreto con su entrega sin tener que buscar por destinatario.
+    console.info('[email] enviado', JSON.stringify({ ...base, id: res.id }));
+    return;
+  }
+  // `no_api_key` es el caso esperado en preview y local: no es un incidente.
+  const nivel = res.reason === 'no_api_key' ? console.warn : console.error;
+  nivel(
+    '[email] NO SE PUDO ENVIAR',
+    JSON.stringify({ ...base, motivo: res.reason, detalle: res.message ?? null }),
+  );
+}
+
 /**
  * Sends a transactional email via Resend.
  *
  * Returns a discriminated `{ ok }` result instead of throwing — every caller
  * in this app is in a hot path where we don't want one downed dep to take
- * down a signup or a billing webhook.
+ * down a signup or a billing webhook. Todo envío queda logueado (ver `logEnvio`).
  */
 export async function sendSystemEmail(opts: SendEmailOpts): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY;
@@ -70,14 +185,25 @@ export async function sendSystemEmail(opts: SendEmailOpts): Promise<SendResult> 
     // user can still log in with their password; verification just doesn't
     // gate them. The verification gate itself is env-flag-controlled
     // (`EMAIL_VERIFICATION_REQUIRED`) for exactly this scenario.
-    return { ok: false, reason: 'no_api_key' };
+    const r: SendResult = { ok: false, reason: 'no_api_key' };
+    logEnvio(opts, r);
+    return r;
   }
 
   if (!opts.to || !opts.subject) {
-    return { ok: false, reason: 'invalid_args', message: 'missing to/subject' };
+    const r: SendResult = { ok: false, reason: 'invalid_args', message: 'missing to/subject' };
+    logEnvio(opts, r);
+    return r;
   }
 
   const from = opts.from ?? process.env.RESEND_FROM ?? DEFAULT_FROM;
+
+  // 🔴 Un "noreply@" sin Reply-To es una pared: el comerciante que contesta
+  // pidiendo ayuda —y contestan, es lo primero que hace cualquiera— le escribe
+  // a un buzón que nadie lee, y se queda esperando. Con `RESEND_REPLY_TO`
+  // puesto, esa respuesta cae donde hay alguien. Sin la variable el
+  // comportamiento es exactamente el de antes.
+  const replyTo = opts.replyTo ?? process.env.RESEND_REPLY_TO;
 
   // Resend payload — see https://resend.com/docs/api-reference/emails/send-email
   const payload: Record<string, unknown> = {
@@ -87,6 +213,7 @@ export async function sendSystemEmail(opts: SendEmailOpts): Promise<SendResult> 
     html: opts.html,
   };
   if (opts.text) payload.text = opts.text;
+  if (replyTo) payload.reply_to = replyTo;
   if (opts.tag) payload.tags = [{ name: 'flow', value: opts.tag }];
 
   try {
@@ -112,17 +239,23 @@ export async function sendSystemEmail(opts: SendEmailOpts): Promise<SendResult> 
       } catch {
         /* body wasn't JSON — keep the status code */
       }
-      return { ok: false, reason: 'http_error', message: detail };
+      const r: SendResult = { ok: false, reason: 'http_error', message: detail };
+      logEnvio(opts, r);
+      return r;
     }
 
     const data = (await res.json()) as { id?: string };
-    return { ok: true, id: data.id ?? 'unknown' };
+    const r: SendResult = { ok: true, id: data.id ?? 'unknown' };
+    logEnvio(opts, r);
+    return r;
   } catch (err) {
-    return {
+    const r: SendResult = {
       ok: false,
       reason: 'network_error',
       message: err instanceof Error ? err.message : 'fetch failed',
     };
+    logEnvio(opts, r);
+    return r;
   }
 }
 
