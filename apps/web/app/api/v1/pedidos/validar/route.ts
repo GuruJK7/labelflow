@@ -1,5 +1,5 @@
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
-import { normalizarPedido, type PedidoCrudo } from '@/lib/pedido-interno';
+import { normalizarPedido, destinoLegible, type PedidoCrudo } from '@/lib/pedido-interno';
 
 /**
  * POST /api/v1/pedidos/validar — la previsualización del importador.
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
         // Lo justo para que se reconozca la fila en la tabla de revisión.
         resumen: {
           nombre: r.pedido.nombre,
-          destino: r.pedido.agencia ? `Agencia ${r.pedido.agencia}` : r.pedido.direccion,
+          destino: destinoLegible(r.pedido),
           departamento: r.pedido.departamento,
           totalUyu: r.pedido.totalUyu,
           contraEntrega: r.pedido.contraEntrega,

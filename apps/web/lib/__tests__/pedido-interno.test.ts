@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizarPedido,
+  destinoLegible,
   parsearPrecio,
   parsearTelefono,
   parsearFecha,
@@ -163,5 +164,25 @@ describe('normalizarPedido', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.errores.some((e) => e.toLowerCase().includes('corto'))).toBe(true);
+  });
+});
+
+describe('destinoLegible — cómo se muestra el destino', () => {
+  it('sin agencia muestra la dirección', () => {
+    expect(destinoLegible({ direccion: 'Gorlero 1234', agencia: null })).toBe('Gorlero 1234');
+  });
+
+  it('con agencia le antepone la palabra', () => {
+    expect(destinoLegible({ direccion: null, agencia: 'Tres Cruces' })).toBe('Agencia Tres Cruces');
+  });
+
+  it('no la repite si el comerciante ya la escribió', () => {
+    // Antes mostraba "Agencia Agencia Pocitos".
+    expect(destinoLegible({ direccion: null, agencia: 'Agencia Pocitos' })).toBe('Agencia Pocitos');
+    expect(destinoLegible({ direccion: null, agencia: 'Sucursal Buceo' })).toBe('Sucursal Buceo');
+  });
+
+  it('la agencia gana sobre la dirección', () => {
+    expect(destinoLegible({ direccion: 'Gorlero 1234', agencia: 'Maldonado' })).toBe('Agencia Maldonado');
   });
 });

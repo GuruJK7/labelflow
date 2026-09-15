@@ -17,6 +17,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, Package, Trash2, Pencil, Send, AlertCircle } from 'lucide-react';
 import { DEPARTAMENTOS_CANONICOS } from '@/lib/departamentos';
+import { destinoLegible } from '@/lib/pedido-interno';
 import { ImportarExcel } from './ImportarExcel';
 
 interface ItemPedido {
@@ -210,7 +211,7 @@ export default function PedidosPage() {
                       <div className="text-xs text-zinc-500">{p.telefono}</div>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="text-zinc-300">{p.agencia ? `Agencia ${p.agencia}` : p.direccion}</div>
+                      <div className="text-zinc-300">{destinoLegible(p)}</div>
                       <div className="text-xs text-zinc-500">
                         {p.departamento}
                         {p.localidad ? ` · ${p.localidad}` : ''}

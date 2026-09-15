@@ -141,6 +141,23 @@ function parsearItems(v: unknown): ItemPedido[] {
 }
 
 /**
+ * Cómo se muestra el destino en pantalla: la dirección, o la agencia donde
+ * retira. No repite la palabra si el comerciante ya la escribió — decía
+ * "Agencia Agencia Pocitos".
+ *
+ * Es SÓLO para mostrar. Lo que ve DAC lo arma `direccionParaDac` en el worker,
+ * que tiene otra exigencia (el texto tiene que matchear `isPickupAtDacBranch`).
+ * Son dos problemas distintos y mezclarlos haría que tocar el copy de la tabla
+ * cambiara a dónde llega un paquete.
+ */
+export function destinoLegible(p: { direccion: string | null; agencia: string | null }): string | null {
+  if (p.agencia) {
+    return /\b(agencia|sucursal)\b/i.test(p.agencia) ? p.agencia : `Agencia ${p.agencia}`;
+  }
+  return p.direccion;
+}
+
+/**
  * Valida y normaliza. Devuelve TODOS los errores juntos, no el primero: quien
  * está corrigiendo una planilla de 50 filas no quiere descubrirlos de a uno.
  */
