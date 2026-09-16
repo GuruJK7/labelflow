@@ -176,6 +176,59 @@ export async function pushDashboardLabels(
 }
 
 /**
+ * Un pedido que AutoEnvía NO pudo despachar, con el motivo en palabras.
+ * [16-sep-2026]
+ *
+ * Existe porque hasta hoy un pedido rechazado (Correo sin email, sin celular,
+ * agencia ambigua; DAC con dirección rechazada) quedaba en NEEDS_REVIEW de
+ * ESTE lado y del lado del origen seguía "esperando guía" para siempre, sin
+ * ninguna pista de qué corregir. El origen que sabe mostrarlo lo recibe por
+ * `POST /api/v1/orders/revision`; el que no lo implementa contesta 404 y no
+ * pasa nada (ver `reportDashboardReviews`).
+ */
+export interface DashboardReview {
+  /** uuid del dashboard */
+  order_id: string;
+  /** Texto para una persona, ya armado (motivos unidos + agencias posibles). */
+  motivo: string;
+}
+
+const REVIEW_CHUNK = 100;
+
+/**
+ * Le informa al origen los pedidos que NO se pudieron despachar y por qué.
+ * Best-effort y en chunks. Devuelve cuántos aceptó el origen.
+ *
+ * Un origen que no conoce el endpoint (404) NO es un error: simplemente no
+ * sabe mostrar el motivo. Se devuelve 0 y el que llama loguea; cualquier otro
+ * fallo (red, 5xx) sí sube, para que el job lo anote.
+ */
+export async function reportDashboardReviews(
+  baseUrl: string,
+  token: string,
+  revisiones: DashboardReview[],
+): Promise<number> {
+  if (!revisiones.length) return 0;
+  let aceptadas = 0;
+  for (let i = 0; i < revisiones.length; i += REVIEW_CHUNK) {
+    const chunk = revisiones.slice(i, i + REVIEW_CHUNK);
+    const res = await axios.post(
+      `${trim(baseUrl)}/api/v1/orders/revision`,
+      { revisiones: chunk },
+      {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        timeout: TIMEOUT_MS,
+        // 404 = el origen no implementa el endpoint. No es un fallo del worker.
+        validateStatus: (st) => (st >= 200 && st < 300) || st === 404,
+      },
+    );
+    if (res.status === 404) return aceptadas;
+    aceptadas += (res.data?.actualizados as number) ?? 0;
+  }
+  return aceptadas;
+}
+
+/**
  * ¿Cuánto se cobra contra entrega en un pedido de la fuente dashboard?
  *
  * Vive acá, es PURA y tiene tests por la misma razón que

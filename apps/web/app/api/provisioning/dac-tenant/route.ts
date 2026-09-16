@@ -130,6 +130,32 @@ export async function POST(req: Request) {
   const ownerEmail = str(body.ownerEmail).toLowerCase();
   const dacUsername = str(body.dacUsername); // = cédula (login DAC)
   const dacPassword = str(body.dacPassword);
+
+  // ── TRANSPORTISTA ──────────────────────────────────────────────────────────
+  // Hasta el 2026-09-05 esta ruta era DAC o nada, y por eso se llama así. Pero
+  // el worker de la fuente dashboard YA sabe despachar por Correo Uruguayo —
+  // rama completa en `process-dashboard-orders.job.ts`, que retorna antes de
+  // tocar DAC— y el scheduler ya acepta las dos: su `where` pide
+  // `(dacUsername y dacPassword) OR (correoEnabled y correoUser y correoPassword)`.
+  // Lo único que faltaba era poder darla de alta.
+  //
+  // `transportista` es OPCIONAL y su ausencia significa DAC, que es exactamente
+  // lo que hacía antes: el tenant de VentaFlow se aprovisionó por acá y no puede
+  // cambiar de comportamiento.
+  const transportista = str(body.transportista).toUpperCase() === 'CORREO' ? 'CORREO' : 'DAC';
+  const correoUser = str(body.correoUser);
+  const correoPassword = str(body.correoPassword);
+  const correoCuenta = str(body.correoCuenta);
+  // "test" | "prod". NO es cosmético y el default conservador es deliberado: el
+  // catálogo de oficinas difiere entre ambientes, y despachar contra el
+  // equivocado acepta sucursales que en producción no existen. Mismo default que
+  // la columna y que el paso del wizard.
+  const correoAmbiente = str(body.correoAmbiente).toLowerCase() === 'prod' ? 'prod' : 'test';
+  // Correo EXIGE peso en cada envío y DAC nunca lo pidió, así que un pedido sin
+  // peso propio necesita este default o va a revisión. El rango es el que acepta
+  // Correo (> 0 y < 30).
+  const pesoCrudo = typeof body.pesoDefaultKg === 'number' ? body.pesoDefaultKg : Number(str(body.pesoDefaultKg));
+  const pesoDefaultKg = Number.isFinite(pesoCrudo) && pesoCrudo > 0 && pesoCrudo < 30 ? pesoCrudo : null;
   const dashboardUrl = str(body.dashboardUrl);
   const dashboardToken = str(body.dashboardToken);
   // dacAccount: AutoEnvía lo manda, pero LabelFlow no tiene columna ni concepto de
@@ -145,8 +171,27 @@ export async function POST(req: Request) {
   // dice nada útil. El piso es 0 (no negativos: el gate compara `> 0`).
   const envios = enviosPedidos === null ? null : Math.min(Math.max(enviosPedidos, 0), 2_000_000_000);
 
+  // ── CONTRAREEMBOLSO ────────────────────────────────────────────────────────
+  // `Tenant.codEnabled` es el interruptor de la tienda y nace en `false`:
+  // fail-closed, a propósito. Por la fuente dashboard el monto viene POR PEDIDO
+  // (`cod_amount`, y sólo cuando la marca marcó "cobrar al entregar"), pero el
+  // worker lo descarta EN SILENCIO si el interruptor está apagado
+  // (`codDeLaFuenteDashboard`, `correo/adapter.ts`): la guía sale como flete
+  // común, el cartero entrega y nadie cobra. Hasta el 16-09-2026 ningún alta lo
+  // prendía — es el mecanismo del MAN-260909-005. El origen (DEPO) lo declara
+  // EXPLÍCITO; ausente, no se toca: un re-aprovisionamiento con un cuerpo viejo
+  // no le apaga el cobro a una cuenta que ya cobraba.
+  const codEnabled = typeof body.codEnabled === 'boolean' ? body.codEnabled : null;
+
   if (!ownerEmail || !EMAIL_RE.test(ownerEmail)) return json({ error: 'ownerEmail inválido' }, 400);
-  if (!dacUsername || !dacPassword) return json({ error: 'faltan credenciales DAC' }, 400);
+  if (transportista === 'CORREO') {
+    if (!correoUser || !correoPassword) return json({ error: 'faltan credenciales de Correo Uruguayo' }, 400);
+    if (pesoDefaultKg === null) {
+      return json({ error: 'falta pesoDefaultKg (mayor a 0 y menor a 30): Correo lo exige en cada envío' }, 400);
+    }
+  } else if (!dacUsername || !dacPassword) {
+    return json({ error: 'faltan credenciales DAC' }, 400);
+  }
   if (!dashboardToken) return json({ error: 'falta dashboardToken' }, 400);
   if (!/^https?:\/\//i.test(dashboardUrl)) return json({ error: 'dashboardUrl inválido' }, 400);
 
@@ -156,14 +201,29 @@ export async function POST(req: Request) {
     dashboardUrl,
     dashboardToken: encrypt(dashboardToken),
     dashboardSourceEnabled: true,
-    dacUsername: encrypt(dacUsername),
-    dacPassword: encrypt(dacPassword),
     isActive: true,
+    // Las credenciales del transportista elegido, y SÓLO las de ese. Cargar las
+    // dos dejaría al tenant en un estado que ningún camino de la UI puede
+    // producir, y el job elige por `correoEnabled`, no por cuál tiene datos.
+    ...(transportista === 'CORREO'
+      ? {
+          correoEnabled: true,
+          correoUser: encrypt(correoUser),
+          correoPassword: encrypt(correoPassword),
+          correoCuenta: correoCuenta ? encrypt(correoCuenta) : null,
+          correoAmbiente,
+          pesoDefaultKg,
+        }
+      : {
+          dacUsername: encrypt(dacUsername),
+          dacPassword: encrypt(dacPassword),
+        }),
     // Sólo se agregan si vinieron. Omitidos, Prisma no toca la columna: un
     // re-aprovisionamiento sin estos campos no le pisa el cron ni el saldo a
     // una cuenta que ya estaba andando.
     ...(soloManual ? { cronSchedule: 'manual' } : {}),
     ...(envios !== null ? { shipmentCredits: envios } : {}),
+    ...(codEnabled !== null ? { codEnabled } : {}),
   };
 
   const slug = `ae-${slugify(sellerSlug || ownerEmail.split('@')[0])}`;

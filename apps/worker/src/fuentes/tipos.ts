@@ -19,7 +19,7 @@
  * una sola para todo el sistema. Una fuente que inventara su propio shape se
  * llevaría puesto ese contrato.
  */
-import type { DashboardOrder, TraidaDashboard, DashboardLabelResult } from '../dashboard/orders';
+import type { DashboardOrder, TraidaDashboard, DashboardLabelResult, DashboardReview } from '../dashboard/orders';
 
 /** Para qué tenant y con qué credenciales corre esta fuente. */
 export interface TenantDeFuente {
@@ -65,6 +65,14 @@ export interface FuenteDePedidos<Ctx = unknown> {
    * web — mandárselo a sí misma en base64 no tendría sentido.
    */
   publicarEtiquetas?(ctx: Ctx, resultados: DashboardLabelResult[]): Promise<number>;
+
+  /**
+   * Contarle al origen qué pedidos NO salieron y por qué (sin email, sin
+   * celular, agencia ambigua, dirección rechazada). Sólo una fuente REMOTA:
+   * la interna ya ve el motivo en su propia etiqueta NEEDS_REVIEW.
+   * Best-effort: si falla, el pedido igual queda en revisión de este lado.
+   */
+  informarRevisiones?(ctx: Ctx, revisiones: DashboardReview[]): Promise<number>;
 }
 
-export type { DashboardOrder, TraidaDashboard, DashboardLabelResult };
+export type { DashboardOrder, TraidaDashboard, DashboardLabelResult, DashboardReview };

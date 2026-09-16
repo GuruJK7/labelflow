@@ -119,11 +119,45 @@ describe('cierre anti-duplicado: cualquier guía previa, no sólo las de Correo'
     expect(cargaMasiva).not.toHaveBeenCalled();
   });
 
+  // [16-09-2026] La guía que ya existe tiene que poder volver al origen aunque
+  // el writeback anterior haya fallado: sin esto el pedido se re-ofrecía y
+  // terminaba acá, "bloqueado", corrida tras corrida, y el panel nunca la veía.
+  it('la guía previa de Correo se devuelve en yaEmitidos con su PDF para re-publicarla', async () => {
+    labelFindUnique.mockResolvedValue({ dacGuia: 'PC021042235UY', carrier: 'CORREO', pdfPath: 't-1/2026-09-16/l.pdf' });
+    const r = await procesarPedidosCorreo([pedido()], ctx());
+    expect(r.yaEmitidos).toEqual([{ shopifyOrderId: '900100', codigo: 'PC021042235UY', pdfPath: 't-1/2026-09-16/l.pdf' }]);
+    expect(r.revisiones).toEqual([]);
+  });
+
+  it('una guía previa de DAC NO va a yaEmitidos: es un conflicto, no algo que Correo pueda publicar', async () => {
+    labelFindUnique.mockResolvedValue({ dacGuia: '00123456', carrier: null, pdfPath: 'x.pdf' });
+    const r = await procesarPedidosCorreo([pedido()], ctx());
+    expect(r.yaEmitidos).toEqual([]);
+  });
+
   it('el placeholder PENDING- NO bloquea: todavía no hay guía', async () => {
     labelFindUnique.mockResolvedValue({ dacGuia: 'PENDING-9', carrier: null });
     const r = await procesarPedidosCorreo([pedido()], ctx({ testMode: true }));
     expect(r.bloqueados).toBe(0);
     expect(r.simulados).toBe(1);
+  });
+});
+
+describe('motivos de revisión para el origen', () => {
+  it('un pedido que no pasa la validación sale en revisiones con el texto exacto', async () => {
+    const sinMail = { ...(pedido() as Record<string, unknown>), email: '' } as never;
+    const r = await procesarPedidosCorreo([sinMail], ctx());
+    expect(r.enRevision).toBe(1);
+    expect(r.revisiones).toHaveLength(1);
+    expect(r.revisiones[0].shopifyOrderId).toBe('900100');
+    expect(r.revisiones[0].motivo).toMatch(/Email/i);
+    expect(cargaMasiva).not.toHaveBeenCalled();
+  });
+
+  it('un despacho exitoso no deja revisiones', async () => {
+    const r = await procesarPedidosCorreo([pedido()], ctx({ testMode: true }));
+    expect(r.simulados).toBe(1);
+    expect(r.revisiones).toEqual([]);
   });
 });
 

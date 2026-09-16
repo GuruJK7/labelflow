@@ -110,6 +110,25 @@ export interface ResultadoCorreo {
    *  faltar sólo si AHIVA no mandó etiqueta — y en ese caso el pedido ni entra
    *  acá, porque queda en NEEDS_REVIEW. */
   despachados: Array<{ shopifyOrderId: string; codigo: string; etiquetaBase64?: string }>;
+  /**
+   * Pedidos que YA tenían guía de Correo de este tenant y por eso no se
+   * despacharon de nuevo. [16-sep-2026]
+   *
+   * Se devuelven con su código y el path del PDF en Storage para que la
+   * fuente REMOTA los RE-publique al origen: si el writeback de la corrida
+   * anterior falló (timeout, 413), la guía existía y estaba facturada pero el
+   * panel nunca la recibió, y el pedido se re-ofrecía en cada ciclo para
+   * terminar acá, contado como "bloqueado", para siempre. La etiqueta es el
+   * hecho: si se emitió, el origen tiene que enterarse aunque sea tarde.
+   */
+  yaEmitidos: Array<{ shopifyOrderId: string; codigo: string; pdfPath: string | null }>;
+  /**
+   * Pedidos que NO salieron por un motivo que una PERSONA puede corregir
+   * (sin email, sin celular, agencia ambigua, rechazo explícito de AHIVA), con
+   * el texto exacto. La fuente remota se lo informa al origen; hasta hoy el
+   * pedido quedaba "esperando guía" del otro lado sin ninguna pista.
+   */
+  revisiones: Array<{ shopifyOrderId: string; motivo: string }>;
 }
 
 const PASO = 'correo-uruguayo';
@@ -156,6 +175,8 @@ export async function procesarPedidosCorreo(
     bloqueados: 0,
     codigos: [],
     despachados: [],
+    yaEmitidos: [],
+    revisiones: [],
   };
   if (ordenes.length === 0) return salida;
 
@@ -209,11 +230,11 @@ export async function procesarPedidosCorreo(
     // Es el mismo criterio de `assertNoPriorSubmit` en dac/shipment.ts, que
     // tampoco envuelve la lectura, y la misma asimetría que fija types.ts:
     // una revisión a mano cuesta un minuto; cobrarle dos veces a alguien, no.
-    let labelPrevio: { dacGuia: string | null; carrier: string | null } | null;
+    let labelPrevio: { dacGuia: string | null; carrier: string | null; pdfPath: string | null } | null;
     try {
       labelPrevio = await db.label.findUnique({
         where: { tenantId_shopifyOrderId: { tenantId: ctx.tenantId, shopifyOrderId } },
-        select: { dacGuia: true, carrier: true },
+        select: { dacGuia: true, carrier: true, pdfPath: true },
       });
     } catch (err) {
       salida.fallidos++;
@@ -236,6 +257,13 @@ export async function procesarPedidosCorreo(
     if (guiaPrevia && !guiaPrevia.startsWith('PENDING-')) {
       salida.bloqueados++;
       const transportistaPrevio = transportistaDe(labelPrevio?.carrier, guiaPrevia);
+      // La guía de Correo ya existe: que el origen la reciba aunque el
+      // writeback anterior haya fallado (ver `yaEmitidos`). Sólo las de Correo:
+      // una de DAC previa es un conflicto que se resuelve a mano, no algo que
+      // esta rama pueda publicar como propio.
+      if (transportistaPrevio === 'CORREO') {
+        salida.yaEmitidos.push({ shopifyOrderId, codigo: guiaPrevia, pdfPath: labelPrevio?.pdfPath ?? null });
+      }
       ctx.log.warn(
         PASO,
         transportistaPrevio === 'CORREO'
@@ -301,6 +329,7 @@ export async function procesarPedidosCorreo(
       if (!adaptado.ok) {
         await marcarRevision(ctx, order, adaptado.motivos, adaptado.candidatas);
         salida.enRevision++;
+        salida.revisiones.push({ shopifyOrderId, motivo: detalleRevision(adaptado.motivos, adaptado.candidatas) });
         continue;
       }
 
@@ -308,6 +337,7 @@ export async function procesarPedidosCorreo(
       if (!preVuelo.ok) {
         await marcarRevision(ctx, order, preVuelo.motivos, []);
         salida.enRevision++;
+        salida.revisiones.push({ shopifyOrderId, motivo: detalleRevision(preVuelo.motivos, []) });
         continue;
       }
       for (const aviso of preVuelo.avisos) ctx.log.info(PASO, `${order.name}: ${aviso}`);
@@ -545,6 +575,10 @@ export async function procesarPedidosCorreo(
         `Falló el despacho de ${order.name}: ${e.message}` +
           (esNegocio ? '' : ' — el marcador queda puesto: verificá en el portal antes de reintentar'),
       );
+      // Un rechazo explícito de AHIVA es algo que la marca puede corregir (un
+      // dato que Correo no acepta); un timeout no le dice nada útil y además se
+      // reintenta solo.
+      if (esNegocio) salida.revisiones.push({ shopifyOrderId, motivo: `Correo Uruguayo: ${e.message}`.slice(0, 500) });
 
       await db.label
         .updateMany({
@@ -561,6 +595,14 @@ export async function procesarPedidosCorreo(
   return salida;
 }
 
+/** El motivo de revisión en una línea, tal como lo lee una persona (acá y en el origen). */
+function detalleRevision(motivos: string[], candidatas: string[]): string {
+  return (
+    motivos.join(' · ') +
+    (candidatas.length ? ` — agencias posibles: ${candidatas.slice(0, 10).join(', ')}` : '')
+  );
+}
+
 /** Deja el pedido visible en el dashboard con el motivo exacto, sin llamar a AHIVA. */
 async function marcarRevision(
   ctx: CtxCorreo,
@@ -568,9 +610,7 @@ async function marcarRevision(
   motivos: string[],
   candidatas: string[],
 ): Promise<void> {
-  const detalle =
-    motivos.join(' · ') +
-    (candidatas.length ? ` — agencias posibles: ${candidatas.slice(0, 10).join(', ')}` : '');
+  const detalle = detalleRevision(motivos, candidatas);
 
   ctx.log.warn(PASO, `${order.name} no se puede despachar por Correo: ${detalle}`);
 

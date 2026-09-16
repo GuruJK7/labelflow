@@ -136,6 +136,120 @@ describe('POST /api/provisioning/dac-tenant', () => {
     );
   });
 
+  // ── Transportista ────────────────────────────────────────────────────────
+  // El worker de la fuente dashboard ya sabía despachar por Correo Uruguayo; lo
+  // que faltaba era poder dar de alta una cuenta así.
+  it('sin `transportista` guarda DAC y NO toca nada de Correo (comportamiento de siempre)', async () => {
+    await post(CUERPO_MINIMO);
+    const data = datosCreados();
+    expect(data.dacUsername).toBeTruthy();
+    expect(data.dacPassword).toBeTruthy();
+    expect(data).not.toHaveProperty('correoEnabled');
+    expect(data).not.toHaveProperty('correoUser');
+  });
+
+  it('transportista CORREO guarda Correo y NO guarda DAC', async () => {
+    const res = await post({
+      ...CUERPO_MINIMO,
+      transportista: 'CORREO',
+      correoUser: 'usuario-ahiva',
+      correoPassword: 'secreta',
+      correoCuenta: '12345',
+      correoAmbiente: 'prod',
+      pesoDefaultKg: 1.5,
+    });
+    expect(res.status).toBe(200);
+    const data = datosCreados();
+    expect(data.correoEnabled).toBe(true);
+    expect(data.correoAmbiente).toBe('prod');
+    expect(data.pesoDefaultKg).toBe(1.5);
+    expect(data.correoUser).toBeTruthy();
+    // Cargar las dos dejaría un tenant que ningún camino de la UI produce, y el
+    // job elige por `correoEnabled`, no por cuál tiene datos.
+    expect(data).not.toHaveProperty('dacUsername');
+    expect(data).not.toHaveProperty('dacPassword');
+  });
+
+  it('CORREO sin peso rebota: Correo lo exige en cada envío', async () => {
+    const res = await post({
+      ...CUERPO_MINIMO,
+      transportista: 'CORREO',
+      correoUser: 'u',
+      correoPassword: 'p',
+    });
+    expect(res.status).toBe(400);
+    expect(mocks.tenantCreate).not.toHaveBeenCalled();
+  });
+
+  it('CORREO sin credenciales rebota, y NO cae al mensaje de DAC', async () => {
+    const res = await post({ ...CUERPO_MINIMO, transportista: 'CORREO', pesoDefaultKg: 1 });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'faltan credenciales de Correo Uruguayo' });
+    expect(mocks.tenantCreate).not.toHaveBeenCalled();
+  });
+
+  it('CORREO puede darse de alta SIN credenciales de DAC', async () => {
+    // El caso que antes era imposible: una tienda que despacha por Correo no
+    // tiene por qué tener cuenta en DAC. El scheduler ya lo aceptaba (su where
+    // es un OR entre los dos transportistas); el alta no.
+    const { dacUsername: _u, dacPassword: _p, ...sinDac } = CUERPO_MINIMO;
+    const res = await post({
+      ...sinDac,
+      transportista: 'CORREO',
+      correoUser: 'u',
+      correoPassword: 'p',
+      pesoDefaultKg: 2,
+    });
+    expect(res.status).toBe(200);
+    expect(datosCreados().correoEnabled).toBe(true);
+  });
+
+  it('el ambiente de Correo cae a "test" salvo que se pida prod explícito', async () => {
+    // El catálogo de oficinas difiere entre ambientes: despachar contra el
+    // equivocado acepta sucursales que en producción no existen.
+    await post({
+      ...CUERPO_MINIMO,
+      transportista: 'CORREO',
+      correoUser: 'u',
+      correoPassword: 'p',
+      pesoDefaultKg: 1,
+      correoAmbiente: 'cualquier-cosa',
+    });
+    expect(datosCreados().correoAmbiente).toBe('test');
+  });
+
+  // ── Contrareembolso ──────────────────────────────────────────────────────
+  // El interruptor del tenant nace apagado y el worker descarta en silencio el
+  // `cod_amount` del feed si sigue apagado: el origen tiene que poder prenderlo.
+  it('codEnabled true se guarda tal cual (DEPO decide el cobro por pedido)', async () => {
+    await post({ ...CUERPO_MINIMO, codEnabled: true });
+    expect(datosCreados().codEnabled).toBe(true);
+  });
+
+  it('codEnabled ausente NO toca la columna: un cuerpo viejo no apaga un cobro que ya andaba', async () => {
+    await post(CUERPO_MINIMO);
+    expect(datosCreados()).not.toHaveProperty('codEnabled');
+  });
+
+  it('codEnabled con un valor que no es booleano se ignora', async () => {
+    await post({ ...CUERPO_MINIMO, codEnabled: 'true' });
+    expect(datosCreados()).not.toHaveProperty('codEnabled');
+  });
+
+  it('codEnabled también aplica al alta de CORREO', async () => {
+    await post({
+      ...CUERPO_MINIMO,
+      transportista: 'CORREO',
+      correoUser: 'u',
+      correoPassword: 'p',
+      pesoDefaultKg: 1,
+      codEnabled: true,
+    });
+    const data = datosCreados();
+    expect(data.correoEnabled).toBe(true);
+    expect(data.codEnabled).toBe(true);
+  });
+
   it('el slug sale de sellerSlug y es el marcador de las cuentas de DEPO', async () => {
     await post(CUERPO_MINIMO);
     // `ae-depo-*` es lo que agrupa la sección DEPO del Centro de Control

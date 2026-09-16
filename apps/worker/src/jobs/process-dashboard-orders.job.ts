@@ -27,7 +27,7 @@ import { createShipment, DuplicateSubmitError, DacAddressRejectedError } from '.
 import { reconcileOrphansForTenant } from '../dac/orphan-reconcile';
 import { withTenantDacLock, DacLockHeldError } from '../dac/tenant-lock';
 import { downloadLabel } from '../dac/label';
-import { uploadLabelPdf } from '../storage/upload';
+import { uploadLabelPdf, downloadLabelPdf } from '../storage/upload';
 import { verificarStorage, motivoStorageCaido } from '../storage/health';
 import { buildSafeLabelGeoFields } from './label-safe-fields';
 import { persistLabelItems } from './label-items';
@@ -35,7 +35,7 @@ import { createStepLogger } from '../logger';
 import logger from '../logger';
 import { shadowRecordShipment } from '../billing/shadow';
 import { sleep } from '../utils';
-import { codDeLaFuenteDashboard, type DashboardLabelResult } from '../dashboard/orders';
+import { codDeLaFuenteDashboard, type DashboardLabelResult, type DashboardReview } from '../dashboard/orders';
 import { toShopifyOrder, stableNumericId } from '../dashboard/adapter';
 import { fuenteDashboard } from '../fuentes/dashboard';
 import type { FuenteDePedidos } from '../fuentes/tipos';
@@ -95,6 +95,8 @@ async function processDashboardOrdersJobInner(
   // Órdenes con guía + PDF imprimible → writeback ENRIQUECIDO (guía + PDF) a
   // AutoEnvía, para que el cliente imprima desde su dashboard. El resto va legacy.
   const labelResults: DashboardLabelResult[] = [];
+  // Rechazos de dirección de DAC, para informarlos al origen (best-effort).
+  const revisionesDac: DashboardReview[] = [];
 
   const slog = createStepLogger(jobId, tenantId);
   const config = getConfig();
@@ -342,18 +344,37 @@ async function processDashboardOrdersJobInner(
       // no existe (queda en NEEDS_REVIEW antes de llegar acá); si llegara igual
       // viaja con su código y sin PDF: el número es lo que impide la guía doble.
       const porShopifyId = new Map(resultado.despachados.map((d) => [d.shopifyOrderId, d] as const));
+      // Guías de Correo que YA existían (writeback anterior fallido): se
+      // re-publican con el PDF que quedó en Storage, o sin él si retention ya
+      // lo borró. La guía es lo que no se puede perder; el papel se vuelve a
+      // pedir por código.
+      const yaEmitidosPorId = new Map(resultado.yaEmitidos.map((y) => [y.shopifyOrderId, y] as const));
       const resultadosCorreo: DashboardLabelResult[] = [];
       const despachadas: string[] = [];
       for (const a of adaptadas) {
-        const d = porShopifyId.get(String(a.order.id));
-        if (!d) continue;
-        despachadas.push(a.dashboardId);
-        resultadosCorreo.push({
-          order_id: a.dashboardId,
-          status: 'labeled',
-          tracking: d.codigo,
-          pdf_base64: d.etiquetaBase64 ?? null,
-        });
+        const sid = String(a.order.id);
+        const d = porShopifyId.get(sid);
+        if (d) {
+          despachadas.push(a.dashboardId);
+          resultadosCorreo.push({
+            order_id: a.dashboardId,
+            status: 'labeled',
+            tracking: d.codigo,
+            pdf_base64: d.etiquetaBase64 ?? null,
+          });
+          continue;
+        }
+        const y = yaEmitidosPorId.get(sid);
+        if (y) {
+          despachadas.push(a.dashboardId);
+          let pdfBase64: string | null = null;
+          if (y.pdfPath) {
+            const pdf = await downloadLabelPdf(y.pdfPath).catch(() => null);
+            pdfBase64 = pdf ? pdf.toString('base64') : null;
+          }
+          resultadosCorreo.push({ order_id: a.dashboardId, status: 'labeled', tracking: y.codigo, pdf_base64: pdfBase64 });
+          slog.info('dashboard', `${a.order.name}: guía de Correo ${y.codigo} ya emitida — se vuelve a devolver al panel${pdfBase64 ? ' con PDF' : ' (sin PDF en Storage)'}`);
+        }
       }
       if (despachadas.length > 0) {
         try {
@@ -365,6 +386,23 @@ async function processDashboardOrdersJobInner(
           }
         } catch (e) {
           slog.warn('dashboard', `No se pudieron devolver las etiquetas de Correo al panel: ${(e as Error).message}`);
+        }
+      }
+
+      // Los que NO salieron y por qué, para que el origen lo muestre en vez de
+      // dejar el pedido "esperando guía" sin ninguna pista. Best-effort.
+      if (resultado.revisiones.length > 0 && typeof fuente.informarRevisiones === 'function') {
+        const dashboardIdPorShopifyId = new Map(adaptadas.map((a) => [String(a.order.id), a.dashboardId] as const));
+        const revisiones: DashboardReview[] = [];
+        for (const r of resultado.revisiones) {
+          const orderId = dashboardIdPorShopifyId.get(r.shopifyOrderId);
+          if (orderId) revisiones.push({ order_id: orderId, motivo: r.motivo });
+        }
+        try {
+          const aceptadas = await fuente.informarRevisiones(ctx, revisiones);
+          slog.info('dashboard', `Motivos de revisión informados al panel: ${aceptadas} de ${revisiones.length}`);
+        } catch (e) {
+          slog.warn('dashboard', `No se pudieron informar los motivos de revisión al panel: ${(e as Error).message}`);
         }
       }
 
@@ -539,6 +577,7 @@ async function processDashboardOrdersJobInner(
         } else if (err instanceof DacAddressRejectedError) {
           reviewCount++;
           slog.warn('order-review', `${order.name}: DAC rechazó la dirección — queda para revisar (no se marca cargada)`);
+          revisionesDac.push({ order_id: dashboardId, motivo: `DAC rechazó la dirección: ${(err as Error).message}`.slice(0, 500) });
         } else {
           failedCount++;
           slog.error('order-fail', `${order.name} falló: ${(err as Error).message}`);
@@ -570,6 +609,14 @@ async function processDashboardOrdersJobInner(
         }
       } catch (markErr) {
         slog.error('dashboard', `No se pudieron marcar cargadas (se reintentará el próximo run; createShipment dedup evita doble-envío): ${(markErr as Error).message}`);
+      }
+    }
+    if (revisionesDac.length > 0 && typeof fuente.informarRevisiones === 'function') {
+      try {
+        const aceptadas = await fuente.informarRevisiones(ctx, revisionesDac);
+        slog.info('dashboard', `Motivos de revisión (DAC) informados al panel: ${aceptadas} de ${revisionesDac.length}`);
+      } catch (e) {
+        slog.warn('dashboard', `No se pudieron informar los motivos de revisión al panel: ${(e as Error).message}`);
       }
     }
 

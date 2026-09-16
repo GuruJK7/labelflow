@@ -10,8 +10,9 @@ import {
   traerConfirmadasDelDashboard,
   markDashboardOrdersLoaded,
   pushDashboardLabels,
+  reportDashboardReviews,
 } from '../dashboard/orders';
-import type { FuenteDePedidos, TenantDeFuente, Configuracion, DashboardLabelResult } from './tipos';
+import type { FuenteDePedidos, TenantDeFuente, Configuracion, DashboardLabelResult, DashboardReview } from './tipos';
 
 export interface CtxDashboard {
   url: string;
@@ -40,5 +41,9 @@ export const fuenteDashboard: FuenteDePedidos<CtxDashboard> = {
 
   publicarEtiquetas(ctx, resultados: DashboardLabelResult[]) {
     return pushDashboardLabels(ctx.url, ctx.token, resultados);
+  },
+
+  informarRevisiones(ctx, revisiones: DashboardReview[]) {
+    return reportDashboardReviews(ctx.url, ctx.token, revisiones);
   },
 };

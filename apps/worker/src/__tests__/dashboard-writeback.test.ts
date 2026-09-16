@@ -11,7 +11,7 @@ vi.mock('axios', () => ({
 }));
 
 import axios from 'axios';
-import { pushDashboardLabels, type DashboardLabelResult } from '../dashboard/orders';
+import { pushDashboardLabels, reportDashboardReviews, type DashboardLabelResult } from '../dashboard/orders';
 
 const post = axios.post as unknown as ReturnType<typeof vi.fn>;
 
@@ -82,5 +82,43 @@ describe('pushDashboardLabels — enriched writeback', () => {
     const results = Array.from({ length: 12 }, (_, i) => mkResult(i));
     const n = await pushDashboardLabels('https://app.autoenvia.com', 'tok', results);
     expect(n).toBe(13);
+  });
+});
+
+describe('reportDashboardReviews — los que no salieron, con motivo', () => {
+  beforeEach(() => {
+    post.mockReset();
+    post.mockResolvedValue({ status: 200, data: { actualizados: 1 } });
+  });
+
+  it('no hace ningún POST con lista vacía', async () => {
+    expect(await reportDashboardReviews('https://depo.test', 'tok', [])).toBe(0);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('manda { revisiones } a /api/v1/orders/revision con Bearer y suma los aceptados', async () => {
+    post.mockResolvedValue({ status: 200, data: { actualizados: 2 } });
+    const n = await reportDashboardReviews('https://depo.test/', 'tok', [
+      { order_id: 'a', motivo: 'sin email' },
+      { order_id: 'b', motivo: 'sin celular' },
+    ]);
+    expect(n).toBe(2);
+    expect(post).toHaveBeenCalledTimes(1);
+    const [url, body, opts] = post.mock.calls[0];
+    expect(url).toBe('https://depo.test/api/v1/orders/revision');
+    expect(body).toEqual({ revisiones: [{ order_id: 'a', motivo: 'sin email' }, { order_id: 'b', motivo: 'sin celular' }] });
+    expect(opts.headers.Authorization).toBe('Bearer tok');
+  });
+
+  it('un origen que no implementa el endpoint (404) NO es un error: devuelve 0', async () => {
+    post.mockResolvedValue({ status: 404, data: {} });
+    await expect(reportDashboardReviews('https://viejo.test', 'tok', [{ order_id: 'a', motivo: 'x' }])).resolves.toBe(0);
+  });
+
+  it('chunkea de a 100', async () => {
+    const muchas = Array.from({ length: 205 }, (_, i) => ({ order_id: `u${i}`, motivo: 'm' }));
+    await reportDashboardReviews('https://depo.test', 'tok', muchas);
+    expect(post).toHaveBeenCalledTimes(3);
+    expect(post.mock.calls.map((c) => c[1].revisiones.length)).toEqual([100, 100, 5]);
   });
 });

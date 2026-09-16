@@ -48,6 +48,26 @@ export async function uploadLabelPdf(
 }
 
 /**
+ * Baja un PDF de etiqueta ya subido (`Label.pdfPath`). [16-sep-2026]
+ *
+ * Lo usa la rama Correo de la fuente dashboard para RE-publicar al origen una
+ * guía que ya se emitió pero cuyo writeback falló (timeout, 413): sin esto la
+ * guía existía y estaba facturada pero el panel nunca la recibía. Devuelve
+ * null si no está (retention ya lo borró, o el path es viejo) — la guía viaja
+ * igual, sin papel.
+ */
+export async function downloadLabelPdf(storagePath: string): Promise<Buffer | null> {
+  const config = getConfig();
+  const supabase = getSupabase();
+  const { data, error } = await supabase.storage.from(config.SUPABASE_STORAGE_BUCKET).download(storagePath);
+  if (error || !data) {
+    logger.warn({ error: error?.message ?? 'sin datos', storagePath }, 'No se pudo bajar el PDF de Storage');
+    return null;
+  }
+  return Buffer.from(await data.arrayBuffer());
+}
+
+/**
  * Uploads a bulk DAC xlsx to Supabase Storage so Adrian's Mac (agent) can
  * download and process it.
  *
