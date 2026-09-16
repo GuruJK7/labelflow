@@ -166,15 +166,18 @@ describe('resolverOficinaEntrega — oficina pedida explícitamente', () => {
     expect(r.oficina.nombre).toBe('Ciudad Vieja');
   });
 
-  it('si la oficina pedida es de otro departamento, se respeta pero se deja dicho', () => {
+  it('si la oficina pedida es EXACTA pero de otro departamento, ya no se respeta: a revisión', () => {
+    // Hasta el 16-09-2026 esto devolvía ok:true con "NO es el departamento del
+    // destino" en el motivo, y el pedido salía igual a Pocitos, Montevideo.
     const r = resolverOficinaEntrega(
       { departamento: 'Maldonado', ciudad: 'Maldonado' },
       CATALOGO,
       { oficinaPreferida: 'Pocitos' },
     );
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.motivoEleccion).toMatch(/NO es el departamento del destino/);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.motivo).toMatch(/"Pocitos" es una agencia de Montevideo, no de Maldonado/);
+    expect(r.candidatas).toEqual(['Pocitos (Montevideo)']);
   });
 
   // --- nombre parcial: se elige SÓLO si hay una única oficina posible ---------
@@ -276,6 +279,150 @@ describe('resolverOficinaEntrega — oficina pedida explícitamente', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.motivo).toMatch(/2 oficinas llamadas/);
+  });
+});
+
+/**
+ * Regresión 16-09-2026: la agencia pedida coincide EXACTA con una oficina de
+ * OTRO departamento.
+ *
+ * Antes se aceptaba ("se respeta la elección; si alguien pidió esa sucursal a
+ * mano, sabe algo que el geo no sabe") y sólo se anotaba la discrepancia en el
+ * motivo. Una prueba diferencial de 980 casos contra el resolvedor de DEPO
+ * (`wms-mvp/src/lib/correo/oficinas.ts`, que ya buscaba la exacta dentro del
+ * departamento) mostró que con el catálogo real de producción (196 oficinas)
+ * eso mandaba el paquete a 100+ km del comprador. Los cuatro casos de abajo
+ * son nombres REALES del catálogo, con su departamento real.
+ *
+ * Lo que se pide: la exacta se busca primero en el departamento del destino;
+ * si sólo existe en otro, se rechaza diciendo dónde está, con esa lista como
+ * candidatas. Sin departamento del destino, la exacta global sigue valiendo.
+ */
+const CATALOGO_HOMONIMOS: LocalidadCorreo[] = [
+  ...CATALOGO,
+  // Los cuatro pares reales (nombre exacto en un departamento + lo que el
+  // departamento del destino sí tiene), tal cual están en producción.
+  of('Cerro', 'Montevideo', 'Montevideo', '12800', 47633),
+  of('Cerro de las Cuentas', 'Cerro de las Cuentas', 'Cerro Largo', '36200', 49317),
+  of('Melo', 'Melo', 'Cerro Largo', '37000', 115),
+  of('Minas', 'Minas', 'Lavalleja', '30000', 120),
+  of('Minas de Corrales', 'Minas de Corrales', 'Rivera', '41100', 121),
+  of('Rivera', 'Rivera', 'Rivera', '40000', 185),
+  of('Colón', 'Montevideo', 'Montevideo', '12500', 47642),
+  of('Colón - Centro de Cercanía', 'Colon', 'Lavalleja', '30000', 49328),
+  of('La Paz', 'La Paz', 'Canelones', '15900', 47660),
+  // Sí: el catálogo real lleva DOS espacios en este nombre.
+  of('La Paz  CP', 'La Paz', 'Colonia', '70200', 49255),
+  of('Colonia', 'Colonia del Sacramento', 'Colonia', '70000', 52),
+];
+
+describe('oficina pedida EXACTA pero de otro departamento (casos reales del catálogo)', () => {
+  const casos: Array<{ destino: string; pedida: string; oficinaDe: string; candidata: string }> = [
+    { destino: 'Cerro Largo', pedida: 'Cerro', oficinaDe: 'Montevideo', candidata: 'Cerro (Montevideo)' },
+    { destino: 'Rivera', pedida: 'Minas', oficinaDe: 'Lavalleja', candidata: 'Minas (Lavalleja)' },
+    { destino: 'Lavalleja', pedida: 'Colón', oficinaDe: 'Montevideo', candidata: 'Colón (Montevideo)' },
+    { destino: 'Colonia', pedida: 'La Paz', oficinaDe: 'Canelones', candidata: 'La Paz (Canelones)' },
+  ];
+
+  for (const c of casos) {
+    it(`${c.destino} + "${c.pedida}" NO va a ${c.oficinaDe}: a revisión, con la agencia y su departamento`, () => {
+      const r = resolverOficinaEntrega({ departamento: c.destino }, CATALOGO_HOMONIMOS, {
+        oficinaPreferida: c.pedida,
+      });
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.motivo).toBe(
+        `"${c.pedida}" es una agencia de ${c.oficinaDe}, no de ${c.destino}: elegí una del departamento del destino.`,
+      );
+      expect(r.candidatas).toEqual([c.candidata]);
+    });
+  }
+
+  it('tampoco se desliza al parcial del departamento del destino: la exacta ajena frena antes', () => {
+    // Rivera tiene "Minas de Corrales" y Lavalleja tiene "Colón - Centro de
+    // Cercanía": si el rechazo no cortara ANTES del paso 0b, el parcial único
+    // los elegiría. Puede que sea la agencia correcta, puede que no: con una
+    // exacta en otro departamento la intención es ambigua, y ambiguo = revisión.
+    const rivera = resolverOficinaEntrega({ departamento: 'Rivera' }, CATALOGO_HOMONIMOS, {
+      oficinaPreferida: 'Minas',
+    });
+    expect(rivera.ok).toBe(false);
+    const lavalleja = resolverOficinaEntrega({ departamento: 'Lavalleja' }, CATALOGO_HOMONIMOS, {
+      oficinaPreferida: 'Colon',
+    });
+    expect(lavalleja.ok).toBe(false);
+  });
+
+  it('la grafía no cambia el veredicto: "colon" y "LA PAZ" también se rechazan', () => {
+    const a = resolverOficinaEntrega({ departamento: 'Lavalleja' }, CATALOGO_HOMONIMOS, {
+      oficinaPreferida: 'colon',
+    });
+    expect(a.ok).toBe(false);
+    if (a.ok) return;
+    expect(a.candidatas).toEqual(['Colón (Montevideo)']);
+    const b = resolverOficinaEntrega({ departamento: 'Colonia' }, CATALOGO_HOMONIMOS, {
+      oficinaPreferida: 'LA PAZ',
+    });
+    expect(b.ok).toBe(false);
+    if (b.ok) return;
+    expect(b.candidatas).toEqual(['La Paz (Canelones)']);
+  });
+
+  it('la misma exacta en el MISMO departamento se sigue eligiendo', () => {
+    const casosOk: Array<[string, string]> = [
+      ['Montevideo', 'Cerro'],
+      ['Lavalleja', 'Minas'],
+      ['Montevideo', 'Colón'],
+      ['Canelones', 'La Paz'],
+    ];
+    for (const [destino, pedida] of casosOk) {
+      const r = resolverOficinaEntrega({ departamento: destino }, CATALOGO_HOMONIMOS, {
+        oficinaPreferida: pedida,
+      });
+      expect(r.ok, `${destino} + ${pedida}`).toBe(true);
+      if (!r.ok) return;
+      expect(r.oficina.nombre).toBe(pedida);
+      expect(r.oficina.departamento).toBe(destino);
+      expect(r.motivoEleccion).toBe(`Oficina pedida explícitamente: ${pedida}.`);
+    }
+  });
+
+  it('el departamento puede venir inferido (ciudad/CP), no sólo declarado', () => {
+    // "Melo" es de Cerro Largo para uruguay-geo; el CP 37000 lo corrobora.
+    const r = resolverOficinaEntrega({ ciudad: 'Melo', zip: '37000' }, CATALOGO_HOMONIMOS, {
+      oficinaPreferida: 'Cerro',
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.candidatas).toEqual(['Cerro (Montevideo)']);
+  });
+
+  it('sin departamento del destino, la exacta vale en todo el catálogo (como antes)', () => {
+    for (const pedida of ['Cerro', 'Minas', 'Colón', 'La Paz']) {
+      const r = resolverOficinaEntrega({}, CATALOGO_HOMONIMOS, { oficinaPreferida: pedida });
+      expect(r.ok, pedida).toBe(true);
+      if (!r.ok) return;
+      expect(r.oficina.nombre).toBe(pedida);
+    }
+  });
+
+  it('sin departamento, el duplicado exacto sigue siendo ambiguo, no se elige', () => {
+    const r = resolverOficinaEntrega({}, CATALOGO_HOMONIMOS, { oficinaPreferida: 'Colonia Miguelete' });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.motivo).toMatch(/2 oficinas llamadas/);
+  });
+
+  it('un departamento sin ninguna oficina de Correo igual rechaza la exacta ajena, con el nombre normalizado', () => {
+    // Durazno no está en este recorte del catálogo: no hay grafía "bonita" que
+    // tomar prestada, así que el motivo usa la forma normalizada.
+    const r = resolverOficinaEntrega({ departamento: 'Durazno' }, CATALOGO_HOMONIMOS, {
+      oficinaPreferida: 'Cerro',
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.motivo).toMatch(/no de DURAZNO/);
+    expect(r.candidatas).toEqual(['Cerro (Montevideo)']);
   });
 });
 

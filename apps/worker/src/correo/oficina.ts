@@ -86,6 +86,14 @@ export function resolverDepartamentoDestino(
   return desdeZip;
 }
 
+/**
+ * El departamento como lo escribe el catálogo ("Cerro Largo"), para los motivos
+ * que lee una persona. Si Correo no tiene oficinas ahí, la forma normalizada.
+ */
+function nombreDepartamento(departamento: CorreoDepartamento, catalogo: LocalidadCorreo[]): string {
+  return catalogo.find((o) => normalizar(o.departamento) === departamento)?.departamento ?? departamento;
+}
+
 /** Oficinas del catálogo que están en ese departamento. */
 export function oficinasDeDepartamento(
   departamento: CorreoDepartamento,
@@ -99,7 +107,9 @@ export function oficinasDeDepartamento(
  *
  * @param opts.oficinaPreferida nombre pedido explícitamente (por el operador o
  *   por un atributo del pedido). Una elección humana explícita gana sobre la
- *   derivación automática, pero igual se valida contra el catálogo.
+ *   derivación automática, pero igual se valida contra el catálogo Y contra el
+ *   departamento del destino: una agencia exacta de OTRO departamento no se
+ *   acepta (ver el paso 0).
  */
 export function resolverOficinaEntrega(
   destino: DestinoParaOficina,
@@ -120,18 +130,42 @@ export function resolverOficinaEntrega(
   const pedida = (opts.oficinaPreferida ?? '').trim();
   if (pedida) {
     const objetivo = normalizar(pedida);
-    const exactas = catalogo.filter((o) => normalizar(o.nombre) === objetivo);
+    const exactasTodas = catalogo.filter((o) => normalizar(o.nombre) === objetivo);
+
+    // 🔴 La exacta se busca PRIMERO dentro del departamento del destino.
+    //
+    // Hasta el 16-09-2026 una coincidencia exacta de OTRO departamento se
+    // aceptaba igual ("si alguien pidió esa sucursal a mano, sabe algo que el
+    // geo no sabe") y sólo se anotaba la discrepancia en el motivo. Con el
+    // catálogo real de producción eso es exactamente el error de los dos
+    // fletes: un pedido a Cerro Largo con agencia "Cerro" iba a Cerro
+    // (Montevideo); Rivera + "Minas" iba a Minas (Lavalleja); Lavalleja +
+    // "Colón" iba a Colón (Montevideo); Colonia + "La Paz" iba a La Paz
+    // (Canelones). Nadie retira un paquete a 100+ km, vuelve, y en contra
+    // entrega la mercadería no se cobra. Verificado con una prueba diferencial
+    // de 980 casos contra el resolvedor de DEPO, que ya aplicaba esta regla.
+    //
+    // Si sólo existe en otro departamento, se rechaza nombrando dónde está,
+    // para que quien corrige sepa qué pasó. Sin departamento del destino no
+    // hay contra qué chequear: la exacta vale en todo el catálogo, como antes.
+    const exactas = departamento
+      ? exactasTodas.filter((o) => normalizar(o.departamento) === departamento)
+      : exactasTodas;
     if (exactas.length === 1) {
-      const oficina = exactas[0];
-      // Se avisa la discrepancia pero se respeta la elección: si alguien pidió
-      // esa sucursal a mano, sabe algo que el geo no sabe.
-      const discrepa = departamento && normalizar(oficina.departamento) !== departamento;
       return {
         ok: true,
-        oficina,
-        motivoEleccion: discrepa
-          ? `Oficina pedida explícitamente ("${oficina.nombre}", ${oficina.departamento}), que NO es el departamento del destino (${departamento}).`
-          : `Oficina pedida explícitamente: ${oficina.nombre}.`,
+        oficina: exactas[0],
+        motivoEleccion: `Oficina pedida explícitamente: ${exactas[0].nombre}.`,
+      };
+    }
+    if (exactas.length === 0 && exactasTodas.length > 0 && departamento) {
+      const deptos = [...new Set(exactasTodas.map((o) => o.departamento))].join(' / ');
+      return {
+        ok: false,
+        motivo:
+          `"${exactasTodas[0].nombre}" es una agencia de ${deptos}, no de ` +
+          `${nombreDepartamento(departamento, catalogo)}: elegí una del departamento del destino.`,
+        candidatas: exactasTodas.map((o) => `${o.nombre} (${o.departamento})`),
       };
     }
     if (exactas.length > 1) {
@@ -157,10 +191,9 @@ export function resolverOficinaEntrega(
     //  · Sólo la dirección "el nombre del catálogo contiene lo pedido". La
     //    inversa ("lo pedido contiene el nombre") sigue siendo sólo sugerencia:
     //    "Maldonado Shopping" contiene "Maldonado" y no necesariamente es esa.
-    //  · Dentro del departamento del destino cuando se conoce. Una elección
-    //    EXACTA de otro departamento se respeta (arriba), pero un parcial es
-    //    evidencia más débil y cruzar de departamento con eso es el error de
-    //    los dos fletes.
+    //  · Dentro del departamento del destino cuando se conoce. Ni siquiera una
+    //    elección EXACTA cruza de departamento (arriba); un parcial es evidencia
+    //    más débil todavía, y cruzar con eso es el error de los dos fletes.
     //  · Menos de 4 letras no cuenta: "Tr" matchea por ruido, no por intención.
     const contienen = catalogo.filter((o) => normalizar(o.nombre).includes(objetivo));
     const enAmbito = departamento
