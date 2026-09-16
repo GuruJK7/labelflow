@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
   resolveAccess: vi.fn(),
   tokenSource: vi.fn(),
+  installPacer: vi.fn(),
 }));
 
 vi.mock('../db', () => ({
@@ -35,16 +36,23 @@ vi.mock('../shopify/access', () => ({
   resolveShopifyAccessForJob: mocks.resolveAccess,
   shopifyTokenSourceForTenant: mocks.tokenSource,
 }));
+// El ritmo real se prueba en sin-etiqueta-ritmo.test.ts contra el bucket emulado.
+vi.mock('../shopify/rest-pacer', () => ({
+  installShopifyRestPacer: mocks.installPacer,
+}));
 
 import { runSinEtiquetaTagging, TAG_SIN_ETIQUETA } from '../jobs/sin-etiqueta-tag.job';
 
 const TENANT = { id: 't1', slug: 'kinevia', shopifyStoreUrl: 'x.myshopify.com', shopifyToken: 'tok' };
+/** Lo que devuelve la fachada: el job sólo le toca `.rest` para instalarle el ritmo. */
+const CLIENT = { rest: { interceptors: {} } };
 
 beforeEach(() => {
   Object.values(mocks).forEach((m) => m.mockReset());
   mocks.tenantFindMany.mockResolvedValue([TENANT]);
   mocks.labelFindMany.mockResolvedValue([]);
-  mocks.createClient.mockReturnValue({});
+  mocks.createClient.mockReturnValue(CLIENT);
+  mocks.installPacer.mockReturnValue({ esperas: 0, reintentos: 0, bucket: () => null });
   mocks.resolveAccess.mockResolvedValue({ access: 'tok', legacy: true });
   mocks.addTag.mockResolvedValue(undefined);
   mocks.removeTag.mockResolvedValue(true);
@@ -91,8 +99,8 @@ describe('poner el tag', () => {
     ]);
     const r = await runSinEtiquetaTagging();
     expect(r.taggeados).toBe(2);
-    expect(mocks.addTag).toHaveBeenCalledWith({}, 111, TAG_SIN_ETIQUETA);
-    expect(mocks.addTag).toHaveBeenCalledWith({}, 222, TAG_SIN_ETIQUETA);
+    expect(mocks.addTag).toHaveBeenCalledWith(CLIENT, 111, TAG_SIN_ETIQUETA);
+    expect(mocks.addTag).toHaveBeenCalledWith(CLIENT, 222, TAG_SIN_ETIQUETA);
   });
 
   it('el tag es exactamente "SIN ETIQUETA"', () => {
@@ -129,7 +137,7 @@ describe('sacar el tag cuando se recupera', () => {
     const r = await runSinEtiquetaTagging();
     expect(r.destaggeados).toBe(1);
     expect(mocks.removeTag).toHaveBeenCalledTimes(1);
-    expect(mocks.removeTag).toHaveBeenCalledWith({}, 333, TAG_SIN_ETIQUETA);
+    expect(mocks.removeTag).toHaveBeenCalledWith(CLIENT, 333, TAG_SIN_ETIQUETA);
   });
 
   it('no cuenta como destaggeada si el tag no estaba', async () => {
@@ -174,5 +182,63 @@ describe('aislamiento entre tiendas', () => {
     const r = await runSinEtiquetaTagging();
     expect(r.errores).toBe(1);
     expect(r.taggeados).toBe(1);
+  });
+});
+
+describe('el ritmo contra el bucket REST de Shopify (16-09-2026)', () => {
+  it('🔴 instala el pacer sobre el cliente REST de cada tienda con trabajo, con las opciones del caller', async () => {
+    const ritmo = { sleep: async () => {}, now: () => 0 };
+    conEtiquetas([{ id: 'l1', shopifyOrderId: '111', shopifyOrderName: '#1' }]);
+    await runSinEtiquetaTagging(new Date(), { ritmo });
+    expect(mocks.installPacer).toHaveBeenCalledTimes(1);
+    expect(mocks.installPacer).toHaveBeenCalledWith(CLIENT.rest, ritmo);
+    // Se instala ANTES de la primera request.
+    expect(mocks.installPacer.mock.invocationCallOrder[0]).toBeLessThan(mocks.addTag.mock.invocationCallOrder[0]);
+  });
+
+  it('sin opciones, el pacer va con sus defaults (producción)', async () => {
+    conEtiquetas([{ id: 'l1', shopifyOrderId: '111', shopifyOrderName: '#1' }]);
+    await runSinEtiquetaTagging();
+    expect(mocks.installPacer).toHaveBeenCalledWith(CLIENT.rest, undefined);
+  });
+
+  it('una tienda sin trabajo no fabrica cliente ni pacer', async () => {
+    conEtiquetas([], []);
+    await runSinEtiquetaTagging();
+    expect(mocks.installPacer).not.toHaveBeenCalled();
+  });
+});
+
+describe('una corrida no pisa a la anterior', () => {
+  it('si la anterior sigue en curso, el tick se saltea sin tocar la base ni Shopify', async () => {
+    let soltar!: () => void;
+    mocks.addTag.mockImplementationOnce(() => new Promise<void>((resolve) => (soltar = resolve)));
+    conEtiquetas([{ id: 'l1', shopifyOrderId: '111', shopifyOrderName: '#1' }]);
+
+    const primera = runSinEtiquetaTagging();
+    await vi.waitFor(() => expect(mocks.addTag).toHaveBeenCalledTimes(1));
+
+    const segunda = await runSinEtiquetaTagging();
+    expect(segunda).toEqual({ taggeados: 0, destaggeados: 0, tiendas: 0, errores: 0, salteada: true });
+    expect(mocks.tenantFindMany).toHaveBeenCalledTimes(1);
+
+    soltar();
+    const r = await primera;
+    expect(r.taggeados).toBe(1);
+    expect(r.salteada).toBeUndefined();
+
+    // Terminada, el próximo tick vuelve a correr.
+    conEtiquetas([], []);
+    const tercera = await runSinEtiquetaTagging();
+    expect(tercera.salteada).toBeUndefined();
+    expect(mocks.tenantFindMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('si la corrida revienta, la siguiente igual puede correr', async () => {
+    mocks.tenantFindMany.mockRejectedValueOnce(new Error('db caída'));
+    await expect(runSinEtiquetaTagging()).rejects.toThrow('db caída');
+    conEtiquetas([], []);
+    const r = await runSinEtiquetaTagging();
+    expect(r.salteada).toBeUndefined();
   });
 });

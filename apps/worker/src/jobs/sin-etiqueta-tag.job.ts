@@ -34,6 +34,15 @@
  *     (sanas y con `updatedAt` bastante posterior a `createdAt`), no todas las
  *     sanas: si no, serían miles de GET por hora contra Shopify.
  *
+ * RESPETA EL BUCKET REST DE SHOPIFY (16-09-2026). Aun acotado, el boot barre
+ * hasta 40 + 80 pedidos por tienda con 1–2 requests cada uno y sin pausa, y
+ * el bucket REST (40, drena 2/s) se vacía en 20: en dos arranques seguidos
+ * del worker, tres tenants comieron 429 en decenas de pedidos (`No pude sacar
+ * el tag`) y quedaron taggeados hasta el tick siguiente, que repetía la
+ * tormenta. El cliente REST de cada tienda sale con `installShopifyRestPacer`:
+ * espera cuando el bucket se acerca al tope y reintenta los 429 respetando
+ * `Retry-After`. Sólo este job lo instala; el camino del despacho no cambia.
+ *
  * NO TOCA NADA DEL DESPACHO: no habla con DAC, no crea envíos, no cambia el
  * fulfillment ni el status de ninguna etiqueta. Sólo lee la tabla Label y
  * escribe un tag.
@@ -42,6 +51,7 @@ import { db } from '../db';
 import logger from '../logger';
 import { createShopifyClient, addOrderTag, removeOrderTag } from '../shopify';
 import { resolveShopifyAccessForJob, shopifyTokenSourceForTenant } from '../shopify/access';
+import { installShopifyRestPacer, type RestPacer, type RestPacerOptions } from '../shopify/rest-pacer';
 
 export const TAG_SIN_ETIQUETA = 'SIN ETIQUETA';
 
@@ -58,10 +68,43 @@ export interface ResultadoSinEtiqueta {
   destaggeados: number;
   tiendas: number;
   errores: number;
+  /** `true` si este tick no corrió porque el anterior seguía en curso. */
+  salteada?: boolean;
 }
 
-export async function runSinEtiquetaTagging(now = new Date()): Promise<ResultadoSinEtiqueta> {
+/**
+ * Con ritmo, una corrida DURA (peor caso ≈ 240 requests por tienda ≈ 2 min a
+ * 2/s). Si una pisara a la siguiente habría dos pacers sobre el mismo bucket
+ * y el ritmo no serviría de nada: el tick que llega con la anterior en curso
+ * se saltea y avisa.
+ */
+let corriendo = false;
+
+export interface OpcionesSinEtiqueta {
+  /** Ritmo del cliente REST (ver `shopify/rest-pacer.ts`). Los tests inyectan `sleep` y `now`. */
+  ritmo?: RestPacerOptions;
+}
+
+export async function runSinEtiquetaTagging(
+  now = new Date(),
+  opts: OpcionesSinEtiqueta = {},
+): Promise<ResultadoSinEtiqueta> {
+  if (corriendo) {
+    logger.warn({ tag: TAG_SIN_ETIQUETA }, '[SinEtiqueta] La corrida anterior sigue en curso; salteo este tick');
+    return { taggeados: 0, destaggeados: 0, tiendas: 0, errores: 0, salteada: true };
+  }
+  corriendo = true;
+  try {
+    return await correr(now, opts);
+  } finally {
+    corriendo = false;
+  }
+}
+
+async function correr(now: Date, opts: OpcionesSinEtiqueta): Promise<ResultadoSinEtiqueta> {
   const res: ResultadoSinEtiqueta = { taggeados: 0, destaggeados: 0, tiendas: 0, errores: 0 };
+  /** Un pacer por tienda; al final se suman sus esperas y reintentos para el log. */
+  const pacers: RestPacer[] = [];
   const desde = new Date(now.getTime() - VENTANA_DIAS * 24 * 60 * 60 * 1000);
   const desdeRecuperadas = new Date(now.getTime() - RECUPERADAS_DIAS * 24 * 60 * 60 * 1000);
 
@@ -113,6 +156,8 @@ export async function runSinEtiquetaTagging(now = new Date()): Promise<Resultado
         shopifyTokenSourceForTenant(tenant.id, acceso),
         { tenantId: tenant.id, slug: tenant.slug },
       );
+      // Cliente propio de esta corrida y esta tienda: el ritmo no se le pega a nadie más.
+      pacers.push(installShopifyRestPacer(client.rest, opts.ritmo));
     } catch (err) {
       // Una tienda sin token válido no puede frenar a las demás.
       res.errores += 1;
@@ -154,8 +199,10 @@ export async function runSinEtiquetaTagging(now = new Date()): Promise<Resultado
   }
 
   if (res.taggeados > 0 || res.destaggeados > 0 || res.errores > 0) {
+    const esperas = pacers.reduce((n, p) => n + p.esperas, 0);
+    const reintentos429 = pacers.reduce((n, p) => n + p.reintentos, 0);
     logger.info(
-      { ...res, tag: TAG_SIN_ETIQUETA },
+      { ...res, esperas, reintentos429, tag: TAG_SIN_ETIQUETA },
       '[SinEtiqueta] Corrida terminada',
     );
   }
