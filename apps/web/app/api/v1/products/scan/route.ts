@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { shopifyAccessForTenant } from '@/lib/shopify-access';
+import { shopifyGraphql, type GraphqlErrorEntry, type GraphqlResult } from '@/lib/shopify-graphql';
 
 /**
  * Cache entry for one Shopify product. Persisted as `Tenant.productTypeCache`.
@@ -26,8 +27,29 @@ type ProductMap = Record<string, ProductEntry>;
 /**
  * POST /api/v1/products/scan
  * Scans Shopify and rebuilds the product map.
- * Strategy 1: Products API (needs read_products scope) — title + product_type + vendor.
- * Strategy 2: Orders API fallback (no scope needed) — title from line_items.
+ * Strategy 1: Products query (needs read_products scope) — title + productType + vendor.
+ * Strategy 2: Orders query fallback — title from lineItems.
+ *
+ * 🔴 OJO CON EL FALLBACK: en REST el `product_id` venía dentro del pedido y
+ * alcanzaba con read_orders. En GraphQL el id del producto sale de
+ * `lineItem.product`, que EXIGE read_products (verificado contra el esquema
+ * 2026-07). O sea: una tienda sin read_products ya no se rescata por pedidos
+ * y la ruta termina en el 404 de siempre. No hay campo escalar con el id del
+ * producto en LineItem: no es algo que se pueda esquivar acá. El fallback
+ * sigue existiendo para el otro caso que cubría (la query de productos falla
+ * por algo que no es el scope) y para no cambiar el contrato de `source`.
+ *
+ * ── GraphQL (requisito 2.2.4 del App Store) ─────────────────────────────────
+ * Desde el 1/4/2025 una app pública nueva NO puede tocar recursos REST de
+ * productos: esta ruta era el caso que Shopify prohíbe explícitamente y ahora
+ * sale entera por la Admin API GraphQL 2026-07 (`lib/shopify-graphql.ts`).
+ *
+ * 🔴 LAS CLAVES DEL MAPA SIGUEN SIENDO EL ID NUMÉRICO, NO EL GID. El worker
+ * resuelve `cache[String(item.product_id)]` con el product_id del pedido
+ * (numérico); si acá se guardara `gid://shopify/Product/123`, el filtro de
+ * productos dejaría de matchear y todo tenant con whitelist dejaría de
+ * despachar, en silencio. Por eso se pide `legacyResourceId` (el ID numérico
+ * de siempre) y no `id`.
  */
 export async function POST() {
   const auth = await getAuthenticatedTenant();
@@ -45,24 +67,20 @@ export async function POST() {
   const token = await shopifyAccessForTenant(tenant);
   if (!token) return apiError('Token de Shopify invalido', 400);
 
-  const baseUrl = `https://${tenant.shopifyStoreUrl}/admin/api/2024-01`;
-  const headers = {
-    'X-Shopify-Access-Token': token,
-    'Content-Type': 'application/json',
-  };
+  const shop = tenant.shopifyStoreUrl;
 
   try {
     let map: ProductMap = {};
     let source: 'products' | 'orders' = 'products';
 
-    // ── Strategy 1: Products API ──
-    const productsOk = await tryProductsApi(baseUrl, headers, map);
+    // ── Strategy 1: Products query ──
+    const productsOk = await tryProductsQuery(shop, token, map);
 
-    // ── Strategy 2: Orders API fallback ──
+    // ── Strategy 2: Orders query fallback ──
     if (!productsOk) {
       source = 'orders';
       map = {};
-      await tryOrdersApi(baseUrl, headers, map);
+      await tryOrdersQuery(shop, token, map);
     }
 
     if (Object.keys(map).length === 0) {
@@ -165,42 +183,190 @@ function normalizeCache(raw: unknown): ProductMap {
   return out;
 }
 
+// ── GraphQL ────────────────────────────────────────────────────────────────
+//
+// Campos verificados contra la doc 2026-07 (queries/products, objects/Product,
+// connections/ProductConnection, queries/orders, objects/LineItem,
+// scalars/UnsignedInt64 — `Product.legacyResourceId`).
+//
+// Costo de query: el tope de una sola query es 1000 puntos (conexión = 2 +
+// first × costo del nodo; los escalares no cuentan). Las páginas de acá están
+// calculadas para entrar debajo de ese tope y, por las dudas, se achican solas
+// si Shopify igual contesta MAX_COST_EXCEEDED.
+
+/** `limit=250` de REST. Costo: 2 + 250 × 1 = 252. */
+const PRODUCTS_PAGE = 250;
+const PRODUCTS_MIN_PAGE = 25;
+/** Corta un bucle de cursores que no termine nunca: 200 × 250 = 50.000 productos. */
+const PRODUCTS_MAX_PAGES = 200;
+
+/** Muestra del fallback: mismo tope que el `limit=250` de REST. */
+const ORDERS_SAMPLE = 250;
+/** Costo por página: 2 + 40 × (1 + 2 + 10 × 2) = 922 < 1000. */
+const ORDERS_PAGE = 40;
+const ORDERS_LINE_ITEMS = 10;
+const ORDERS_MIN_PAGE = 5;
+const ORDERS_MIN_LINE_ITEMS = 5;
 /**
- * Try fetching products from the Products API.
- * Returns true if successful, false if access denied or failed.
+ * A diferencia de REST (250 pedidos en UNA llamada), GraphQL cobra por página
+ * y el balde es de 1000 puntos con reposición de 50/s: barrer 250 pedidos
+ * puede tardar más que lo que vive la función. El fallback pagina hasta
+ * quedarse sin presupuesto y devuelve lo que juntó — un mapa parcial sirve;
+ * un timeout, no.
  */
-async function tryProductsApi(
-  baseUrl: string,
-  headers: Record<string, string>,
+const ORDERS_BUDGET_MS = 20_000;
+
+const THROTTLE_RETRIES = 3;
+const THROTTLE_WAIT_MS = 2_000;
+
+const PRODUCTS_QUERY = `query LabelFlowProductScan($first: Int!, $after: String) {
+  products(first: $first, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      legacyResourceId
+      title
+      productType
+      vendor
+    }
+  }
+}`;
+
+/**
+ * Sin `query` la conexión `orders` no filtra por estado: es el equivalente del
+ * `status=any` de REST (mismo criterio que `getRecentOrders` del worker).
+ * `sortKey: CREATED_AT, reverse: true` = los más nuevos primero, que es la
+ * muestra que buscaba el `limit=250` de REST.
+ */
+const ORDERS_QUERY = `query LabelFlowProductScanFromOrders($first: Int!, $after: String, $lineItemsFirst: Int!) {
+  orders(first: $first, after: $after, sortKey: CREATED_AT, reverse: true) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      lineItems(first: $lineItemsFirst) {
+        nodes {
+          title
+          vendor
+          product {
+            legacyResourceId
+          }
+        }
+      }
+    }
+  }
+}`;
+
+interface GqlPageInfo {
+  hasNextPage: boolean;
+  endCursor: string | null;
+}
+
+interface ProductsData {
+  products: {
+    pageInfo: GqlPageInfo;
+    nodes: Array<{
+      legacyResourceId: string;
+      title: string | null;
+      productType: string | null;
+      vendor: string | null;
+    }>;
+  } | null;
+}
+
+interface OrdersData {
+  orders: {
+    pageInfo: GqlPageInfo;
+    nodes: Array<{
+      lineItems: {
+        nodes: Array<{
+          title: string | null;
+          vendor: string | null;
+          product: { legacyResourceId: string } | null;
+        }>;
+      } | null;
+    }>;
+  } | null;
+}
+
+/** GraphQL contesta HTTP 200 con `errors[]`: el código vive en extensions.code. */
+function hasCode(errors: GraphqlErrorEntry[], code: string): boolean {
+  return errors.some((e) => String(e.extensions?.code ?? '') === code);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Try fetching products from the Products query.
+ * Returns true if successful, false if access denied or failed.
+ *
+ * El contrato de salida es el mismo que tenía la versión REST: false manda al
+ * fallback de pedidos (sin read_products, tienda vacía, o cualquier error).
+ */
+async function tryProductsQuery(
+  shop: string,
+  token: string,
   map: ProductMap,
 ): Promise<boolean> {
   try {
-    let url: string | null = `${baseUrl}/products.json?fields=id,product_type,title,vendor&limit=250`;
+    let first = PRODUCTS_PAGE;
+    let after: string | null = null;
+    let throttleRetries = 0;
 
-    while (url) {
-      const res = await fetch(url, { headers });
+    for (let page = 0; page < PRODUCTS_MAX_PAGES; page++) {
+      // Anotado a mano: `after` sale del propio resultado y sin el tipo
+      // explícito TS no puede cerrar la inferencia circular (TS7022).
+      const res: GraphqlResult<ProductsData> = await shopifyGraphql<ProductsData>(
+        shop,
+        token,
+        PRODUCTS_QUERY,
+        { first, after },
+      );
 
-      if (res.status === 403 || res.status === 401) {
-        // Scope read_products not available — fall back
+      // Token revocado / tienda inactiva: Shopify contesta 401/402/403 sin
+      // cuerpo GraphQL. Mismo trato que el `res.status === 403 || 401` de REST.
+      if (res.status !== 200) return false;
+
+      if (res.errors.length > 0) {
+        if (hasCode(res.errors, 'MAX_COST_EXCEEDED') && first > PRODUCTS_MIN_PAGE) {
+          first = Math.max(PRODUCTS_MIN_PAGE, Math.floor(first / 2));
+          continue;
+        }
+        if (hasCode(res.errors, 'THROTTLED') && throttleRetries < THROTTLE_RETRIES) {
+          throttleRetries++;
+          await sleep(THROTTLE_WAIT_MS * throttleRetries);
+          continue;
+        }
+        // ACCESS_DENIED (la tienda no dio read_products) y cualquier otro
+        // error: se cae al fallback de pedidos, como hacía el 403 de REST.
         return false;
       }
-      if (!res.ok) return false;
 
-      const data = await res.json();
-      const products: Array<{ id: number; product_type: string; title: string; vendor: string }> =
-        data.products ?? [];
+      const conn: ProductsData['products'] = res.data?.products ?? null;
+      if (!conn) return false;
 
-      if (products.length === 0 && Object.keys(map).length === 0) return false;
+      const nodes = conn.nodes ?? [];
+      if (nodes.length === 0 && Object.keys(map).length === 0) return false;
 
-      for (const product of products) {
-        map[String(product.id)] = {
+      for (const product of nodes) {
+        // 🔴 legacyResourceId, no el GID: es la clave que busca el worker.
+        const id = String(product.legacyResourceId ?? '').trim();
+        if (!id) continue;
+        map[id] = {
           title: (product.title || '').trim(),
-          type: (product.product_type || '').trim(),
+          type: (product.productType || '').trim(),
           vendor: (product.vendor || '').trim(),
         };
       }
 
-      url = parsePaginationNext(res.headers.get('link'), baseUrl);
+      if (!conn.pageInfo?.hasNextPage) break;
+      after = conn.pageInfo.endCursor ?? null;
+      if (!after) break;
     }
 
     return Object.keys(map).length > 0;
@@ -210,61 +376,75 @@ async function tryProductsApi(
 }
 
 /**
- * Fallback: extract products from recent orders' line_items.
- * Orders API doesn't expose product_type or vendor reliably, so we only
- * get title here. The worker matcher still works because it ORs across
+ * Fallback: extract products from recent orders' lineItems.
+ * The Orders query doesn't expose productType, so we only get title + vendor
+ * here. The worker matcher still works because it ORs across
  * title/type/vendor.
+ *
+ * 🔴 Necesita read_products igual que la estrategia 1 (ver cabecera del POST):
+ * `lineItem.product` está detrás de ese scope. Sin él, Shopify contesta 200
+ * con ACCESS_DENIED en `errors[]` y acá se corta con el mapa vacío.
+ *
+ * Sin try/catch a propósito: un fallo de red acá sube al catch del POST y
+ * devuelve 500 «Error escaneando productos», igual que la versión REST.
  */
-async function tryOrdersApi(
-  baseUrl: string,
-  headers: Record<string, string>,
-  map: ProductMap,
-): Promise<void> {
-  // Last 250 orders — good sample without over-fetching.
-  const url = `${baseUrl}/orders.json?limit=250&status=any`;
-  const res = await fetch(url, { headers });
-  if (!res.ok) return;
+async function tryOrdersQuery(shop: string, token: string, map: ProductMap): Promise<void> {
+  const deadline = Date.now() + ORDERS_BUDGET_MS;
+  let first = ORDERS_PAGE;
+  let lineItemsFirst = ORDERS_LINE_ITEMS;
+  let after: string | null = null;
+  let scanned = 0;
+  let throttleRetries = 0;
 
-  const data = await res.json();
-  const orders: Array<{
-    line_items: Array<{ product_id: number; title: string; vendor?: string }>;
-  }> = data.orders ?? [];
+  while (scanned < ORDERS_SAMPLE && Date.now() < deadline) {
+    const want = Math.min(first, ORDERS_SAMPLE - scanned);
+    // Anotado a mano por el mismo motivo que arriba (TS7022).
+    const res: GraphqlResult<OrdersData> = await shopifyGraphql<OrdersData>(
+      shop,
+      token,
+      ORDERS_QUERY,
+      { first: want, after, lineItemsFirst },
+    );
 
-  for (const order of orders) {
-    for (const item of order.line_items ?? []) {
-      if (!item.product_id) continue;
-      const key = String(item.product_id);
-      if (map[key]) continue; // First sighting wins.
-      map[key] = {
-        title: (item.title || '').trim(),
-        type: '',
-        vendor: (item.vendor || '').trim(),
-      };
+    if (res.status !== 200) return;
+
+    if (res.errors.length > 0) {
+      if (
+        hasCode(res.errors, 'MAX_COST_EXCEEDED') &&
+        (first > ORDERS_MIN_PAGE || lineItemsFirst > ORDERS_MIN_LINE_ITEMS)
+      ) {
+        first = Math.max(ORDERS_MIN_PAGE, Math.floor(first / 2));
+        lineItemsFirst = Math.max(ORDERS_MIN_LINE_ITEMS, Math.floor(lineItemsFirst / 2));
+        continue;
+      }
+      if (hasCode(res.errors, 'THROTTLED') && throttleRetries < THROTTLE_RETRIES) {
+        throttleRetries++;
+        await sleep(THROTTLE_WAIT_MS * throttleRetries);
+        continue;
+      }
+      return;
     }
-  }
-}
 
-/**
- * Extrae la URL `rel="next"` del header Link de Shopify, validando que
- * apunte al MISMO origin de la tienda. Sin este check, una respuesta
- * maliciosa (Shopify comprometido, MITM, proxy roto) podría redirigir
- * nuestros fetch outbound a IMDS interno, Redis, o la API de Supabase
- * (SSRF). Cualquier URL fuera del baseUrl esperado se descarta.
- */
-function parsePaginationNext(linkHeader: string | null, baseUrl: string): string | null {
-  if (!linkHeader) return null;
-  const parts = linkHeader.split(',');
-  for (const part of parts) {
-    const match = part.match(/<([^>]+)>;\s*rel="next"/);
-    if (!match) continue;
-    const candidate = match[1];
-    if (!candidate.startsWith(`${baseUrl}/`)) {
-      console.warn(
-        `[Shopify pagination] dropping next URL outside baseUrl: ${candidate}`,
-      );
-      return null;
+    const conn: OrdersData['orders'] = res.data?.orders ?? null;
+    if (!conn) return;
+
+    for (const order of conn.nodes ?? []) {
+      scanned++;
+      for (const item of order.lineItems?.nodes ?? []) {
+        // 🔴 legacyResourceId, no el GID (ver cabecera del POST).
+        const key = String(item.product?.legacyResourceId ?? '').trim();
+        if (!key) continue; // Producto borrado: no se puede matchear.
+        if (map[key]) continue; // First sighting wins.
+        map[key] = {
+          title: (item.title || '').trim(),
+          type: '',
+          vendor: (item.vendor || '').trim(),
+        };
+      }
     }
-    return candidate;
+
+    if (!conn.pageInfo?.hasNextPage) break;
+    after = conn.pageInfo.endCursor ?? null;
+    if (!after) break;
   }
-  return null;
 }

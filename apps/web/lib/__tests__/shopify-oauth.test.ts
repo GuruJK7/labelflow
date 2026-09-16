@@ -237,8 +237,8 @@ describe('missingScopes', () => {
   });
 
   it('detecta el que falta aunque el orden cambie y sobren scopes', () => {
-    const concedidos = [...REQUIRED_SCOPES].reverse().filter((s) => s !== 'write_fulfillments');
-    expect(missingScopes([...concedidos, 'read_themes'])).toEqual(['write_fulfillments']);
+    const concedidos = [...REQUIRED_SCOPES].reverse().filter((s) => s !== 'write_orders');
+    expect(missingScopes([...concedidos, 'read_themes'])).toEqual(['write_orders']);
   });
 
   it('tolera espacios y valores vacíos', () => {

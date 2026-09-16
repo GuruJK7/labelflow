@@ -66,6 +66,11 @@ vi.mock('@/lib/api-utils', async (importOriginal) => ({
 vi.mock('@/lib/credit-accrual', () => ({ settlePaidPurchase: mocks.settle, refundPaidPurchase: mocks.refund }));
 vi.mock('@/lib/db', () => ({
   db: {
+    // Tienda de carga propia: el checkout de Whop mira el tenant para cerrarle
+    // el riel a las que cobran por Shopify (requisito 1.2.1).
+    tenant: {
+      findUnique: async () => ({ id: 'tenant-1', shopifyStoreUrl: null, shopifyToken: null }),
+    },
     creditPurchase: {
       findFirst: async ({ where }: { where: Where }) => {
         const rows = state.purchases.filter((r) => matches(r, where)).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());

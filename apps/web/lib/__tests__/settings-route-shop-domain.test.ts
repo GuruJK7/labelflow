@@ -9,7 +9,12 @@ const mocks = vi.hoisted(() => ({
   tenantFindUnique: vi.fn(),
   tenantUpdate: vi.fn(),
   runLogDeleteMany: vi.fn(),
+  getControlActor: vi.fn(),
 }));
+// Requisito 2.3.1: escribir dominio/token a mano es sólo-admin. Estos casos
+// prueban el camino manual, así que el actor por defecto es admin; el 403 del
+// comerciante vive en shopify-2-3-1-fugas-servidor.test.ts.
+vi.mock('@/lib/control-scope', () => ({ getControlActor: mocks.getControlActor }));
 vi.mock('@/lib/api-utils', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-utils')>()),
   getAuthenticatedTenant: mocks.getAuthenticatedTenant,
@@ -23,6 +28,12 @@ vi.mock('@/lib/db', () => ({
 
 import { PUT } from '@/app/api/v1/settings/route';
 import { fakeTenantFindFirst } from './_shopify-route-utils';
+import { SHOP_INFO_QUERY } from '@/lib/shopify-provision';
+
+/** Respuesta con la forma que devuelve el Admin GraphQL API (HTTP 200 siempre). */
+function gql(body: unknown, status = 200) {
+  return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body) };
+}
 
 function put(body: unknown) {
   return PUT(
@@ -43,6 +54,7 @@ beforeEach(() => {
   // Por defecto el tenant no tiene tienda: cualquier dominio que llegue es un cambio.
   mocks.tenantFindUnique.mockResolvedValue({ shopifyStoreUrl: null });
   mocks.tenantUpdate.mockResolvedValue({});
+  mocks.getControlActor.mockResolvedValue({ userId: 'u1', isAdmin: true });
   vi.unstubAllGlobals();
 });
 
@@ -131,16 +143,27 @@ describe('PUT /api/v1/settings — el 409 sólo cuando el dominio CAMBIA', () =>
   it('tienda compartida, dominio sin cambio (guardado con mayúsculas) + token nuevo: 200, no consulta duplicados, guarda en minúsculas', async () => {
     mocks.tenantFindUnique.mockResolvedValue({ shopifyStoreUrl: 'MiTienda.myshopify.com' });
     mocks.tenantFindFirst.mockImplementation(fakeTenantFindFirst(tabla));
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    const fetchMock = vi.fn().mockResolvedValue(
+      gql({ data: { shop: { name: 'Mi Tienda', email: 'a@b.co', myshopifyDomain: 'mitienda.myshopify.com' } } }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     const res = await put({ shopifyStoreUrl: 'mitienda.myshopify.com', shopifyToken: 'shpat_nuevo' });
 
     expect(res.status).toBe(200);
     expect(mocks.tenantFindFirst).not.toHaveBeenCalled();
-    // El token sí se verificó contra Shopify antes de guardarlo.
+    // El token sí se verificó contra Shopify antes de guardarlo — y contra
+    // GraphQL, no REST (requisito 2.2.4: una app pública nueva que consulte
+    // recursos REST no se aprueba). Sin esta aserción el probe puede volver a
+    // shop.json sin que nadie se entere hasta el rechazo del App Store.
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe('https://mitienda.myshopify.com/admin/api/2024-01/shop.json');
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(url)).toBe('https://mitienda.myshopify.com/admin/api/2026-07/graphql.json');
+    expect(String(url)).not.toContain('shop.json');
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_nuevo');
+    // La misma sonda que el alta del App Store y el onboarding, no una copia.
+    expect(JSON.parse(String(init.body)).query).toBe(SHOP_INFO_QUERY);
     expect(mocks.tenantUpdate).toHaveBeenCalledTimes(1);
     const { where, data } = mocks.tenantUpdate.mock.calls[0][0];
     expect(where).toEqual({ id: 'tenant-1' });
@@ -167,5 +190,45 @@ describe('PUT /api/v1/settings — el 409 sólo cuando el dominio CAMBIA', () =>
     expect(res.status).toBe(200);
     expect(mocks.tenantFindFirst).toHaveBeenCalledTimes(1);
     expect(mocks.tenantUpdate.mock.calls[0][0].data).toEqual({ shopifyStoreUrl: 'libre.myshopify.com' });
+  });
+});
+
+/**
+ * GraphQL contesta HTTP 200 aunque la consulta falle. En REST "token sin
+ * alcances" era un 403 y `!res.ok` lo cazaba solo; acá el status ya no alcanza.
+ * Sin el chequeo de `errors[]` se guarda un token que no despacha nada y el
+ * comerciante se entera recién cuando falla la primera corrida.
+ */
+describe('PUT /api/v1/settings — el probe de Shopify lee errors[], no sólo el status', () => {
+  beforeEach(() => {
+    mocks.tenantFindUnique.mockResolvedValue({ shopifyStoreUrl: 'mitienda.myshopify.com' });
+  });
+
+  it('HTTP 200 con ACCESS_DENIED → 422 y NO guarda el token', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        gql({ data: null, errors: [{ message: 'Access denied', extensions: { code: 'ACCESS_DENIED' } }] }),
+      ),
+    );
+    const res = await put({ shopifyStoreUrl: 'mitienda.myshopify.com', shopifyToken: 'shpat_nuevo' });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: 'No se pudo conectar a Shopify. Verifica la URL y el token.' });
+    expect(mocks.tenantUpdate).not.toHaveBeenCalled();
+  });
+
+  it('HTTP 401 (token revocado) → el mismo 422 de siempre', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(gql({ errors: [{ message: 'Invalid API key' }] }, 401)));
+    const res = await put({ shopifyStoreUrl: 'mitienda.myshopify.com', shopifyToken: 'shpat_nuevo' });
+    expect(res.status).toBe(422);
+    expect(mocks.tenantUpdate).not.toHaveBeenCalled();
+  });
+
+  it('la red se cae → 422 "Error verificando conexion a Shopify", el texto que muestra el form', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNRESET')));
+    const res = await put({ shopifyStoreUrl: 'mitienda.myshopify.com', shopifyToken: 'shpat_nuevo' });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: 'Error verificando conexion a Shopify' });
+    expect(mocks.tenantUpdate).not.toHaveBeenCalled();
   });
 });

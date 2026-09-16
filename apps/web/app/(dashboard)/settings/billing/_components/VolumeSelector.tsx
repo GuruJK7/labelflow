@@ -78,6 +78,16 @@ export interface VolumeSelectorProps {
    */
   currency?: Currency;
   onCurrencyChange?: (next: Currency) => void;
+  /**
+   * Volumen con el que arranca el selector. Default 100, que es lo que se veía
+   * siempre; la pantalla no lo pasa.
+   *
+   * Existe para que un test pueda RENDERIZAR los estados que sólo se alcanzan
+   * moviendo el selector —el cartel de volumen alto, por ejemplo— sin simular
+   * eventos: el render de estos tests es estático (`react-dom/server`) y el
+   * `useState` no se puede mover desde afuera de otra manera.
+   */
+  initialVolume?: number;
 }
 
 const NOOP = () => {};
@@ -97,8 +107,9 @@ export function VolumeSelector({
   onPayShopify,
   currency: currencyProp,
   onCurrencyChange,
+  initialVolume = 100,
 }: VolumeSelectorProps) {
-  const [volume, setVolume] = useState<number>(100);
+  const [volume, setVolume] = useState<number>(initialVolume);
   const [custom, setCustom] = useState<string>('');
   const [customError, setCustomError] = useState<string | null>(null);
   // El hook se llama siempre (regla de hooks); su valor se ignora cuando la
@@ -327,14 +338,37 @@ export function VolumeSelector({
                 )}
                 <span>.</span>
               </p>
-              {quote.needsCustomQuote && (
-                <p className="mt-2 text-amber-300/90">
-                  Para {fmt(quote.monthlyShipments)} envíos por mes el precio se arma a medida:
-                  escribinos por WhatsApp y lo cerramos. Comprando paquetes sueltos te saldría más
-                  caro que el precio de tu escalón — mientras tanto podés repetir la compra{' '}
-                  {quote.quantity} veces.
-                </p>
-              )}
+              {/**
+               * 🔴 REQUISITO 1.2.1 DEL APP STORE, EN EL COPY.
+               *
+               * «Apps that use off-platform billing cannot be distributed
+               * through the Shopify App Store». Los botones ya están cortados,
+               * pero este cartel invitaba a cerrar el precio "a medida" POR
+               * WHATSAPP, y se renderizaba igual con `shopifyBilling === true`.
+               * Un cobro pactado por WhatsApp es cobro fuera de la plataforma:
+               * da lo mismo que el riel sea un endpoint o una conversación, y
+               * acá está escrito adentro de la app que revisa Shopify.
+               *
+               * Al comerciante de Shopify se le dice lo MISMO que necesita
+               * saber —que no hay un paquete único para ese volumen— sin
+               * mandarlo afuera. El que no entró por Shopify sigue viendo el
+               * cartel de siempre, intacto.
+               */}
+              {quote.needsCustomQuote &&
+                (shopifyBilling ? (
+                  <p className="mt-2 text-amber-300/90">
+                    Para {fmt(quote.monthlyShipments)} envíos por mes no hay un paquete único: se
+                    compra el más grande {quote.quantity} veces y cada cargo va a la factura de tu
+                    tienda de Shopify.
+                  </p>
+                ) : (
+                  <p className="mt-2 text-amber-300/90">
+                    Para {fmt(quote.monthlyShipments)} envíos por mes el precio se arma a medida:
+                    escribinos por WhatsApp y lo cerramos. Comprando paquetes sueltos te saldría más
+                    caro que el precio de tu escalón — mientras tanto podés repetir la compra{' '}
+                    {quote.quantity} veces.
+                  </p>
+                ))}
             </div>
           </div>
 

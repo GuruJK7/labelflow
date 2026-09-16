@@ -9,6 +9,12 @@ import { getControlActor } from '@/lib/control-scope';
 import { encryptIfPresent, decryptOrRaw } from '@/lib/encryption';
 import { shopDomainChangeConflicts, SHOP_DOMAIN_TAKEN_MESSAGE } from '@/lib/shop-domain-taken';
 import { startOfDayUy, startOfMonthUy } from '@/lib/uy-time';
+import { shopifyGraphql } from '@/lib/shopify-graphql';
+import { SHOP_INFO_QUERY } from '@/lib/shopify-provision';
+import {
+  puedeEscribirShopifyAMano,
+  SHOPIFY_MANUAL_BLOQUEADO_MESSAGE,
+} from '@/lib/shopify-manual.server';
 
 const updateSchema = z.object({
   shopifyStoreUrl: z.string()
@@ -294,6 +300,21 @@ export async function PUT(req: NextRequest) {
   const data: Record<string, unknown> = {};
   const input = parsed.data;
 
+  // Requisito 2.3.1: el dominio `.myshopify.com` y el Admin API token no se
+  // cargan a mano. Apagar los dos campos del form no cerraba nada — este PUT
+  // los seguía aceptando de cualquier tenant logueado, o sea de un revisor de
+  // Shopify con sesión.
+  //
+  // 🔴 El gate es sobre ESCRIBIR uno nuevo, no sobre tener uno. Un envelope sin
+  // `shopifyStoreUrl` ni `shopifyToken` —que es TODO lo que manda el resto de
+  // Configuración: DAC, Correo, parámetros, programación, impresión— no pasa
+  // por acá y sigue funcionando igual para los tenants de producción.
+  if (input.shopifyStoreUrl !== undefined || input.shopifyToken !== undefined) {
+    if (!(await puedeEscribirShopifyAMano())) {
+      return apiError(SHOPIFY_MANUAL_BLOQUEADO_MESSAGE, 403);
+    }
+  }
+
   // Un dominio de Shopify pertenece a UN tenant. Mismo chequeo que hacen
   // /api/shopify/install, /claim y onboarding/test-shopify (lib/shop-domain-taken):
   // sin él, dos cuentas podían apuntar a la misma tienda cargando el token a
@@ -474,19 +495,34 @@ export async function PUT(req: NextRequest) {
   if (input.emailPass !== undefined) data.emailPass = encryptIfPresent(input.emailPass);
   if (input.paymentCardCvc !== undefined) data.paymentCardCvc = encryptIfPresent(input.paymentCardCvc);
 
-  // Verify Shopify connection if token provided
+  // Verify Shopify connection if token provided.
+  //
+  // GraphQL, no REST (requisito 2.2.4 del App Store): desde el 1/4/2025 una app
+  // pública nueva no puede tocar el REST Admin API, y el `shop.json` que estaba
+  // acá era justo lo que el self-review marcaba FALLANDO. Se reusa
+  // SHOP_INFO_QUERY (lib/shopify-provision) — la MISMA sonda que corren el alta
+  // desde el App Store y el paso de Shopify del onboarding — para no tener tres
+  // definiciones del mismo probe. `shop { name email myshopifyDomain }` no pide
+  // ningún alcance: es tan barata como el shop.json que reemplaza.
+  //
+  // El contrato de salida no se mueve: los dos 422, con el mismo texto, son los
+  // que el form de Configuración muestra tal cual.
   if (input.shopifyToken && input.shopifyStoreUrl) {
     try {
-      const res = await fetch(
-        `https://${input.shopifyStoreUrl}/admin/api/2024-01/shop.json`,
-        {
-          headers: { 'X-Shopify-Access-Token': input.shopifyToken },
-        }
+      const res = await shopifyGraphql<{ shop?: { name?: string | null } | null }>(
+        input.shopifyStoreUrl,
+        input.shopifyToken,
+        SHOP_INFO_QUERY,
       );
-      if (!res.ok) {
+      // 🔴 GraphQL contesta HTTP 200 aunque la consulta falle. Mirar sólo el
+      // status (el `!res.ok` de antes) dejaría pasar un token sin alcances
+      // —`errors[].extensions.code = ACCESS_DENIED`, que en REST era un 403— y
+      // se guardaría un token que después no despacha nada.
+      if (res.status !== 200 || res.errors.length > 0 || !res.data?.shop) {
         return apiError('No se pudo conectar a Shopify. Verifica la URL y el token.', 422);
       }
     } catch {
+      // Red caída o timeout (shopifyGraphql aborta a los 15 s).
       return apiError('Error verificando conexion a Shopify', 422);
     }
   }

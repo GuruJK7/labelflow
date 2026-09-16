@@ -41,6 +41,42 @@ export async function GET(req: NextRequest) {
     return apiError(`Pack inválido. Opciones: ${packIdList()}`, 400);
   }
 
+  const tenant = await db.tenant.findUnique({
+    where: { id: auth.tenantId },
+    select: { id: true, shopifyStoreUrl: true, shopifyToken: true },
+  });
+  if (!tenant) return apiError('Tenant no encontrado', 404);
+
+  /**
+   * 🔴 REQUISITO 1.2.1 DEL APP STORE — el corte no puede ser sólo de UI.
+   *
+   * «Apps that use off-platform billing cannot be distributed through the
+   * Shopify App Store». La pantalla ya no muestra el botón de Whop cuando la
+   * tienda entró por Shopify (`shopifyBilling` en /api/credit-packs/me), pero
+   * el endpoint seguía abierto: con la URL a mano redirigía igual al checkout
+   * de Whop. Eso ES cobro fuera de la plataforma.
+   *
+   * MISMA REGLA, UN SOLO LUGAR DE VERDAD: `shopifyStoreUrl && shopifyToken`
+   * sobre el tenant que ORIGINA la compra (no el holder del saldo), idéntica a
+   * `app/api/credit-packs/me/route.ts`. Si divergen, pantalla y server dicen
+   * cosas distintas y es peor que no tener el corte.
+   *
+   * VA ANTES QUE EL LOOKUP DEL LINK a propósito: fail-closed. Si el corte
+   * quedara después, un pack sin URL configurada contestaría 404 «no
+   * disponible» y el día que alguien configure ese link el endpoint se
+   * reabriría solo para un tenant de Shopify.
+   */
+  if (tenant.shopifyStoreUrl && tenant.shopifyToken) {
+    return NextResponse.json(
+      {
+        error: 'Esta tienda paga por Shopify: los envíos se compran desde la factura de tu tienda.',
+        code: 'SHOPIFY_BILLING_ONLY',
+        checkoutUrl: '/api/credit-packs/shopify-checkout',
+      },
+      { status: 409 },
+    );
+  }
+
   const url = getWhopCheckoutUrls()[pack.id];
   if (!url) return apiError('Pago con Whop no disponible para este pack', 404);
 

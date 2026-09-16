@@ -36,8 +36,7 @@
 
 import { db } from '@/lib/db';
 import { shopifyAccessForTenant } from '@/lib/shopify-access';
-
-const SHOPIFY_API_VERSION = '2024-01';
+import { shopifyGraphql } from '@/lib/shopify-graphql';
 
 /** Prefix written onto errorMessage to mark a stuck row resolved outside our pipeline. */
 export const RESOLVED_MARKER = '[RESUELTO-EXTERNO]';
@@ -47,8 +46,74 @@ const RETRYABLE_STATUSES = ['NEEDS_REVIEW', 'FAILED', 'PENDING'] as const;
 
 /** Bound the candidate scan so a large backlog can't make this unbounded. */
 const MAX_RECONCILE_SCAN = 500;
-/** Shopify `ids` filter accepts up to 250 per call; stay under it. */
+/** Pedidos por llamada. Mismo tamano de lote que usaba el filtro `ids` de REST. */
 const SHOPIFY_ID_BATCH = 200;
+
+/**
+ * Lookup DIRECTO por id — el equivalente exacto del `?ids=...&status=any` de REST.
+ *
+ * Por que `nodes(ids:)` y no `orders(first:, query: "id:...")`: la sintaxis de
+ * busqueda de GraphQL NO tiene `status:any` (los valores validos del filtro
+ * `status` son open / closed / cancelled / not_closed) y esta funcion existe
+ * justamente para encontrar los pedidos CERRADOS y CANCELADOS. `nodes` resuelve
+ * contra el objeto por id: no pasa por el indice de busqueda ni por ningun
+ * filtro de estado, devuelve el pedido este abierto, cerrado o cancelado, y
+ * devuelve `null` cuando el id no existe o no es visible — que es exactamente
+ * el `notFound` que ya contabamos cuando REST no incluia ese id en la respuesta.
+ *
+ * Los campos son el espejo del `fields=id,fulfillment_status,closed_at,cancelled_at`
+ * anterior. Ninguno es "protected customer data".
+ */
+const ORDERS_BY_ID_QUERY = `
+  query ReconcileOrders($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Order {
+        id
+        legacyResourceId
+        displayFulfillmentStatus
+        closedAt
+        cancelledAt
+      }
+    }
+  }
+`;
+
+/** Nodo `Order` tal como lo devuelve ORDERS_BY_ID_QUERY. */
+interface GraphqlOrderNode {
+  id?: string | null;
+  legacyResourceId?: string | null;
+  displayFulfillmentStatus?: string | null;
+  closedAt?: string | null;
+  cancelledAt?: string | null;
+}
+
+/**
+ * `displayFulfillmentStatus` (enum de GraphQL) -> el `fulfillment_status` de REST,
+ * para que `classifyShopifyResolution` siga recibiendo exactamente la misma forma.
+ * REST solo devolvia 'fulfilled' | 'partial' | 'restocked' | null.
+ */
+function toRestFulfillmentStatus(status: string | null | undefined): string | null {
+  switch (status) {
+    case 'FULFILLED':
+      return 'fulfilled';
+    case 'PARTIALLY_FULFILLED':
+      return 'partial';
+    case 'RESTOCKED':
+      return 'restocked';
+    default:
+      return null;
+  }
+}
+
+/**
+ * GID -> id numerico. `Label.shopifyOrderId` guarda el numerico de REST, asi que
+ * el mapa se tiene que seguir indexando por ese valor y no por el GID.
+ */
+function legacyOrderId(node: GraphqlOrderNode): string | null {
+  if (node.legacyResourceId) return String(node.legacyResourceId);
+  const tail = /\/(\d+)$/.exec(node.id ?? '');
+  return tail ? tail[1] : null;
+}
 
 /** True when a stuck Label has already been flagged resolved-externally. */
 export function isResolvedExternally(errorMessage: string | null | undefined): boolean {
@@ -131,19 +196,30 @@ export async function reconcileStuckAgainstShopify(tenantId: string): Promise<Re
   const statusById = new Map<string, ShopifyOrderStatus>();
   for (let i = 0; i < ids.length; i += SHOPIFY_ID_BATCH) {
     const batch = ids.slice(i, i + SHOPIFY_ID_BATCH);
-    const params = new URLSearchParams({
-      ids: batch.join(','),
-      status: 'any',
-      limit: '250',
-      fields: 'id,fulfillment_status,closed_at,cancelled_at',
-    });
-    const url = `https://${tenant.shopifyStoreUrl}/admin/api/${SHOPIFY_API_VERSION}/orders.json?${params}`;
-    const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
-    if (!res.ok) {
+    const res = await shopifyGraphql<{ nodes?: (GraphqlOrderNode | null)[] }>(
+      tenant.shopifyStoreUrl,
+      token,
+      ORDERS_BY_ID_QUERY,
+      { ids: batch.map((id) => `gid://shopify/Order/${id}`) },
+    );
+    // GraphQL contesta 200 aunque falle: hay que mirar `errors`, no solo el status.
+    // Fail-safe del encabezado: cualquier error de Shopify tira y el llamador lo
+    // atrapa, asi el widget nunca se rompe (y sin heartbeat se reintenta despues).
+    if (res.status !== 200 || res.errors.length > 0 || !res.data) {
       throw new Error(`Shopify orders fetch failed (${res.status}) for tenant ${tenantId}`);
     }
-    const data = (await res.json()) as { orders?: ShopifyOrderStatus[] };
-    for (const o of data.orders ?? []) statusById.set(String(o.id), o);
+    for (const node of res.data.nodes ?? []) {
+      // `null` = id inexistente o sin acceso; sigue contando como notFound.
+      if (!node) continue;
+      const numericId = legacyOrderId(node);
+      if (!numericId) continue;
+      statusById.set(numericId, {
+        id: numericId,
+        fulfillment_status: toRestFulfillmentStatus(node.displayFulfillmentStatus),
+        closed_at: node.closedAt ?? null,
+        cancelled_at: node.cancelledAt ?? null,
+      });
+    }
   }
 
   // Classify + collect the terminal-done ones.

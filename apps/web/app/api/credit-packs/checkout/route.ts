@@ -44,9 +44,40 @@ export async function GET(req: NextRequest) {
 
   const tenant = await db.tenant.findUnique({
     where: { id: auth.tenantId },
-    select: { id: true, name: true, userId: true },
+    select: { id: true, name: true, userId: true, shopifyStoreUrl: true, shopifyToken: true },
   });
   if (!tenant) return apiError('Tenant no encontrado', 404);
+
+  /**
+   * 🔴 REQUISITO 1.2.1 DEL APP STORE — el corte no puede ser sólo de UI.
+   *
+   * «Apps that use off-platform billing cannot be distributed through the
+   * Shopify App Store». La pantalla de compra ya esconde este botón cuando la
+   * tienda entró por Shopify (`shopifyBilling` en /api/credit-packs/me), pero
+   * esconder un botón no cierra un endpoint: con la URL a mano —un bookmark
+   * viejo, el historial, un revisor curioso— este GET seguía creando la
+   * preferencia de MercadoPago. Eso ES cobro fuera de la plataforma.
+   *
+   * MISMA REGLA, UN SOLO LUGAR DE VERDAD: `shopifyStoreUrl && shopifyToken`
+   * sobre el tenant que ORIGINA la compra (no el holder del saldo), idéntica a
+   * `app/api/credit-packs/me/route.ts`. Si las dos divergen, la pantalla y el
+   * server dicen cosas distintas y es peor que no tener el corte.
+   *
+   * Fail-closed y ANTES de tocar la base: no se crea `CreditPurchase` ni se
+   * habla con MercadoPago. El comerciante de Shopify compra por
+   * `/api/credit-packs/shopify-checkout`; el de carga propia / DEPO no entra
+   * acá y sigue pagando por este mismo riel, intacto.
+   */
+  if (tenant.shopifyStoreUrl && tenant.shopifyToken) {
+    return NextResponse.json(
+      {
+        error: 'Esta tienda paga por Shopify: los envíos se compran desde la factura de tu tienda.',
+        code: 'SHOPIFY_BILLING_ONLY',
+        checkoutUrl: '/api/credit-packs/shopify-checkout',
+      },
+      { status: 409 },
+    );
+  }
 
   const user = await db.user.findUnique({
     where: { id: tenant.userId },

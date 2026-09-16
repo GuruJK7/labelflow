@@ -33,19 +33,42 @@ import crypto from 'crypto';
  *
  * Por qué cada uno:
  *   read_orders / write_orders  → leer pedidos pagos y escribir notas/tags.
- *   read_fulfillments / write_fulfillments → marcar el pedido como enviado.
  *   read_products → resolver SKU y tipo de producto. NO se pide write_products:
  *     la app no tiene ninguna mutación de productos (las únicas son cobro,
  *     webhooks, fulfillment, tagsAdd y la nota del pedido), y el requisito 3.2
  *     del App Store exige pedir sólo los scopes necesarios.
- *   *_fulfillment_orders → la API moderna de fulfillment; sin estos, marcar
- *     como enviado falla en tiendas nuevas aunque write_fulfillments esté.
+ *   *_fulfillment_orders → la API moderna de fulfillment. Son los ÚNICOS que
+ *     habilitan marcar el pedido como enviado: tanto `fulfillmentCreate` como
+ *     el `POST /fulfillments.json` con `line_items_by_fulfillment_order`.
+ *
+ * 🔴 NO VOLVER A AGREGAR read_fulfillments / write_fulfillments (requisito 3.2)
+ * -----------------------------------------------------------------------------
+ * Estaban en la lista con el comentario "marcar el pedido como enviado" y eso
+ * era falso. En la doc de Shopify esos dos scopes mapean a UN solo recurso,
+ * `FulfillmentService` — el objeto que registra una app como servicio de
+ * cumplimiento con `fulfillmentServiceCreate` («To register a fulfillment
+ * service, your app requires the write_fulfillments access scope»). AutoEnvía
+ * no registra ningún fulfillment service: es una app de gestión de pedidos, y
+ * la guía de Shopify para esas pide sólo `*_merchant_managed_fulfillment_orders`
+ * y `*_third_party_fulfillment_orders`.
+ *
+ * Verificado el 2026-09-16 contra la doc 2026-07:
+ *   - mutations/fulfillmentCreate → "Requires write_assigned_fulfillment_orders,
+ *     write_merchant_managed_fulfillment_orders or
+ *     write_third_party_fulfillment_orders". No menciona write_fulfillments.
+ *   - queries/fulfillment → "Requires read_orders … or read_*_fulfillment_orders".
+ *     No menciona read_fulfillments.
+ *   - admin-rest/resources/fulfillment → los GET piden `orders`; ni
+ *     read_fulfillments ni write_fulfillments aparecen en la página.
+ *   - grep de fulfillmentService/fulfillment_service en apps/ → cero.
+ *
+ * Pedirlos le mostraba al comerciante «Administrar servicios de cumplimiento»
+ * en la pantalla de OAuth por un permiso que la app nunca ejerce, que es
+ * exactamente lo que el requisito 3.2 del App Store prohíbe.
  */
 export const REQUIRED_SCOPES = [
   'read_orders',
   'write_orders',
-  'read_fulfillments',
-  'write_fulfillments',
   'read_products',
   'read_assigned_fulfillment_orders',
   'write_assigned_fulfillment_orders',

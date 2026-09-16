@@ -3,11 +3,44 @@ import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { shopifyAccessForTenant } from '@/lib/shopify-access';
 import { normalizePhone } from '@/lib/recover-utils';
+import { shopifyGraphql } from '@/lib/shopify-graphql';
 
 /**
  * POST /api/recover/sync
  * Fetches abandoned checkouts from Shopify and upserts them into RecoverCart.
+ *
+ * Portado de REST (`GET /admin/api/2024-01/checkouts.json?status=open`) a la
+ * query `abandonedCheckouts` del Admin GraphQL (requisito 2.2.4 del App Store:
+ * desde el 1/4/2025 una app pública nueva no puede consultar recursos REST).
+ *
+ * La forma que consume el upsert de abajo (`NormalizedCheckout`) es la MISMA
+ * que devolvía REST, así que el bucle de upsert y la respuesta del endpoint
+ * (`{ synced, created, updated, totalFromShopify }`) quedaron intactos.
+ *
+ * Diferencias de la API que hay que tener presentes:
+ *  - El `id` de GraphQL es un GID (`gid://shopify/AbandonedCheckout/123`): se
+ *    extrae el número para que `shopifyCheckoutId` siga siendo el mismo string
+ *    que escribe el webhook de `checkouts/*` (si no, la clave única
+ *    `tenantId_shopifyCheckoutId` no matchearía y se duplicarían filas).
+ *  - `AbandonedCheckout` no expone `token`: `shopifyCheckoutToken` queda ''.
+ *    Hoy nadie lo lee (la URL de recuperación es `abandonedCheckoutUrl`).
+ *  - Tampoco expone `email`/`phone` sueltos: salen de `customer`, que pide el
+ *    scope `read_customers` — que la app pública NO pide. Si Shopify contesta
+ *    ACCESS_DENIED se reintenta la página sin ese bloque: se sincroniza igual,
+ *    con el teléfono de las direcciones (que sólo necesitan `read_orders`).
+ *  - GraphQL pagina con cursores y cobra por costo de query, no por request:
+ *    de ahí el tamaño de página chico y el reintento ante THROTTLED.
  */
+
+/** Tope por página. Con los line items anidados el costo pedido queda ~800 de los 1000 permitidos. */
+const CHECKOUTS_PER_PAGE = 25;
+/** Line items por checkout. Un carrito con más ítems que esto se trunca acá. */
+const LINE_ITEMS_PER_CHECKOUT = 20;
+/** Cota dura de páginas (25 × 40 = 1000 checkouts) para que el request no se eternice. */
+const MAX_PAGES = 40;
+const THROTTLE_RETRIES = 2;
+const THROTTLE_WAIT_MS = 1_500;
+
 export async function POST(_req: NextRequest) {
   const auth = await getAuthenticatedTenant();
   if (!auth) return apiError('No autorizado', 401);
@@ -40,33 +73,63 @@ export async function POST(_req: NextRequest) {
     const since = new Date();
     since.setDate(since.getDate() - 30);
 
-    let allCheckouts: ShopifyCheckout[] = [];
-    let url = `https://${tenant.shopifyStoreUrl}/admin/api/2024-01/checkouts.json?limit=250&created_at_min=${since.toISOString()}&status=open`;
+    // Mismo filtro que tenía el REST (`created_at_min` + `status=open`), en la
+    // sintaxis de búsqueda de Shopify. El timestamp va entrecomillado y sin
+    // milisegundos, que es la forma documentada (`created_at:>'2020-10-21T23:39:20Z'`).
+    const searchQuery =
+      `created_at:>='${since.toISOString().replace(/\.\d{3}Z$/, 'Z')}' status:open`;
+
+    let allCheckouts: NormalizedCheckout[] = [];
+    let cursor: string | null = null;
+    let includeCustomer = true;
+    let pages = 0;
+    let truncated = false;
 
     // Paginate through all results
-    while (url) {
-      const res = await fetch(url, {
-        headers: {
-          'X-Shopify-Access-Token': token,
-          'Content-Type': 'application/json',
-        },
-      });
+    for (;;) {
+      let page = await fetchCheckoutPage(
+        tenant.shopifyStoreUrl,
+        token,
+        searchQuery,
+        cursor,
+        includeCustomer,
+      );
 
-      if (!res.ok) {
-        const errText = await res.text();
+      // Sin `read_customers` el bloque `customer` es un ACCESS_DENIED que tira
+      // toda la query abajo: se repite la MISMA página sin ese bloque.
+      if (page.kind === 'no-customer-scope') {
+        console.warn('[recover/sync] sin scope read_customers: se sincroniza sin email/telefono del cliente');
+        includeCustomer = false;
+        page = await fetchCheckoutPage(
+          tenant.shopifyStoreUrl,
+          token,
+          searchQuery,
+          cursor,
+          false,
+        );
+      }
+
+      if (page.kind !== 'ok') {
         // Loguear server-side, no leak Shopify internals al cliente.
-        console.error(`[recover/sync] Shopify API ${res.status}: ${errText.slice(0, 500)}`);
+        console.error(`[recover/sync] Shopify GraphQL: ${page.detail}`);
         return apiError('Error conectando con Shopify', 502);
       }
 
-      const data = await res.json();
-      const checkouts: ShopifyCheckout[] = data.checkouts || [];
-      allCheckouts = allCheckouts.concat(checkouts);
+      allCheckouts = allCheckouts.concat(page.nodes.map(normalizeCheckout));
+      pages++;
 
-      // Follow pagination via Link header — restringido al origin de la
-      // tienda para prevenir SSRF si el header viene manipulado.
-      const linkHeader = res.headers.get('link');
-      url = parsePaginationNext(linkHeader, `https://${tenant.shopifyStoreUrl}`);
+      if (!page.hasNextPage || !page.endCursor) break;
+      if (pages >= MAX_PAGES) {
+        truncated = true;
+        break;
+      }
+      cursor = page.endCursor;
+    }
+
+    if (truncated) {
+      console.warn(
+        `[recover/sync] corte en ${MAX_PAGES} paginas (${allCheckouts.length} checkouts): quedaron mas sin sincronizar`,
+      );
     }
 
     // Filter: only abandoned (no completed_at) and with some contact info
@@ -158,18 +221,19 @@ export async function POST(_req: NextRequest) {
 
 // ── Types ──
 
-interface ShopifyCheckout {
-  id: number;
+/**
+ * Forma que consume el upsert. Es la que devolvía REST: se mantiene tal cual
+ * para que portar la lectura no cambie ni un campo de lo que se guarda.
+ */
+interface NormalizedCheckout {
+  id: string;
   token: string;
   email: string | null;
   phone: string | null;
   total_price: string;
-  subtotal_price: string;
   currency: string;
   presentment_currency: string;
   completed_at: string | null;
-  created_at: string;
-  updated_at: string;
   abandoned_checkout_url: string;
   line_items: Array<{
     title: string;
@@ -190,29 +254,205 @@ interface ShopifyCheckout {
   } | null;
 }
 
+interface GqlMoney {
+  amount?: string | null;
+  currencyCode?: string | null;
+}
+
+interface GqlAddress {
+  firstName?: string | null;
+  lastName?: string | null;
+  phone?: string | null;
+}
+
+interface GqlAbandonedCheckout {
+  id: string;
+  abandonedCheckoutUrl?: string | null;
+  completedAt?: string | null;
+  totalPriceSet?: { shopMoney?: GqlMoney | null; presentmentMoney?: GqlMoney | null } | null;
+  customer?: {
+    defaultEmailAddress?: { emailAddress?: string | null } | null;
+    defaultPhoneNumber?: { phoneNumber?: string | null } | null;
+  } | null;
+  billingAddress?: GqlAddress | null;
+  shippingAddress?: GqlAddress | null;
+  lineItems?: {
+    nodes?: Array<{
+      title?: string | null;
+      quantity?: number | null;
+      sku?: string | null;
+      variantTitle?: string | null;
+      originalUnitPriceSet?: { shopMoney?: GqlMoney | null } | null;
+    }> | null;
+  } | null;
+}
+
+interface AbandonedCheckoutsData {
+  abandonedCheckouts?: {
+    pageInfo?: { hasNextPage?: boolean | null; endCursor?: string | null } | null;
+    nodes?: GqlAbandonedCheckout[] | null;
+  } | null;
+}
+
+type PageOutcome =
+  | { kind: 'ok'; nodes: GqlAbandonedCheckout[]; hasNextPage: boolean; endCursor: string | null }
+  /** Falta `read_customers`: hay que repetir la página sin el bloque `customer`. */
+  | { kind: 'no-customer-scope'; detail: string }
+  | { kind: 'failed'; detail: string };
+
 // ── Helpers ──
 
 /**
- * Extrae la URL `rel="next"` del header Link de Shopify, validando que
- * apunte al MISMO origin de la tienda. Sin este check, una respuesta
- * maliciosa podría redirigir nuestro fetch outbound a IMDS interno (SSRF).
+ * Query de una página de checkouts abandonados. `customer` es opcional porque
+ * pide `read_customers`, un scope que la app pública no solicita.
  */
-function parsePaginationNext(linkHeader: string | null, baseUrl: string): string {
-  if (!linkHeader) return '';
-  const parts = linkHeader.split(',');
-  for (const part of parts) {
-    const match = part.match(/<([^>]+)>;\s*rel="next"/);
-    if (!match) continue;
-    const candidate = match[1];
-    if (!candidate.startsWith(`${baseUrl}/`)) {
-      console.warn(
-        `[recover/sync] dropping next URL outside baseUrl: ${candidate}`,
-      );
-      return '';
+function buildAbandonedCheckoutsQuery(includeCustomer: boolean): string {
+  const customerBlock = includeCustomer
+    ? `        customer {
+          defaultEmailAddress { emailAddress }
+          defaultPhoneNumber { phoneNumber }
+        }
+`
+    : '';
+
+  return `query RecoverAbandonedCheckouts($first: Int!, $after: String, $query: String) {
+  abandonedCheckouts(first: $first, after: $after, query: $query) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      abandonedCheckoutUrl
+      completedAt
+      totalPriceSet {
+        shopMoney { amount currencyCode }
+        presentmentMoney { currencyCode }
+      }
+${customerBlock}      billingAddress { firstName lastName phone }
+      shippingAddress { firstName lastName phone }
+      lineItems(first: ${LINE_ITEMS_PER_CHECKOUT}) {
+        nodes {
+          title
+          quantity
+          sku
+          variantTitle
+          originalUnitPriceSet { shopMoney { amount } }
+        }
+      }
     }
-    return candidate;
   }
-  return '';
+}`;
+}
+
+async function fetchCheckoutPage(
+  shop: string,
+  accessToken: string,
+  searchQuery: string,
+  cursor: string | null,
+  includeCustomer: boolean,
+): Promise<PageOutcome> {
+  const query = buildAbandonedCheckoutsQuery(includeCustomer);
+  const variables = { first: CHECKOUTS_PER_PAGE, after: cursor, query: searchQuery };
+
+  for (let intento = 0; ; intento++) {
+    const res = await shopifyGraphql<AbandonedCheckoutsData>(shop, accessToken, query, variables);
+
+    // Los errores de GraphQL viajan en `errors` con HTTP 200: no alcanza el status.
+    if (res.errors.length > 0) {
+      const codigos = res.errors.map((e) => e.extensions?.code ?? '').filter(Boolean);
+
+      if (includeCustomer && res.errors.some(esErrorDeCustomer)) {
+        return {
+          kind: 'no-customer-scope',
+          detail: `${res.status} ${res.errors.map((e) => e.message).join(' | ').slice(0, 500)}`,
+        };
+      }
+
+      if (codigos.includes('THROTTLED') && intento < THROTTLE_RETRIES) {
+        await esperar(THROTTLE_WAIT_MS * (intento + 1));
+        continue;
+      }
+
+      return {
+        kind: 'failed',
+        detail: `${res.status} ${res.errors.map((e) => e.message).join(' | ').slice(0, 500)}`,
+      };
+    }
+
+    const conexion = res.data?.abandonedCheckouts;
+    if (res.status !== 200 || !conexion) {
+      return { kind: 'failed', detail: `${res.status}: ${res.bodyText}` };
+    }
+
+    return {
+      kind: 'ok',
+      nodes: conexion.nodes ?? [],
+      hasNextPage: conexion.pageInfo?.hasNextPage ?? false,
+      endCursor: conexion.pageInfo?.endCursor ?? null,
+    };
+  }
+}
+
+/** ACCESS_DENIED sobre el campo `customer` (falta `read_customers`). */
+function esErrorDeCustomer(error: { message?: string; extensions?: { code?: string } }): boolean {
+  const code = error.extensions?.code ?? '';
+  const msg = error.message ?? '';
+  if (code !== 'ACCESS_DENIED') return false;
+  return /customer/i.test(msg);
+}
+
+function esperar(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * `gid://shopify/AbandonedCheckout/123` → `"123"`. El webhook de `checkouts/*`
+ * guarda el id numérico: acá tiene que quedar el mismo string o se duplican
+ * filas contra la única `tenantId_shopifyCheckoutId`. Si el GID no tiene la
+ * forma esperada se devuelve tal cual, nunca vacío.
+ */
+function numericIdFromGid(gid: string): string {
+  const match = /\/(\d+)(?:\?.*)?$/.exec(gid);
+  return match ? match[1] : gid;
+}
+
+/** Traduce un nodo de GraphQL a la forma REST que consume el upsert. */
+function normalizeCheckout(node: GqlAbandonedCheckout): NormalizedCheckout {
+  const shopMoney = node.totalPriceSet?.shopMoney;
+  const presentmentMoney = node.totalPriceSet?.presentmentMoney;
+
+  return {
+    id: numericIdFromGid(node.id),
+    // `AbandonedCheckout` no expone el token del checkout.
+    token: '',
+    email: node.customer?.defaultEmailAddress?.emailAddress ?? null,
+    phone: node.customer?.defaultPhoneNumber?.phoneNumber ?? null,
+    // `total_price` de REST venía en moneda de la tienda, igual que `shopMoney`.
+    total_price: shopMoney?.amount ?? '0',
+    currency: shopMoney?.currencyCode ?? '',
+    presentment_currency: presentmentMoney?.currencyCode ?? '',
+    completed_at: node.completedAt ?? null,
+    abandoned_checkout_url: node.abandonedCheckoutUrl ?? '',
+    line_items: (node.lineItems?.nodes ?? []).map((item) => ({
+      title: item.title ?? '',
+      quantity: item.quantity ?? 0,
+      // `price` de REST era el unitario sin descuentos.
+      price: item.originalUnitPriceSet?.shopMoney?.amount ?? '0',
+      variant_title: item.variantTitle ?? null,
+      sku: item.sku ?? null,
+    })),
+    shipping_address: normalizeAddress(node.shippingAddress),
+    billing_address: normalizeAddress(node.billingAddress),
+  };
+}
+
+function normalizeAddress(
+  address: GqlAddress | null | undefined,
+): NormalizedCheckout['shipping_address'] {
+  if (!address) return null;
+  return {
+    first_name: address.firstName ?? '',
+    last_name: address.lastName ?? '',
+    phone: address.phone ?? null,
+  };
 }
 
 // normalizePhone imported from @/lib/recover-utils (single source of truth)

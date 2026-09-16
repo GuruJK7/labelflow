@@ -12,9 +12,21 @@
  *     LabelItem (sin la persistencia el export nunca deja de pagar el costo),
  *   - Shopify caído NO puede voltear el export: esa etiqueta cae a sin_items y
  *     el resto del payload sale igual — degradación, nunca excepción,
- *   - el fetch va EN LOTE y se parte en 250 (el `ids` de la Admin API no acepta
- *     más; sin el corte, un lote grande vuelve con un 400 y se pierde entero),
+ *   - el fetch va EN LOTE y se parte en SHOPIFY_IDS_BATCH (el costo calculado
+ *     de UNA query de la Admin GraphQL no puede pasar de 1000: sin el corte,
+ *     un lote grande vuelve con MAX_COST_EXCEEDED y se pierde entero),
  *   - un tenant sin tienda conectada no rompe nada y no intenta nada.
+ *
+ * Desde el port a GraphQL (2026-09-16, requisito 2.2.4 del App Store) se suman:
+ *   - la llamada va por POST a graphql.json y NUNCA a orders.json,
+ *   - los ids viajan como GID y vuelven como GID: si la conversión de vuelta a
+ *     numérico se rompe, NINGUNA etiqueta se completa (la clave del Map no
+ *     coincidiría con ninguna fila),
+ *   - GraphQL contesta 200 CON `errors`: un lote irrecuperable tiene que caer
+ *     igual que un 500 de REST, y uno con errores parciales tiene que
+ *     aprovechar los nodos que sí vinieron,
+ *   - un pedido con más line items que la página se completa con seguimientos
+ *     y, si el seguimiento falla, NO sale a medias.
  *
  * Prisma va mockeado: lo que importa acá es la FORMA de la escritura
  * (deleteMany + createMany por labelId en una transacción), que es la misma que
@@ -57,23 +69,81 @@ import {
   applyBackfilledItems,
   buildLabelItems,
   chunk,
+  orderIdFromGid,
+  toOrderGid,
   SHOPIFY_IDS_BATCH,
+  SHOPIFY_LINE_ITEMS_PAGE,
   type BackfillLabelRow,
 } from '../wms-items-backfill';
 import { buildWmsExportPayload, type WmsExportLabelRow } from '../wms-export';
 
 const CREDS = { id: 't-kinevia', shopifyStoreUrl: 'kinevia.myshopify.com', shopifyToken: 'enc:shpat_123' };
 
+/** Costo calculado de la Admin GraphQL: 1 (Order) + 2 (conexión) + first. */
+const COSTO_POR_PEDIDO = 3 + SHOPIFY_LINE_ITEMS_PAGE;
+const COSTO_MAXIMO_POR_QUERY = 1000;
+
 function row(over: Partial<BackfillLabelRow> = {}): BackfillLabelRow {
   return { id: 'lbl_1', shopifyOrderId: '5001', items: [], ...over };
 }
 
-/** Respuesta OK de orders.json con los pedidos pedidos. */
-function shopifyOk(orders: unknown[]) {
-  return { ok: true, status: 200, json: async () => ({ orders }) };
+type LineItem = { sku?: string | null; title?: string | null; quantity?: number | null };
+
+/** Respuesta cruda de graphql.json. El cliente lee `.text()`, no `.json()`. */
+function gqlRes(body: unknown, status = 200) {
+  const text = JSON.stringify(body);
+  return { ok: status >= 200 && status < 300, status, text: async () => text };
+}
+
+/** Respuesta OK de la query de lote con los pedidos pedidos. */
+function gqlOk(
+  orders: { id: number; line_items?: LineItem[] }[],
+  opts: { hasNextPage?: boolean; endCursor?: string | null } = {},
+) {
+  return gqlRes({
+    data: {
+      nodes: orders.map((o) => ({
+        id: toOrderGid(String(o.id)),
+        lineItems: {
+          pageInfo: { hasNextPage: opts.hasNextPage ?? false, endCursor: opts.endCursor ?? null },
+          nodes: o.line_items ?? [],
+        },
+      })),
+    },
+  });
+}
+
+/** Respuesta OK de la query de seguimiento (una página más de un pedido). */
+function gqlOrderPage(id: number, items: LineItem[], next?: string | null) {
+  return gqlRes({
+    data: {
+      order: {
+        id: toOrderGid(String(id)),
+        lineItems: {
+          pageInfo: { hasNextPage: Boolean(next), endCursor: next ?? null },
+          nodes: items,
+        },
+      },
+    },
+  });
+}
+
+function bodyOf(call: unknown[]): { query: string; variables: Record<string, unknown> } {
+  const init = call[1] as RequestInit;
+  return JSON.parse(String(init.body));
+}
+
+function idsOf(call: unknown[]): string[] {
+  return bodyOf(call).variables.ids as string[];
 }
 
 let fetchMock: ReturnType<typeof vi.fn>;
+let avisosLog: string[] = [];
+
+/** Todo lo que el módulo logueó, aplanado, para poder afirmar el MOTIVO. */
+function avisos(): string {
+  return avisosLog.join('\n');
+}
 
 beforeEach(() => {
   deleteMany.mockReset().mockReturnValue({ __op: 'deleteMany' });
@@ -81,10 +151,17 @@ beforeEach(() => {
   $transaction.mockReset().mockResolvedValue([]);
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
+  // Un lote perdido se loguea; acá sólo ensucia la salida de los tests, pero el
+  // MOTIVO se guarda: varios tests afirman por qué se cayó, no sólo que se cayó.
+  avisosLog = [];
+  vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+    avisosLog.push(args.map((a) => JSON.stringify(a)).join(' '));
+  });
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('(a) camino normal — con snapshot no se toca Shopify', () => {
@@ -103,7 +180,7 @@ describe('(a) camino normal — con snapshot no se toca Shopify', () => {
 
   it('con una mezcla, sólo pide los ids de las que NO tienen ítems', async () => {
     fetchMock.mockResolvedValue(
-      shopifyOk([{ id: 5002, line_items: [{ sku: 'BUZ-9', title: 'Buzo', quantity: 1 }] }]),
+      gqlOk([{ id: 5002, line_items: [{ sku: 'BUZ-9', title: 'Buzo', quantity: 1 }] }]),
     );
 
     await backfillMissingItems(
@@ -115,15 +192,14 @@ describe('(a) camino normal — con snapshot no se toca Shopify', () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const url = new URL(fetchMock.mock.calls[0][0] as string);
-    expect(url.searchParams.get('ids')).toBe('5002');
+    expect(idsOf(fetchMock.mock.calls[0])).toEqual(['gid://shopify/Order/5002']);
   });
 });
 
 describe('(b) backfill — completa desde Shopify y persiste', () => {
   it('devuelve los ítems y escribe LabelItem con la forma del worker', async () => {
     fetchMock.mockResolvedValue(
-      shopifyOk([
+      gqlOk([
         {
           id: 5001,
           line_items: [
@@ -156,20 +232,33 @@ describe('(b) backfill — completa desde Shopify y persiste', () => {
     });
   });
 
-  it('usa el token DESCIFRADO y la store del tenant en el request', async () => {
-    fetchMock.mockResolvedValue(shopifyOk([]));
+  it('va por GraphQL (2.2.4), con el token DESCIFRADO y la store del tenant', async () => {
+    fetchMock.mockResolvedValue(gqlOk([]));
     await backfillMissingItems([row()], CREDS);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('https://kinevia.myshopify.com/admin/api/2024-01/orders.json');
-    expect(url).toContain('fields=id%2Cline_items');
-    expect(url).toContain('status=any');
+    expect(url).toBe('https://kinevia.myshopify.com/admin/api/2026-07/graphql.json');
+    expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe('shpat_123');
+
+    // Ni un rastro del recurso REST: eso es lo que reprueba el requisito 2.2.4.
+    expect(url).not.toContain('orders.json');
+    expect(url).not.toContain('/admin/api/2024-01/');
+
+    const { query, variables } = bodyOf(fetchMock.mock.calls[0]);
+    expect(query).toContain('nodes(ids: $ids)');
+    expect(query).toContain('... on Order');
+    expect(query).toContain('lineItems(first: $liFirst)');
+    expect(query).toContain('sku');
+    expect(query).toContain('title');
+    expect(query).toContain('quantity');
+    expect(variables.ids).toEqual(['gid://shopify/Order/5001']);
+    expect(variables.liFirst).toBe(SHOPIFY_LINE_ITEMS_PAGE);
   });
 
   it('si la escritura falla igual devuelve los ítems (best-effort)', async () => {
     fetchMock.mockResolvedValue(
-      shopifyOk([{ id: 5001, line_items: [{ sku: 'A', title: 'A', quantity: 1 }] }]),
+      gqlOk([{ id: 5001, line_items: [{ sku: 'A', title: 'A', quantity: 1 }] }]),
     );
     $transaction.mockRejectedValue(new Error('deadlock'));
 
@@ -182,7 +271,7 @@ describe('(b) backfill — completa desde Shopify y persiste', () => {
 
   it('la etiqueta de reparto propio (guía LF-) también se completa', async () => {
     fetchMock.mockResolvedValue(
-      shopifyOk([{ id: 7777, line_items: [{ sku: 'LF-1', title: 'Caja', quantity: 3 }] }]),
+      gqlOk([{ id: 7777, line_items: [{ sku: 'LF-1', title: 'Caja', quantity: 3 }] }]),
     );
     const res = await backfillMissingItems([row({ id: 'lf', shopifyOrderId: '7777' })], CREDS);
     expect(res.items.get('lf')).toEqual([{ sku: 'LF-1', title: 'Caja', quantity: 3 }]);
@@ -192,6 +281,31 @@ describe('(b) backfill — completa desde Shopify y persiste', () => {
     const res = await backfillMissingItems([row({ shopifyOrderId: 'manual-abc' })], CREDS);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(res.skipped).toBe('nada-que-hacer');
+  });
+});
+
+describe('(b2) GID ↔ id numérico — la costura del port', () => {
+  it('ida y vuelta', () => {
+    expect(toOrderGid('5001')).toBe('gid://shopify/Order/5001');
+    expect(orderIdFromGid('gid://shopify/Order/5001')).toBe('5001');
+    expect(orderIdFromGid(toOrderGid('7777'))).toBe('7777');
+  });
+
+  it('tolera el sufijo ?key=value y descarta lo que no es un GID de pedido', () => {
+    expect(orderIdFromGid('gid://shopify/Order/5001?namespace=x')).toBe('5001');
+    expect(orderIdFromGid(null)).toBeNull();
+    expect(orderIdFromGid(undefined)).toBeNull();
+    expect(orderIdFromGid('')).toBeNull();
+    expect(orderIdFromGid({})).toBeNull();
+  });
+
+  it('la clave del Map es el id NUMÉRICO, que es lo que guarda Label.shopifyOrderId', async () => {
+    fetchMock.mockResolvedValue(
+      gqlOk([{ id: 5001, line_items: [{ sku: 'A', title: 'A', quantity: 1 }] }]),
+    );
+    // Si la respuesta se indexara por GID, esto daría 0 recuperadas.
+    const res = await backfillMissingItems([row({ shopifyOrderId: '5001' })], CREDS);
+    expect(res.recuperadas).toBe(1);
   });
 });
 
@@ -207,8 +321,60 @@ describe('(c) Shopify caído — degradación, nunca excepción', () => {
   });
 
   it('un 429 (rate limit) tampoco rompe', async () => {
-    fetchMock.mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
-    await expect(backfillMissingItems([row()], CREDS)).resolves.toBeTruthy();
+    fetchMock.mockResolvedValue(gqlRes({}, 429));
+    const res = await backfillMissingItems([row()], CREDS);
+    expect(res.recuperadas).toBe(0);
+    expect(avisos()).toContain('429');
+  });
+
+  it('200 con `errors` y sin data (THROTTLED) se trata como lote caído', async () => {
+    // El modo de falla propio de GraphQL: el status NO alcanza para saber si
+    // salió bien. Si esto se chequeara sólo por res.ok, el lote se daría por
+    // bueno y las etiquetas saldrían vacías sin que nadie se entere.
+    fetchMock.mockResolvedValue(
+      gqlRes({ errors: [{ message: 'Throttled', extensions: { code: 'THROTTLED' } }] }),
+    );
+
+    const res = await backfillMissingItems([row()], CREDS);
+
+    expect(res.recuperadas).toBe(0);
+    expect(res.items.size).toBe(0);
+    expect($transaction).not.toHaveBeenCalled();
+    // Y el motivo REAL tiene que llegar al log: si el módulo sólo mirara el
+    // status HTTP, el lote caería igual pero por un TypeError de rebote y
+    // nadie podría saber por qué el export quedó entero en `sin_items`.
+    expect(avisos()).toContain('THROTTLED');
+  });
+
+  it('errores PARCIALES: el nodo que sí vino se aprovecha', async () => {
+    // Un pedido fuera de la ventana de 60 días vuelve como null (o con su
+    // error) sin invalidar a los demás del lote.
+    fetchMock.mockResolvedValue(
+      gqlRes({
+        data: {
+          nodes: [
+            null,
+            {
+              id: toOrderGid('5002'),
+              lineItems: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [{ sku: 'B', title: 'Buzo', quantity: 1 }],
+              },
+            },
+          ],
+        },
+        errors: [{ message: 'Access denied', extensions: { code: 'ACCESS_DENIED' } }],
+      }),
+    );
+
+    const res = await backfillMissingItems(
+      [row({ id: 'viejo', shopifyOrderId: '5001' }), row({ id: 'nuevo', shopifyOrderId: '5002' })],
+      CREDS,
+    );
+
+    expect(res.items.get('nuevo')).toEqual([{ sku: 'B', title: 'Buzo', quantity: 1 }]);
+    expect(res.items.has('viejo')).toBe(false);
+    expect(res.recuperadas).toBe(1);
   });
 
   it('el resto del payload sale igual: la caída sólo agranda sin_items', async () => {
@@ -242,49 +408,92 @@ describe('(c) Shopify caído — degradación, nunca excepción', () => {
   });
 });
 
-describe('(d) lotes — el fetch se parte en 250', () => {
-  it('251 Labels sin ítems generan 2 requests de 250 + 1', async () => {
-    fetchMock.mockResolvedValue(shopifyOk([]));
+describe('(d) lotes — el fetch se parte en SHOPIFY_IDS_BATCH', () => {
+  it('2 lotes + 1 generan 3 requests, y ninguno se pasa del costo máximo', async () => {
+    fetchMock.mockResolvedValue(gqlOk([]));
 
-    const rows = Array.from({ length: 251 }, (_, i) =>
+    const n = SHOPIFY_IDS_BATCH * 2 + 1;
+    const rows = Array.from({ length: n }, (_, i) =>
       row({ id: `l${i}`, shopifyOrderId: String(9000 + i) }),
     );
     await backfillMissingItems(rows, CREDS);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const ids1 = new URL(fetchMock.mock.calls[0][0] as string).searchParams.get('ids')!.split(',');
-    const ids2 = new URL(fetchMock.mock.calls[1][0] as string).searchParams.get('ids')!.split(',');
-    expect(ids1).toHaveLength(SHOPIFY_IDS_BATCH);
-    expect(ids2).toHaveLength(1);
-    // Ningún lote puede pasarse del máximo que acepta el parámetro `ids`.
-    expect(Math.max(ids1.length, ids2.length)).toBeLessThanOrEqual(250);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(idsOf(fetchMock.mock.calls[0])).toHaveLength(SHOPIFY_IDS_BATCH);
+    expect(idsOf(fetchMock.mock.calls[1])).toHaveLength(SHOPIFY_IDS_BATCH);
+    expect(idsOf(fetchMock.mock.calls[2])).toHaveLength(1);
+
+    for (const call of fetchMock.mock.calls) {
+      const ids = idsOf(call);
+      expect(ids.length * COSTO_POR_PEDIDO).toBeLessThanOrEqual(COSTO_MAXIMO_POR_QUERY);
+      expect(ids.every((g) => g.startsWith('gid://shopify/Order/'))).toBe(true);
+    }
+  });
+
+  it('la tanda típica (64 etiquetas) sigue siendo UN solo request', async () => {
+    fetchMock.mockResolvedValue(gqlOk([]));
+    const rows = Array.from({ length: 64 }, (_, i) =>
+      row({ id: `l${i}`, shopifyOrderId: String(9000 + i) }),
+    );
+    await backfillMissingItems(rows, CREDS);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('un lote que falla no se lleva puesto al otro', async () => {
+    const n = SHOPIFY_IDS_BATCH * 2 + 1;
+    const ultimoPedido = 9000 + (n - 1);
+
     fetchMock
       .mockRejectedValueOnce(new Error('timeout'))
-      .mockResolvedValueOnce(
-        shopifyOk([{ id: 9250, line_items: [{ sku: 'Z', title: 'Z', quantity: 1 }] }]),
+      .mockResolvedValue(
+        gqlOk([{ id: ultimoPedido, line_items: [{ sku: 'Z', title: 'Z', quantity: 1 }] }]),
       );
 
-    const rows = Array.from({ length: 251 }, (_, i) =>
+    const rows = Array.from({ length: n }, (_, i) =>
       row({ id: `l${i}`, shopifyOrderId: String(9000 + i) }),
     );
     const res = await backfillMissingItems(rows, CREDS);
 
     expect(res.recuperadas).toBe(1);
-    expect(res.items.get('l250')).toEqual([{ sku: 'Z', title: 'Z', quantity: 1 }]);
+    expect(res.items.get(`l${n - 1}`)).toEqual([{ sku: 'Z', title: 'Z', quantity: 1 }]);
+  });
+
+  it('MAX_COST_EXCEEDED parte el lote en dos y reintenta', async () => {
+    // Red de seguridad: si la cuenta de costo de Shopify cambiara, el backfill
+    // se pone lento — no se apaga en silencio.
+    fetchMock
+      .mockResolvedValueOnce(
+        gqlRes({
+          errors: [
+            {
+              message: 'Query cost is 2003, which exceeds the single query max cost limit (1000).',
+              extensions: { code: 'MAX_COST_EXCEEDED', cost: 2003, maxCost: 1000 },
+            },
+          ],
+        }),
+      )
+      .mockResolvedValue(gqlOk([{ id: 5001, line_items: [{ sku: 'A', title: 'A', quantity: 1 }] }]));
+
+    const res = await backfillMissingItems(
+      [row({ id: 'a', shopifyOrderId: '5001' }), row({ id: 'b', shopifyOrderId: '5002' })],
+      CREDS,
+    );
+
+    expect(fetchMock.mock.calls.length).toBe(3); // el lote entero + las dos mitades
+    expect(idsOf(fetchMock.mock.calls[0])).toHaveLength(2);
+    expect(idsOf(fetchMock.mock.calls[1])).toHaveLength(1);
+    expect(res.items.get('a')).toEqual([{ sku: 'A', title: 'A', quantity: 1 }]);
   });
 
   it('ids duplicados (envío partido) se piden una sola vez', async () => {
     fetchMock.mockResolvedValue(
-      shopifyOk([{ id: 5001, line_items: [{ sku: 'A', title: 'A', quantity: 1 }] }]),
+      gqlOk([{ id: 5001, line_items: [{ sku: 'A', title: 'A', quantity: 1 }] }]),
     );
     const res = await backfillMissingItems(
       [row({ id: 'a', shopifyOrderId: '5001' }), row({ id: 'b', shopifyOrderId: '5001' })],
       CREDS,
     );
-    expect(new URL(fetchMock.mock.calls[0][0] as string).searchParams.get('ids')).toBe('5001');
+    expect(idsOf(fetchMock.mock.calls[0])).toEqual(['gid://shopify/Order/5001']);
     // Pero las DOS Labels se completan con ese pedido.
     expect(res.recuperadas).toBe(2);
   });
@@ -293,7 +502,7 @@ describe('(d) lotes — el fetch se parte en 250', () => {
     // Más que PERSIST_CONCURRENCY: es donde se rompería un chunk mal escrito.
     const n = 20;
     fetchMock.mockResolvedValue(
-      shopifyOk(
+      gqlOk(
         Array.from({ length: n }, (_, i) => ({
           id: 6000 + i,
           line_items: [{ sku: `S${i}`, title: `T${i}`, quantity: 1 }],
@@ -309,6 +518,86 @@ describe('(d) lotes — el fetch se parte en 250', () => {
     expect(res.recuperadas).toBe(n);
     expect(res.persistidas).toBe(n);
     expect($transaction).toHaveBeenCalledTimes(n);
+  });
+});
+
+describe('(d2) line items paginados — lo que REST traía entero', () => {
+  it('un pedido con más ítems que la página se completa con un seguimiento', async () => {
+    const primera = Array.from({ length: SHOPIFY_LINE_ITEMS_PAGE }, (_, i) => ({
+      sku: `S${i}`,
+      title: `T${i}`,
+      quantity: 1,
+    }));
+
+    fetchMock
+      .mockResolvedValueOnce(
+        gqlOk([{ id: 5001, line_items: primera }], { hasNextPage: true, endCursor: 'cur1' }),
+      )
+      .mockResolvedValueOnce(gqlOrderPage(5001, [{ sku: 'EXTRA', title: 'Extra', quantity: 2 }]));
+
+    const res = await backfillMissingItems([row()], CREDS);
+
+    expect(res.items.get('lbl_1')).toHaveLength(SHOPIFY_LINE_ITEMS_PAGE + 1);
+    expect(res.items.get('lbl_1')!.at(-1)).toEqual({ sku: 'EXTRA', title: 'Extra', quantity: 2 });
+
+    const seguimiento = bodyOf(fetchMock.mock.calls[1]);
+    expect(seguimiento.query).toContain('order(id: $id)');
+    expect(seguimiento.variables.after).toBe('cur1');
+    expect(seguimiento.variables.id).toBe('gid://shopify/Order/5001');
+  });
+
+  it('si el seguimiento falla, el pedido NO sale con la lista a medias', async () => {
+    // Media lista de picking se despacha incompleta y nadie se entera; en
+    // `sin_items` se ve. Entre las dos, `sin_items`.
+    fetchMock
+      .mockResolvedValueOnce(
+        gqlOk([{ id: 5001, line_items: [{ sku: 'A', title: 'A', quantity: 1 }] }], {
+          hasNextPage: true,
+          endCursor: 'cur1',
+        }),
+      )
+      .mockRejectedValueOnce(new Error('timeout'));
+
+    const res = await backfillMissingItems([row()], CREDS);
+
+    expect(res.recuperadas).toBe(0);
+    expect(res.items.size).toBe(0);
+    expect($transaction).not.toHaveBeenCalled();
+  });
+
+  it('el seguimiento que falla no se lleva puesto al pedido vecino', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        gqlRes({
+          data: {
+            nodes: [
+              {
+                id: toOrderGid('5001'),
+                lineItems: {
+                  pageInfo: { hasNextPage: true, endCursor: 'cur1' },
+                  nodes: [{ sku: 'A', title: 'A', quantity: 1 }],
+                },
+              },
+              {
+                id: toOrderGid('5002'),
+                lineItems: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [{ sku: 'B', title: 'B', quantity: 1 }],
+                },
+              },
+            ],
+          },
+        }),
+      )
+      .mockRejectedValueOnce(new Error('timeout'));
+
+    const res = await backfillMissingItems(
+      [row({ id: 'a', shopifyOrderId: '5001' }), row({ id: 'b', shopifyOrderId: '5002' })],
+      CREDS,
+    );
+
+    expect(res.items.has('a')).toBe(false);
+    expect(res.items.get('b')).toEqual([{ sku: 'B', title: 'B', quantity: 1 }]);
   });
 });
 

@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 /** GET /api/credit-packs/whop-checkout?pack= (D34). */
 const mocks = vi.hoisted(() => ({
   getAuthenticatedTenant: vi.fn(),
+  tenantFindUnique: vi.fn(),
   purchaseCreate: vi.fn(),
   purchaseUpdate: vi.fn(),
   purchaseFindFirst: vi.fn(),
@@ -14,6 +15,11 @@ vi.mock('@/lib/api-utils', async (importOriginal) => ({
 }));
 vi.mock('@/lib/db', () => ({
   db: {
+    // El riel de Whop está cerrado para las tiendas que cobran por Shopify
+    // (requisito 1.2.1): la ruta mira el tenant antes de redirigir. Acá todos
+    // los casos son de carga propia. El 409 se prueba en
+    // `shopify-billing-rieles-cerrados.test.ts`.
+    tenant: { findUnique: mocks.tenantFindUnique },
     creditPurchase: { create: mocks.purchaseCreate, update: mocks.purchaseUpdate, findFirst: mocks.purchaseFindFirst },
   },
 }));
@@ -34,6 +40,7 @@ beforeEach(() => {
   vi.spyOn(console, 'info').mockImplementation(() => {});
   process.env.WHOP_CHECKOUT_URLS = JSON.stringify(URLS);
   mocks.getAuthenticatedTenant.mockResolvedValue({ userId: 'u1', tenantId: 'tenant-1' });
+  mocks.tenantFindUnique.mockResolvedValue({ id: 'tenant-1', shopifyStoreUrl: null, shopifyToken: null });
   mocks.purchaseCreate.mockResolvedValue({ id: 'cp-new' });
   mocks.purchaseUpdate.mockResolvedValue({});
   mocks.purchaseFindFirst.mockResolvedValue(null); // sin PENDING reciente

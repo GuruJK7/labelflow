@@ -17,10 +17,38 @@ export async function GET(req: NextRequest) {
 
   const tenant = await db.tenant.findUnique({
     where: { id: auth.tenantId },
-    select: { id: true, name: true, userId: true },
+    select: { id: true, name: true, userId: true, shopifyStoreUrl: true, shopifyToken: true },
   });
 
   if (!tenant) return apiError('Tenant no encontrado', 404);
+
+  /**
+   * 🔴 REQUISITO 1.2.1 DEL APP STORE — el corte no puede ser sólo de UI.
+   *
+   * «Apps that use off-platform billing cannot be distributed through the
+   * Shopify App Store». Éste es el riel más caro de los tres: una PreApproval
+   * de MercadoPago es una SUSCRIPCIÓN, o sea un cobro recurrente que sigue
+   * corriendo todos los meses. Dejarlo abierto para una tienda que entró por
+   * Shopify no es sólo un rechazo de la ficha: es plata cobrada por fuera de
+   * la plataforma, mes a mes, hasta que alguien la cancele a mano.
+   *
+   * MISMA REGLA, UN SOLO LUGAR DE VERDAD: `shopifyStoreUrl && shopifyToken`
+   * sobre el tenant que ORIGINA la compra, idéntica a
+   * `app/api/credit-packs/me/route.ts`.
+   *
+   * Fail-closed y antes de hablar con MercadoPago. Los tenants que NO vienen
+   * de Shopify (carga propia, DEPO) siguen pasando por acá sin cambios.
+   */
+  if (tenant.shopifyStoreUrl && tenant.shopifyToken) {
+    return NextResponse.json(
+      {
+        error: 'Esta tienda paga por Shopify: los envíos se compran desde la factura de tu tienda.',
+        code: 'SHOPIFY_BILLING_ONLY',
+        checkoutUrl: '/api/credit-packs/shopify-checkout',
+      },
+      { status: 409 },
+    );
+  }
 
   const user = await db.user.findUnique({
     where: { id: tenant.userId },

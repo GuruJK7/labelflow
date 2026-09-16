@@ -63,6 +63,14 @@ export async function middleware(request: NextRequest) {
                   // allowlist de PROTECCIÓN, así que lo que no está en ninguna
                   // de las dos listas queda accesible igual. Va acá para que
                   // exija sesión de verdad.
+                  //
+                  // 🔴 ESTO SOLO PIDE SESIÓN (16-09-2026). `getToken()` no
+                  // distingue admin de comerciante, así que un revisor de
+                  // Shopify logueado pasaba igual. El gate real es
+                  // `requireAdminOrNotFound()` DENTRO de la página, que además
+                  // responde 404. Esta línea queda como defensa en profundidad
+                  // —rebota al anónimo antes de tocar la base— y para cubrir
+                  // cualquier /tutorial/* futuro que se olvide de gatearse.
     '/dashboard',
     '/orders',
     '/labels',

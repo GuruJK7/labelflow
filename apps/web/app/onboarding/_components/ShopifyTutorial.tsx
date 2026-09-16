@@ -46,8 +46,6 @@ import { OSTabs } from '@/app/tutorial/shopify-token/_components/OSTabs';
 const REQUIRED_SCOPES = [
   { name: 'read_orders', why: 'Leer los pedidos nuevos.' },
   { name: 'write_orders', why: 'Marcar pedidos como preparados.' },
-  { name: 'read_fulfillments', why: 'Detectar envíos manuales.' },
-  { name: 'write_fulfillments', why: 'Crear el fulfillment con la guía DAC.' },
   { name: 'read_products', why: 'Filtros opcionales por categoría.' },
   {
     name: 'read_assigned_fulfillment_orders',
@@ -68,6 +66,8 @@ const REQUIRED_SCOPES = [
 ] as const;
 
 const SCOPES_CSV = REQUIRED_SCOPES.map((s) => s.name).join(',');
+/** Derivado, no escrito a mano: decía "10" con nueve en la lista. */
+const SCOPE_COUNT = REQUIRED_SCOPES.length;
 
 export function ShopifyTutorial() {
   const [expanded, setExpanded] = useState(false);
@@ -174,7 +174,7 @@ export function ShopifyTutorial() {
                 <div>
                   En la sección{' '}
                   <span className="text-zinc-100 font-medium">Acceso</span>,
-                  pegá los 10 alcances en el campo{' '}
+                  pegá los {SCOPE_COUNT} alcances en el campo{' '}
                   <span className="text-zinc-100 font-medium">Alcances</span>{' '}
                   (separados por coma):
                 </div>
@@ -189,7 +189,8 @@ export function ShopifyTutorial() {
                     </>
                   ) : (
                     <>
-                      <Copy className="w-3 h-3" /> Copiar los 10 alcances (CSV)
+                      <Copy className="w-3 h-3" /> Copiar los {SCOPE_COUNT}{' '}
+                      alcances (CSV)
                     </>
                   )}
                 </button>

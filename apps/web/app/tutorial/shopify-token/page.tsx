@@ -12,6 +12,7 @@ import {
   Info,
   Terminal as TerminalIcon,
 } from 'lucide-react';
+import { requireAdminOrNotFound } from '@/lib/admin';
 import { CopyButton } from './_components/CopyButton';
 import { OSTabs } from './_components/OSTabs';
 import {
@@ -70,16 +71,6 @@ const REQUIRED_SCOPES: { name: string; resource: string; why: string }[] = [
     why: 'Marcar pedidos como "Preparado" cuando el envío sale.',
   },
   {
-    name: 'read_fulfillments',
-    resource: 'Fulfillment services',
-    why: 'Detectar pedidos que ya fueron despachados manualmente.',
-  },
-  {
-    name: 'write_fulfillments',
-    resource: 'Fulfillment services',
-    why: 'Crear el fulfillment con el número de guía DAC.',
-  },
-  {
     name: 'read_products',
     resource: 'Products',
     why: 'Leer tipos de producto para filtros opcionales por categoría.',
@@ -107,6 +98,20 @@ const REQUIRED_SCOPES: { name: string; resource: string; why: string }[] = [
 ];
 
 const ALL_SCOPES_CSV = REQUIRED_SCOPES.map((s) => s.name).join(',');
+
+/**
+ * 🔴 El número de alcances se DERIVA de la lista, nunca se escribe a mano.
+ * Hasta el 2026-09-16 toda la página decía "10 alcances" con nueve en el
+ * array: alguien sacó uno y las catorce cadenas quedaron mintiendo. Con
+ * `SCOPE_COUNT` el texto no puede desincronizarse del CSV que se copia.
+ */
+const SCOPE_COUNT = REQUIRED_SCOPES.length;
+
+/**
+ * La lista con comillas simples, tal cual la piden los verificadores de abajo.
+ * Sirve igual para Python (`[...]`) y para PowerShell (`@(...)`).
+ */
+const SCOPES_QUOTED = REQUIRED_SCOPES.map((sc) => `'${sc.name}'`).join(',');
 
 const PYTHON_SERVER = `#!/usr/bin/env python3
 """Shopify OAuth Token Capturer — listens on localhost:3456"""
@@ -280,14 +285,15 @@ const STEPS: Step[] = [
   },
   {
     n: 3,
-    title: 'Pegar los 10 alcances en el campo "Alcances"',
+    title: `Pegar los ${SCOPE_COUNT} alcances en el campo "Alcances"`,
     body: (
       <>
         En el editor de la primera versión, scrolleá a la sección{' '}
         <span className="text-zinc-100 font-semibold">Acceso</span>. En el
         campo <span className="text-zinc-100 font-semibold">Alcances</span>{' '}
-        (NO "Alcances opcionales") pegá los 10 separados por comas. Usá el
-        botón "Copiar los 10 alcances" del bloque amarillo arriba.
+        (NO "Alcances opcionales") pegá los {SCOPE_COUNT} separados por comas.
+        Usá el botón "Copiar los {SCOPE_COUNT} alcances" del bloque amarillo
+        arriba.
       </>
     ),
     visual: <Step08AccessoComplete className="w-full h-auto" />,
@@ -591,7 +597,7 @@ for /f "tokens=5" %a in ('netstat -ano ^| findstr :3456 ^| findstr LISTENING') d
             las apps personalizadas no pasan por el App Store).
           </li>
           <li>
-            Lista de permisos que pediste (los 10 scopes traducidos por
+            Lista de permisos que pediste (los {SCOPE_COUNT} scopes traducidos por
             Shopify a categorías como "Ver y editar datos de la tienda").
           </li>
           <li>
@@ -645,10 +651,10 @@ curl -s -H "X-Shopify-Access-Token: $TOKEN" \\
 python3 -c "
 import sys, json
 scopes = sorted(s['handle'] for s in json.load(sys.stdin)['access_scopes'])
-required = ['read_orders','write_orders','read_fulfillments','write_fulfillments','read_products','read_assigned_fulfillment_orders','write_assigned_fulfillment_orders','read_merchant_managed_fulfillment_orders','write_merchant_managed_fulfillment_orders']
+required = [${SCOPES_QUOTED}]
 missing = [s for s in required if s not in scopes]
 print(f'Granted total: {len(scopes)}')
-print('ALL 10 LABELFLOW SCOPES GRANTED ✅' if not missing else f'MISSING: {missing}')
+print('ALL ${SCOPE_COUNT} LABELFLOW SCOPES GRANTED ✅' if not missing else f'MISSING: {missing}')
 "`}
               </pre>
             }
@@ -662,10 +668,10 @@ curl -s -H "X-Shopify-Access-Token: $TOKEN" \\
 python3 -c "
 import sys, json
 scopes = sorted(s['handle'] for s in json.load(sys.stdin)['access_scopes'])
-required = ['read_orders','write_orders','read_fulfillments','write_fulfillments','read_products','read_assigned_fulfillment_orders','write_assigned_fulfillment_orders','read_merchant_managed_fulfillment_orders','write_merchant_managed_fulfillment_orders']
+required = [${SCOPES_QUOTED}]
 missing = [s for s in required if s not in scopes]
 print(f'Granted total: {len(scopes)}')
-print('ALL 10 LABELFLOW SCOPES GRANTED ✅' if not missing else f'MISSING: {missing}')
+print('ALL ${SCOPE_COUNT} LABELFLOW SCOPES GRANTED ✅' if not missing else f'MISSING: {missing}')
 "`}
               </pre>
             }
@@ -679,13 +685,7 @@ $response = Invoke-RestMethod \`
   -Uri "https://$DOMAIN/admin/oauth/access_scopes.json" \`
   -Headers @{ "X-Shopify-Access-Token" = $TOKEN }
 
-$required = @(
-  'read_orders','write_orders',
-  'read_fulfillments','write_fulfillments',
-  'read_products',
-  'read_assigned_fulfillment_orders','write_assigned_fulfillment_orders',
-  'read_merchant_managed_fulfillment_orders','write_merchant_managed_fulfillment_orders'
-)
+$required = @(${SCOPES_QUOTED})
 $granted = $response.access_scopes.handle
 $missing = $required | Where-Object { $_ -notin $granted }
 
@@ -693,7 +693,7 @@ Write-Host "Granted total: $($granted.Count)"
 if ($missing) {
   Write-Host "MISSING: $($missing -join ', ')" -ForegroundColor Red
 } else {
-  Write-Host "ALL 10 LABELFLOW SCOPES GRANTED" -ForegroundColor Green
+  Write-Host "ALL ${SCOPE_COUNT} LABELFLOW SCOPES GRANTED" -ForegroundColor Green
 }`}
               </pre>
             }
@@ -701,9 +701,10 @@ if ($missing) {
         </div>
         <div className="mt-3 text-sm text-zinc-400 leading-relaxed">
           <strong className="text-emerald-300">Resultado esperado:</strong>{' '}
-          una línea con &quot;Granted total: 10&quot; o más, y la línea{' '}
+          una línea con &quot;Granted total: {SCOPE_COUNT}&quot; o más, y la
+          línea{' '}
           <code className="text-emerald-300 font-mono">
-            ALL 10 LABELFLOW SCOPES GRANTED
+            ALL {SCOPE_COUNT} LABELFLOW SCOPES GRANTED
           </code>
           . Si te aparece{' '}
           <code className="text-amber-300 font-mono">MISSING: [...]</code>,
@@ -762,7 +763,26 @@ if ($missing) {
   },
 ];
 
-export default function ShopifyTokenTutorialPage() {
+/**
+ * 🔴 SÓLO ADMIN (16-09-2026, requisito 2.3.1 del App Store).
+ *
+ * El 05-09 esta ruta salió de `publicPaths` y entró en `protectedPaths` del
+ * middleware, pero ese gate es `getToken()`: pedía SESIÓN, no admin. O sea que
+ * cualquier usuario logueado —incluido el revisor de Shopify, que se registra
+ * como un comerciante más— seguía llegando a un tutorial que enseña paso a paso
+ * a crearse una app privada y copiar un Admin API token: exactamente el flujo
+ * que 2.3.1 prohíbe ofrecer.
+ *
+ * `requireAdminOrNotFound()` responde 404, no 403: al que no corresponde no se
+ * le revela siquiera que la página existe. El contenido no se borra porque
+ * sigue sirviendo para soporte de los tenants viejos, que es quien lo abre —
+ * Adrian, desde su cuenta admin. La única UI que linkea acá
+ * (`ShopifyTutorial`, dentro del wizard) ya está detrás de la misma condición
+ * de admin, así que a un comerciante no se le rompe ningún link: nunca lo veía.
+ */
+export default async function ShopifyTokenTutorialPage() {
+  await requireAdminOrNotFound();
+
   return (
     <div className="min-h-screen bg-[#050505] text-zinc-200">
       {/* Top bar */}
@@ -818,7 +838,7 @@ export default function ShopifyTokenTutorialPage() {
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
             <KeyRound className="w-5 h-5 text-cyan-400" />
             <div className="text-sm font-semibold text-white mt-2">
-              10 alcances
+              {SCOPE_COUNT} alcances
             </div>
             <div className="text-xs text-zinc-500 mt-1">
               Mínimos necesarios para que AutoEnvía funcione. Nada más.
@@ -930,7 +950,7 @@ py --version`}
                 <span className="text-zinc-200 font-medium">Claude Desktop</span>{' '}
                 con la extensión de Chrome instalada, copiá este prompt y pegalo
                 en una conversación nueva. Claude va a abrir tu Shopify, crear
-                la app, configurar los 10 alcances + redirect_uri, publicar,
+                la app, configurar los {SCOPE_COUNT} alcances + redirect_uri, publicar,
                 arrancar el server local y entregarte el token al final.
               </p>
             </div>
@@ -968,7 +988,7 @@ py --version`}
                 Atajo
               </div>
               <h2 className="text-xl font-semibold text-white mt-1">
-                Los 10 alcances que necesitás
+                Los {SCOPE_COUNT} alcances que necesitás
               </h2>
               <p className="text-sm text-zinc-400 mt-1">
                 Copialos como CSV y pegalos directo en el campo "Alcances" del
@@ -977,8 +997,8 @@ py --version`}
             </div>
             <CopyButton
               value={ALL_SCOPES_CSV}
-              label="Copiar los 10 alcances (CSV)"
-              ariaLabel="Copiar los 10 alcances separados por comas al portapapeles"
+              label={`Copiar los ${SCOPE_COUNT} alcances (CSV)`}
+              ariaLabel={`Copiar los ${SCOPE_COUNT} alcances separados por comas al portapapeles`}
               variant="pill"
             />
           </div>
@@ -1186,8 +1206,13 @@ py --version`}
   );
 }
 
+/**
+ * Sin `shpat_` ni pasos del alta manual en el `<meta name="description">`:
+ * 2.3.1 mira lo que la app OFRECE, y una descripción es texto que se indexa y
+ * se previsualiza fuera del gate de admin. `noindex` por el mismo motivo.
+ */
 export const metadata = {
-  title: 'Cómo generar tu token de Shopify · AutoEnvía',
-  description:
-    'Tutorial paso a paso para obtener un token Admin API de Shopify (shpat_) usando el flujo nuevo del Dev Dashboard 2026. Con capturas reales y prompt para Claude Desktop.',
+  title: 'Tutorial interno de Shopify · AutoEnvía',
+  description: 'Documentación interna de soporte de AutoEnvía.',
+  robots: { index: false, follow: false },
 };

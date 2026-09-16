@@ -7,12 +7,19 @@ import {
 } from '@/lib/api-utils';
 import { encrypt } from '@/lib/encryption';
 import { shopDomainChangeConflicts, SHOP_DOMAIN_TAKEN_MESSAGE } from '@/lib/shop-domain-taken';
+import { shopifyGraphql } from '@/lib/shopify-graphql';
+import { SHOP_INFO_QUERY } from '@/lib/shopify-provision';
+import { REQUIRED_SCOPES } from '@/lib/shopify-oauth';
+import {
+  puedeEscribirShopifyAMano,
+  SHOPIFY_MANUAL_BLOQUEADO_MESSAGE,
+} from '@/lib/shopify-manual.server';
 
 /**
  * POST /api/v1/onboarding/test-shopify
  *
- * Verifies the user-supplied Shopify URL + token by hitting the shop.json
- * Admin API endpoint. On success, persists both fields (token encrypted).
+ * Verifies the user-supplied Shopify URL + token with a `shop` query contra el
+ * Admin **GraphQL** API. On success, persists both fields (token encrypted).
  *
  * Used by the onboarding wizard's Shopify step to give the user immediate,
  * trustable feedback ("Conexión OK ✓ — tu tienda 'XYZ'") before letting them
@@ -40,9 +47,25 @@ const bodySchema = z.object({
   shopifyToken: z.string().min(10).max(512),
 });
 
+/** Sólo se usa `name`; los otros campos vienen en SHOP_INFO_QUERY. */
+interface ShopProbeData {
+  shop?: { name?: string | null; email?: string | null; myshopifyDomain?: string | null } | null;
+}
+
+/** Códigos de `errors[].extensions.code` que significan "el token no sirve". */
+const AUTH_ERROR_CODES = new Set(['ACCESS_DENIED', 'UNAUTHORIZED', 'FORBIDDEN']);
+
 export async function POST(request: Request) {
   const auth = await getAuthenticatedTenant();
   if (!auth) return apiError('No autorizado', 401);
+
+  // Requisito 2.3.1: esta ruta ES el alta manual, y hasta acá la tenía
+  // cualquier tenant logueado — incluido un revisor de Shopify. El gate va
+  // ANTES de leer el body: un token que no se puede aceptar tampoco se parsea,
+  // ni se prueba contra Shopify, ni se escribe. Ver lib/shopify-manual.server.
+  if (!(await puedeEscribirShopifyAMano())) {
+    return apiError(SHOPIFY_MANUAL_BLOQUEADO_MESSAGE, 403);
+  }
 
   let raw: unknown;
   try {
@@ -68,40 +91,68 @@ export async function POST(request: Request) {
     return apiError(SHOP_DOMAIN_TAKEN_MESSAGE, 409);
   }
 
-  // Verify against Shopify Admin API. shop.json is the canonical "is the
-  // token valid + has read_products" probe — cheap, no side-effects.
+  // Verify against Shopify Admin API. La consulta `shop` es la sonda canónica
+  // de "¿el token sirve?" — barata y sin efectos de lado.
+  //
+  // GraphQL, no REST (D27 / requisito 2.2.4 del App Store): desde el 1/4/2025
+  // las apps públicas nuevas no pueden tocar el REST Admin API. Se reusa
+  // SHOP_INFO_QUERY (lib/shopify-provision), la MISMA query que corre el alta
+  // desde el App Store, para no tener dos definiciones del mismo probe.
   let shopName: string | null = null;
   try {
-    const res = await fetch(
-      `https://${shopifyStoreUrl}/admin/api/2024-01/shop.json`,
-      {
-        headers: { 'X-Shopify-Access-Token': shopifyToken },
-        // Tight timeout: the user is staring at a spinner. If Shopify is
-        // slow we'd rather fail fast than hold the wizard hostage.
-        signal: AbortSignal.timeout(8000),
-      },
+    // Tight timeout: the user is staring at a spinner. If Shopify is slow
+    // we'd rather fail fast than hold the wizard hostage.
+    const res = await shopifyGraphql<ShopProbeData>(
+      shopifyStoreUrl,
+      shopifyToken,
+      SHOP_INFO_QUERY,
+      {},
+      { timeoutMs: 8000 },
     );
 
-    if (res.status === 401 || res.status === 403) {
-      // Keep the message terse — the full scope list + Python OAuth flow
-      // lives in /tutorial/shopify-token. The two most common reasons a
-      // freshly-generated token gets rejected are: (a) the redirect_uri
-      // wasn't registered in the app config, and (b) the
-      // "Usar flujo de instalación heredado" checkbox wasn't tildado.
+    // Token inválido/revocado → 401 (a veces 403). Alcances faltantes → HTTP
+    // 200 con `errors[].extensions.code = ACCESS_DENIED`: en REST eso era un
+    // 403, así que se mapea al mismo mensaje para que el usuario lea lo mismo.
+    const authRechazado =
+      res.status === 401 ||
+      res.status === 403 ||
+      res.errors.some((e) => AUTH_ERROR_CODES.has(String(e.extensions?.code ?? '')));
+
+    if (authRechazado) {
+      // Las dos razones más comunes de que un token recién generado rebote:
+      // (a) el redirect_uri no quedó registrado en la config de la app, y (b)
+      // el checkbox "Usar flujo de instalación heredado" sin tildar.
+      //
+      // 🔴 El mensaje NO linkea /tutorial/shopify-token. Ese tutorial enseña a
+      // crearse una app privada y copiar un token, que es justo lo que 2.3.1
+      // prohíbe ofrecer, y el error de un 422 es un lugar donde un revisor lo
+      // encontraba sin buscarlo. El tutorial sigue existiendo para soporte,
+      // pero sólo lo alcanza un admin (app/tutorial/shopify-token/page.tsx).
       return apiError(
-        'Token rechazado por Shopify. Verificá que: (1) los 10 alcances estén en el campo "Alcances" del Dev Dashboard, (2) el checkbox "Usar flujo de instalación heredado" esté tildado, y (3) "URLs de redireccionamiento" incluya http://localhost:3456/callback. Tutorial completo en /tutorial/shopify-token.',
+        // El conteo se DERIVA de REQUIRED_SCOPES. Escrito a mano decía "10"
+        // cuando la app ya pedía nueve, y mandaba al comerciante a buscar un
+        // alcance que no existe. Hoy son siete (se podaron
+        // read_fulfillments/write_fulfillments, requisito 3.2).
+        `Token rechazado por Shopify. Verificá que: (1) los ${REQUIRED_SCOPES.length} alcances estén en el campo "Alcances" del Dev Dashboard, (2) el checkbox "Usar flujo de instalación heredado" esté tildado, y (3) "URLs de redireccionamiento" incluya http://localhost:3456/callback.`,
         422,
       );
     }
-    if (!res.ok) {
+    if (res.status !== 200) {
       return apiError(
         `Shopify respondió ${res.status}. Verificá la URL y el token.`,
         422,
       );
     }
+    // GraphQL contesta 200 aunque la consulta falle: sin esto un `errors[]`
+    // pasaría por OK y se guardaría un token que no sirve.
+    if (res.errors.length > 0 || !res.data?.shop) {
+      return apiError(
+        'Shopify no devolvió los datos de la tienda. Verificá la URL y el token.',
+        422,
+      );
+    }
 
-    const data = (await res.json()) as { shop?: { name?: string } };
-    shopName = data.shop?.name ?? null;
+    shopName = res.data.shop.name ?? null;
   } catch (err) {
     const isTimeout =
       err instanceof Error &&

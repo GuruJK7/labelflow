@@ -2,11 +2,16 @@
  * Live Shopify "pendientes" backlog count per store — the "pedidos para
  * completar" number on the multi-store control dashboard.
  *
- * Uses Shopify's cheap orders/count.json with the SAME filter the worker
- * processes (status=open, financial_status=paid, fulfillment_status=unfulfilled)
+ * Uses the cheap `ordersCount` query of the Admin GraphQL API with the SAME
+ * filter the worker processes (status=open, financial_status=paid, sin cumplir)
  * so the number reflects the true backlog a run would work through. One tiny
  * API call per store, THROTTLED via a process-local cache so a polling
  * dashboard cannot hammer Shopify / hit rate limits.
+ *
+ * GraphQL y no REST porque desde el 1/4/2025 una app pública nueva del App
+ * Store no puede tocar recursos REST (requisito 2.2.4). El equivalente de
+ * `orders/count.json` es `ordersCount(query:)`, que devuelve el número ya
+ * contado del lado de Shopify: no hay que paginar edges/nodes.
  *
  * This is an UPPER BOUND of what a run actually ships (the worker further skips
  * already-COMPLETED labels and C-4-blocked orders), so it is for display only —
@@ -17,9 +22,40 @@
 import { db } from '@/lib/db';
 import { shopifyAccessForTenant } from '@/lib/shopify-access';
 import { decrypt } from '@/lib/encryption';
+import { shopifyGraphql } from '@/lib/shopify-graphql';
 
-const SHOPIFY_API_VERSION = '2024-01';
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 min — a backlog number this stale is fine.
+
+/**
+ * `limit: null` = sin tope. Por defecto `ordersCount` corta en 10.000 y avisa
+ * con `precision: AT_LEAST`; `orders/count.json` no tenía tope, así que se lo
+ * saca para que el número siga siendo el exacto de siempre.
+ */
+const ORDERS_COUNT_QUERY = `query LabelFlowPendientes($query: String!) {
+  ordersCount(query: $query, limit: null) {
+    count
+  }
+}`;
+
+/**
+ * Filtro de búsqueda equivalente a
+ * `?status=open&financial_status=<x>&fulfillment_status=unfulfilled` de REST.
+ *
+ * 🔑 El `fulfillment_status` va NEGADO y no en positivo. `unfulfilled` de REST
+ * significa "el campo `fulfillment_status` del pedido es null o `partial`", y
+ * ese campo sólo es distinto de null para FULFILLED, PARTIALLY_FULFILLED y
+ * RESTOCKED (ver `mapDisplayFulfillmentStatus` en el worker): o sea, REST
+ * contaba todo MENOS los cumplidos y los restockeados. En la sintaxis de
+ * búsqueda de GraphQL `fulfillment_status:unfulfilled` es uno de ocho valores
+ * sueltos (`unshipped|shipped|fulfilled|partial|scheduled|on_hold|unfulfilled|
+ * request_declined`) y NO está documentado que incluya los parciales ni los
+ * on_hold/scheduled/in_progress que REST sí contaba — usarlo en positivo
+ * dejaría pedidos pendientes afuera del panel. Negar `fulfilled` da el mismo
+ * conjunto que REST bajo las dos lecturas posibles del filtro.
+ */
+function filtroPendientes(financialStatus: string): string {
+  return `status:open financial_status:${financialStatus} -fulfillment_status:fulfilled`;
+}
 
 // Process-local cache: tenantId -> { count, at }. A serverless cold start just
 // re-fetches; correctness never depends on the cache.
@@ -93,27 +129,29 @@ export async function getUnfulfilledCount(tenantId: string, force = false): Prom
     // `paid`: contando sólo los pagados el panel le mostraba 0 pendientes
     // mientras el worker despachaba. Se cuentan los dos estados y se suman.
     //
-    // Son dos llamadas y no una con `financial_status=any` porque `count.json`
-    // devuelve un número pelado: con `any` entrarían los reembolsados y
-    // anulados y no habría forma de descontarlos. El worker descarta esos
-    // mismos estados (ver ESTADOS_DESPACHABLES_CONTRAENTREGA), así que este
-    // número y el que despacha el worker coinciden.
+    // Son dos llamadas y no una con `financial_status:any` porque con `any`
+    // entrarían los reembolsados y anulados y no habría forma de descontarlos.
+    // El worker descarta esos mismos estados (ver
+    // ESTADOS_DESPACHABLES_CONTRAENTREGA), así que este número y el que
+    // despacha el worker coinciden. Un pedido tiene UN solo financial_status,
+    // así que sumar los dos conteos da el mismo número que contar la unión.
     const estados = tenant.codEnabled ? ['paid', 'pending'] : ['paid'];
     let count = 0;
     for (const financial of estados) {
-      const params = new URLSearchParams({
-        status: 'open',
-        financial_status: financial,
-        fulfillment_status: 'unfulfilled',
-      });
-      const url = `https://${tenant.shopifyStoreUrl}/admin/api/${SHOPIFY_API_VERSION}/orders/count.json?${params}`;
-      const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
-      if (!res.ok) {
+      const res = await shopifyGraphql<{ ordersCount: { count: number } | null }>(
+        tenant.shopifyStoreUrl,
+        token,
+        ORDERS_COUNT_QUERY,
+        { query: filtroPendientes(financial) },
+      );
+      // Un error de GraphQL viaja con HTTP 200 y el cuerpo en `errors`: mirar
+      // sólo el status dejaría pasar un `null` como si fuera un cero.
+      const parcial = res.data?.ordersCount?.count;
+      if (res.status !== 200 || res.errors.length > 0 || typeof parcial !== 'number') {
         // Keep the last good number if we have one; otherwise signal the error.
         return { tenantId, count: hit?.count ?? null, cached: false, skipped: 'error' };
       }
-      const data = (await res.json()) as { count?: number };
-      count += typeof data.count === 'number' ? data.count : 0;
+      count += parcial;
     }
     cache.set(tenantId, { count, at: Date.now() });
     return { tenantId, count, cached: false };
