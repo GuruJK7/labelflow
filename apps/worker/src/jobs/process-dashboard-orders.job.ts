@@ -325,18 +325,47 @@ async function processDashboardOrdersJobInner(
       failedCount = resultado.fallidos + resultado.enRevision;
       skippedCount += resultado.bloqueados;
 
-      // Marcar cargadas en el panel las que efectivamente salieron, para que no
-      // vuelvan en el próximo ciclo. Se mapea por id de pedido, NO por posición:
-      // los que van a revisión se intercalan con los que salen, así que "los
-      // primeros N" marcaría cargados pedidos que nunca se despacharon.
-      const idsDespachados = new Set(resultado.despachados.map((d) => d.shopifyOrderId));
-      const despachadas = adaptadas
-        .filter((a) => idsDespachados.has(String(a.order.id)))
-        .map((a) => a.dashboardId);
+      // Devolverle al origen la guía Y la etiqueta de cada pedido que salió, por
+      // el MISMO camino que la rama de DAC (`publicarEtiquetas` → `{ results,
+      // ids }`): así el panel imprime el papel de Correo igual que el de DAC y
+      // el pedido deja de ofrecerse en el próximo ciclo.
+      //
+      // 🔴 Hasta el 16-09-2026 esta rama sólo marcaba cargadas (`{ ids }`): el
+      // panel (DEPO) dejaba el pedido "cargado" SIN número de guía y SIN PDF
+      // —un pedido trabado que alguien tenía que completar a mano— aunque AHIVA
+      // ya había devuelto las dos cosas. Una fuente sin `publicarEtiquetas` (la
+      // interna: el PDF ya está en su storage) sigue por marcarCargadas.
+      //
+      // Se mapea por id de pedido, NO por posición: los que van a revisión se
+      // intercalan con los que salen, así que "los primeros N" marcaría
+      // cargados pedidos que nunca se despacharon. Un despachado sin etiqueta
+      // no existe (queda en NEEDS_REVIEW antes de llegar acá); si llegara igual
+      // viaja con su código y sin PDF: el número es lo que impide la guía doble.
+      const porShopifyId = new Map(resultado.despachados.map((d) => [d.shopifyOrderId, d] as const));
+      const resultadosCorreo: DashboardLabelResult[] = [];
+      const despachadas: string[] = [];
+      for (const a of adaptadas) {
+        const d = porShopifyId.get(String(a.order.id));
+        if (!d) continue;
+        despachadas.push(a.dashboardId);
+        resultadosCorreo.push({
+          order_id: a.dashboardId,
+          status: 'labeled',
+          tracking: d.codigo,
+          pdf_base64: d.etiquetaBase64 ?? null,
+        });
+      }
       if (despachadas.length > 0) {
-        await fuente.marcarCargadas(ctx, despachadas).catch((e) =>
-          slog.warn('dashboard', `No se pudieron marcar cargadas: ${(e as Error).message}`),
-        );
+        try {
+          if (typeof fuente.publicarEtiquetas === 'function') {
+            const labeled = await fuente.publicarEtiquetas(ctx, resultadosCorreo);
+            slog.info('dashboard', `Etiquetas de Correo devueltas al panel con guía y PDF: ${labeled}`);
+          } else {
+            await fuente.marcarCargadas(ctx, despachadas);
+          }
+        } catch (e) {
+          slog.warn('dashboard', `No se pudieron devolver las etiquetas de Correo al panel: ${(e as Error).message}`);
+        }
       }
 
       await db.job.update({

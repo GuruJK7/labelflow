@@ -100,8 +100,16 @@ export interface ResultadoCorreo {
   codigos: string[];
   /** Los pedidos efectivamente despachados. Las fuentes lo usan para marcarlos
    *  cargados: contar "los primeros N" es incorrecto, porque los que van a
-   *  revisión se intercalan con los que salen. */
-  despachados: Array<{ shopifyOrderId: string; codigo: string }>;
+   *  revisión se intercalan con los que salen.
+   *
+   *  `etiquetaBase64` es el PDF tal cual lo devolvió AHIVA (el mismo que ya se
+   *  subió a Storage). Va acá porque la fuente dashboard (DEPO) necesita
+   *  devolverle al panel la guía Y el papel en el mismo writeback, como hace la
+   *  rama de DAC: sin esto el panel marcaba el pedido "cargado" sin número ni
+   *  etiqueta y alguien tenía que escribir el código a mano (16-09-2026). Puede
+   *  faltar sólo si AHIVA no mandó etiqueta — y en ese caso el pedido ni entra
+   *  acá, porque queda en NEEDS_REVIEW. */
+  despachados: Array<{ shopifyOrderId: string; codigo: string; etiquetaBase64?: string }>;
 }
 
 const PASO = 'correo-uruguayo';
@@ -516,7 +524,7 @@ export async function procesarPedidosCorreo(
       }
 
       salida.procesados++;
-      salida.despachados.push({ shopifyOrderId, codigo });
+      salida.despachados.push({ shopifyOrderId, codigo, etiquetaBase64: envio.etiquetasBase64 });
     } catch (err) {
       salida.fallidos++;
       const e = err as Error;
