@@ -186,15 +186,36 @@ export function normalizarPedido(crudo: PedidoCrudo): ResultadoPedido {
 
   const direccion = str(crudo.direccion);
   const agencia = str(crudo.agencia);
+  const localidad = str(crudo.localidad);
   // Una de las dos alcanza: o va a domicilio, o lo retira en una agencia.
   if (!direccion && !agencia) errores.push('Falta la dirección (o el nombre de la agencia donde retira)');
+
+  // 🔴 Retiro en agencia SIN localidad es un pedido que no se puede despachar.
+  // El selector de oficina de Correo (apps/worker/src/correo/oficina.ts:242-251)
+  // usa la localidad para desempatar: en Montevideo hay 17 agencias y en
+  // Maldonado 10, así que sin este dato el pedido va a NEEDS_REVIEW en cada
+  // corrida y no sale NUNCA — el comerciante sólo ve "pendiente" para siempre.
+  // Se rechaza acá, con una persona mirando la pantalla que puede corregirlo,
+  // en vez de dejarlo morir en silencio tres horas después.
+  if (agencia && !direccion && !localidad) {
+    errores.push('Falta la localidad: sin eso no se sabe a cuál de las agencias del departamento va');
+  }
 
   const items = parsearItems(crudo.items);
   if (items.length === 0) errores.push('El pedido no tiene ningún producto');
 
-  if (errores.length > 0) return { ok: false, errores };
-
   const totalUyu = items.reduce((s, it) => s + it.precio * it.cantidad, 0);
+  const contraEntrega = esContraEntrega(crudo.contraEntrega);
+
+  // 🔴 Contrareembolso con total $ 0: el repartidor no le cobra nada al
+  // comprador y la tienda entrega la mercadería gratis sin enterarse.
+  // `parsearItems` convierte un precio ilegible en 0 en silencio (el `?? 0` de
+  // más arriba), así que un "$ 1.390" mal tipeado llegaba hasta el cartero.
+  if (contraEntrega && totalUyu <= 0) {
+    errores.push('Marcaste "cobrar al entregar" pero el total da $ 0: revisá el precio de los productos');
+  }
+
+  if (errores.length > 0) return { ok: false, errores };
 
   return {
     ok: true,
@@ -203,13 +224,13 @@ export function normalizarPedido(crudo: PedidoCrudo): ResultadoPedido {
       telefono: telefono!,
       documento: str(crudo.documento),
       departamento: departamento!,
-      localidad: str(crudo.localidad),
+      localidad,
       direccion,
       agencia,
       referencia: str(crudo.referencia),
       items,
       totalUyu,
-      contraEntrega: esContraEntrega(crudo.contraEntrega),
+      contraEntrega,
       fechaVenta: parsearFecha(crudo.fechaVenta),
       observaciones: str(crudo.observaciones),
     },

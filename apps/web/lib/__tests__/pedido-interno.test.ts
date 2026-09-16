@@ -126,7 +126,11 @@ describe('normalizarPedido', () => {
   });
 
   it('con agencia no hace falta dirección: lo retira él', () => {
-    const r = normalizarPedido({ ...BASE, direccion: null, agencia: 'Tres Cruces' });
+    // Sigue valiendo lo de siempre —la dirección NO es obligatoria si retira en
+    // una agencia— pero desde el 16-09-2026 la localidad sí: es lo único que
+    // permite saber a cuál de las agencias del departamento va. Ver el bloque
+    // "no dejar cargar un pedido que después no se va a poder despachar".
+    const r = normalizarPedido({ ...BASE, direccion: null, agencia: 'Tres Cruces', localidad: 'Montevideo' });
     expect(r.ok).toBe(true);
   });
 
@@ -184,5 +188,63 @@ describe('destinoLegible — cómo se muestra el destino', () => {
 
   it('la agencia gana sobre la dirección', () => {
     expect(destinoLegible({ direccion: 'Gorlero 1234', agencia: 'Maldonado' })).toBe('Agencia Maldonado');
+  });
+});
+
+describe('🔴 no dejar cargar un pedido que después no se va a poder despachar', () => {
+  // El caso real que los originó (16-09-2026): un pedido con "Retira en una
+  // agencia: Tres cruces" en Montevideo se guardó sin localidad y quedó
+  // rebotando en cada corrida — "Correo tiene 17 oficinas en MONTEVIDEO y el
+  // destino (sin localidad) no identifica ninguna" — sin ningún lugar donde
+  // corregirlo. Ahora se frena en el formulario, con alguien mirando.
+
+  it('agencia SIN localidad se rechaza: no se sabe a cuál de las agencias del departamento va', () => {
+    const r = normalizarPedido({
+      ...BASE,
+      direccion: undefined,
+      agencia: 'Tres cruces',
+      departamento: 'Montevideo',
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errores.some((e) => e.toLowerCase().includes('localidad'))).toBe(true);
+  });
+
+  it('agencia CON localidad pasa', () => {
+    const r = normalizarPedido({
+      ...BASE,
+      direccion: undefined,
+      agencia: 'Tres cruces',
+      localidad: 'Montevideo',
+      departamento: 'Montevideo',
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('a domicilio NO exige localidad: ese camino nunca necesitó desempatar una agencia', () => {
+    const r = normalizarPedido({ ...BASE, localidad: undefined });
+    expect(r.ok).toBe(true);
+  });
+
+  it('🔴 "cobrar al entregar" con total $0 se rechaza: el repartidor no cobraría nada', () => {
+    // `parsearItems` convierte un precio ilegible en 0 en silencio, así que un
+    // "$1.390" mal tipeado llegaba hasta el cartero y la tienda entregaba gratis.
+    const r = normalizarPedido({
+      ...BASE,
+      contraEntrega: true,
+      items: [{ nombre: 'Perfume', cantidad: 1, precio: 'gratis' }],
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errores.some((e) => e.includes('$ 0'))).toBe(true);
+  });
+
+  it('total $0 SIN contrareembolso sigue pasando: ya te lo pagaron, no hay nada que cobrar', () => {
+    const r = normalizarPedido({
+      ...BASE,
+      contraEntrega: false,
+      items: [{ nombre: 'Regalo', cantidad: 1, precio: 0 }],
+    });
+    expect(r.ok).toBe(true);
   });
 });

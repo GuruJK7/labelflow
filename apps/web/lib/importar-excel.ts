@@ -189,7 +189,12 @@ export const EJEMPLO_PLANTILLA: Array<Record<string, string | number>> = [
     'Teléfono': '098 111 222',
     'Cédula': '',
     Departamento: 'Montevideo',
-    Localidad: '',
+    // 🔴 La localidad va TAMBIÉN cuando retira en agencia, y por eso la plantilla
+    // la trae llena: es lo único que permite saber a cuál de las agencias del
+    // departamento va. Montevideo tiene 17 oficinas de Correo. Hasta el
+    // 16-09-2026 este ejemplo la dejaba vacía y enseñaba, sin querer, a cargar
+    // un pedido que después no se podía despachar.
+    Localidad: 'Montevideo',
     // Con agencia, la dirección va vacía: lo retira él.
     'Dirección': '',
     Agencia: 'Tres Cruces',

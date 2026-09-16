@@ -17,7 +17,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, Package, Trash2, Pencil, Send, AlertCircle } from 'lucide-react';
 import { DEPARTAMENTOS_CANONICOS } from '@/lib/departamentos';
-import { destinoLegible } from '@/lib/pedido-interno';
+import { destinoLegible, parsearPrecio, normalizarPedido } from '@/lib/pedido-interno';
 import { ImportarExcel } from './ImportarExcel';
 
 interface ItemPedido {
@@ -52,8 +52,22 @@ const ESTADO_UI: Record<Pedido['estado'], { label: string; clase: string }> = {
   CANCELADO: { label: 'Cancelado', clase: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20' },
 };
 
-const INPUT =
-  'w-full px-3 py-2 bg-zinc-800/50 border border-white/[0.08] rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-500/40';
+/**
+ * 🔴 El ancho va SEPARADO del resto a propósito.
+ *
+ * `INPUT` traía `w-full` pegado, y Tailwind emite `.w-full` DESPUÉS de
+ * `.w-20`/`.w-28`. Con la misma especificidad gana la última que aparece en la
+ * hoja, así que `${INPUT} w-20` NO medía 5rem: medía el ancho entero. En la
+ * fila de items los tres campos pedían el 100% cada uno y el del precio
+ * terminaba fuera del modal, cortado por el borde (medido en Chrome: la fila
+ * ocupaba 1286 px dentro de un modal de 672 px).
+ *
+ * Para un campo con ancho propio: `INPUT_BASE` + la clase de ancho.
+ * Para un campo que ocupa todo el renglón: `INPUT`.
+ */
+const INPUT_BASE =
+  'px-3 py-2 bg-zinc-800/50 border border-white/[0.08] rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-500/40';
+const INPUT = `w-full ${INPUT_BASE}`;
 const LABEL = 'block text-xs font-medium text-zinc-400 mb-1.5';
 
 const pesos = (n: number) => `$ ${n.toLocaleString('es-UY')}`;
@@ -331,9 +345,16 @@ function ModalPedido({
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
+  // 🔴 El MISMO parser que usa el servidor (`parsearPrecio`), no una fórmula
+  // propia. Tenían reglas distintas y divergían justo donde más caro sale:
+  // "99.99" daba 9999 en pantalla y 99,99 en el servidor; "$ 1.390" daba 0 acá
+  // y 1390 allá. Lo que el comerciante lee en "Total" es exactamente lo que el
+  // repartidor le va a cobrar al comprador, así que las dos cuentas tienen que
+  // ser la misma cuenta.
   const total = items.reduce((s, it) => {
-    const precio = Number(String(it.precio).replace(/\./g, '').replace(',', '.')) || 0;
-    return s + precio * (Number(it.cantidad) || 1);
+    const precio = parsearPrecio(it.precio) ?? 0;
+    const cantidad = Math.max(1, Math.trunc(parsearPrecio(it.cantidad) ?? 1) || 1);
+    return s + precio * cantidad;
   }, 0);
 
   async function guardar(e: React.FormEvent) {
@@ -356,6 +377,19 @@ function ModalPedido({
         contraEntrega,
         observaciones,
       };
+      // 🔴 Se valida ACÁ, antes de mandar, con el MISMO validador del servidor
+      // (`normalizarPedido`, lib/pedido-interno.ts). No es una copia de reglas:
+      // es la misma función, así que no pueden divergir. El servidor igual
+      // vuelve a validar — esto no lo reemplaza, le ahorra el viaje al
+      // comerciante y le muestra TODOS los problemas juntos mientras está
+      // mirando el formulario, en vez de que el pedido se guarde y muera en la
+      // corrida de las 3 AM sin que nadie entienda por qué.
+      const revision = normalizarPedido(cuerpo);
+      if (!revision.ok) {
+        setError(revision.errores.join('. ') + '.');
+        return;
+      }
+
       const res = await fetch(editando ? `/api/v1/pedidos/${inicial!.id}` : '/api/v1/pedidos', {
         method: editando ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -447,10 +481,27 @@ function ModalPedido({
                 </div>
               </div>
             ) : (
-              <div>
-                <label className={LABEL}>Agencia donde retira *</label>
-                <input value={agencia} onChange={(e) => setAgencia(e.target.value)} className={INPUT} placeholder="Tres Cruces" />
-                <p className="text-[11px] text-zinc-500 mt-1">El nombre de la sucursal de DAC, como figura en su lista.</p>
+              // 🔴 La localidad va TAMBIÉN acá. Antes vivía sólo en la rama de
+              // domicilio, así que un pedido con retiro en agencia se guardaba
+              // con `localidad = null` — y el selector de oficina de Correo
+              // (apps/worker/src/correo/oficina.ts) la necesita para desempatar:
+              // sin ella, "Montevideo" son 17 oficinas y el pedido va a
+              // revisión en cada corrida, sin salir nunca.
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={LABEL}>Agencia donde retira *</label>
+                  <input value={agencia} onChange={(e) => setAgencia(e.target.value)} className={INPUT} placeholder="Tres Cruces" />
+                  <p className="text-[11px] text-zinc-500 mt-1">
+                    El nombre de la sucursal tal como figura en la lista de tu transportista.
+                  </p>
+                </div>
+                <div>
+                  <label className={LABEL}>Localidad *</label>
+                  <input value={localidad} onChange={(e) => setLocalidad(e.target.value)} className={INPUT} placeholder="Montevideo" />
+                  <p className="text-[11px] text-zinc-500 mt-1">
+                    Si hay varias agencias en el departamento, es lo que permite saber a cuál va.
+                  </p>
+                </div>
               </div>
             )}
           </div>
@@ -463,19 +514,19 @@ function ModalPedido({
                   <input
                     value={it.nombre}
                     onChange={(e) => setItems(items.map((x, j) => (j === i ? { ...x, nombre: e.target.value } : x)))}
-                    className={INPUT}
+                    className={`${INPUT_BASE} flex-1 min-w-0`}
                     placeholder="Producto (podés agregarle el talle o color)"
                   />
                   <input
                     value={it.cantidad}
                     onChange={(e) => setItems(items.map((x, j) => (j === i ? { ...x, cantidad: e.target.value } : x)))}
-                    className={`${INPUT} w-20 shrink-0`}
+                    className={`${INPUT_BASE} w-20 shrink-0`}
                     placeholder="1"
                   />
                   <input
                     value={it.precio}
                     onChange={(e) => setItems(items.map((x, j) => (j === i ? { ...x, precio: e.target.value } : x)))}
-                    className={`${INPUT} w-28 shrink-0`}
+                    className={`${INPUT_BASE} w-28 shrink-0`}
                     placeholder="1.390"
                   />
                   {items.length > 1 && (
