@@ -13,6 +13,7 @@ import {
   parsearTelefono,
   parsearFecha,
   esContraEntrega,
+  esMailValido,
 } from '../pedido-interno';
 
 const BASE = {
@@ -168,6 +169,76 @@ describe('normalizarPedido', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.errores.some((e) => e.toLowerCase().includes('corto'))).toBe(true);
+  });
+});
+
+describe('esMailValido — la MISMA regla que el worker (correo/mapper.ts)', () => {
+  // Los casos son los mismos que fija apps/worker/src/__tests__/correo-mapper.test.ts.
+  // Si las dos copias divergen, un mail que pasa acá muere allá: el pedido entra
+  // a la base y queda en NEEDS_REVIEW en la corrida de Correo, sin nadie mirando.
+  it('acepta mails normales', () => {
+    expect(esMailValido('juan@gmail.com')).toBe(true);
+    expect(esMailValido('a.b+c@sub.dominio.uy')).toBe(true);
+  });
+
+  it('rechaza lo que AHIVA rechazaría', () => {
+    expect(esMailValido('')).toBe(false);
+    expect(esMailValido(null)).toBe(false);
+    expect(esMailValido(undefined)).toBe(false);
+    expect(esMailValido('sin-arroba')).toBe(false);
+    expect(esMailValido('a@b')).toBe(false); // sin punto en el dominio
+    expect(esMailValido('con espacio@x.com')).toBe(false);
+    expect(esMailValido(`${'a'.repeat(250)}@x.com`)).toBe(false);
+  });
+});
+
+describe('🔴 el mail del destinatario: lo que Correo Uruguayo exige', () => {
+  // Hasta el 16-09-2026 la carga propia no tenía mail. El worker
+  // (correo/validate.ts) rechaza sin excepción un mail vacío, así que en una
+  // tienda con Correo TODO pedido cargado a mano o por Excel iba a revisión en
+  // cada corrida, sin dónde corregirlo: el formulario tampoco tenía el campo.
+
+  it('un mail válido se guarda recortado, tal cual lo escribieron', () => {
+    const r = normalizarPedido({ ...BASE, email: '  Carla.Perez@example.com ' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.pedido.email).toBe('Carla.Perez@example.com');
+  });
+
+  it('un mail mal escrito se rechaza, con el texto en el mensaje (no entra a morir en Correo)', () => {
+    for (const malo of ['carla@gmail', 'carla.perez', 'carla @gmail.com']) {
+      const r = normalizarPedido({ ...BASE, email: malo });
+      expect(r.ok, malo).toBe(false);
+      if (r.ok) return;
+      expect(r.errores.some((e) => e.includes(malo.trim()) && /email/i.test(e)), malo).toBe(true);
+    }
+  });
+
+  it('sin mail, para DAC, pasa: el mail es opcional', () => {
+    const r = normalizarPedido({ ...BASE, email: '' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.pedido.email).toBeNull();
+    expect(normalizarPedido(BASE).ok).toBe(true); // ni siquiera viene la clave
+  });
+
+  it('sin mail, con Correo (`exigirEmail`), se rechaza: sin eso el pedido no sale nunca', () => {
+    const r = normalizarPedido({ ...BASE, email: '' }, { exigirEmail: true });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errores.some((e) => /falta el email/i.test(e) && /correo/i.test(e))).toBe(true);
+  });
+
+  it('con mail y `exigirEmail` pasa', () => {
+    const r = normalizarPedido({ ...BASE, email: 'carla@example.com' }, { exigirEmail: true });
+    expect(r.ok).toBe(true);
+  });
+
+  it('un mail que no es texto (una celda numérica de Excel) no se toma como mail', () => {
+    const r = normalizarPedido({ ...BASE, email: 12345 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.pedido.email).toBeNull();
   });
 });
 

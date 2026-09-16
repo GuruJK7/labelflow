@@ -72,6 +72,7 @@ export interface FilaPedidoInterno {
   nombre: string;
   telefono: string;
   documento: string | null;
+  email: string | null;
   departamento: string;
   localidad: string | null;
   direccion: string | null;
@@ -103,6 +104,13 @@ export function aDashboardOrder(p: FilaPedidoInterno): DashboardOrder {
       department: p.departamento,
       address_line: direccionParaDac(p),
       document: texto(p.documento),
+      // El mail llega a `order.email` por el adaptador (dashboard/adapter.ts:71)
+      // y de ahí a `construirEnvio` (correo/validate.ts), que rechaza SIN
+      // excepción un mail vacío: AHIVA lo exige para avisar la llegada. Hasta el
+      // 16-09-2026 esta fuente no lo mandaba, así que TODO pedido cargado a mano
+      // o por Excel en una tienda con Correo iba a NEEDS_REVIEW por «Email
+      // inválido o vacío», corrida tras corrida. DAC lo ignora: null es válido.
+      email: texto(p.email),
       city: texto(p.localidad),
       // Para Correo Uruguayo `neighborhood` es la localidad que pide AHIVA y el
       // dato que más ayuda a elegir la agencia (ver el comentario de la rama de

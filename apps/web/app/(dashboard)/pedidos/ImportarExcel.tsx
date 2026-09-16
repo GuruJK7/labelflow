@@ -29,12 +29,19 @@ import {
 } from '@/lib/importar-excel';
 
 type Validacion =
-  | { fila: number; ok: true; resumen: { nombre: string; destino: string | null; departamento: string; totalUyu: number; contraEntrega: boolean } }
+  | { fila: number; ok: true; resumen: { nombre: string; email: string | null; destino: string | null; departamento: string; totalUyu: number; contraEntrega: boolean } }
   | { fila: number; ok: false; errores: string[] };
 
 const pesos = (n: number) => `$ ${n.toLocaleString('es-UY')}`;
 
-export function ImportarExcel({ onImportado }: { onImportado: (texto: string) => void }) {
+export function ImportarExcel({
+  onImportado,
+  correoEnabled,
+}: {
+  onImportado: (texto: string) => void;
+  /** La tienda despacha por Correo Uruguayo: sin columna de mail no sale nada. */
+  correoEnabled: boolean;
+}) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [paso, setPaso] = useState<'elegir' | 'leyendo' | 'revisar' | 'importando'>('elegir');
   const [error, setError] = useState('');
@@ -84,6 +91,13 @@ export function ImportarExcel({ onImportado }: { onImportado: (texto: string) =>
       }
       if (r.columnasIgnoradas.length > 0) {
         avisos.push(`Ignoré estas columnas porque no sé qué son: ${r.columnasIgnoradas.join(', ')}.`);
+      }
+      // El servidor va a rechazar fila por fila («Falta el email…»), pero el
+      // motivo de fondo es UNO —falta la columna— y se dice una sola vez, arriba.
+      if (correoEnabled && !r.columnasPresentes.includes('email')) {
+        avisos.push(
+          'No encontré la columna Email, y tu tienda despacha por Correo Uruguayo: sin el mail del comprador el pedido no sale. Agregala al archivo y volvé a subirlo.',
+        );
       }
       setAviso(avisos);
       setFilas(r.filas);
@@ -222,7 +236,10 @@ export function ImportarExcel({ onImportado }: { onImportado: (texto: string) =>
                     {validas.map((v) => (
                       <tr key={v.fila}>
                         <td className="px-3 py-2 text-zinc-600 font-mono w-14">{v.fila}</td>
-                        <td className="px-3 py-2 text-white">{v.ok && v.resumen.nombre}</td>
+                        <td className="px-3 py-2 text-white">
+                          {v.ok && v.resumen.nombre}
+                          {v.ok && v.resumen.email && <div className="text-zinc-500">{v.resumen.email}</div>}
+                        </td>
                         <td className="px-3 py-2 text-zinc-400">
                           {v.ok && v.resumen.destino}<span> · </span>{v.ok && v.resumen.departamento}
                         </td>

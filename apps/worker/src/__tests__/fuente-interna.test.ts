@@ -16,6 +16,7 @@ function fila(overrides: Partial<FilaPedidoInterno> = {}): FilaPedidoInterno {
     nombre: 'Carla Pérez',
     telefono: '099887766',
     documento: '45123456',
+    email: 'carla.perez@example.com',
     departamento: 'Maldonado',
     localidad: 'Punta del Este',
     direccion: 'Gorlero 1234 apto 302',
@@ -69,6 +70,27 @@ describe('aDashboardOrder — traducción básica', () => {
 
   it('sin agencia, `pickup_office` viaja null (la fuente remota no cambia en nada)', () => {
     expect(aDashboardOrder(fila()).address?.pickup_office).toBeNull();
+  });
+});
+
+describe('aDashboardOrder — mail del destinatario (lo que Correo Uruguayo exige)', () => {
+  it('🔴 el mail viaja en `address.email` y llega a `order.email`, que es lo que valida Correo', () => {
+    // Hasta el 16-09-2026 esta fuente no mandaba el mail. `construirEnvio`
+    // (correo/validate.ts) rechaza SIN excepción un mail vacío —AHIVA lo exige
+    // para avisar la llegada—, así que en una tienda con Correo TODO pedido
+    // cargado a mano o por Excel iba a NEEDS_REVIEW por «Email inválido o
+    // vacío», corrida tras corrida, sin salir nunca.
+    const o = aDashboardOrder(fila({ email: 'carla.perez@example.com' }));
+    expect(o.address?.email).toBe('carla.perez@example.com');
+    const { order } = toShopifyOrder(o);
+    expect(order.email).toBe('carla.perez@example.com');
+  });
+
+  it('sin mail viaja null (DAC no lo necesita) y el adaptador lo deja vacío, como siempre', () => {
+    expect(aDashboardOrder(fila({ email: null })).address?.email).toBeNull();
+    // Un string en blanco no es un mail: tiene que llegar null, no '   '.
+    expect(aDashboardOrder(fila({ email: '   ' })).address?.email).toBeNull();
+    expect(toShopifyOrder(aDashboardOrder(fila({ email: null }))).order.email).toBe('');
   });
 });
 

@@ -19,6 +19,8 @@ export interface PedidoNormalizado {
   nombre: string;
   telefono: string;
   documento: string | null;
+  /** Mail del destinatario. Opcional para DAC; Correo Uruguayo lo exige. */
+  email: string | null;
   departamento: string;
   localidad: string | null;
   direccion: string | null;
@@ -41,6 +43,7 @@ export interface PedidoCrudo {
   nombre?: unknown;
   telefono?: unknown;
   documento?: unknown;
+  email?: unknown;
   departamento?: unknown;
   localidad?: unknown;
   direccion?: unknown;
@@ -158,10 +161,39 @@ export function destinoLegible(p: { direccion: string | null; agencia: string | 
 }
 
 /**
+ * 🔴 MISMA REGLA que `esMailValido` en `apps/worker/src/correo/mapper.ts`: un
+ * `@`, dominio con al menos un punto, sin espacios, hasta 254 caracteres. Las
+ * dos copias tienen que decir lo mismo. Si acá pasara un mail que el worker
+ * rechaza, el pedido entraría a la base y moriría en NEEDS_REVIEW en la corrida
+ * de Correo («Email inválido o vacío»), sin nadie mirando — que es exactamente
+ * lo que este módulo existe para evitar. Los tests de las dos puntas
+ * (`lib/__tests__/pedido-interno.test.ts` y `correo-mapper.test.ts`) fijan los
+ * mismos casos.
+ */
+export function esMailValido(raw: unknown): boolean {
+  if (typeof raw !== 'string') return false;
+  const v = raw.trim();
+  if (!v || v.length > 254) return false;
+  return /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(v);
+}
+
+export interface OpcionesPedido {
+  /**
+   * Exigir el mail del destinatario. Se prende cuando la tienda despacha por
+   * Correo Uruguayo (`Tenant.correoEnabled`): AHIVA lo pide para avisar la
+   * llegada del paquete y sin él el pedido no sale nunca. Para DAC es opcional.
+   *
+   * Lo decide quien llama (el formulario con lo que le contó el servidor; las
+   * rutas con la fila del tenant) porque este módulo es puro y no toca la base.
+   */
+  exigirEmail?: boolean;
+}
+
+/**
  * Valida y normaliza. Devuelve TODOS los errores juntos, no el primero: quien
  * está corrigiendo una planilla de 50 filas no quiere descubrirlos de a uno.
  */
-export function normalizarPedido(crudo: PedidoCrudo): ResultadoPedido {
+export function normalizarPedido(crudo: PedidoCrudo, opts: OpcionesPedido = {}): ResultadoPedido {
   const errores: string[] = [];
 
   const nombre = str(crudo.nombre);
@@ -172,6 +204,16 @@ export function normalizarPedido(crudo: PedidoCrudo): ResultadoPedido {
     errores.push(
       str(crudo.telefono) ? 'El teléfono es muy corto (mirá si falta un dígito)' : 'Falta el teléfono',
     );
+  }
+
+  // El mail NO pasa por `str` a propósito: `str` colapsa espacios internos, y
+  // un mail con un espacio adentro es inválido y se tiene que rechazar, no
+  // «arreglar». Se recorta y se guarda tal cual lo escribieron.
+  const email = typeof crudo.email === 'string' ? crudo.email.trim() || null : null;
+  if (email && !esMailValido(email)) {
+    errores.push(`El email "${email}" no parece válido (tiene que ser como nombre@dominio.com)`);
+  } else if (!email && opts.exigirEmail) {
+    errores.push('Falta el email: Correo Uruguayo le avisa al comprador la llegada del paquete por ahí');
   }
 
   const deptoCrudo = str(crudo.departamento);
@@ -223,6 +265,7 @@ export function normalizarPedido(crudo: PedidoCrudo): ResultadoPedido {
       nombre: nombre!,
       telefono: telefono!,
       documento: str(crudo.documento),
+      email,
       departamento: departamento!,
       localidad,
       direccion,

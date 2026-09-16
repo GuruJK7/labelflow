@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { normalizarPedido, type PedidoCrudo } from '@/lib/pedido-interno';
+import { exigirEmailParaTenant } from '@/lib/pedido-interno.server';
 import type { Prisma } from '@prisma/client';
 
 /**
@@ -41,7 +42,7 @@ export async function PUT(req: Request, { params }: Ctx) {
     );
   }
 
-  const r = normalizarPedido(body as PedidoCrudo);
+  const r = normalizarPedido(body as PedidoCrudo, { exigirEmail: await exigirEmailParaTenant(auth.tenantId) });
   if (!r.ok) return apiError(r.errores.join('. '), 400);
   const p = r.pedido;
 
@@ -54,6 +55,7 @@ export async function PUT(req: Request, { params }: Ctx) {
       nombre: p.nombre,
       telefono: p.telefono,
       documento: p.documento,
+      email: p.email,
       departamento: p.departamento,
       localidad: p.localidad,
       direccion: p.direccion,

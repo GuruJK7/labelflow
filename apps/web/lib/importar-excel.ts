@@ -24,6 +24,10 @@ const ALIAS: Record<string, string[]> = {
   fecha: ['fecha', 'fecha de venta', 'fecha venta', 'dia'],
   nombre: ['nombre', 'cliente', 'nombre del cliente', 'destinatario', 'nombre y apellido', 'quien recibe'],
   telefono: ['telefono', 'tel', 'celular', 'cel', 'whatsapp', 'contacto'],
+  // Sin «correo» a secas a propósito: la segunda pasada (la floja, por
+  // contención) lo habría encontrado en cualquier encabezado que hablara del
+  // transportista. «Correo electrónico» sí, que no se confunde con nada.
+  email: ['email', 'e mail', 'mail', 'correo electronico', 'email del cliente', 'mail del cliente', 'email cliente'],
   documento: ['cedula', 'ci', 'documento', 'doc', 'rut'],
   departamento: ['departamento', 'depto', 'destino', 'dpto'],
   localidad: ['localidad', 'ciudad', 'barrio', 'pueblo'],
@@ -80,6 +84,13 @@ export interface ResultadoImportacion {
   columnasIgnoradas: string[];
   /** Campos importantes que el archivo no trae. */
   columnasFaltantes: string[];
+  /**
+   * Todos los campos nuestros que el archivo SÍ trae. Existe para que la
+   * pantalla pueda avisar, antes de importar, que falta una columna que no es
+   * obligatoria en general pero sí para esta tienda (el mail, cuando despacha
+   * por Correo Uruguayo) — sin decidirlo acá, que no sabe de tiendas.
+   */
+  columnasPresentes: string[];
 }
 
 /** Los que no pueden faltar: sin esto no hay envío que valga. */
@@ -92,7 +103,7 @@ const REQUERIDOS = ['nombre', 'telefono', 'departamento', 'producto'] as const;
  */
 export function filasAPedidos(filas: FilaCruda[]): ResultadoImportacion {
   if (filas.length === 0) {
-    return { filas: [], columnasIgnoradas: [], columnasFaltantes: [...REQUERIDOS] };
+    return { filas: [], columnasIgnoradas: [], columnasFaltantes: [...REQUERIDOS], columnasPresentes: [] };
   }
 
   // El mapa de columnas se arma UNA vez, con los encabezados de la primera fila.
@@ -130,6 +141,7 @@ export function filasAPedidos(filas: FilaCruda[]): ResultadoImportacion {
       pedido: {
         nombre: v.nombre,
         telefono: v.telefono,
+        email: v.email,
         documento: v.documento,
         departamento: v.departamento,
         localidad: v.localidad,
@@ -144,7 +156,7 @@ export function filasAPedidos(filas: FilaCruda[]): ResultadoImportacion {
     });
   });
 
-  return { filas: out, columnasIgnoradas: ignoradas, columnasFaltantes: faltantes };
+  return { filas: out, columnasIgnoradas: ignoradas, columnasFaltantes: faltantes, columnasPresentes: [...presentes] };
 }
 
 /** Las columnas de la plantilla, en orden. Se usan para el archivo de ejemplo. */
@@ -152,6 +164,7 @@ export const COLUMNAS_PLANTILLA = [
   'Fecha',
   'Nombre',
   'Teléfono',
+  'Email',
   'Cédula',
   'Departamento',
   'Localidad',
@@ -171,6 +184,10 @@ export const EJEMPLO_PLANTILLA: Array<Record<string, string | number>> = [
     Fecha: '03/09/2026',
     Nombre: 'Carla Pérez',
     'Teléfono': '099 887 766',
+    // El mail va en la plantilla aunque para DAC sea opcional: Correo Uruguayo
+    // lo exige (avisa la llegada por ahí) y una planilla sin la columna, en una
+    // tienda con Correo, es una planilla que no despacha nada.
+    Email: 'carla.perez@example.com',
     'Cédula': '4.512.345-6',
     Departamento: 'Maldonado',
     Localidad: 'Punta del Este',
@@ -187,6 +204,7 @@ export const EJEMPLO_PLANTILLA: Array<Record<string, string | number>> = [
     Fecha: '03/09/2026',
     Nombre: 'Martín Suárez',
     'Teléfono': '098 111 222',
+    Email: 'martin.suarez@example.com',
     'Cédula': '',
     Departamento: 'Montevideo',
     // 🔴 La localidad va TAMBIÉN cuando retira en agencia, y por eso la plantilla

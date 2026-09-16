@@ -31,6 +31,7 @@ interface Pedido {
   estado: 'PENDIENTE' | 'DESPACHADO' | 'CANCELADO';
   nombre: string;
   telefono: string;
+  email: string | null;
   documento: string | null;
   departamento: string;
   localidad: string | null;
@@ -76,6 +77,9 @@ export default function PedidosPage() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [total, setTotal] = useState(0);
   const [pendientes, setPendientes] = useState(0);
+  // Con Correo Uruguayo el mail del destinatario es obligatorio: lo dice el
+  // servidor (mismo flag con el que después valida), la pantalla sólo lo muestra.
+  const [correoEnabled, setCorreoEnabled] = useState(false);
   const [page, setPage] = useState(1);
   const [cargando, setCargando] = useState(true);
   const [modal, setModal] = useState<{ abierto: boolean; editando: Pedido | null }>({ abierto: false, editando: null });
@@ -91,6 +95,7 @@ export default function PedidosPage() {
       setPedidos(json.data ?? []);
       setTotal(json.meta?.total ?? 0);
       setPendientes(json.meta?.pendientes ?? 0);
+      setCorreoEnabled(!!json.meta?.correoEnabled);
     } finally {
       setCargando(false);
     }
@@ -150,6 +155,7 @@ export default function PedidosPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ImportarExcel
+            correoEnabled={correoEnabled}
             onImportado={(texto) => {
               setAviso({ tipo: 'ok', texto });
               void cargar();
@@ -222,7 +228,10 @@ export default function PedidosPage() {
                   <tr key={p.id} className="border-b border-white/[0.04] last:border-0">
                     <td className="px-4 py-3">
                       <div className="text-white">{p.nombre}</div>
-                      <div className="text-xs text-zinc-500">{p.telefono}</div>
+                      <div className="text-xs text-zinc-500">
+                        {p.telefono}
+                        {p.email ? ` · ${p.email}` : ''}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="text-zinc-300">{destinoLegible(p)}</div>
@@ -303,6 +312,7 @@ export default function PedidosPage() {
       {modal.abierto && (
         <ModalPedido
           inicial={modal.editando}
+          correoEnabled={correoEnabled}
           onCerrar={() => setModal({ abierto: false, editando: null })}
           onGuardado={(texto) => {
             setModal({ abierto: false, editando: null });
@@ -318,16 +328,20 @@ export default function PedidosPage() {
 /** Alta y edición comparten formulario: `inicial` distingue los dos casos. */
 function ModalPedido({
   inicial,
+  correoEnabled,
   onCerrar,
   onGuardado,
 }: {
   inicial: Pedido | null;
+  /** La tienda despacha por Correo Uruguayo: el mail pasa a ser obligatorio. */
+  correoEnabled: boolean;
   onCerrar: () => void;
   onGuardado: (texto: string) => void;
 }) {
   const editando = inicial !== null;
   const [nombre, setNombre] = useState(inicial?.nombre ?? '');
   const [telefono, setTelefono] = useState(inicial?.telefono ?? '');
+  const [email, setEmail] = useState(inicial?.email ?? '');
   const [documento, setDocumento] = useState(inicial?.documento ?? '');
   const [departamento, setDepartamento] = useState(inicial?.departamento ?? '');
   const [localidad, setLocalidad] = useState(inicial?.localidad ?? '');
@@ -365,6 +379,7 @@ function ModalPedido({
       const cuerpo = {
         nombre,
         telefono,
+        email,
         documento,
         departamento,
         localidad,
@@ -384,7 +399,7 @@ function ModalPedido({
       // comerciante y le muestra TODOS los problemas juntos mientras está
       // mirando el formulario, en vez de que el pedido se guarde y muera en la
       // corrida de las 3 AM sin que nadie entienda por qué.
-      const revision = normalizarPedido(cuerpo);
+      const revision = normalizarPedido(cuerpo, { exigirEmail: correoEnabled });
       if (!revision.ok) {
         setError(revision.errores.join('. ') + '.');
         return;
@@ -433,6 +448,23 @@ function ModalPedido({
             <div>
               <label className={LABEL}>Teléfono *</label>
               <input value={telefono} onChange={(e) => setTelefono(e.target.value)} className={INPUT} placeholder="099 887 766" />
+            </div>
+            <div>
+              {/* Hasta el 16-09-2026 el formulario no tenía este campo, y Correo
+                  Uruguayo rechaza todo pedido sin mail: en una tienda con Correo
+                  la carga propia entera iba a revisión, sin dónde corregirlo. */}
+              <label className={LABEL}>Email{correoEnabled ? ' *' : ''}</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className={INPUT}
+                placeholder="carla@ejemplo.com"
+                required={correoEnabled}
+              />
+              {correoEnabled && (
+                <p className="text-[11px] text-zinc-500 mt-1">Correo avisa la llegada por este mail.</p>
+              )}
             </div>
             <div>
               <label className={LABEL}>Cédula</label>

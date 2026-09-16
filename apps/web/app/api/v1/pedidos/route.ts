@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { normalizarPedido, type PedidoCrudo, type PedidoNormalizado } from '@/lib/pedido-interno';
+import { exigirEmailParaTenant } from '@/lib/pedido-interno.server';
 import type { Prisma } from '@prisma/client';
 
 /**
@@ -32,7 +33,7 @@ export async function GET(req: Request) {
 
   const where = { tenantId: auth.tenantId, ...(estado ? { estado } : {}) };
 
-  const [pedidos, total, pendientes] = await Promise.all([
+  const [pedidos, total, pendientes, correoEnabled] = await Promise.all([
     db.pedidoInterno.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -42,9 +43,13 @@ export async function GET(req: Request) {
     db.pedidoInterno.count({ where }),
     // Para el botón "Despachar ahora": sin pendientes no tiene sentido ofrecerlo.
     db.pedidoInterno.count({ where: { tenantId: auth.tenantId, estado: 'PENDIENTE' } }),
+    // Para el formulario: con Correo Uruguayo el mail del destinatario es
+    // obligatorio, y la pantalla lo marca así con el MISMO flag que después
+    // usa el servidor para validar.
+    exigirEmailParaTenant(auth.tenantId),
   ]);
 
-  return apiSuccess(pedidos, { total, page, limit, hasNext: page * limit < total, pendientes });
+  return apiSuccess(pedidos, { total, page, limit, hasNext: page * limit < total, pendientes, correoEnabled });
 }
 
 export async function POST(req: Request) {
@@ -72,8 +77,9 @@ export async function POST(req: Request) {
   const validos: PedidoNormalizado[] = [];
   const rechazados: Array<{ fila: number; errores: string[] }> = [];
 
+  const exigirEmail = await exigirEmailParaTenant(auth.tenantId);
   crudos.forEach((crudo, i) => {
-    const r = normalizarPedido(crudo);
+    const r = normalizarPedido(crudo, { exigirEmail });
     if (r.ok) validos.push(r.pedido);
     // `fila` es 1-based para que coincida con lo que el comerciante ve en Excel.
     else rechazados.push({ fila: i + 1, errores: r.errores });
@@ -95,6 +101,7 @@ export async function POST(req: Request) {
       nombre: p.nombre,
       telefono: p.telefono,
       documento: p.documento,
+      email: p.email,
       departamento: p.departamento,
       localidad: p.localidad,
       direccion: p.direccion,

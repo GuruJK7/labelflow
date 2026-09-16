@@ -6,7 +6,7 @@
  * dice "no reconozco tu archivo" sin más, no vuelve.
  */
 import { describe, it, expect } from 'vitest';
-import { filasAPedidos, campoDeEncabezado, normalizarEncabezado, EJEMPLO_PLANTILLA } from '../importar-excel';
+import { filasAPedidos, campoDeEncabezado, normalizarEncabezado, EJEMPLO_PLANTILLA, COLUMNAS_PLANTILLA } from '../importar-excel';
 import { normalizarPedido } from '../pedido-interno';
 
 describe('normalizarEncabezado', () => {
@@ -26,6 +26,17 @@ describe('campoDeEncabezado', () => {
     expect(campoDeEncabezado('Dirección de envío')).toBe('direccion');
     expect(campoDeEncabezado('Forma de pago')).toBe('formaDePago');
     expect(campoDeEncabezado('Talle / Color')).toBe('variante');
+  });
+
+  it('reconoce el mail como lo escriba la gente', () => {
+    for (const h of ['Email', 'E-mail', 'e-Mail', 'Mail', 'Correo electrónico', 'Email del cliente']) {
+      expect(campoDeEncabezado(h), h).toBe('email');
+    }
+  });
+
+  it('«Correo» a secas NO es el mail: en una planilla de envíos puede hablar del transportista', () => {
+    expect(campoDeEncabezado('Correo')).toBeNull();
+    expect(campoDeEncabezado('Enviar por correo')).toBeNull();
   });
 
   it('una columna que no conocemos devuelve null, no adivina', () => {
@@ -94,6 +105,20 @@ describe('filasAPedidos', () => {
     const r = filasAPedidos([]);
     expect(r.filas).toEqual([]);
     expect(r.columnasFaltantes.length).toBeGreaterThan(0);
+    expect(r.columnasPresentes).toEqual([]);
+  });
+
+  it('el mail viaja en el pedido y la columna se declara presente', () => {
+    const r = filasAPedidos([{ ...FILA, 'E-mail': 'carla@example.com' }]);
+    expect(r.filas[0].pedido.email).toBe('carla@example.com');
+    expect(r.columnasPresentes).toContain('email');
+  });
+
+  it('sin columna de mail, `columnasPresentes` no lo lista (así la pantalla avisa cuando la tienda usa Correo)', () => {
+    const r = filasAPedidos([FILA]);
+    expect(r.columnasPresentes).not.toContain('email');
+    // Y no es un error en general: para DAC el mail es opcional.
+    expect(r.columnasFaltantes).not.toContain('email');
   });
 });
 
@@ -106,6 +131,18 @@ describe('el recorrido completo: planilla → pedido válido', () => {
     for (const f of r.filas) {
       const v = normalizarPedido(f.pedido);
       expect(v.ok, `fila ${f.fila}: ${v.ok ? '' : v.errores.join(', ')}`).toBe(true);
+    }
+  });
+
+  it('🔴 la plantilla trae la columna Email y sus filas pasan aun cuando Correo lo exige', () => {
+    // Una plantilla sin mail, en una tienda con Correo Uruguayo, enseñaría a
+    // armar una planilla que no despacha nada.
+    expect(COLUMNAS_PLANTILLA).toContain('Email');
+    const r = filasAPedidos(EJEMPLO_PLANTILLA);
+    for (const f of r.filas) {
+      const v = normalizarPedido(f.pedido, { exigirEmail: true });
+      expect(v.ok, `fila ${f.fila}: ${v.ok ? '' : v.errores.join(', ')}`).toBe(true);
+      if (v.ok) expect(v.pedido.email).toMatch(/@example\.com$/);
     }
   });
 

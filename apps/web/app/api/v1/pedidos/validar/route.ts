@@ -1,5 +1,6 @@
 import { getAuthenticatedTenant, apiError, apiSuccess } from '@/lib/api-utils';
 import { normalizarPedido, destinoLegible, type PedidoCrudo } from '@/lib/pedido-interno';
+import { exigirEmailParaTenant } from '@/lib/pedido-interno.server';
 
 /**
  * POST /api/v1/pedidos/validar — la previsualización del importador.
@@ -33,8 +34,11 @@ export async function POST(req: Request) {
     return apiError(`El archivo tiene ${filas.length} filas (máximo ${MAX_FILAS}). Partilo en varios.`, 413);
   }
 
+  // El mismo flag que usa el alta: si acá no se exigiera el mail y en el alta
+  // sí, la revisión diría «entra» y la importación la rechazaría.
+  const exigirEmail = await exigirEmailParaTenant(auth.tenantId);
   const resultados = (filas as Array<{ fila?: unknown; pedido?: unknown }>).map((f, i) => {
-    const r = normalizarPedido((f?.pedido ?? {}) as PedidoCrudo);
+    const r = normalizarPedido((f?.pedido ?? {}) as PedidoCrudo, { exigirEmail });
     // El número lo pone el cliente porque es el del Excel, que acá no se ve.
     const nroFila = typeof f?.fila === 'number' ? f.fila : i + 2;
     if (r.ok) {
@@ -44,6 +48,7 @@ export async function POST(req: Request) {
         // Lo justo para que se reconozca la fila en la tabla de revisión.
         resumen: {
           nombre: r.pedido.nombre,
+          email: r.pedido.email,
           destino: destinoLegible(r.pedido),
           departamento: r.pedido.departamento,
           totalUyu: r.pedido.totalUyu,

@@ -1604,6 +1604,10 @@ model PedidoInterno {
   nombre       String
   telefono     String
   documento    String? /// Cédula — va al RUT del destinatario en DAC.
+  /// Mail del destinatario. Opcional para DAC; Correo Uruguayo lo EXIGE (AHIVA
+  /// valida el formato y avisa la llegada por ahí). Hasta el 16-09-2026 la carga
+  /// propia no lo tenía y ningún pedido de esta fuente podía salir por Correo.
+  email        String?
   departamento String
   localidad    String?
   direccion    String? /// Vacío SÓLO si hay `agencia`: ahí se retira en sucursal.
