@@ -123,16 +123,33 @@ describe('cierre anti-duplicado: cualquier guía previa, no sólo las de Correo'
   // el writeback anterior haya fallado: sin esto el pedido se re-ofrecía y
   // terminaba acá, "bloqueado", corrida tras corrida, y el panel nunca la veía.
   it('la guía previa de Correo se devuelve en yaEmitidos con su PDF para re-publicarla', async () => {
-    labelFindUnique.mockResolvedValue({ dacGuia: 'PC021042235UY', carrier: 'CORREO', pdfPath: 't-1/2026-09-16/l.pdf' });
+    labelFindUnique.mockResolvedValue({ dacGuia: 'PC021042235UY', carrier: 'CORREO', pdfPath: 't-1/2026-09-16/l.pdf', status: 'COMPLETED' });
     const r = await procesarPedidosCorreo([pedido()], ctx());
     expect(r.yaEmitidos).toEqual([{ shopifyOrderId: '900100', codigo: 'PC021042235UY', pdfPath: 't-1/2026-09-16/l.pdf' }]);
     expect(r.revisiones).toEqual([]);
   });
 
   it('una guía previa de DAC NO va a yaEmitidos: es un conflicto, no algo que Correo pueda publicar', async () => {
-    labelFindUnique.mockResolvedValue({ dacGuia: '00123456', carrier: null, pdfPath: 'x.pdf' });
+    labelFindUnique.mockResolvedValue({ dacGuia: '00123456', carrier: null, pdfPath: 'x.pdf', status: 'COMPLETED' });
     const r = await procesarPedidosCorreo([pedido()], ctx());
     expect(r.yaEmitidos).toEqual([]);
+  });
+
+  it('retention (COMPLETED con pdfPath null) SÍ se re-publica: la guía viaja sin papel', async () => {
+    labelFindUnique.mockResolvedValue({ dacGuia: 'PC1', carrier: 'CORREO', pdfPath: null, status: 'COMPLETED' });
+    const r = await procesarPedidosCorreo([pedido()], ctx());
+    expect(r.yaEmitidos).toEqual([{ shopifyOrderId: '900100', codigo: 'PC1', pdfPath: null }]);
+  });
+
+  it('una guía de Correo cuya etiqueta NO se guardó (NEEDS_REVIEW) no se publica como labeled: vuelve como motivo', async () => {
+    labelFindUnique.mockResolvedValue({ dacGuia: 'PC0001UY', carrier: 'CORREO', pdfPath: null, status: 'NEEDS_REVIEW' });
+    const r = await procesarPedidosCorreo([pedido()], ctx());
+    expect(r.bloqueados).toBe(1);
+    expect(r.yaEmitidos).toEqual([]);
+    expect(r.revisiones).toHaveLength(1);
+    expect(r.revisiones[0].motivo).toMatch(/PC0001UY/);
+    expect(r.revisiones[0].motivo).toMatch(/no se vuelve a emitir/);
+    expect(cargaMasiva).not.toHaveBeenCalled();
   });
 
   it('el placeholder PENDING- NO bloquea: todavía no hay guía', async () => {

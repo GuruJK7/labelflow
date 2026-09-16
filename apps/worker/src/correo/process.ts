@@ -230,11 +230,11 @@ export async function procesarPedidosCorreo(
     // Es el mismo criterio de `assertNoPriorSubmit` en dac/shipment.ts, que
     // tampoco envuelve la lectura, y la misma asimetría que fija types.ts:
     // una revisión a mano cuesta un minuto; cobrarle dos veces a alguien, no.
-    let labelPrevio: { dacGuia: string | null; carrier: string | null; pdfPath: string | null } | null;
+    let labelPrevio: { dacGuia: string | null; carrier: string | null; pdfPath: string | null; status: string } | null;
     try {
       labelPrevio = await db.label.findUnique({
         where: { tenantId_shopifyOrderId: { tenantId: ctx.tenantId, shopifyOrderId } },
-        select: { dacGuia: true, carrier: true, pdfPath: true },
+        select: { dacGuia: true, carrier: true, pdfPath: true, status: true },
       });
     } catch (err) {
       salida.fallidos++;
@@ -261,8 +261,23 @@ export async function procesarPedidosCorreo(
       // writeback anterior haya fallado (ver `yaEmitidos`). Sólo las de Correo:
       // una de DAC previa es un conflicto que se resuelve a mano, no algo que
       // esta rama pueda publicar como propio.
+      //
+      // Y sólo si la etiqueta quedó COMPLETED: retention deja COMPLETED con
+      // `pdfPath` null (el papel se vuelve a pedir por código), pero una
+      // NEEDS_REVIEW con guía es «AHIVA emitió y el PDF no se pudo guardar»
+      // — publicarla como `labeled` le estamparía al origen una guía sin papel
+      // que ya no aparecería en ninguna corrida. Esa se informa como motivo.
       if (transportistaPrevio === 'CORREO') {
-        salida.yaEmitidos.push({ shopifyOrderId, codigo: guiaPrevia, pdfPath: labelPrevio?.pdfPath ?? null });
+        if (labelPrevio?.status === 'COMPLETED') {
+          salida.yaEmitidos.push({ shopifyOrderId, codigo: guiaPrevia, pdfPath: labelPrevio?.pdfPath ?? null });
+        } else {
+          salida.revisiones.push({
+            shopifyOrderId,
+            motivo:
+              `Correo ya emitió la guía ${guiaPrevia} pero la etiqueta no quedó guardada en AutoEnvía: ` +
+              'recuperala desde AutoEnvía (Etiquetas → reintentar) antes de despachar; no se vuelve a emitir.',
+          });
+        }
       }
       ctx.log.warn(
         PASO,

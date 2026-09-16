@@ -219,6 +219,22 @@ describe('fuente dashboard · rama Correo Uruguayo → writeback con guía y PDF
     ]);
   });
 
+  it('la fuente interna (sin publicarEtiquetas) NO re-marca cargados los yaEmitidos', async () => {
+    procesarPedidosCorreo.mockResolvedValue({
+      procesados: 0, simulados: 0, fallidos: 0, enRevision: 0, bloqueados: 1,
+      codigos: [],
+      despachados: [],
+      yaEmitidos: [{ shopifyOrderId: String(stableNumericId(PEDIDO.id)), codigo: 'PC7', pdfPath: null }],
+      revisiones: [],
+    });
+    const { fuente, marcarCargadas } = fuenteDePrueba();
+    delete (fuente as unknown as { publicarEtiquetas?: unknown }).publicarEtiquetas;
+
+    await processDashboardOrdersJob('t-1', 'j-1', fuente);
+
+    expect(marcarCargadas).not.toHaveBeenCalled();
+  });
+
   // ── Los que no salieron, con el motivo, vuelven al origen ────────────────
   it('un pedido en revisión se informa al origen con su motivo, mapeado por id de pedido', async () => {
     procesarPedidosCorreo.mockResolvedValue({

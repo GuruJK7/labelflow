@@ -139,13 +139,17 @@ describe('POST /api/provisioning/dac-tenant', () => {
   // ── Transportista ────────────────────────────────────────────────────────
   // El worker de la fuente dashboard ya sabía despachar por Correo Uruguayo; lo
   // que faltaba era poder dar de alta una cuenta así.
-  it('sin `transportista` guarda DAC y NO toca nada de Correo (comportamiento de siempre)', async () => {
+  it('sin `transportista` guarda DAC, deja Correo APAGADO y no toca sus credenciales', async () => {
     await post(CUERPO_MINIMO);
     const data = datosCreados();
     expect(data.dacUsername).toBeTruthy();
     expect(data.dacPassword).toBeTruthy();
-    expect(data).not.toHaveProperty('correoEnabled');
+    // `correoEnabled: false` es no-op para todo tenant DAC (su default) y es lo
+    // que hace que «volver a DAC» sobre un slug que fue Correo deje de
+    // despachar por Correo. Las credenciales de Correo no se tocan.
+    expect(data.correoEnabled).toBe(false);
     expect(data).not.toHaveProperty('correoUser');
+    expect(data).not.toHaveProperty('correoPassword');
   });
 
   it('transportista CORREO guarda Correo y NO guarda DAC', async () => {
@@ -216,6 +220,12 @@ describe('POST /api/provisioning/dac-tenant', () => {
       correoAmbiente: 'cualquier-cosa',
     });
     expect(datosCreados().correoAmbiente).toBe('test');
+  });
+
+  it('volver a DAC sobre el mismo slug APAGA Correo (el job elige por correoEnabled)', async () => {
+    await post({ ...CUERPO_MINIMO, transportista: 'DAC' });
+    expect(datosCreados().correoEnabled).toBe(false);
+    expect(datosCreados()).not.toHaveProperty('correoUser');
   });
 
   // ── Contrareembolso ──────────────────────────────────────────────────────

@@ -217,6 +217,11 @@ export async function POST(req: Request) {
       : {
           dacUsername: encrypt(dacUsername),
           dacPassword: encrypt(dacPassword),
+          // Volver a DAC sobre un slug que antes se dio de alta como Correo
+          // tiene que APAGAR Correo: el job elige por `correoEnabled`, así que
+          // dejarlo prendido seguiría despachando por Correo sin ningún error a
+          // la vista. No-op para todo tenant DAC actual (su default ya es false).
+          correoEnabled: false,
         }),
     // Sólo se agregan si vinieron. Omitidos, Prisma no toca la columna: un
     // re-aprovisionamiento sin estos campos no le pisa el cron ni el saldo a

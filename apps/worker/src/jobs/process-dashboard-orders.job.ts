@@ -364,7 +364,10 @@ async function processDashboardOrdersJobInner(
           });
           continue;
         }
-        const y = yaEmitidosPorId.get(sid);
+        // Sólo para la fuente REMOTA: la interna ya tiene la etiqueta en su
+        // propio storage y su estado; re-marcarle «cargado» un pedido por una
+        // guía vieja no le agrega nada.
+        const y = typeof fuente.publicarEtiquetas === 'function' ? yaEmitidosPorId.get(sid) : undefined;
         if (y) {
           despachadas.push(a.dashboardId);
           let pdfBase64: string | null = null;
