@@ -265,10 +265,20 @@ async function processDashboardOrdersJobInner(
             monto: codDeLaFuenteDashboard({ codEnabled: tenant.codEnabled, order: a.crudo }),
           },
           barrio: a.crudo.address?.neighborhood ?? null,
-          // `dac_text` es el texto libre que escribió el vendedor. Si nombra una
-          // agencia, la elección explícita del humano gana sobre la derivación
-          // automática — pero se valida contra el catálogo igual que todo lo demás.
-          oficinaPreferida: null,
+          // La agencia que eligió una PERSONA le gana a la derivación automática
+          // — pero se valida contra el catálogo igual que todo lo demás:
+          // `resolverOficinaEntrega` (correo/oficina.ts:120-154) la matchea
+          // normalizando tildes y mayúsculas, y si no existe manda el pedido a
+          // revisión con sugerencias, en vez de elegir una agencia equivocada.
+          //
+          // 🔴 Hasta el 16-09-2026 esto era `null` hardcodeado bajo un comentario
+          // que prometía justamente esta lectura. El resultado: quien escribía
+          // "Tres Cruces" en la carga propia veía su pedido ir a revisión corrida
+          // tras corrida ("Correo tiene 17 oficinas en MONTEVIDEO y el destino
+          // (sin localidad) no identifica ninguna") sin ningún lugar donde
+          // corregirlo. Ningún pedido con retiro en agencia salía por Correo en
+          // un departamento con más de una oficina.
+          oficinaPreferida: a.crudo.address?.pickup_office ?? null,
         };
       }
 

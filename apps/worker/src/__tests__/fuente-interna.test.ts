@@ -53,6 +53,23 @@ describe('aDashboardOrder — traducción básica', () => {
     expect(o.address?.city).toBe('Punta del Este');
     expect(o.address?.neighborhood).toBe('Punta del Este');
   });
+
+  it('🔴 la agencia elegida a mano viaja CRUDA en `pickup_office`, para que Correo la pueda matchear', () => {
+    // Hasta el 16-09-2026 el nombre de la agencia sólo existía envuelto en
+    // "Agencia DAC …" dentro de `address_line`, una convención que sólo DAC
+    // entiende. Correo necesita el nombre pelado para compararlo contra el
+    // catálogo de AHIVA; sin este campo `oficinaPreferida` llegaba en null y un
+    // pedido a "Tres cruces" en Montevideo iba a revisión en cada corrida,
+    // porque ese departamento tiene 17 oficinas y nada permitía desempatar.
+    const o = aDashboardOrder(fila({ direccion: null, agencia: 'Tres cruces' }));
+    expect(o.address?.pickup_office).toBe('Tres cruces');
+    // Y el camino de DAC no cambia: sigue recibiendo su texto de siempre.
+    expect(o.address?.address_line).toBe('Agencia DAC Tres cruces');
+  });
+
+  it('sin agencia, `pickup_office` viaja null (la fuente remota no cambia en nada)', () => {
+    expect(aDashboardOrder(fila()).address?.pickup_office).toBeNull();
+  });
 });
 
 describe('aDashboardOrder — ítems y precios', () => {

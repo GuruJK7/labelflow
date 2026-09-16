@@ -109,6 +109,13 @@ export function aDashboardOrder(p: FilaPedidoInterno): DashboardOrder {
       // Correo en el job). El adaptador de DAC lo ignora, así que ponerlo acá no
       // le cambia nada a ese camino.
       neighborhood: texto(p.localidad),
+      // La agencia que el comerciante escribió, CRUDA. `address_line` ya lleva
+      // el mismo dato envuelto en "Agencia DAC …" para que `isPickupAtDacBranch`
+      // lo reconozca, pero esa forma sólo la entiende DAC: Correo necesita el
+      // nombre pelado para matchearlo contra el catálogo de AHIVA.
+      // Sin esto, el texto del comerciante moría acá y Correo elegía la oficina
+      // por su cuenta (o mandaba el pedido a revisión).
+      pickup_office: texto(p.agencia),
       reference: texto(p.referencia),
     },
     dac_text: texto(p.observaciones),

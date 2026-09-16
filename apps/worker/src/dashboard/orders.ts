@@ -24,6 +24,25 @@ export interface DashboardOrderAddress {
   number?: string | null;
   postal_code?: string | null;
   reference?: string | null;
+  /**
+   * Agencia/oficina donde el comprador retira, elegida EXPLÍCITAMENTE por quien
+   * cargó el pedido. [16-sep-2026]
+   *
+   * OPCIONAL Y AUSENTE POR DEFECTO: una fuente que no lo manda —DEPO y
+   * cualquier dashboard hasta hoy— se comporta exactamente como antes.
+   *
+   * Existe porque la elección humana tiene que poder ganarle a la derivación
+   * automática: `resolverOficinaEntrega` (correo/oficina.ts:120) ya sabe
+   * recibirla por `ExtrasPedido.oficinaPreferida`, pero no había ningún campo
+   * que la transportara desde el pedido hasta el job. Sin esto, alguien que
+   * escribe "Tres Cruces" ve cómo su pedido va a revisión porque Montevideo
+   * tiene 17 oficinas y el texto que escribió no llegaba a leerse nunca.
+   *
+   * 🔴 NO confundir con `address_line`, que para DAC lleva el texto
+   * "Agencia DAC <nombre>" que `isPickupAtDacBranch` matchea. Son dos
+   * convenciones distintas para dos transportistas distintos.
+   */
+  pickup_office?: string | null;
 }
 
 export interface DashboardOrder {
