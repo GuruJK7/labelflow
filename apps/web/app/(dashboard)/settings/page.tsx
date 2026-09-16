@@ -369,7 +369,7 @@ export default function SettingsPage() {
                   disabled={!shopifyUrl.trim()}
                   className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                   <CheckCircle className="w-3 h-3" />
-                  {settings?.shopifyTokenSet ? 'Reconectar con Shopify' : 'Conectar con Shopify'}
+                  {settings?.shopifyTokenSet ? <span>Reconectar con Shopify</span> : <span>Conectar con Shopify</span>}
                 </button>
                 <p className="text-[11px] text-zinc-500 leading-relaxed">
                   Te lleva a Shopify para que autorices los permisos. Volvés conectado — no hace falta
@@ -394,7 +394,7 @@ export default function SettingsPage() {
                 </div>
                 <button onClick={() => saveSection('shopify', { shopifyStoreUrl: shopifyUrl, ...(shopifyToken ? { shopifyToken } : {}) })} disabled={saving === 'shopify'}
                   className="inline-flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
-                  {saving === 'shopify' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar token
+                  {saving === 'shopify' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}<span> Guardar token</span>
                 </button>
                 <InlineMessage section="shopify" />
               </div>
@@ -425,7 +425,7 @@ export default function SettingsPage() {
             </label>
             <button onClick={() => saveSection('dashboard', { dashboardUrl, dashboardSourceEnabled: dashboardEnabled, ...(dashboardToken ? { dashboardToken } : {}) })} disabled={saving === 'dashboard'}
               className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
-              {saving === 'dashboard' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar dashboard
+              {saving === 'dashboard' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}<span> Guardar dashboard</span>
             </button>
             <InlineMessage section="dashboard" />
           </div>
@@ -449,7 +449,7 @@ export default function SettingsPage() {
             </div>
             <button onClick={() => saveSection('dac', { dacUsername, ...(dacPassword ? { dacPassword } : {}) })} disabled={saving === 'dac'}
               className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
-              {saving === 'dac' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar DAC
+              {saving === 'dac' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}<span> Guardar DAC</span>
             </button>
             <InlineMessage section="dac" />
           </div>
@@ -468,7 +468,7 @@ export default function SettingsPage() {
           </div>
           <button onClick={() => saveSection('email', { emailHost, emailPort, emailUser, ...(emailPass ? { emailPass } : {}), emailFrom, storeName })} disabled={saving === 'email'}
             className="mt-3 inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
-            {saving === 'email' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar Email
+            {saving === 'email' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}<span> Guardar Email</span>
           </button>
           <InlineMessage section="email" />
         </div>
@@ -519,7 +519,7 @@ export default function SettingsPage() {
 
           <button onClick={() => saveSection('threshold', { paymentThreshold: threshold, paymentRuleEnabled })} disabled={saving === 'threshold'}
             className="mt-3 inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
-            {saving === 'threshold' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar regla
+            {saving === 'threshold' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}<span> Guardar regla</span>
           </button>
           <InlineMessage section="threshold" />
 
@@ -549,7 +549,7 @@ export default function SettingsPage() {
             )}
             <button onClick={() => saveSection('consolidation', { consolidateConsecutiveOrders, consolidationWindowMinutes })} disabled={saving === 'consolidation'}
               className="mt-2 inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50">
-              {saving === 'consolidation' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar consolidación
+              {saving === 'consolidation' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}<span> Guardar consolidación</span>
             </button>
             <InlineMessage section="consolidation" />
           </div>
@@ -615,7 +615,7 @@ export default function SettingsPage() {
                 className="inline-flex items-center gap-1.5 text-[11px] text-cyan-400 hover:text-cyan-300 transition-colors disabled:opacity-50"
               >
                 {scanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <ExternalLink className="w-3 h-3" />}
-                {scanning ? 'Escaneando...' : 'Escanear productos'}
+                {scanning ? <span>Escaneando...</span> : <span>Escanear productos</span>}
               </button>
             </div>
 
@@ -749,7 +749,7 @@ export default function SettingsPage() {
             disabled={saving === 'orderProcessing'}
             className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
           >
-            {saving === 'orderProcessing' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar procesamiento
+            {saving === 'orderProcessing' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}<span> Guardar procesamiento</span>
           </button>
           <InlineMessage section="orderProcessing" />
         </div>
@@ -883,7 +883,7 @@ export default function SettingsPage() {
             disabled={saving === 'schedule'}
             className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
           >
-            {saving === 'schedule' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar programación
+            {saving === 'schedule' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}<span> Guardar programación</span>
           </button>
           <InlineMessage section="schedule" />
         </div>
@@ -967,7 +967,7 @@ export default function SettingsPage() {
               className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white px-5 py-2.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
             >
               {testRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-              Ejecutar test ({testMaxOrders} {testMaxOrders === 1 ? 'pedido' : 'pedidos'})
+              <span>Ejecutar test ({testMaxOrders} {testMaxOrders === 1 ? 'pedido' : 'pedidos'})</span>
             </button>
             {testResult && (
               <p className={`text-xs font-medium ${testResult.type === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>

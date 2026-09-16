@@ -157,7 +157,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
                   <>
-                    Guardar nueva contraseña
+                    <span>Guardar nueva contraseña</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}

@@ -96,12 +96,20 @@ export function StepListo({
   }
 
   const modoLabel = state.processingMode === 'inmediato' ? 'Inmediato' : state.processingMode === 'cada_hora' ? 'Cada hora' : 'Horario personalizado';
+  // 🔴 La carga propia ES una tienda conectada. Faltaba su rama, así que quien
+  // elegía cargar los pedidos a mano llegaba al último paso y leía "Sin tienda
+  // conectada" — contradiciendo al propio stepper, que ya le mostraba "Tu tienda
+  // ✓". No bloqueaba nada (`onboarding/complete` valida con `storeConnection`,
+  // que sí la contempla), pero le decía al comerciante que le faltaba algo justo
+  // cuando iba a activar la cuenta.
   const tiendaLabel =
     state.store.kind === 'shopify'
       ? `Shopify: ${state.store.shopifyStoreUrl ?? ''}`
       : state.store.kind === 'dashboard'
         ? `Dashboard con Excel: ${state.store.dashboardUrl ?? ''}`
-        : 'Sin tienda conectada';
+        : state.store.kind === 'interna'
+          ? 'Carga propia (a mano o Excel)'
+          : 'Sin tienda conectada';
   const emailOk = state.emailVerified;
   const bloqueado = !yaCompleto && !emailOk;
 
@@ -126,7 +134,7 @@ export function StepListo({
           Te los acreditamos para que pruebes el flujo completo. No vencen. Cuando los uses, comprás envíos y seguís sin pausas.
         </p>
         <p className="text-xs text-zinc-300 mt-2">
-          Saldo disponible: <strong className="text-white">{state.balance.total}</strong> {state.balance.total === 1 ? 'envío' : 'envíos'}
+          <span>Saldo disponible: </span><strong className="text-white">{state.balance.total}</strong> <span>{state.balance.total === 1 ? 'envío' : 'envíos'}</span>
           {state.balance.total < state.trialShipments && <span className="text-zinc-500"> · Tu saldo es compartido entre todas tus tiendas.</span>}
         </p>
       </div>
@@ -152,7 +160,7 @@ export function StepListo({
       {bloqueado && (
         <div className="max-w-md mx-auto mb-4 text-left">
           <Notice kind="warn">
-            Confirmá tu email para activar la cuenta. Te mandamos un link al registrarte.{' '}
+            <span>Confirmá tu email para activar la cuenta. Te mandamos un link al registrarte.</span>{' '}
             <a href={`/verify-email?email=${encodeURIComponent(state.email ?? '')}`} className="underline hover:text-white">
               Reenviar
             </a>
@@ -177,10 +185,10 @@ export function StepListo({
 
       <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
         <PrimaryButton onClick={activarYProcesar} busy={busy === 'activar'} busyLabel={yaCompleto ? 'Encolando…' : 'Activando…'} disabled={bloqueado || busy !== ''} className="w-full sm:w-auto px-8">
-          {yaCompleto ? 'Procesar ahora' : 'Activar y procesar ahora'}
+          <span>{yaCompleto ? 'Procesar ahora' : 'Activar y procesar ahora'}</span>
         </PrimaryButton>
         <SecondaryButton onClick={activarSinProcesar} disabled={bloqueado || busy !== ''} className="w-full sm:w-auto">
-          {busy === 'activar-sin' ? 'Un momento…' : yaCompleto ? 'Ir al dashboard' : 'Activar sin procesar'}
+          <span>{busy === 'activar-sin' ? 'Un momento…' : yaCompleto ? 'Ir al dashboard' : 'Activar sin procesar'}</span>
         </SecondaryButton>
       </div>
 

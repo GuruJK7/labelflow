@@ -224,7 +224,7 @@ export function ImportarExcel({ onImportado }: { onImportado: (texto: string) =>
                         <td className="px-3 py-2 text-zinc-600 font-mono w-14">{v.fila}</td>
                         <td className="px-3 py-2 text-white">{v.ok && v.resumen.nombre}</td>
                         <td className="px-3 py-2 text-zinc-400">
-                          {v.ok && v.resumen.destino} · {v.ok && v.resumen.departamento}
+                          {v.ok && v.resumen.destino}<span> · </span>{v.ok && v.resumen.departamento}
                         </td>
                         <td className="px-3 py-2 text-zinc-300 text-right whitespace-nowrap">
                           {v.ok && pesos(v.resumen.totalUyu)}
@@ -272,7 +272,7 @@ export function ImportarExcel({ onImportado }: { onImportado: (texto: string) =>
         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-white/[0.06] text-white border border-white/[0.08] hover:bg-white/[0.1] disabled:opacity-50"
       >
         <Upload className="w-4 h-4" />
-        {paso === 'leyendo' ? 'Leyendo…' : 'Importar Excel'}
+        {paso === 'leyendo' ? <span>Leyendo…</span> : <span>Importar Excel</span>}
       </button>
       <button
         onClick={bajarPlantilla}
@@ -291,7 +291,7 @@ export function ImportarExcel({ onImportado }: { onImportado: (texto: string) =>
       {paso === 'elegir' && !error && validaciones.length === 0 && nombreArchivo && (
         <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400">
           <CheckCircle2 className="w-3.5 h-3.5" />
-          Listo
+          <span>Listo</span>
         </span>
       )}
     </>

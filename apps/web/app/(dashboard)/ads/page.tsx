@@ -141,7 +141,7 @@ export default function AdsPanel() {
           ) : (
             <Upload className="w-4 h-4" />
           )}
-          Escanear Drive y Subir
+          <span>Escanear Drive y Subir</span>
         </button>
         <button
           onClick={fetchData}

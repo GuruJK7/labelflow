@@ -162,7 +162,7 @@ export default function PedidosPage() {
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-white/[0.06] text-white border border-white/[0.08] hover:bg-white/[0.1] disabled:opacity-50"
             >
               <Send className="w-4 h-4" />
-              {despachando ? 'Encolando…' : `Despachar ${pendientes} ahora`}
+              <span>{despachando ? 'Encolando…' : `Despachar ${pendientes} ahora`}</span>
             </button>
           )}
           <button
@@ -170,7 +170,7 @@ export default function PedidosPage() {
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-cyan-500 text-zinc-950 hover:bg-cyan-400"
           >
             <Plus className="w-4 h-4" />
-            Cargar pedido
+            <span>Cargar pedido</span>
           </button>
         </div>
       </div>
@@ -201,7 +201,7 @@ export default function PedidosPage() {
             className="mt-5 inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-cyan-500 text-zinc-950 hover:bg-cyan-400"
           >
             <Plus className="w-4 h-4" />
-            Cargar el primero
+            <span>Cargar el primero</span>
           </button>
         </div>
       ) : (
@@ -243,7 +243,7 @@ export default function PedidosPage() {
                       {p.errorMessage && (
                         <div className="text-xs text-red-400 mt-1 flex items-start gap-1">
                           <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                          {p.errorMessage}
+                          <span>{p.errorMessage}</span>
                         </div>
                       )}
                     </td>
@@ -572,7 +572,7 @@ function ModalPedido({
               className="mt-0.5 w-4 h-4 rounded border-white/20 bg-white/5"
             />
             <span className="text-sm text-zinc-300">
-              Cobrar al entregar
+              <span>Cobrar al entregar</span>
               <span className="block text-xs text-zinc-500">
                 El repartidor le cobra {pesos(total)} al recibir. Si ya te pagó, dejalo sin marcar.
               </span>

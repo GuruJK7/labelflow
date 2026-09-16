@@ -50,8 +50,11 @@ export function ForgotPasswordForm() {
             </div>
             <h2 className="text-xl font-bold text-white">Revisá tu email</h2>
             <p className="text-zinc-400 text-sm">
-              Si <strong className="text-zinc-200">{email}</strong> está registrado en AutoEnvía, te
-              enviamos un link para elegir una nueva contraseña. El link expira en 1 hora.
+              <span>Si </span>
+              <strong className="text-zinc-200">{email}</strong>
+              <span> está registrado en AutoEnvía, te enviamos un link para elegir una nueva
+                contraseña. El link expira en 1 hora.
+              </span>
             </p>
             <p className="text-zinc-600 text-xs">
               ¿No te llegó? Revisá la carpeta de spam o pedí otro en unos minutos.
@@ -60,7 +63,7 @@ export function ForgotPasswordForm() {
               href="/login"
               className="inline-flex items-center justify-center gap-2 text-cyan-400 hover:text-cyan-300 text-sm font-medium mt-4 transition-colors"
             >
-              Volver al login
+              <span>Volver al login</span>
               <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
@@ -102,7 +105,7 @@ export function ForgotPasswordForm() {
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
                   <>
-                    Enviar link de recuperación
+                    <span>Enviar link de recuperación</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
@@ -111,7 +114,7 @@ export function ForgotPasswordForm() {
 
             <div className="mt-8 text-center">
               <p className="text-zinc-500 text-sm">
-                ¿Te acordaste?{' '}
+                <span>¿Te acordaste?</span>{' '}
                 <Link
                   href="/login"
                   className="text-cyan-400 hover:text-cyan-300 font-medium transition-colors"

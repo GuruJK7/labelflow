@@ -77,7 +77,7 @@ export function SalidaDelWizard({ tenantIdActual }: { tenantIdActual: string }) 
         <div className="mb-4">
           <p className="text-[11px] text-zinc-500 mb-2 flex items-center gap-1.5">
             <Store className="w-3 h-3" />
-            ¿Querés seguir con otra de tus tiendas? Lo que cargaste acá queda guardado.
+            <span>¿Querés seguir con otra de tus tiendas? Lo que cargaste acá queda guardado.</span>
           </p>
           <div className="flex flex-wrap gap-2">
             {otras.map((t) => (
@@ -102,7 +102,7 @@ export function SalidaDelWizard({ tenantIdActual }: { tenantIdActual: string }) 
         className="text-[11px] text-zinc-600 hover:text-zinc-400 inline-flex items-center gap-1.5 transition"
       >
         <LogOut className="w-3 h-3" />
-        Cerrar sesión
+        <span>Cerrar sesión</span>
       </button>
     </div>
   );

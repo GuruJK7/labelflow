@@ -384,7 +384,7 @@ export default function LabelsPage() {
                               className="flex items-center justify-center gap-2 flex-1 py-2 rounded-lg bg-cyan-600/10 border border-cyan-500/20 text-cyan-400 text-xs font-medium hover:bg-cyan-600/20 transition-colors"
                             >
                               <Download className="w-3.5 h-3.5" />
-                              Descargar
+                              <span>Descargar</span>
                             </a>
                             <PrintButton labelId={label.id} pdfPath={label.pdfPath} size="md" />
                             <button
@@ -408,7 +408,7 @@ export default function LabelsPage() {
                         ) : (
                           <div className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-zinc-500/5 border border-white/[0.04] text-zinc-600 text-xs">
                             <Clock className="w-3.5 h-3.5" />
-                            PDF no disponible
+                            <span>PDF no disponible</span>
                           </div>
                         )}
                       </div>

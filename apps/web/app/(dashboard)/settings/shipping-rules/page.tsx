@@ -277,16 +277,16 @@ export default function ShippingRulesPage() {
 
       {loading && !rules ? (
         <div className="flex items-center gap-2 text-zinc-400 text-sm">
-          <Loader2 className="w-4 h-4 animate-spin" /> Cargando...
+          <Loader2 className="w-4 h-4 animate-spin" /> <span>Cargando...</span>
         </div>
       ) : rules && rules.length === 0 ? (
         <div className="bg-zinc-900/30 border border-dashed border-white/[0.10] rounded-xl p-10 text-center">
           <p className="text-zinc-400 text-sm mb-4">
-            No hay reglas configuradas. Se sigue aplicando el umbral clásico de{' '}
-            <b className="text-zinc-200 font-mono font-semibold">paymentThreshold</b>.
+            <span>No hay reglas configuradas. Se sigue aplicando el umbral clásico de</span>{' '}
+            <b className="text-zinc-200 font-mono font-semibold">paymentThreshold</b><span>.</span>
           </p>
           <button onClick={() => setCreating(true)} className={BTN_PRIMARY}>
-            <Plus className="w-4 h-4" /> Crear la primera regla
+            <Plus className="w-4 h-4" /> <span>Crear la primera regla</span>
           </button>
         </div>
       ) : (
@@ -473,14 +473,14 @@ function RuleModal({
                     Empezar con una plantilla
                   </h3>
                   <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-                    Elegí un preset común y editá los valores si hace falta. O{' '}
+                    <span>Elegí un preset común y editá los valores si hace falta. O</span>{' '}
                     <button
                       type="button"
                       onClick={() => setShowPresets(false)}
                       className="text-cyan-400 underline underline-offset-2 hover:text-cyan-300 transition-colors"
                     >
                       empezar desde cero
-                    </button>.
+                    </button><span>.</span>
                   </p>
                 </div>
               </div>
@@ -589,7 +589,7 @@ function RuleModal({
             className={BTN_PRIMARY}
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            Guardar
+            <span>Guardar</span>
           </button>
         </div>
       </div>

@@ -176,7 +176,7 @@ export default function DepositoPage() {
         </label>
         {data && (
           <span className="text-xs text-zinc-500">
-            <span className="text-white font-semibold tabular-nums">{data.total}</span> etiquetas ·{' '}
+            <span className="text-white font-semibold tabular-nums">{data.total}</span><span> etiquetas ·</span>{' '}
             <span className="text-white font-semibold tabular-nums">{data.clientes.length}</span>{' '}
             {data.clientes.length === 1 ? 'cliente' : 'clientes'}
           </span>
@@ -193,7 +193,7 @@ export default function DepositoPage() {
       {data?.truncado && (
         <div className="bg-amber-500/10 border border-amber-500/20 text-amber-400 px-4 py-3 rounded-xl text-sm mb-5 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          El rango tiene demasiadas etiquetas y el total está recortado. Achicá las fechas para un número exacto.
+          <span>El rango tiene demasiadas etiquetas y el total está recortado. Achicá las fechas para un número exacto.</span>
         </div>
       )}
 
@@ -201,14 +201,14 @@ export default function DepositoPage() {
         {loading && !data ? (
           <div className="flex items-center justify-center py-24 text-zinc-500">
             <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-            Cargando…
+            <span>Cargando…</span>
           </div>
         ) : !data || data.clientes.length === 0 ? (
           <div className="py-20 text-center">
             <Warehouse className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
             <p className="text-sm text-zinc-400">No se emitió ninguna etiqueta en este rango.</p>
             <p className="text-xs text-zinc-600 mt-1">
-              Probá ampliar las fechas{soloDeposito ? ' o destildar «sólo tiendas del depósito»' : ''}.
+              <span>Probá ampliar las fechas</span>{soloDeposito ? ' o destildar «sólo tiendas del depósito»' : ''}<span>.</span>
             </p>
           </div>
         ) : (
@@ -251,7 +251,7 @@ export default function DepositoPage() {
                     <div className="bg-black/20 px-5 py-4 border-t border-white/[0.04]">
                       {cargandoDetalle ? (
                         <div className="flex items-center text-zinc-500 text-sm py-6 justify-center">
-                          <RefreshCw className="w-4 h-4 animate-spin mr-2" /> Cargando etiquetas…
+                          <RefreshCw className="w-4 h-4 animate-spin mr-2" /><span> Cargando etiquetas…</span>
                         </div>
                       ) : errorDetalle ? (
                         <div className="text-red-400 text-sm flex items-center gap-2 py-2">
@@ -294,7 +294,7 @@ export default function DepositoPage() {
                                           rel="noopener noreferrer"
                                           className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300"
                                         >
-                                          <FileText className="w-3 h-3" /> ver
+                                          <FileText className="w-3 h-3" /><span> ver</span>
                                         </a>
                                       ) : (
                                         <span className="text-zinc-700">—</span>

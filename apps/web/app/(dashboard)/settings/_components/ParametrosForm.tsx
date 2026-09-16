@@ -277,7 +277,7 @@ export function ParametrosForm({
   if (!loaded) {
     return (
       <div className="flex items-center gap-2 text-sm text-zinc-500 py-6">
-        <Loader2 className="w-4 h-4 animate-spin" /> Cargando tus parámetros…
+        <Loader2 className="w-4 h-4 animate-spin" /> <span>Cargando tus parámetros…</span>
       </div>
     );
   }
@@ -389,7 +389,7 @@ export function ParametrosForm({
               {rulesCount === null ? 'Reglas activas: —' : `Reglas activas: ${rulesCount}`}
             </p>
             <a href="/settings/shipping-rules" className="text-xs text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1">
-              Ver todas las reglas <ExternalLink className="w-3 h-3" />
+              <span>Ver todas las reglas</span> <ExternalLink className="w-3 h-3" />
             </a>
           </div>
         }
@@ -500,7 +500,7 @@ export function ParametrosForm({
           {esShopify ? (
             <button type="button" onClick={scanProducts} disabled={scanning} className="inline-flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 disabled:opacity-50 flex-shrink-0">
               {scanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
-              {scanning ? 'Buscando…' : 'Buscar tipos en mi tienda'}
+              <span>{scanning ? 'Buscando…' : 'Buscar tipos en mi tienda'}</span>
             </button>
           ) : (
             <span className="text-[11px] text-zinc-600">La búsqueda automática es sólo para Shopify.</span>
@@ -638,7 +638,7 @@ export function ParametrosForm({
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs text-zinc-400">
-                  Contraseña {correoPasswordSet && <span className="text-emerald-500">· ya guardada</span>}
+                  <span>Contraseña</span> {correoPasswordSet && <span className="text-emerald-500">· ya guardada</span>}
                 </span>
                 <input
                   type="password"
@@ -654,7 +654,7 @@ export function ParametrosForm({
                 Una cuenta contado (la que se saca por autogestión) las deja vacías. */}
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block">
-                <span className="mb-1 block text-xs text-zinc-400">Cuenta <span className="text-zinc-600">· sólo cuentas crédito</span></span>
+                <span className="mb-1 block text-xs text-zinc-400"><span>Cuenta</span> <span className="text-zinc-600">· sólo cuentas crédito</span></span>
                 <input
                   value={correoCuenta}
                   onChange={(e) => setCorreoCuenta(e.target.value)}
@@ -663,7 +663,7 @@ export function ParametrosForm({
                 />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs text-zinc-400">Subcuenta <span className="text-zinc-600">· sólo cuentas crédito</span></span>
+                <span className="mb-1 block text-xs text-zinc-400"><span>Subcuenta</span> <span className="text-zinc-600">· sólo cuentas crédito</span></span>
                 <input
                   value={correoSubcuenta}
                   onChange={(e) => setCorreoSubcuenta(e.target.value)}
@@ -1008,7 +1008,7 @@ function Atajo({
           disabled={busy || disabled}
           className="ml-auto inline-flex items-center gap-1.5 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Crear regla
+          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null} <span>Crear regla</span>
         </button>
       </div>
       {note && <p className="text-[11px] text-zinc-500 mt-2 leading-relaxed">{note}</p>}

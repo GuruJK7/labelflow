@@ -231,7 +231,26 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <>
-                  Iniciar sesión
+                  {/* 🔴 El texto VA DENTRO DE UN <span>, nunca suelto.
+
+                      El 14-09-2026 la revisión del Shopify App Store rebotó la app
+                      por "the application lands to an error when trying to log in
+                      to the app dashboard". En el screencast que mandaron se ve
+                      que el revisor tenía la página traducida por Chrome (no habla
+                      español). El traductor reemplaza cada nodo de texto SUELTO por
+                      un <font>; cuando React re-renderiza este botón para mostrar
+                      el spinner, intenta remover el nodo original —que el traductor
+                      ya sustituyó— y revienta con "NotFoundError: Failed to execute
+                      'removeChild' on 'Node'". La app entera queda en blanco.
+
+                      El login del servidor SÍ había funcionado: quedaron seis
+                      `user.login.success` del revisor en la base, uno por cada
+                      intento, mientras él veía la pantalla de error.
+
+                      Con el texto dentro de un elemento, React reemplaza el <span>
+                      —que sigue siendo hijo del botón— en vez de un nodo de texto
+                      huérfano, y la traducción deja de romper nada. */}
+                  <span>Iniciar sesión</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}

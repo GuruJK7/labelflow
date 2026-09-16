@@ -163,7 +163,7 @@ export default function RecoverPage() {
             className="flex items-center gap-2 px-3 py-1.5 bg-cyan-500/10 border border-cyan-500/20 rounded-lg text-cyan-400 text-xs font-medium hover:bg-cyan-500/20 transition-colors disabled:opacity-50"
           >
             <RefreshCw className={cn('w-3.5 h-3.5', syncing && 'animate-spin')} />
-            {syncing ? 'Sincronizando...' : 'Sincronizar Shopify'}
+            <span>{syncing ? 'Sincronizando...' : 'Sincronizar Shopify'}</span>
           </button>
 
         {/* Period selector */}

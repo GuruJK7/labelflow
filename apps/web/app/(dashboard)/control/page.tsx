@@ -483,13 +483,13 @@ export default function ControlPage() {
             }}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-white/[0.05] border border-white/[0.1] text-zinc-200 hover:text-white"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> Reintentar
+            <RefreshCw className="w-3.5 h-3.5" /> <span>Reintentar</span>
           </button>
         </div>
       </div>
     ) : (
       <div className="flex items-center justify-center py-32 text-zinc-500">
-        <Loader2 className="w-5 h-5 animate-spin mr-2" /> Cargando tiendas...
+        <Loader2 className="w-5 h-5 animate-spin mr-2" /> <span>Cargando tiendas...</span>
       </div>
     );
   }
@@ -582,7 +582,7 @@ export default function ControlPage() {
               className="inline-flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-semibold bg-amber-500 text-zinc-950 hover:bg-amber-400 transition-colors disabled:opacity-50"
             >
               {bulkRetrying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
-              Reintentar todo ({totalRetryable})
+              <span>Reintentar todo ({totalRetryable})</span>
             </button>
           )}
           {selectedCount > 0 && (
@@ -592,7 +592,7 @@ export default function ControlPage() {
               className="inline-flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-semibold bg-cyan-500 text-zinc-950 hover:bg-cyan-400 transition-colors disabled:opacity-50"
             >
               {bulkRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ListOrdered className="w-3.5 h-3.5" />}
-              Ejecutar {selectedCount} {lote === 0 ? '· TODOS los pedidos' : 'en orden'}
+              <span>Ejecutar {selectedCount} {lote === 0 ? '· TODOS los pedidos' : 'en orden'}</span>
             </button>
           )}
         </div>
@@ -678,7 +678,7 @@ export default function ControlPage() {
       {stores.length === 0 ? (
         <div className="glass rounded-2xl p-10 text-center text-zinc-500">
           <Store className="w-8 h-8 mx-auto mb-3 opacity-50" />
-          {adminView ? 'No hay tiendas activas todavía.' : 'No tenés tiendas todavía.'}
+          <span>{adminView ? 'No hay tiendas activas todavía.' : 'No tenés tiendas todavía.'}</span>
         </div>
       ) : (
         storeGroups.map((g) => (
@@ -833,12 +833,12 @@ function StoreCard({
         {isRunning ? (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-semibold text-cyan-300">
             <Loader2 className="w-3 h-3 animate-spin" />
-            {total > 0 ? `${processed}/${total}` : 'corriendo'}
+            <span>{total > 0 ? `${processed}/${total}` : 'corriendo'}</span>
           </span>
         ) : isQueued ? (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold text-zinc-400">
             <Clock className="w-3 h-3" />
-            en cola
+            <span>en cola</span>
           </span>
         ) : null}
       </div>
@@ -872,7 +872,7 @@ function StoreCard({
           className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold bg-cyan-500 text-zinc-950 hover:bg-cyan-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-1 justify-center"
         >
           {busy === 'run' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-          {isRunning ? 'En curso' : isQueued ? 'En cola' : `Ejecutar ${loteLabel}`}
+          <span>{isRunning ? 'En curso' : isQueued ? 'En cola' : `Ejecutar ${loteLabel}`}</span>
         </button>
         <button
           onClick={onRetry}

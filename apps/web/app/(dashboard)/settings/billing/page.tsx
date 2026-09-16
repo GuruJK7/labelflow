@@ -254,8 +254,9 @@ function BillingContent() {
                 {(balance?.referralBonusCredits ?? 0) > 0 && (
                   <>
                     {' '}
-                    · más {balance!.referralBonusCredits.toLocaleString('es-UY')} de bonus por
-                    referido
+                    <span>· más </span>
+                    {balance!.referralBonusCredits.toLocaleString('es-UY')}
+                    <span> de bonus por referido</span>
                   </>
                 )}
               </p>
@@ -458,7 +459,7 @@ function BillingContent() {
                   {savings > 0 && (
                     <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-semibold">
                       <TrendingDown className="w-3 h-3" />
-                      -{savings}%
+                      <span>-{savings}%</span>
                     </div>
                   )}
                 </div>
@@ -541,7 +542,7 @@ function BillingContent() {
                   {isLoading ? (
                     <span className="inline-flex items-center gap-2">
                       <span className="w-3.5 h-3.5 border-2 border-current border-r-transparent rounded-full animate-spin" />
-                      Redirigiendo...
+                      <span>Redirigiendo...</span>
                     </span>
                   ) : (
                     shopifyBilling

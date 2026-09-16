@@ -192,7 +192,7 @@ export function DeltaBadge({
   return (
     <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${color}`}>
       <Icon className="w-3 h-3" />
-      {Math.abs(deltaPct).toFixed(1)}%
+      <span>{Math.abs(deltaPct).toFixed(1)}%</span>
     </span>
   );
 }

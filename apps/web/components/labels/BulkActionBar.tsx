@@ -62,7 +62,7 @@ export function BulkActionBar({
         ) : (
           <Download className="w-3.5 h-3.5" />
         )}
-        Descargar
+        <span>Descargar</span>
       </button>
 
       {/* Print button */}
@@ -81,7 +81,7 @@ export function BulkActionBar({
         ) : (
           <Printer className="w-3.5 h-3.5" />
         )}
-        Imprimir
+        <span>Imprimir</span>
       </button>
     </div>
   );

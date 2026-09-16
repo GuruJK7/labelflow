@@ -185,7 +185,8 @@ export default function AdminDashboardPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20 text-zinc-500 text-sm">
-        <Loader2 className="w-4 h-4 animate-spin mr-2" /> Cargando métricas…
+        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+        <span> Cargando métricas…</span>
       </div>
     );
   }
@@ -667,11 +668,15 @@ export default function AdminDashboardPage() {
               </p>
             ) : anthropicCost.configured && !anthropicCost.fetchedOk ? (
               <p className="text-[11px] text-amber-400 mt-0.5">
-                Error al traer Admin API: {anthropicCost.errorMessage}. Mostrando solo Address Resolver.
+                <span>Error al traer Admin API: </span>
+                {anthropicCost.errorMessage}
+                <span>. Mostrando solo Address Resolver.</span>
               </p>
             ) : (
               <p className="text-[11px] text-zinc-500 mt-0.5">
-                Address Resolver únicamente. Configurá <code className="text-zinc-400">ANTHROPIC_ADMIN_API_KEY</code> para ver el spend completo.
+                <span>Address Resolver únicamente. Configurá </span>
+                <code className="text-zinc-400">ANTHROPIC_ADMIN_API_KEY</code>
+                <span> para ver el spend completo.</span>
               </p>
             )}
           </div>

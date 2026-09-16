@@ -335,7 +335,7 @@ export default function RecoverSettingsPage() {
           <div className="space-y-3 pt-1">
             <div>
               <label className="block text-xs text-zinc-400 mb-1.5">
-                Phone Number ID
+                <span>Phone Number ID</span>
                 <span className="text-zinc-600 ml-1">(de Meta Developers → WhatsApp → API Setup)</span>
               </label>
               <input
@@ -348,11 +348,11 @@ export default function RecoverSettingsPage() {
 
             <div>
               <label className="block text-xs text-zinc-400 mb-1.5">
-                API Token (permanente)
+                <span>API Token (permanente)</span>
                 {whatsappApiTokenSet && (
                   <span className="ml-2 inline-flex items-center gap-1 text-emerald-400">
                     <CheckCircle2 className="w-3 h-3" />
-                    Token guardado
+                    <span>Token guardado</span>
                   </span>
                 )}
               </label>
@@ -393,13 +393,13 @@ export default function RecoverSettingsPage() {
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-300 hover:text-white disabled:opacity-40 transition-all"
             >
               {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              Enviar prueba
+              <span>Enviar prueba</span>
             </button>
           </div>
           {testResult && (
             <p className={cn('text-xs mt-2 flex items-center gap-1.5', testResult.ok ? 'text-emerald-400' : 'text-red-400')}>
               {testResult.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-              {testResult.msg}
+              <span>{testResult.msg}</span>
             </p>
           )}
         </div>
@@ -422,7 +422,7 @@ export default function RecoverSettingsPage() {
       {error && (
         <div className="flex items-center gap-2 text-red-400 text-sm">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          {error}
+          <span>{error}</span>
         </div>
       )}
 
@@ -442,7 +442,7 @@ export default function RecoverSettingsPage() {
         ) : (
           <Save className="w-4 h-4" />
         )}
-        {saved ? 'Guardado' : saving ? 'Guardando...' : 'Guardar cambios'}
+        <span>{saved ? 'Guardado' : saving ? 'Guardando...' : 'Guardar cambios'}</span>
       </button>
     </div>
   );

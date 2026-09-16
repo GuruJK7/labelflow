@@ -721,7 +721,7 @@ export function ClientPortal({
                   ) : (
                     <ArrowDown className="h-3.5 w-3.5" />
                   )}
-                  {sortDir === 'asc' ? 'Ascendente' : 'Descendente'}
+                  <span>{sortDir === 'asc' ? 'Ascendente' : 'Descendente'}</span>
                 </button>
               </div>
             </section>
@@ -830,17 +830,17 @@ export function ClientPortal({
                     ) : (
                       <Square className="h-3.5 w-3.5" />
                     )}
-                    {allVisibleSelected ? 'Quitar selección' : 'Seleccionar todo'}
+                    <span>{allVisibleSelected ? 'Quitar selección' : 'Seleccionar todo'}</span>
                   </button>
                 )}
                 <p className="text-sm text-white/40">
                   <span className="font-semibold text-white/70">{filtered.length}</span>{' '}
-                  {filtered.length === 1 ? 'etiqueta' : 'etiquetas'}
+                  <span>{filtered.length === 1 ? 'etiqueta' : 'etiquetas'}</span>
                   {groups.length > 0 && (
                     <>
                       {' · '}
                       <span className="font-semibold text-white/70">{groups.length}</span>{' '}
-                      {groups.length === 1 ? 'día' : 'días'}
+                      <span>{groups.length === 1 ? 'día' : 'días'}</span>
                     </>
                   )}
                 </p>
@@ -899,19 +899,19 @@ export function ClientPortal({
                           </h2>
                         </div>
                         <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs text-white/50">
-                          {items.length} {items.length === 1 ? 'etiqueta' : 'etiquetas'}
+                          {items.length} <span>{items.length === 1 ? 'etiqueta' : 'etiquetas'}</span>
                         </span>
                         {dayPdfIds.length > 0 &&
                           (dayPending > 0 ? (
                             <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-300">
                               <Printer className="h-3 w-3" />
                               {dayPending}{' '}
-                              {dayPending === 1 ? 'pendiente' : 'pendientes'}
+                              <span>{dayPending === 1 ? 'pendiente' : 'pendientes'}</span>
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300">
                               <CheckCircle2 className="h-3 w-3" />
-                              Día impreso
+                              <span>Día impreso</span>
                             </span>
                           ))}
                         {/* Per-store breakdown for this day */}
@@ -953,11 +953,13 @@ export function ClientPortal({
                               ) : (
                                 <Square className="h-3.5 w-3.5" />
                               )}
-                              {dayState === 'none'
-                                ? 'Seleccionar día'
-                                : dayState === 'all'
-                                  ? 'Quitar día'
-                                  : `Día (${dayState === 'some' ? dayPdfIds.filter((id) => selectedIds.has(id)).length : dayPdfIds.length}/${dayPdfIds.length})`}
+                              <span>
+                                {dayState === 'none'
+                                  ? 'Seleccionar día'
+                                  : dayState === 'all'
+                                    ? 'Quitar día'
+                                    : `Día (${dayState === 'some' ? dayPdfIds.filter((id) => selectedIds.has(id)).length : dayPdfIds.length}/${dayPdfIds.length})`}
+                              </span>
                             </button>
                             <button
                               onClick={() => handleBulk('print', dayPdfIds)}
@@ -969,7 +971,7 @@ export function ClientPortal({
                               ) : (
                                 <Printer className="h-3.5 w-3.5" />
                               )}
-                              Imprimir día
+                              <span>Imprimir día</span>
                             </button>
                           </div>
                         )}
@@ -1011,9 +1013,9 @@ export function ClientPortal({
                                   </span>
                                   <span className="text-xs text-white/40">
                                     {zona.items.length}{' '}
-                                    {zona.items.length === 1 ? 'etiqueta' : 'etiquetas'}
+                                    <span>{zona.items.length === 1 ? 'etiqueta' : 'etiquetas'}</span>
                                     {zonaPending > 0 && (
-                                      <> · {zonaPending} sin imprimir</>
+                                      <span> · {zonaPending} sin imprimir</span>
                                     )}
                                   </span>
                                   {zonaPdfIds.length > 0 && (
@@ -1033,9 +1035,11 @@ export function ClientPortal({
                                         ) : (
                                           <Square className="h-3.5 w-3.5" />
                                         )}
-                                        {zonaState === 'all'
-                                          ? 'Quitar grupo'
-                                          : 'Seleccionar grupo'}
+                                        <span>
+                                          {zonaState === 'all'
+                                            ? 'Quitar grupo'
+                                            : 'Seleccionar grupo'}
+                                        </span>
                                       </button>
                                       <button
                                         onClick={() => handleBulk('print', zonaPdfIds)}
@@ -1047,7 +1051,7 @@ export function ClientPortal({
                                         ) : (
                                           <Printer className="h-3.5 w-3.5" />
                                         )}
-                                        Imprimir grupo
+                                        <span>Imprimir grupo</span>
                                       </button>
                                     </div>
                                   )}
@@ -1188,7 +1192,7 @@ export function ClientPortal({
                                               ) : (
                                                 <CheckCircle2 className="h-3.5 w-3.5" />
                                               )}
-                                              {printed ? 'Desmarcar' : 'Marcar'}
+                                              <span>{printed ? 'Desmarcar' : 'Marcar'}</span>
                                             </button>
                                           )}
                                           {l.hasPdf ? (
@@ -1205,7 +1209,7 @@ export function ClientPortal({
                                               className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-500/20"
                                             >
                                               <Download className="h-3.5 w-3.5" />
-                                              PDF
+                                              <span>PDF</span>
                                             </a>
                                           ) : (
                                             <span className="text-xs text-white/25">Sin PDF</span>
@@ -1274,7 +1278,7 @@ export function ClientPortal({
               ) : (
                 <Download className="h-3.5 w-3.5" />
               )}
-              Descargar
+              <span>Descargar</span>
             </button>
             <button
               onClick={() => handleBulk('print')}
@@ -1286,7 +1290,7 @@ export function ClientPortal({
               ) : (
                 <Printer className="h-3.5 w-3.5" />
               )}
-              Imprimir
+              <span>Imprimir</span>
             </button>
           </div>
         </div>

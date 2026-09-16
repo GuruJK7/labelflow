@@ -189,9 +189,9 @@ export function StepTransportista({
                 <label className={labelClass}>Usuario de AhíVA</label>
                 <input value={username} onChange={(e) => setUsername(e.target.value)} className={inputClass} placeholder="Tu cédula o RUT, igual que en el portal" autoComplete="off" maxLength={120} />
                 <p className="text-[11px] text-zinc-500 mt-1">
-                  El mismo con el que entrás a{' '}
+                  <span>El mismo con el que entrás a</span>{' '}
                   <a href="https://ahiva.correo.com.uy" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1">
-                    ahiva.correo.com.uy <ExternalLink className="w-3 h-3" />
+                    <span>ahiva.correo.com.uy</span> <ExternalLink className="w-3 h-3" />
                   </a>
                 </p>
               </div>
@@ -220,7 +220,7 @@ export function StepTransportista({
               </div>
               <div className="flex items-center gap-3 flex-wrap">
                 <PrimaryButton type="submit" busy={busy} busyLabel="Guardando…" arrow={false}>
-                  Guardar
+                  <span>Guardar</span>
                 </PrimaryButton>
                 {connected && (
                   <button type="button" onClick={() => setEditing(false)} className="text-xs text-zinc-500 hover:text-zinc-300 underline underline-offset-2">
@@ -244,7 +244,7 @@ export function StepTransportista({
                 </div>
                 <div className="flex items-center gap-3 flex-wrap">
                   <PrimaryButton type="submit" busy={busy} busyLabel="Guardando…" arrow={false}>
-                    Guardar
+                    <span>Guardar</span>
                   </PrimaryButton>
                   {connected && (
                     <button type="button" onClick={() => setEditing(false)} className="text-xs text-zinc-500 hover:text-zinc-300 underline underline-offset-2">
@@ -268,10 +268,10 @@ export function StepTransportista({
 
       <StepFooter>
         <SecondaryButton onClick={onBack} back>
-          Atrás
+          <span>Atrás</span>
         </SecondaryButton>
         <PrimaryButton onClick={onContinue} disabled={!connected}>
-          Continuar
+          <span>Continuar</span>
         </PrimaryButton>
       </StepFooter>
     </StepCard>

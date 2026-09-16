@@ -53,11 +53,13 @@ export function DacTutorial() {
       {expanded && (
         <div className="px-4 pb-4 pt-1 space-y-4 text-sm text-zinc-300">
           <div className="bg-zinc-900/40 border border-white/[0.04] rounded-lg p-3 leading-relaxed text-xs text-zinc-400">
-            DAC no tiene API pública, así que usamos un{' '}
-            <strong className="text-zinc-200">bot</strong> que inicia sesión en
-            tu cuenta y completa el formulario de creación de guía igual que lo
-            harías vos a mano. Necesitamos las mismas credenciales que usás para
-            entrar al portal.
+            <span>DAC no tiene API pública, así que usamos un</span>{' '}
+            <strong className="text-zinc-200">bot</strong>{' '}
+            <span>
+              que inicia sesión en tu cuenta y completa el formulario de
+              creación de guía igual que lo harías vos a mano. Necesitamos las
+              mismas credenciales que usás para entrar al portal.
+            </span>
           </div>
 
           {/* Where to find creds */}
@@ -71,17 +73,17 @@ export function DacTutorial() {
                   1
                 </span>
                 <div className="flex-1 leading-relaxed">
-                  Andá a{' '}
+                  <span>Andá a</span>{' '}
                   <a
                     href="https://www.dac.com.uy/usuarios/login"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 font-medium"
                   >
-                    dac.com.uy/usuarios/login{' '}
+                    <span>dac.com.uy/usuarios/login</span>{' '}
                     <ExternalLink className="w-3 h-3" />
                   </a>{' '}
-                  — el mismo portal donde generás guías a mano.
+                  <span>— el mismo portal donde generás guías a mano.</span>
                 </div>
               </li>
               <li className="flex gap-3">
@@ -112,19 +114,21 @@ export function DacTutorial() {
               ¿No tenés cuenta DAC todavía?
             </h4>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Registrate primero en{' '}
+              <span>Registrate primero en</span>{' '}
               <a
                 href="https://www.dac.com.uy/usuarios/registro"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 font-medium"
               >
-                dac.com.uy/usuarios/registro{' '}
+                <span>dac.com.uy/usuarios/registro</span>{' '}
                 <ExternalLink className="w-3 h-3" />
               </a>
-              . Es gratis, te toma 2 minutos, y volvés acá con tus datos. (Si tu
-              negocio ya tiene cuenta corporativa, usá esas credenciales — no
-              hace falta crear una nueva.)
+              <span>
+                . Es gratis, te toma 2 minutos, y volvés acá con tus datos. (Si
+                tu negocio ya tiene cuenta corporativa, usá esas credenciales —
+                no hace falta crear una nueva.)
+              </span>
             </p>
           </div>
 
@@ -148,10 +152,14 @@ export function DacTutorial() {
           <div className="flex items-start gap-2 text-[11px] text-zinc-500 leading-relaxed bg-black/20 border border-white/[0.04] rounded-lg p-3">
             <Shield className="w-3.5 h-3.5 text-zinc-400 flex-shrink-0 mt-0.5" />
             <span>
-              Guardamos usuario y contraseña cifrados con AES-256. Sólo se
-              descifran dentro del worker para iniciar sesión, nunca se loguean
-              en texto plano. Podés cambiarlas o borrarlas cuando quieras desde{' '}
-              <span className="text-zinc-300 font-medium">Configuración</span>.
+              <span>
+                Guardamos usuario y contraseña cifrados con AES-256. Sólo se
+                descifran dentro del worker para iniciar sesión, nunca se
+                loguean en texto plano. Podés cambiarlas o borrarlas cuando
+                quieras desde
+              </span>{' '}
+              <span className="text-zinc-300 font-medium">Configuración</span>
+              <span>.</span>
             </span>
           </div>
         </div>

@@ -365,7 +365,7 @@ export const TenantSwitcher: FC = () => {
                       </div>
                       <div className="text-[10px] text-zinc-600 mt-0.5">
                         {t.availableCredits} envío{t.availableCredits === 1 ? '' : 's'} disponible{t.availableCredits === 1 ? '' : 's'}
-                        {!t.onboardingComplete && ' · Onboarding pendiente'}
+                        {!t.onboardingComplete && <span> · Onboarding pendiente</span>}
                       </div>
                     </div>
                   </button>
@@ -396,7 +396,7 @@ export const TenantSwitcher: FC = () => {
                   <Plus className="w-3.5 h-3.5" strokeWidth={2.5} />
                 )}
               </span>
-              {creating ? 'Creando tienda nueva…' : 'Agregar otra tienda'}
+              {creating ? <span>Creando tienda nueva…</span> : <span>Agregar otra tienda</span>}
             </button>
           </div>
         </div>

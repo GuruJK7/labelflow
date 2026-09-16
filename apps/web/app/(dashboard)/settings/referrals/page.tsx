@@ -116,12 +116,12 @@ export default function ReferralsPage() {
                   {copied ? (
                     <>
                       <Check className="w-4 h-4" />
-                      Copiado
+                      <span>Copiado</span>
                     </>
                   ) : (
                     <>
                       <Copy className="w-4 h-4" />
-                      Copiar link
+                      <span>Copiar link</span>
                     </>
                   )}
                 </button>

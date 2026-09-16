@@ -101,12 +101,17 @@ function PendingState({ email }: { email: string }) {
         Confirmá tu email
       </h2>
       <p className="text-sm text-zinc-400 text-center mt-2 leading-relaxed">
-        Te mandamos un mail{email ? ' a ' : '.'}
+        <span>Te mandamos un mail</span>
+        {email ? <span>{' a '}</span> : <span>.</span>}
         {email && (
           <span className="text-zinc-200 font-medium break-all">{email}</span>
         )}
-        {email && '.'} Hacé click en el botón del mail para activar tu cuenta.
-        El link expira en 24 horas.
+        {email && <span>.</span>}
+        <span>
+          {' '}
+          Hacé click en el botón del mail para activar tu cuenta. El link expira
+          en 24 horas.
+        </span>
       </p>
 
       <div className="mt-6 rounded-lg bg-zinc-900/60 border border-white/[0.06] px-4 py-3">
@@ -308,13 +313,15 @@ function ResendBlock({ email: initialEmail }: { email: string }) {
         <RefreshCw
           className={`w-4 h-4 ${state === 'sending' ? 'animate-spin' : ''}`}
         />
-        {cooldown > 0
-          ? `Reenviar en ${cooldown}s`
-          : state === 'sending'
-          ? 'Enviando…'
-          : state === 'sent'
-          ? 'Reenviado · revisá tu inbox'
-          : 'Reenviar email de confirmación'}
+        {cooldown > 0 ? (
+          <span>{`Reenviar en ${cooldown}s`}</span>
+        ) : state === 'sending' ? (
+          <span>Enviando…</span>
+        ) : state === 'sent' ? (
+          <span>Reenviado · revisá tu inbox</span>
+        ) : (
+          <span>Reenviar email de confirmación</span>
+        )}
       </button>
 
       {state === 'sent' && cooldown > 0 && (

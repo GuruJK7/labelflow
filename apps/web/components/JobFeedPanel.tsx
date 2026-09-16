@@ -272,14 +272,14 @@ export function JobFeedPanel({ jobId, onClose }: Props) {
               <span className="font-medium text-white">
                 {job.successCount}
               </span>{' '}
-              {job.successCount === 1 ? 'pedido procesado' : 'pedidos procesados'}
+              <span>{job.successCount === 1 ? 'pedido procesado' : 'pedidos procesados'}</span>
               {failedCount > 0 && (
                 <>
-                  {' · '}
-                  <span className="text-red-400">{failedCount} {failedCount === 1 ? 'error' : 'errores'}</span>
+                  <span>{' · '}</span>
+                  <span className="text-red-400">{failedCount} <span>{failedCount === 1 ? 'error' : 'errores'}</span></span>
                 </>
               )}
-              {' · '}
+              <span>{' · '}</span>
               <span className="text-zinc-500">{durationStr}</span>
             </span>
           </div>
@@ -311,7 +311,7 @@ export function JobFeedPanel({ jobId, onClose }: Props) {
               onClick={() => setShowLogs(!showLogs)}
               className="text-[11px] text-zinc-600 hover:text-zinc-400 transition-colors"
             >
-              {showLogs ? 'Ocultar' : 'Ver'} logs ({visibleLogs.length})
+              <span>{showLogs ? 'Ocultar' : 'Ver'}</span> logs ({visibleLogs.length})
             </button>
             {showLogs && (
               <LogSection logs={visibleLogs} isRunning={false} />
@@ -376,7 +376,7 @@ export function JobFeedPanel({ jobId, onClose }: Props) {
             onClick={() => setShowLogs(!showLogs)}
             className="text-[11px] text-zinc-600 hover:text-zinc-400 transition-colors"
           >
-            {showLogs ? 'Ocultar' : 'Ver'} logs detallados ({visibleLogs.length})
+            <span>{showLogs ? 'Ocultar' : 'Ver'}</span> logs detallados ({visibleLogs.length})
           </button>
         </div>
       )}

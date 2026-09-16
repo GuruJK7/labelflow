@@ -148,9 +148,9 @@ export function OnboardingWizard({
                 Volver a Configuración
               </a>
             ) : state.onboardingComplete ? (
-              'Falta un dato para volver a procesar; completá este paso'
+              <span>Falta un dato para volver a procesar; completá este paso</span>
             ) : (
-              'Configuración inicial: unos 9 minutos en total'
+              <span>Configuración inicial: unos 9 minutos en total</span>
             )}
           </span>
         </div>

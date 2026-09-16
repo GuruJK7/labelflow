@@ -178,7 +178,9 @@ function SignupContent({
           {refCode && (
             <div className="relative mt-4 pt-4 border-t border-cyan-400/15 text-xs">
               <span className="inline-flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 px-2.5 py-1 rounded-full font-medium">
-                Te invitó <strong className="font-bold">{refCode}</strong> · +{REFEREE_BONUS_CREDITS} envíos extra
+                <span>Te invitó </span>
+                <strong className="font-bold">{refCode}</strong>
+                <span> · +{REFEREE_BONUS_CREDITS} envíos extra</span>
               </span>
             </div>
           )}
@@ -207,7 +209,7 @@ function SignupContent({
                 className="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-2.5 rounded-lg text-sm flex items-center gap-2"
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
-                {error}
+                <span>{error}</span>
               </div>
             )}
 
@@ -326,11 +328,11 @@ function SignupContent({
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Creando tu cuenta…
+                  <span>Creando tu cuenta…</span>
                 </>
               ) : (
                 <>
-                  Crear cuenta gratis
+                  <span>Crear cuenta gratis</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}

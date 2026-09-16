@@ -48,7 +48,7 @@ export function Sidebar({ isAdmin = false, cargaPropia = false }: { isAdmin?: bo
           {!collapsed && (
             <div className="animate-fade-in">
               <h1 className="font-bold text-white text-[15px] tracking-tight leading-none">
-                Auto<span className="text-cyan-400">Envía</span>
+                <span>Auto</span><span className="text-cyan-400">Envía</span>
               </h1>
               <p className="text-[10px] text-zinc-600 mt-0.5">por LabelFlow SAS</p>
             </div>
@@ -116,7 +116,7 @@ export function Sidebar({ isAdmin = false, cargaPropia = false }: { isAdmin?: bo
                   )}
                   {collapsed && (
                     <div className="absolute left-full ml-2 px-2.5 py-1.5 bg-zinc-800 text-zinc-200 text-xs rounded-md shadow-xl opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 border border-white/[0.08]">
-                      {section.displayLabel ?? section.label} (Coming Soon)
+                      {section.displayLabel ?? section.label}<span> (Coming Soon)</span>
                     </div>
                   )}
                 </button>
@@ -176,7 +176,7 @@ export function Sidebar({ isAdmin = false, cargaPropia = false }: { isAdmin?: bo
                         {!collapsed && <span>{item.label}</span>}
                         {collapsed && (
                           <div className="absolute left-full ml-2 px-2.5 py-1.5 bg-zinc-800 text-zinc-200 text-xs rounded-md shadow-xl opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 border border-white/[0.08]">
-                            {item.label} (Coming Soon)
+                            {item.label}<span> (Coming Soon)</span>
                           </div>
                         )}
                       </div>

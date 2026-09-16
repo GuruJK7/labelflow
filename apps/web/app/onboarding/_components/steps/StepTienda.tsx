@@ -252,16 +252,19 @@ export function StepTienda({
                     : 'inline-flex items-center justify-center gap-2 w-full sm:w-auto bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2.5 rounded-lg text-xs font-medium transition-colors'
                 }
               >
-                {manualOk
-                  ? 'o instalala desde el App Store de Shopify'
-                  : 'Instalar desde el App Store de Shopify'}{' '}
+                <span>
+                  {manualOk
+                    ? 'o instalala desde el App Store de Shopify'
+                    : 'Instalar desde el App Store de Shopify'}
+                </span>{' '}
                 <ExternalLink className="w-3 h-3" />
               </a>
             ) : (
               !manualOk && (
                 <p className="text-[11px] text-zinc-500 leading-relaxed">
-                  Buscá <span className="text-zinc-300">AutoEnvía</span> en el App Store de Shopify e
-                  instalala desde ahí. Shopify te trae de vuelta acá ya conectado.
+                  <span>Buscá </span>
+                  <span className="text-zinc-300">AutoEnvía</span>
+                  <span> en el App Store de Shopify e instalala desde ahí. Shopify te trae de vuelta acá ya conectado.</span>
                 </p>
               )
             )}
@@ -321,7 +324,9 @@ export function StepTienda({
               Usar esta opción
             </PrimaryButton>
             <p className="text-[11px] text-zinc-500 mt-3 leading-relaxed">
-              Después vas a tener una sección <span className="text-zinc-400">Pedidos</span> para cargarlos y despacharlos cuando quieras.
+              <span>Después vas a tener una sección </span>
+              <span className="text-zinc-400">Pedidos</span>
+              <span> para cargarlos y despacharlos cuando quieras.</span>
             </p>
           </div>
 
