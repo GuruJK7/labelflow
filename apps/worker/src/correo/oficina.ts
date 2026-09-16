@@ -143,6 +143,41 @@ export function resolverOficinaEntrega(
         candidatas: exactas.map((o) => `${o.nombre} (${o.departamento}, ${o.direccion})`),
       };
     }
+
+    // --- 0b. nombre parcial con UNA sola oficina posible ---------------------
+    //
+    // 16-09-2026, producción: el comerciante escribió "Tres Cruces" y el
+    // catálogo dice "Shopping Tres Cruces". El match exacto fallaba, la lista
+    // de sugerencias de abajo tenía exactamente UNA entrada, y el pedido igual
+    // se iba a revisión. Eso contradice la regla de este archivo: se elige
+    // cuando hay una sola respuesta posible, y una única oficina cuyo nombre
+    // CONTIENE lo pedido es una sola respuesta posible.
+    //
+    // Tres límites, todos a propósito:
+    //  · Sólo la dirección "el nombre del catálogo contiene lo pedido". La
+    //    inversa ("lo pedido contiene el nombre") sigue siendo sólo sugerencia:
+    //    "Maldonado Shopping" contiene "Maldonado" y no necesariamente es esa.
+    //  · Dentro del departamento del destino cuando se conoce. Una elección
+    //    EXACTA de otro departamento se respeta (arriba), pero un parcial es
+    //    evidencia más débil y cruzar de departamento con eso es el error de
+    //    los dos fletes.
+    //  · Menos de 4 letras no cuenta: "Tr" matchea por ruido, no por intención.
+    const contienen = catalogo.filter((o) => normalizar(o.nombre).includes(objetivo));
+    const enAmbito = departamento
+      ? contienen.filter((o) => normalizar(o.departamento) === departamento)
+      : contienen;
+    if (objetivo.length >= 4 && enAmbito.length === 1) {
+      const oficina = enAmbito[0];
+      return {
+        ok: true,
+        oficina,
+        motivoEleccion:
+          `Oficina pedida "${pedida}": la única del catálogo` +
+          (departamento ? ` en ${departamento}` : '') +
+          ` con ese nombre es "${oficina.nombre}".`,
+      };
+    }
+
     return {
       ok: false,
       motivo: `La oficina pedida "${pedida}" no existe en el catálogo de Correo.`,

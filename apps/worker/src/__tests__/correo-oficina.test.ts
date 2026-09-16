@@ -46,6 +46,9 @@ const CATALOGO: LocalidadCorreo[] = [
   of('Pocitos', 'Montevideo', 'Montevideo', '11300', 713),
   of('Cordón', 'Montevideo', 'Montevideo', '11200', 714),
   of('Aguada', 'Montevideo', 'Montevideo', '11800', 715),
+  // El nombre real de producción que el 16-09 dejó dos pedidos a revisión:
+  // el comerciante escribe "Tres Cruces" y el catálogo dice esto.
+  of('Shopping Tres Cruces', 'Montevideo', 'Montevideo', '11800', 716),
   // Maldonado, 10 oficinas.
   of('Maldonado', 'Maldonado', 'Maldonado', '20000', 49010),
   of('Punta del Este', 'Punta del Este', 'Maldonado', '20100', 49011),
@@ -174,13 +177,94 @@ describe('resolverOficinaEntrega — oficina pedida explícitamente', () => {
     expect(r.motivoEleccion).toMatch(/NO es el departamento del destino/);
   });
 
-  it('una oficina pedida que no existe se rechaza con sugerencias', () => {
+  // --- nombre parcial: se elige SÓLO si hay una única oficina posible ---------
+  //
+  // 16-09-2026, producción: AE-cmu481nl y AE-cmu4hek1 quedaron "a revisión" con
+  // «La oficina pedida "Tres Cruces" no existe en el catálogo — agencias
+  // posibles: Shopping Tres Cruces (Montevideo)». El selector tenía la única
+  // respuesta en la mano y la rechazó igual. La regla del archivo es "elegir
+  // sólo cuando hay una sola respuesta posible": una sola oficina cuyo nombre
+  // contenga lo pedido ES una sola respuesta posible.
+
+  it('el caso real de producción: "Tres Cruces" elige "Shopping Tres Cruces"', () => {
+    const r = resolverOficinaEntrega(
+      { departamento: 'Montevideo', ciudad: 'Montevideo' },
+      CATALOGO,
+      { oficinaPreferida: 'Tres Cruces' },
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.oficina.nombre).toBe('Shopping Tres Cruces');
+    // El motivo deja claro que no fue un match exacto, para que se vea en el runlog.
+    expect(r.motivoEleccion).toMatch(/Tres Cruces/);
+    expect(r.motivoEleccion).toMatch(/Shopping Tres Cruces/);
+  });
+
+  it('la grafía del comerciante no importa: "tres cruces" también', () => {
+    const r = resolverOficinaEntrega({ departamento: 'Montevideo' }, CATALOGO, {
+      oficinaPreferida: 'tres cruces',
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.oficina.nombre).toBe('Shopping Tres Cruces');
+  });
+
+  it('un nombre truncado que sólo puede ser una oficina también la elige', () => {
     const r = resolverOficinaEntrega({ departamento: 'Maldonado' }, CATALOGO, {
       oficinaPreferida: 'Punta del Est',
     });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.oficina.nombre).toBe('Punta del Este');
+  });
+
+  it('un nombre parcial que matchea VARIAS oficinas va a revisión con sugerencias', () => {
+    // "Colonia" está contenido en las dos "Colonia Miguelete": no hay una sola respuesta.
+    const r = resolverOficinaEntrega({ departamento: 'Colonia' }, CATALOGO, {
+      oficinaPreferida: 'Colonia',
+    });
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.candidatas.join(' ')).toMatch(/Punta del Este/);
+    expect(r.motivo).toMatch(/no existe en el catálogo/);
+    expect(r.candidatas.join(' ')).toMatch(/Colonia Miguelete/);
+  });
+
+  it('un nombre parcial que sólo existe en OTRO departamento no se elige', () => {
+    // Elección explícita exacta de otro departamento se respeta (test de arriba);
+    // pero un parcial es evidencia más débil: cruzar de departamento con eso es
+    // exactamente el error de los dos fletes.
+    const r = resolverOficinaEntrega({ departamento: 'Maldonado' }, CATALOGO, {
+      oficinaPreferida: 'Pocit',
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.candidatas.join(' ')).toMatch(/Pocitos \(Montevideo\)/);
+  });
+
+  it('sin departamento determinable, el parcial vale contra todo el catálogo si es único', () => {
+    const r = resolverOficinaEntrega({}, CATALOGO, { oficinaPreferida: 'Tres Cruces' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.oficina.nombre).toBe('Shopping Tres Cruces');
+  });
+
+  it('un pedido de menos de 4 letras no elige por parcial: matchea por ruido', () => {
+    // "Tr" sólo está en "Shopping Tres Cruces" dentro de Montevideo, pero nadie
+    // pide una agencia con dos letras: es un dato roto, no una intención.
+    const r = resolverOficinaEntrega({ departamento: 'Montevideo' }, CATALOGO, {
+      oficinaPreferida: 'Tr',
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it('un nombre que no se parece a ninguna oficina se rechaza sin sugerencias', () => {
+    const r = resolverOficinaEntrega({ departamento: 'Maldonado' }, CATALOGO, {
+      oficinaPreferida: 'Sucursal Inventada',
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.motivo).toMatch(/no existe en el catálogo/);
+    expect(r.candidatas).toHaveLength(0);
   });
 
   it('el nombre duplicado de producción no se resuelve en silencio', () => {
@@ -416,7 +500,7 @@ describe('el código postal sale del catálogo de Correo, no de las tablas de DA
     expect(r.ok).toBe(false);
     if (r.ok) return;
     // Sin acotar: se devuelven todas las de Montevideo para elegir a mano.
-    expect(r.candidatas).toEqual(['Aguada', 'Ciudad Vieja', 'Cordón', 'Pocitos']);
+    expect(r.candidatas).toEqual(['Aguada', 'Ciudad Vieja', 'Cordón', 'Pocitos', 'Shopping Tres Cruces']);
   });
 
   it('un barrio declarado que no es ninguna oficina NO se pisa con otra señal', () => {
