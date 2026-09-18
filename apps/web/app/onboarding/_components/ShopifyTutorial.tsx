@@ -185,12 +185,12 @@ export function ShopifyTutorial() {
                 >
                   {copiedScope === '__all__' ? (
                     <>
-                      <Check className="w-3 h-3" /> Copiados
+                      <Check className="w-3 h-3" /> <span>Copiados</span>
                     </>
                   ) : (
                     <>
-                      <Copy className="w-3 h-3" /> Copiar los {SCOPE_COUNT}{' '}
-                      alcances (CSV)
+                      <Copy className="w-3 h-3" />{' '}
+                      <span>Copiar los {SCOPE_COUNT} alcances (CSV)</span>
                     </>
                   )}
                 </button>

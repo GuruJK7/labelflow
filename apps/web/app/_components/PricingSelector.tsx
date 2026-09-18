@@ -200,8 +200,17 @@ export function PricingSelector({
       </div>
 
       <p className="mt-5 text-center text-[13px] leading-relaxed text-zinc-400">
+        {/* 🔴 CADA RAMA DEVUELVE UN <span>, NO UN FRAGMENT. Con un fragment, los
+            textos de la rama son hijos directos del <p>; el traductor de Chrome
+            reemplaza cada uno por un <font>, y cuando el slider cambia de rama
+            React intenta remover un nodo que ya no está y tira
+            `NotFoundError: Failed to execute 'removeChild' on 'Node'` — el mismo
+            error por el que Shopify rechazó la app el 14-09-2026. Con un <span>,
+            React remueve UN elemento (el traductor no toca elementos) y el
+            intercambio de ramas es seguro. Reproducido en producción el 18-09
+            apretando el preset de 2.500 envíos con la página traducida. */}
         {quote.needsCustomQuote ? (
-          <>
+          <span>
             Arriba de {fmt(quote.pack.shipments)} envíos por mes el precio se arma a medida:{' '}
             <Link
               href={ALTA}
@@ -210,9 +219,9 @@ export function PricingSelector({
               creá tu cuenta
             </Link>{' '}
             y lo ajustamos con vos desde adentro.
-          </>
+          </span>
         ) : quote.nextStep && quote.nextStep.savesPerShipmentUsdMilli > 0 ? (
-          <>
+          <span>
             Con {fmt(quote.nextStep.shipmentsMore)} envíos más pasás al escalón de{' '}
             {fmt(quote.nextStep.minShipments)} y cada envío te sale{' '}
             <span className="font-semibold text-white">
@@ -224,9 +233,9 @@ export function PricingSelector({
             {quote.nextStep.minShipments > TECHO_AUTOSERVICIO
               ? ' —ese escalón se ajusta a medida, desde tu cuenta.'
               : '.'}
-          </>
+          </span>
         ) : (
-          <>Ya estás en el mejor precio por envío del tarifario.</>
+          <span>Ya estás en el mejor precio por envío del tarifario.</span>
         )}
       </p>
 

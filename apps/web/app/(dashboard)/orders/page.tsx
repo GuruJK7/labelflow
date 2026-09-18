@@ -319,7 +319,7 @@ export default function OrdersPage() {
                                 <div>
                                   <p className="text-zinc-600 mb-0.5">Email enviado</p>
                                   <p className={cn('flex items-center gap-1', label.emailSent ? 'text-emerald-400' : 'text-zinc-500')}>
-                                    {label.emailSent ? <><Mail className="w-3 h-3" /> Si</> : <><MailX className="w-3 h-3" /> No</>}
+                                    {label.emailSent ? <><Mail className="w-3 h-3" /> <span>Si</span></> : <><MailX className="w-3 h-3" /> <span>No</span></>}
                                   </p>
                                 </div>
                               </div>

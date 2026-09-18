@@ -73,11 +73,11 @@ export function CopyButton({
     >
       {copied ? (
         <>
-          <Check className="w-3.5 h-3.5" /> Copiado
+          <Check className="w-3.5 h-3.5" /> <span>Copiado</span>
         </>
       ) : (
         <>
-          <Copy className="w-3.5 h-3.5" /> {label ?? 'Copiar'}
+          <Copy className="w-3.5 h-3.5" /> <span>{label ?? 'Copiar'}</span>
         </>
       )}
     </button>
