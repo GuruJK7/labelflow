@@ -61,6 +61,33 @@ export async function GET(req: NextRequest) {
     console.info(
       `[shopify-billing] retorno purchase=${purchase.id} status=${status} credited=${res.credited}`,
     );
+
+    // 🔴 NO SE CANTA ÉXITO SIN HABER ACREDITADO. Acá el cargo ya está ACTIVE,
+    // o sea que Shopify YA le cobró al comerciante. Si `settlePaidPurchase`
+    // devolvió `credited:false`, los envíos no entraron y la pantalla verde
+    // «Pago acreditado» sería mentira sobre plata cobrada — el peor cartel
+    // posible, porque el comerciante se va tranquilo con saldo cero.
+    //
+    // `credited:false` acá tiene dos causas de distinto signo:
+    //  - CARRERA BENIGNA: el webhook llegó primero y ya acreditó. La fila
+    //    quedó en PAID, no hay nada roto, y el comerciante tiene que ver éxito.
+    //  - PROBLEMA REAL: la fila estaba en FAILED (barrida) o el pago quedó
+    //    pegado a otra compra. Ahí no se acreditó nada y hay que gritar.
+    // Se distinguen releyendo el estado, que es la única autoridad.
+    if (!res.credited) {
+      const fresca = await db.creditPurchase.findUnique({
+        where: { id: purchase.id },
+        select: { status: true },
+      });
+      if (fresca?.status !== 'PAID') {
+        console.error(
+          `[shopify-billing] 🔴 COBRADO SIN ACREDITAR purchase=${purchase.id} ` +
+            `charge=${purchase.mpPreferenceId} motivo=${res.reason} estado=${fresca?.status ?? 'sin_fila'}`,
+        );
+        return destino('error=pago_sin_acreditar');
+      }
+    }
+
     return destino('success=true');
   }
 

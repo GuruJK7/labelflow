@@ -18,6 +18,7 @@ import { db } from '../db';
 import logger from '../logger';
 import { deductCreditsAndStamp } from '../credits';
 import { isJobStillAlive } from './job-liveness';
+import { esCompraAbandonada, VENTANA_MINIMA_MS, rielDeCompra } from './stale-purchase';
 
 // Cadence: a typical order finishes in 20–60 s (YELLOW with AI resolver can go
 // up to ~90 s).
@@ -44,10 +45,11 @@ const STALE_JOB_NO_PROGRESS_MS = 8 * 60 * 1000; // 8 minutes
 // captcha + Plexo + historial probe) plenty of room before we intervene.
 const ORPHAN_PENDING_SHIPMENT_MS = 15 * 60 * 1000;
 // CreditPurchase sigue PENDING porque el usuario hizo click en "Comprar"
-// pero abandonó el flow de MercadoPago. La preferencia MP expira a las 24h
-// (default), así que cualquier PENDING más viejo que eso es ruido en el
-// historial del tenant — lo flippeamos a FAILED.
-const STALE_CREDIT_PURCHASE_MS = 24 * 60 * 60 * 1000;
+// pero abandonó el flow del riel de pago. Cuánto se espera antes de darla por
+// abandonada depende del riel y vive en ./stale-purchase: MercadoPago expira la
+// preferencia a las 24 h, pero el cargo de Shopify se puede aprobar hasta dos
+// días después. Un corte único de 24 h mataba la fila mientras el cargo todavía
+// se podía cobrar de verdad.
 const MAX_AUTO_RETRIES = 3;
 
 /**
@@ -373,24 +375,57 @@ export async function runReconciliation(): Promise<void> {
     // ================================================
     //
     // El handler /api/credit-packs/checkout crea un row PENDING antes de
-    // redirigir a MercadoPago. Si el usuario abandona el checkout, el row
-    // se queda PENDING para siempre y aparece en su historial como pago en
-    // proceso (falso positivo). MP expira la preferencia a 24h por default,
-    // así que cualquier row más viejo que eso ya no se va a aprobar.
-    const stalePurchaseCutoff = new Date(Date.now() - STALE_CREDIT_PURCHASE_MS);
-    const stalePurchases = await db.creditPurchase.updateMany({
+    // redirigir al riel de pago. Si el usuario abandona el checkout, el row se
+    // queda PENDING para siempre y aparece en su historial como pago en proceso
+    // (falso positivo).
+    //
+    // 🔴 EL CORTE ES POR RIEL, NO ÚNICO. Ver ./stale-purchase: MercadoPago
+    // expira a las 24 h, pero Shopify acepta la aprobación del cargo hasta dos
+    // días después. Con el corte único de 24 h que había acá, una compra de
+    // Shopify aprobada en la hora 30 se cobraba de verdad y no acreditaba nada,
+    // porque settlePaidPurchase exige que la fila siga en PENDING.
+    //
+    // La query trae candidatos con el corte MÁS CORTO y el filtro fino lo hace
+    // esCompraAbandonada() en memoria: así el predicado que decide es el mismo
+    // que cubren los tests (stale-purchase-ventana-por-riel.test.ts). El set es
+    // chico por definición — son checkouts abandonados.
+    const ahora = new Date();
+    const candidatas = await db.creditPurchase.findMany({
       where: {
         status: 'PENDING',
-        createdAt: { lt: stalePurchaseCutoff },
+        createdAt: { lt: new Date(ahora.getTime() - VENTANA_MINIMA_MS) },
       },
-      data: {
-        status: 'FAILED',
-      },
+      select: { id: true, mpExternalRef: true, createdAt: true },
     });
+
+    const abandonadas = candidatas.filter((c) => esCompraAbandonada(c, ahora));
+    const perdonadas = candidatas.length - abandonadas.length;
+
+    if (perdonadas > 0) {
+      // Visible a propósito: son compras que el barrido viejo habría matado.
+      logger.info(
+        { perdonadas, rieles: [...new Set(candidatas.map((c) => rielDeCompra(c.mpExternalRef)))] },
+        '[Reconcile] PENDING purchases spared: still inside their rail approval window',
+      );
+    }
+
+    const stalePurchases = abandonadas.length
+      ? await db.creditPurchase.updateMany({
+          where: { id: { in: abandonadas.map((c) => c.id) }, status: 'PENDING' },
+          data: { status: 'FAILED' },
+        })
+      : { count: 0 };
 
     if (stalePurchases.count > 0) {
       logger.warn(
-        { count: stalePurchases.count, olderThanHours: STALE_CREDIT_PURCHASE_MS / (60 * 60 * 1000) },
+        {
+          count: stalePurchases.count,
+          porRiel: abandonadas.reduce<Record<string, number>>((acc, c) => {
+            const riel = rielDeCompra(c.mpExternalRef);
+            acc[riel] = (acc[riel] ?? 0) + 1;
+            return acc;
+          }, {}),
+        },
         '[Reconcile] Marked stale PENDING CreditPurchase rows as FAILED (abandoned checkouts)',
       );
       fixed += stalePurchases.count;

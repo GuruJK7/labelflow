@@ -93,6 +93,48 @@ interface CreditState {
   }>;
 }
 
+/**
+ * Qué se le dice al comerciante por cada motivo con el que puede volver el
+ * riel de Shopify (`/api/credit-packs/shopify-return`). Sin esto, el cartel
+ * genérico «usá otro medio» era además un mal consejo dentro de la app de
+ * Shopify, donde la Billing API es el único medio permitido.
+ */
+const MENSAJE_ERROR: Record<string, { titulo: string; detalle: string }> = {
+  rechazado: {
+    titulo: 'Rechazaste el cargo',
+    detalle: 'No se te cobró nada. Podés volver a elegir un pack cuando quieras.',
+  },
+  pago_sin_acreditar: {
+    titulo: 'Pagaste, pero los envíos no se acreditaron',
+    detalle:
+      'Shopify confirmó el cobro y quedó trabado de nuestro lado. Ya nos llegó el aviso: escribinos y lo resolvemos sin que tengas que pagar de nuevo.',
+  },
+  sesion: {
+    titulo: 'Se cerró la sesión',
+    detalle: 'Volvé a entrar y fijate en el historial si el pago quedó registrado antes de reintentar.',
+  },
+  tienda: {
+    titulo: 'La tienda no está conectada',
+    detalle: 'Reconectá tu tienda de Shopify desde Ajustes y volvé a intentar.',
+  },
+  token: {
+    titulo: 'Perdimos el permiso con Shopify',
+    detalle: 'Reinstalá la app desde tu panel de Shopify para renovar el acceso.',
+  },
+  compra_no_encontrada: {
+    titulo: 'No encontramos esa compra',
+    detalle: 'Puede ser un link viejo. Elegí el pack de nuevo desde esta pantalla.',
+  },
+  cargo_sin_id: {
+    titulo: 'La compra quedó incompleta',
+    detalle: 'No llegamos a crear el cargo en Shopify. No se te cobró nada: reintentá.',
+  },
+  falta_compra: {
+    titulo: 'Link incompleto',
+    detalle: 'Volvé a elegir el pack desde esta pantalla.',
+  },
+};
+
 export default function BillingPage() {
   return (
     <Suspense fallback={<div className="text-zinc-500 text-sm p-8">Cargando...</div>}>
@@ -107,7 +149,13 @@ function BillingContent() {
   const [loading, setLoading] = useState<string | null>(null);
 
   const success = searchParams.get('success') === 'true';
-  const error = searchParams.get('error') === 'true';
+  // 🔴 CUALQUIER `error=` PINTA, NO SÓLO `error=true`. El riel histórico vuelve
+  // con `?error=true`, pero el de Shopify redirige con el motivo adentro
+  // (`error=rechazado`, `error=token`, …). Mientras esto comparaba contra la
+  // cadena 'true', todos esos caminos dejaban al comerciante en una pantalla
+  // muda: declinaba el cargo y no pasaba absolutamente nada en la UI.
+  const errorCodigo = searchParams.get('error');
+  const error = Boolean(errorCodigo);
   const pending = searchParams.get('pending') === 'true';
   // Whop vuelve a la URL de retorno con ?checkout_status=success&payment_id=…
   // (docs/PAGOS.md §2). Acá no se acredita nada: eso lo hace el webhook.
@@ -194,9 +242,18 @@ function BillingContent() {
             <AlertCircle className="w-5 h-5 text-red-400" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-red-300">Error en el pago</p>
+            {/* El <span> no es decorativo: el traductor de Chrome reemplaza cada
+                nodo de texto suelto por un <font>, y un texto dinámico que React
+                pueda re-renderizar tiene que estar dentro de un elemento propio.
+                Es la misma regla que fijó traductor-no-rompe.test.ts. */}
+            <p className="text-sm font-semibold text-red-300">
+              <span>{MENSAJE_ERROR[errorCodigo ?? '']?.titulo ?? 'Error en el pago'}</span>
+            </p>
             <p className="text-xs text-red-400/70 mt-0.5">
-              No se pudo procesar el pago. Probá nuevamente o usá otro medio.
+              <span>
+                {MENSAJE_ERROR[errorCodigo ?? '']?.detalle ??
+                  'No se pudo procesar el pago. Probá nuevamente.'}
+              </span>
             </p>
           </div>
         </div>
