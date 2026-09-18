@@ -52,6 +52,10 @@ interface StoreRow {
   slug: string;
   shopifyConnected: boolean;
   dacConnected: boolean;
+  /** Correo Uruguayo elegido y con credenciales. Opcional: una respuesta vieja no lo trae. */
+  correoConnected?: boolean;
+  /** 'test' | 'prod'. En prueba el worker no emite guías reales aunque la tienda esté conectada. */
+  correoAmbiente?: string | null;
   stuck: { total: number; retryable: number; orphan: number; remitente: number };
   doneToday: number;
   doneMonth: number;
@@ -286,7 +290,7 @@ export default function ControlPage() {
     async (tenantId: string, retryable: number) => {
       if (retryable <= 0) return;
       const n = Math.min(retryable, 50);
-      if (!window.confirm(`¿Reintentar ${n} envío(s) sin completar de esta tienda? Se reprocesan en DAC.`)) return;
+      if (!window.confirm(`¿Reintentar ${n} envío(s) sin completar de esta tienda? Se reprocesan en el transportista de cada tienda.`)) return;
       setError('');
       setBusy((b) => ({ ...b, [tenantId]: 'retry' }));
       await postRetry(tenantId, n);
@@ -309,7 +313,7 @@ export default function ControlPage() {
     const targets = (overview?.stores ?? []).filter((s) => s.stuck.retryable > 0);
     if (targets.length === 0) return;
     const totalN = targets.reduce((sum, s) => sum + Math.min(s.stuck.retryable, 50), 0);
-    if (!window.confirm(`¿Reintentar ${totalN} envío(s) sin completar de ${targets.length} tienda(s)? Se reprocesan en DAC.`)) return;
+    if (!window.confirm(`¿Reintentar ${totalN} envío(s) sin completar de ${targets.length} tienda(s)? Se reprocesan en el transportista de cada tienda.`)) return;
     setError('');
     setBulkRetrying(true);
     const failed: string[] = [];
@@ -800,6 +804,9 @@ function StoreCard({
   const total = running?.totalOrders ?? 0;
   const review = store.stuck.orphan + store.stuck.remitente;
   const pendingCount = pending?.count;
+  // De dónde sale "Para completar": Shopify para las tiendas de Shopify; para
+  // las de la fuente dashboard es su propio dashboard (DEPO en las del depósito).
+  const origenPendientes = store.depo ? 'DEPO' : store.fuente === 'dashboard' ? 'dashboard' : 'Shopify';
 
   return (
     <div
@@ -826,6 +833,14 @@ function StoreCard({
           <div className="mt-1 flex items-center gap-2 text-[11px]">
             <ConnDot ok={store.shopifyConnected} label="Shopify" />
             <ConnDot ok={store.dacConnected} label="DAC" />
+            {/* Correo Uruguayo. Hasta acá la fila sólo tenía DAC y una tienda de
+                Correo se veía con todo apagado, como si no tuviera transportista.
+                En prueba va ámbar y lo dice: está conectada pero no sale nada. */}
+            <ConnDot
+              ok={store.correoConnected === true}
+              warn={store.correoConnected === true && store.correoAmbiente !== 'prod'}
+              label={store.correoConnected === true && store.correoAmbiente !== 'prod' ? 'Correo (prueba)' : 'Correo'}
+            />
             <span className="text-zinc-600">·</span>
             <span className="text-zinc-500">{timeAgo(store.lastRunAt)}</span>
           </div>
@@ -849,7 +864,10 @@ function StoreCard({
           icon={Package}
           label="Para completar"
           value={pendingCount == null ? '—' : pendingCount}
-          hint={pending?.skipped === 'no-token' ? 'sin Shopify' : pending?.cached ? 'Shopify' : 'Shopify (live)'}
+          // El número de una tienda de la fuente dashboard sale de SU dashboard
+          // (`contarEnDashboard`), no de Shopify: decir "Shopify (live)" en una
+          // tarjeta de DEPO era falso y confundía al operador.
+          hint={pending?.skipped === 'no-token' ? `sin ${origenPendientes}` : pending?.cached ? origenPendientes : `${origenPendientes} (live)`}
           tone="cyan"
         />
         <Metric
@@ -908,10 +926,14 @@ function StoreCard({
   );
 }
 
-function ConnDot({ ok, label }: { ok: boolean; label: string }) {
+function ConnDot({ ok, warn = false, label }: { ok: boolean; warn?: boolean; label: string }) {
+  // `warn` = conectada pero en un estado que no despacha (Correo en prueba):
+  // ni verde (mentiría) ni gris (parecería desconectada).
+  const tone = !ok ? 'text-zinc-600' : warn ? 'text-amber-400/90' : 'text-emerald-400/80';
+  const dot = !ok ? 'bg-zinc-600' : warn ? 'bg-amber-400' : 'bg-emerald-400';
   return (
-    <span className={cn('inline-flex items-center gap-1', ok ? 'text-emerald-400/80' : 'text-zinc-600')}>
-      <span className={cn('h-1.5 w-1.5 rounded-full', ok ? 'bg-emerald-400' : 'bg-zinc-600')} />
+    <span className={cn('inline-flex items-center gap-1', tone)}>
+      <span className={cn('h-1.5 w-1.5 rounded-full', dot)} />
       {label}
     </span>
   );

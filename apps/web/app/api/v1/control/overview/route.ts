@@ -28,7 +28,7 @@ import { db } from '@/lib/db';
 import { LabelStatus, JobStatus } from '@prisma/client';
 import { apiError, apiSuccess } from '@/lib/api-utils';
 import { getControlActor, controlTenantWhere } from '@/lib/control-scope';
-import { storeConnection } from '@/lib/onboarding-state';
+import { hasCorreo, storeConnection } from '@/lib/onboarding-state';
 import { getStuckBreakdown } from '@/lib/stuck-labels';
 import { startOfDayUy, startOfMonthUy } from '@/lib/uy-time';
 
@@ -76,6 +76,15 @@ export async function GET() {
       dashboardUrl: true,
       dashboardToken: true,
       internalSourceEnabled: true,
+      // Correo Uruguayo. Igual que las de DAC: ciphertext que se lee SÓLO para
+      // derivar el booleano de abajo (`correoConnected`) y nunca se devuelve.
+      // El ambiente sí sale tal cual: no es un secreto y el operador tiene que
+      // verlo — en `test` el worker manda `testMode: true` y no se emite una
+      // sola guía real, así que una tienda "conectada" en prueba no despacha.
+      correoEnabled: true,
+      correoUser: true,
+      correoPassword: true,
+      correoAmbiente: true,
     },
   });
 
@@ -164,6 +173,14 @@ export async function GET() {
       slug: t.slug,
       shopifyConnected: !!t.shopifyStoreUrl && !!t.shopifyToken,
       dacConnected: !!t.dacUsername && !!t.dacPassword,
+      // Correo Uruguayo elegido y con credenciales (misma regla que el gate del
+      // onboarding: el interruptor apagado con usuario y clave guardados es una
+      // tienda de DAC). Hasta acá la tarjeta sólo tenía el punto de DAC, y una
+      // tienda de Correo —por ejemplo las `depo-*-correo` que da de alta DEPO—
+      // se veía con DAC apagado y nada más, como si no tuviera transportista.
+      correoConnected: hasCorreo(t),
+      // 'test' | 'prod'. Sólo tiene sentido cuando Correo está conectado.
+      correoAmbiente: t.correoAmbiente,
       // Tienda dada de alta desde DEPO (el depósito). El marcador es el slug:
       // `/api/provisioning/dac-tenant` arma `ae-<sellerSlug>` y DEPO manda
       // siempre `depo-<marca>`, así que estas cuentas —y sólo estas— empiezan
