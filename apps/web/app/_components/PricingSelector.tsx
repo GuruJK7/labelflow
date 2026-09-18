@@ -200,17 +200,25 @@ export function PricingSelector({
       </div>
 
       <p className="mt-5 text-center text-[13px] leading-relaxed text-zinc-400">
-        {/* 🔴 CADA RAMA DEVUELVE UN <span>, NO UN FRAGMENT. Con un fragment, los
-            textos de la rama son hijos directos del <p>; el traductor de Chrome
-            reemplaza cada uno por un <font>, y cuando el slider cambia de rama
-            React intenta remover un nodo que ya no está y tira
-            `NotFoundError: Failed to execute 'removeChild' on 'Node'` — el mismo
-            error por el que Shopify rechazó la app el 14-09-2026. Con un <span>,
-            React remueve UN elemento (el traductor no toca elementos) y el
-            intercambio de ramas es seguro. Reproducido en producción el 18-09
-            apretando el preset de 2.500 envíos con la página traducida. */}
+        {/* 🔴 CADA RAMA ES UN <span> CON SU PROPIA `key`. Las dos cosas hacen falta,
+            y la `key` es la que de verdad arregla el bug.
+
+            El traductor de Chrome reemplaza cada nodo de texto suelto por un
+            <font> que lo contiene; los ELEMENTOS no los toca, así que un
+            elemento sigue siendo hijo de su padre original. El error
+            `NotFoundError: Failed to execute 'removeChild' on 'Node'` —el que
+            hizo que Shopify rechazara la app el 14-09-2026— salta cuando React
+            intenta remover un nodo de TEXTO que ya no está donde cree.
+
+            Envolver cada rama en un <span> NO alcanzaba, y se comprobó en
+            producción el 18-09: si las dos ramas renderizan el mismo tipo de
+            elemento, React no desmonta nada, reutiliza el <span> y reconcilia
+            sus HIJOS — que siguen siendo textos sueltos. El crash seguía igual.
+
+            Con una `key` distinta por rama, React desmonta el <span> viejo y
+            monta el nuevo: remueve UN elemento, que sí es hijo del <p>. */}
         {quote.needsCustomQuote ? (
-          <span>
+          <span key="a-medida">
             Arriba de {fmt(quote.pack.shipments)} envíos por mes el precio se arma a medida:{' '}
             <Link
               href={ALTA}
@@ -221,7 +229,7 @@ export function PricingSelector({
             y lo ajustamos con vos desde adentro.
           </span>
         ) : quote.nextStep && quote.nextStep.savesPerShipmentUsdMilli > 0 ? (
-          <span>
+          <span key="proximo-escalon">
             Con {fmt(quote.nextStep.shipmentsMore)} envíos más pasás al escalón de{' '}
             {fmt(quote.nextStep.minShipments)} y cada envío te sale{' '}
             <span className="font-semibold text-white">
@@ -235,7 +243,7 @@ export function PricingSelector({
               : '.'}
           </span>
         ) : (
-          <span>Ya estás en el mejor precio por envío del tarifario.</span>
+          <span key="mejor-precio">Ya estás en el mejor precio por envío del tarifario.</span>
         )}
       </p>
 

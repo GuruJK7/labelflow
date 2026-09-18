@@ -129,7 +129,7 @@ export function ShipmentsByStore() {
           <Loader2 className="w-5 h-5 animate-spin" />
         </div>
       ) : data && data.stores.length > 0 && data.total > 0 ? (
-        <div style={{ width: '100%', height: chartHeight }} className={cn(loading && 'opacity-60')}>
+        <div key="grafico" style={{ width: '100%', height: chartHeight }} className={cn(loading && 'opacity-60')}>
           <ResponsiveContainer>
             <BarChart data={data.stores} layout="vertical" margin={{ top: 0, right: 24, left: 8, bottom: 0 }} barCategoryGap="28%">
               <XAxis type="number" domain={[0, maxCount]} hide />
@@ -162,7 +162,7 @@ export function ShipmentsByStore() {
           </ResponsiveContainer>
         </div>
       ) : (
-        <div className="py-10 text-center text-sm text-zinc-500">Sin envíos en este período.</div>
+        <div key="vacio" className="py-10 text-center text-sm text-zinc-500">Sin envíos en este período.</div>
       )}
     </div>
   );

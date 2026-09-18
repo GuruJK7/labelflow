@@ -356,13 +356,13 @@ export function VolumeSelector({
                */}
               {quote.needsCustomQuote &&
                 (shopifyBilling ? (
-                  <p className="mt-2 text-amber-300/90">
+                  <p key="shopify" className="mt-2 text-amber-300/90">
                     Para {fmt(quote.monthlyShipments)} envíos por mes no hay un paquete único: se
                     compra el más grande {quote.quantity} veces y cada cargo va a la factura de tu
                     tienda de Shopify.
                   </p>
                 ) : (
-                  <p className="mt-2 text-amber-300/90">
+                  <p key="a-medida" className="mt-2 text-amber-300/90">
                     Para {fmt(quote.monthlyShipments)} envíos por mes el precio se arma a medida:
                     escribinos por WhatsApp y lo cerramos. Comprando paquetes sueltos te saldría más
                     caro que el precio de tu escalón — mientras tanto podés repetir la compra{' '}

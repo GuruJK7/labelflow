@@ -105,6 +105,83 @@ function fragmentsDeRamaConTextoSuelto(
   return hallazgos;
 }
 
+/**
+ * 🔴 EL SEGUNDO INVARIANTE, y el que faltaba: la rama necesita `key`.
+ *
+ * Envolver cada rama en un <span> NO alcanza, y costó un deploy comprobarlo.
+ * Si las dos ramas de un ternario renderizan el MISMO tipo de elemento, React
+ * no desmonta nada: reutiliza el elemento y reconcilia sus HIJOS, que siguen
+ * siendo los nodos de texto que el traductor convirtió en <font>. El
+ * `removeChild` vuelve a saltar igual.
+ *
+ * Verificado el 18-09 con el traductor simulado sobre la landing: con las tres
+ * ramas envueltas en <span> pero SIN key, un click en el preset de 2.500 tira
+ * la página (body de 7.528 a 213 caracteres, y React apunta «at span / at p»).
+ * Con una key distinta por rama: 0 errores en 9 presets + 4 movidas de slider.
+ *
+ * 🔑 EL CRITERIO ES ESTRECHO A PROPÓSITO, y afinarlo importó: pedir key a
+ * TODA rama con texto marcaba 49 sitios, casi todos inofensivos. Si las dos
+ * ramas tienen la MISMA forma de hijos, React sólo actualiza el texto —y
+ * actualizar un texto es seguro, porque el nodo sigue existiendo dentro del
+ * <font>. El crash necesita que React tenga que REMOVER un hijo de texto, o
+ * sea que las dos ramas difieran en la forma de sus hijos. Con ese criterio
+ * los peligrosos reales eran 2.
+ */
+function ramasQueRemuevenTexto(
+  archivo: string,
+  codigo: string,
+): Array<{ linea: number; detalle: string }> {
+  const src = ts.createSourceFile(archivo, codigo, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const hallazgos: Array<{ linea: number; detalle: string }> = [];
+
+  const pelar = (n: ts.Node): ts.Node => (ts.isParenthesizedExpression(n) ? pelar(n.expression) : n);
+  const etiqueta = (n: ts.Node): string | null =>
+    ts.isJsxElement(n) ? n.openingElement.tagName.getText() : ts.isJsxFragment(n) ? '<>' : null;
+  const conKey = (n: ts.Node): boolean =>
+    ts.isJsxElement(n) &&
+    n.openingElement.attributes.properties.some((a) => ts.isJsxAttribute(a) && a.name.getText() === 'key');
+
+  /** La "forma" de los hijos: qué tipo de hijo hay y en qué orden. */
+  const forma = (n: ts.Node): string => {
+    if (!ts.isJsxElement(n) && !ts.isJsxFragment(n)) return 'X';
+    return n.children
+      .filter((c) => !(ts.isJsxText(c) && !c.text.trim()))
+      .map((c) =>
+        ts.isJsxText(c) ? 'T'
+          : ts.isJsxExpression(c) ? 'E'
+          : ts.isJsxElement(c) ? 'N:' + c.openingElement.tagName.getText()
+          : ts.isJsxSelfClosingElement(c) ? 'N:' + c.tagName.getText()
+          : '?',
+      )
+      .join(',');
+  };
+  const conTextoDirecto = (n: ts.Node): boolean =>
+    (ts.isJsxElement(n) || ts.isJsxFragment(n)) &&
+    n.children.some((c) => ts.isJsxText(c) && c.text.trim().length > 1);
+
+  const visitar = (n: ts.Node): void => {
+    if (ts.isConditionalExpression(n)) {
+      const a = pelar(n.whenTrue);
+      const b = pelar(n.whenFalse);
+      const ta = etiqueta(a);
+      const tb = etiqueta(b);
+      if (ta && tb && ta === tb && (conTextoDirecto(a) || conTextoDirecto(b))) {
+        if (forma(a) !== forma(b) && !(conKey(a) && conKey(b))) {
+          const { line } = src.getLineAndCharacterOfPosition(n.getStart());
+          hallazgos.push({
+            linea: line + 1,
+            detalle: `<${ta}> con hijos [${forma(a)}] vs [${forma(b)}] y sin key`,
+          });
+        }
+      }
+    }
+    ts.forEachChild(n, visitar);
+  };
+
+  visitar(src);
+  return hallazgos;
+}
+
 /** Todo .tsx de la app: el barrido no vuelve a depender de una lista a mano. */
 function todosLosTsx(dir: string): string[] {
   const out: string[] = [];
@@ -144,6 +221,23 @@ describe('🔴 traducir la página no puede tirar abajo la app (Shopify 4.5.5)',
         ofensores.join('\n'),
     ).toEqual([]);
   });
+
+  it('🔴 dos ramas del mismo tag con hijos distintos necesitan key: si no, React remueve texto', () => {
+    const ofensores: string[] = [];
+    for (const abs of [...todosLosTsx(join(RAIZ, 'app')), ...todosLosTsx(join(RAIZ, 'components'))]) {
+      const rel = abs.slice(RAIZ.length + 1);
+      for (const h of ramasQueRemuevenTexto(abs, readFileSync(abs, 'utf-8'))) {
+        ofensores.push(`${rel}:${h.linea} → ${h.detalle}`);
+      }
+    }
+    expect(
+      ofensores,
+      'React va a REUTILIZAR el elemento (mismo tag, sin key) y, como los hijos difieren, va a ' +
+        'remover un hijo de texto — que con la página traducida ya no está donde cree. Es el crash ' +
+        'del rechazo del 14-09. Dale a cada rama una key distinta.\n\n' + ofensores.join('\n'),
+    ).toEqual([]);
+  });
+
 
   it('🔴 el simulador de precios de la landing usa <span>, no fragments', () => {
     // Regresión puntual: este archivo se saltó a propósito en el fix del 16-09
