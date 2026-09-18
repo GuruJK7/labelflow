@@ -183,6 +183,26 @@ export function StepTransportista({
             ))}
           </div>
 
+          {/* 🔴 LA SALIDA PARA QUIEN NO TIENE CUENTA DE TRANSPORTISTA.
+              Todas las pantallas del panel rebotan a este wizard hasta que hay
+              un transportista cargado, y las dos opciones exigen una cuenta
+              uruguaya que alguien que evalúa el producto desde afuera no tiene
+              ni puede conseguir. El dato que lo desbloquea ya era cierto y no
+              estaba escrito en ninguna parte: acá NO se valida contra el portal
+              del transportista (DAC bloquea las pruebas automáticas), así que
+              se puede completar y seguir. Decirlo es la diferencia entre ver el
+              producto y darlo por inaccesible. */}
+          <div className="mb-5">
+            <Notice kind="info">
+              <span>
+              ¿Todavía no tenés cuenta de DAC ni de Correo Uruguayo? Completá igual y seguí: estos
+              datos no se verifican contra el transportista en este paso, quedan guardados y los
+              podés cambiar cuando quieras desde Configuración. Vas a poder recorrer todo el panel;
+                lo único que necesita la cuenta real es despachar un envío de verdad.
+              </span>
+            </Notice>
+          </div>
+
           {esCorreo ? (
             <form onSubmit={guardarCorreo} className="space-y-4">
               <div>
