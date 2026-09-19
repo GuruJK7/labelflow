@@ -239,15 +239,28 @@ export async function GET(req: NextRequest) {
 
     await registrarWebhooks(shop, accessToken, origin);
 
-    // Enlace para definir contraseña, SÓLO para cuentas recién creadas (D12).
-    // En una reinstalación o reapertura el comerciante ya tiene contraseña:
-    // mandarle otro reset cada vez invalidaría la que tiene vigente y le
-    // llenaría el inbox de "restablecer contraseña" que no pidió.
+    // Enlace para definir contraseña: para cuentas recién creadas (D12) y
+    // también para una reinstalación de alguien que NUNCA llegó a elegirla.
+    //
+    // El caso que faltaba: el comerciante instala (llega el mail de elegir
+    // contraseña), no lo usa o se le vence —dura 1 h—, desinstala, y al otro
+    // día reinstala. Eso es 'existing', y sin esto aterrizaba en /login con
+    // «iniciá sesión para seguir» y NADA con qué hacerlo: la app parecía
+    // inaccesible después de reinstalar. Es exactamente lo que hace un revisor
+    // del App Store para probar el requisito 1.2.2 (reinstall).
+    //
+    // Se manda sólo si el usuario NO tiene `passwordHash`: a quien ya eligió
+    // contraseña no se le invalida la vigente ni se le llena el inbox de
+    // "restablecer contraseña" que no pidió. Sin hash no hay nada que
+    // invalidar.
     //
     // Es best-effort a propósito: si el mail no sale, la cuenta YA quedó
     // creada y con la tienda conectada — el comerciante puede entrar por
     // "olvidé mi contraseña". Perder el mail no puede costar la instalación.
-    if (alta.kind === 'created') {
+    const necesitaMail =
+      alta.kind === 'created' ||
+      (alta.kind === 'existing' && (await usuarioSinContrasena(alta.userId)));
+    if (necesitaMail) {
       try {
         await issueAndSendPasswordResetEmail({
           userId: alta.userId,
@@ -280,6 +293,19 @@ export async function GET(req: NextRequest) {
   const webhookWarning = await registrarWebhooks(shop, accessToken, origin);
 
   return limpiar(NextResponse.redirect(new URL(`${landing}?shopify=connected${webhookWarning}`, origin)));
+}
+
+/**
+ * `true` si el usuario existe y nunca eligió contraseña. Ante cualquier fallo
+ * de la base devuelve `false`: no mandar un mail de más es el lado seguro.
+ */
+async function usuarioSinContrasena(userId: string): Promise<boolean> {
+  try {
+    const u = await db.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
+    return !!u && !u.passwordHash;
+  } catch {
+    return false;
+  }
 }
 
 /**

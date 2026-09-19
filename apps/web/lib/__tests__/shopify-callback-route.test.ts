@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   getAuthenticatedUser: vi.fn(),
   tenantFindFirst: vi.fn(),
   tenantUpdate: vi.fn(),
+  userFindUnique: vi.fn(),
   fetchShopInfo: vi.fn(),
   provisionFromShopify: vi.fn(),
   issueAndSendPasswordResetEmail: vi.fn(),
@@ -17,7 +18,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/api-utils', () => ({ getAuthenticatedUser: mocks.getAuthenticatedUser }));
 vi.mock('@/lib/db', () => ({
-  db: { tenant: { findFirst: mocks.tenantFindFirst, update: mocks.tenantUpdate } },
+  db: {
+    tenant: { findFirst: mocks.tenantFindFirst, update: mocks.tenantUpdate },
+    user: { findUnique: mocks.userFindUnique },
+  },
 }));
 vi.mock('@/lib/shopify-provision', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/shopify-provision')>()),
@@ -86,6 +90,9 @@ beforeEach(() => {
   mocks.registerShopifyWebhooks.mockResolvedValue({ registered: [], alreadyPresent: [], failed: [] });
   mocks.fetchShopInfo.mockResolvedValue({ email: 'dueno@acme.com', name: 'Acme', domain: SHOP });
   mocks.issueAndSendPasswordResetEmail.mockResolvedValue({ issued: true, send: null });
+  // Por default el usuario existente YA tiene contraseña: reinstalar no le
+  // manda nada. El caso sin contraseña tiene su propio test.
+  mocks.userFindUnique.mockResolvedValue({ passwordHash: '$2b$hash' });
 });
 
 describe('callback — rama B (dashboard): los permisos van ANTES del canje (H3)', () => {
@@ -264,6 +271,49 @@ describe('callback — rama A (App Store): destinos públicos, sin email en la q
     expect(loc.searchParams.get('shopify')).toBe('reconnected');
     expect(loc.searchParams.has('email')).toBe(false);
     expect(mocks.issueAndSendPasswordResetEmail).not.toHaveBeenCalled();
+  });
+
+  it("🔴 'existing' de alguien que NUNCA eligió contraseña → SÍ manda el mail: sin eso reinstalar deja la app inaccesible", async () => {
+    // El revisor instala (mail de contraseña, dura 1 h), no lo usa, desinstala,
+    // reinstala al otro día. Es 'existing'. Sin esto aterrizaba en /login con
+    // «iniciá sesión para seguir» y nada con qué hacerlo.
+    mocks.userFindUnique.mockResolvedValue({ passwordHash: null });
+    mocks.provisionFromShopify.mockResolvedValue({
+      kind: 'existing', userId: 'u1', tenantId: 't1', email: 'dueno@acme.com',
+    });
+    const res = await GET(makeRequest('/api/shopify/callback', signedQuery(), appStoreCookies));
+    expect(location(res).searchParams.get('shopify')).toBe('reconnected');
+    expect(mocks.userFindUnique).toHaveBeenCalledWith({ where: { id: 'u1' }, select: { passwordHash: true } });
+    expect(mocks.issueAndSendPasswordResetEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.issueAndSendPasswordResetEmail.mock.calls[0][0].userId).toBe('u1');
+  });
+
+  it("'existing' con contraseña vigente sigue SIN mail: no se invalida la que tiene", async () => {
+    mocks.userFindUnique.mockResolvedValue({ passwordHash: '$2b$vigente' });
+    mocks.provisionFromShopify.mockResolvedValue({
+      kind: 'existing', userId: 'u1', tenantId: 't1', email: 'dueno@acme.com',
+    });
+    await GET(makeRequest('/api/shopify/callback', signedQuery(), appStoreCookies));
+    expect(mocks.issueAndSendPasswordResetEmail).not.toHaveBeenCalled();
+  });
+
+  it("si la base falla al mirar la contraseña, no se manda mail de más y la reinstalación sigue", async () => {
+    mocks.userFindUnique.mockRejectedValue(new Error('db caída'));
+    mocks.provisionFromShopify.mockResolvedValue({
+      kind: 'existing', userId: 'u1', tenantId: 't1', email: 'dueno@acme.com',
+    });
+    const res = await GET(makeRequest('/api/shopify/callback', signedQuery(), appStoreCookies));
+    expect(location(res).searchParams.get('shopify')).toBe('reconnected');
+    expect(mocks.issueAndSendPasswordResetEmail).not.toHaveBeenCalled();
+  });
+
+  it("'created' nunca consulta la contraseña: la cuenta es nueva y el mail va siempre", async () => {
+    mocks.provisionFromShopify.mockResolvedValue({
+      kind: 'created', userId: 'u1', tenantId: 't1', email: 'dueno@acme.com',
+    });
+    await GET(makeRequest('/api/shopify/callback', signedQuery(), appStoreCookies));
+    expect(mocks.userFindUnique).not.toHaveBeenCalled();
+    expect(mocks.issueAndSendPasswordResetEmail).toHaveBeenCalledTimes(1);
   });
 
   it('apertura repetida: dos callbacks seguidos con la tienda ya existente no emiten ningún reset', async () => {

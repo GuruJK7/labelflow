@@ -57,7 +57,9 @@ export const SHOPIFY_LOGIN_MESSAGES: Record<string, ShopifyMessage> = {
   },
   reconnected: {
     ok: true,
-    text: 'Tu tienda volvió a quedar conectada. Iniciá sesión para seguir.',
+    // La salida explícita para quien reinstaló sin haber elegido contraseña
+    // nunca: sin esto leía «iniciá sesión» sin tener con qué.
+    text: 'Tu tienda volvió a quedar conectada. Iniciá sesión para seguir. Si nunca elegiste una contraseña, te acabamos de mandar el mail para hacerlo; si la olvidaste, usá «Olvidé mi contraseña».',
   },
   open: {
     ok: true,

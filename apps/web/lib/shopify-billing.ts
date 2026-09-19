@@ -192,14 +192,50 @@ export async function fetchChargeStatus(
   return res.data.node.status;
 }
 
-/** `true` si la tienda es de desarrollo (el cargo va como `test`). */
+/**
+ * Shopify no contestó si la tienda es de desarrollo. No es un "no": es un
+ * "no sé", y con un "no sé" no se crea un cargo — ni de prueba ni real.
+ */
+export class ShopifyPlanUnresolvedError extends ShopifyBillingError {
+  constructor(detail: string) {
+    super('No pudimos verificar tu tienda con Shopify', detail);
+    this.name = 'ShopifyPlanUnresolvedError';
+  }
+}
+
+/**
+ * `true` si la tienda es de desarrollo (el cargo va como `test`).
+ *
+ * 🔴 UN "NO SÉ" NO ES UN "NO". Antes, cualquier respuesta que no fuera 200
+ * con `partnerDevelopment: true` devolvía `false`, y el cargo salía REAL. En
+ * una tienda de desarrollo Shopify rechaza un cargo real, así que un hipo de
+ * red o un 429 en esta consulta le dejaba al revisor del App Store un 502
+ * sin explicación justo al intentar comprar — que es el paso del requisito
+ * 1.2 que tiene que poder completar.
+ *
+ * Ahora: un reintento, y si sigue sin resolverse se tira
+ * `ShopifyPlanUnresolvedError`, que el checkout traduce en un mensaje que
+ * dice qué pasó y que se puede reintentar. Lo que NO cambia: una tienda real
+ * sigue dando `false` y una de desarrollo `true`; nunca se adivina para
+ * ninguno de los dos lados. `shop.plan` no exige ningún scope (verificado
+ * en la doc de `ShopPlan`, 2026-07), así que lo único que puede fallar acá
+ * es transitorio.
+ */
 export async function isDevelopmentStore(shop: string, accessToken: string): Promise<boolean> {
-  const res = await shopifyGraphql<{ shop: { plan: { partnerDevelopment: boolean } } }>(
-    shop,
-    accessToken,
-    SHOP_PLAN_QUERY,
-  );
-  // Ante la duda NO se marca como prueba: errar para el lado de cobrar de
-  // verdad es preferible a regalar el producto por un error de red.
-  return res.status === 200 && res.data?.shop?.plan?.partnerDevelopment === true;
+  let ultimo = 'sin respuesta';
+  for (let intento = 0; intento < 2; intento++) {
+    try {
+      const res = await shopifyGraphql<{ shop: { plan: { partnerDevelopment: boolean } } }>(
+        shop,
+        accessToken,
+        SHOP_PLAN_QUERY,
+      );
+      const flag = res.data?.shop?.plan?.partnerDevelopment;
+      if (res.status === 200 && typeof flag === 'boolean') return flag;
+      ultimo = `status=${res.status} errors=${JSON.stringify(res.errors).slice(0, 200)}`;
+    } catch (err) {
+      ultimo = `excepción=${String((err as Error)?.message ?? err).slice(0, 200)}`;
+    }
+  }
+  throw new ShopifyPlanUnresolvedError(ultimo);
 }

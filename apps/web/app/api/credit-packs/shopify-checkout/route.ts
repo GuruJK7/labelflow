@@ -4,7 +4,12 @@ import { getAuthenticatedTenant, apiError } from '@/lib/api-utils';
 import { getPack, packIdList } from '@/lib/credit-packs';
 import { getUsdUyuRateMilli, usdMilliToUyuWhole } from '@/lib/pricing';
 import { shopifyAccessForTenant } from '@/lib/shopify-access';
-import { createOneTimeCharge, isDevelopmentStore, ShopifyBillingError } from '@/lib/shopify-billing';
+import {
+  createOneTimeCharge,
+  isDevelopmentStore,
+  ShopifyBillingError,
+  ShopifyPlanUnresolvedError,
+} from '@/lib/shopify-billing';
 import { registerShopifyWebhooks } from '@/lib/shopify-register-webhooks';
 
 /**
@@ -122,6 +127,11 @@ export async function GET(req: NextRequest) {
       .catch(() => {});
     const detail = err instanceof ShopifyBillingError ? err.detail : (err as Error).message;
     console.error(`[shopify-billing] no se pudo crear el cargo purchase=${purchase.id}: ${detail}`);
+    // El "no sé si es tienda de desarrollo" tiene su propio mensaje: no se
+    // creó ningún cargo y reintentar alcanza. El genérico queda para el resto.
+    if (err instanceof ShopifyPlanUnresolvedError) {
+      return apiError('No pudimos verificar tu tienda con Shopify. No se te cobró nada: reintentá en un momento.', 502);
+    }
     return apiError('No se pudo iniciar el cobro con Shopify. Intentá de nuevo.', 502);
   }
 }

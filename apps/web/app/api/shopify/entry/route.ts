@@ -12,6 +12,7 @@ import {
   FLOW_APPSTORE,
   STATE_TTL_SECONDS,
 } from '@/lib/shopify-oauth';
+import { vitalidadDelToken } from '@/lib/shopify-token-liveness';
 
 export const dynamic = 'force-dynamic';
 
@@ -85,14 +86,31 @@ export async function GET(req: NextRequest) {
   // aprovisionarle una segunda cuenta (D18).
   const yaConectada = await db.tenant.findFirst({
     where: { shopifyStoreUrl: { equals: shop, mode: 'insensitive' }, shopifyToken: { not: null } },
-    select: { id: true },
+    select: { id: true, shopifyStoreUrl: true, shopifyToken: true },
   });
   if (yaConectada) {
-    const r = NextResponse.redirect(new URL('/login?shopify=open', origin));
-    r.cookies.delete(STATE_COOKIE);
-    r.cookies.delete(FLOW_COOKIE);
-    r.cookies.delete(TENANT_COOKIE);
-    return r;
+    // 🔴 "TOKEN NO NULO" NO ES "TOKEN VIVO". Lo único que pone el token en
+    // null es el webhook `app/uninstalled`, y es best-effort: si no llegó, la
+    // tienda figura conectada con un token que Shopify ya revocó, y esto la
+    // mandaba al login para siempre — reinstalar no volvía a pedir OAuth
+    // nunca. El revisor del App Store desinstala y reinstala (está en el
+    // historial, dos veces): ese camino terminaba en una tienda instalada en
+    // Shopify y muerta acá. Por eso se le pregunta a Shopify.
+    const vitalidad = await vitalidadDelToken(yaConectada, shop);
+    if (vitalidad !== 'muerta') {
+      const r = NextResponse.redirect(new URL('/login?shopify=open', origin));
+      r.cookies.delete(STATE_COOKIE);
+      r.cookies.delete(FLOW_COOKIE);
+      r.cookies.delete(TENANT_COOKIE);
+      return r;
+    }
+    // Token muerto: se limpia igual que lo habría hecho el webhook (el worker
+    // deja de pegarle a una tienda revocada) y se sigue a OAuth. Best-effort:
+    // el callback lo va a pisar con el token nuevo de todos modos.
+    await db.tenant
+      .updateMany({ where: { id: yaConectada.id }, data: { shopifyToken: null } })
+      .catch(() => {});
+    console.info(`[shopify/entry] token revocado para ${shop}: se reinicia OAuth (tenant ${yaConectada.id})`);
   }
 
   const state = generateState();

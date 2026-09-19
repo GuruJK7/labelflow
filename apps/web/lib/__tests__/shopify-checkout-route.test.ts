@@ -135,6 +135,21 @@ describe('tienda de desarrollo', () => {
 });
 
 describe('cuando Shopify falla', () => {
+  it('🔴 si no se pudo saber si es tienda de desarrollo, NO se crea cargo y el mensaje dice que reintente', async () => {
+    // Antes un "no sé" se convertía en `test:false`: en una dev store Shopify
+    // rechaza el cargo real y el revisor comía un 502 sin explicación.
+    const { ShopifyPlanUnresolvedError } = await import('@/lib/shopify-billing');
+    mocks.isDevelopmentStore.mockRejectedValue(new ShopifyPlanUnresolvedError('status=429'));
+    const res = await pedir('pack_250');
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(JSON.stringify(body)).toContain('No pudimos verificar tu tienda');
+    expect(JSON.stringify(body)).toContain('No se te cobró nada');
+    expect(mocks.createOneTimeCharge).not.toHaveBeenCalled();
+    // Y la compra no queda PENDING colgada.
+    expect(mocks.purchaseUpdate).toHaveBeenCalledWith({ where: { id: 'cp_1' }, data: { status: 'FAILED' } });
+  });
+
   it('la compra queda FAILED, no PENDING colgada', async () => {
     mocks.createOneTimeCharge.mockRejectedValue(new Error('boom'));
     const res = await pedir('pack_250');
