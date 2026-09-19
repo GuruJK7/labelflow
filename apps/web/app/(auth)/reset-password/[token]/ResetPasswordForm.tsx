@@ -5,7 +5,14 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Zap, ArrowRight, Loader2, Lock, CheckCircle2 } from 'lucide-react';
 
-export function ResetPasswordForm({ token }: { token: string }) {
+export function ResetPasswordForm({
+  token,
+  bienvenida = null,
+}: {
+  token: string;
+  /** Viene del alta desde el Shopify App Store: es la PRIMERA contraseña, no un reset. */
+  bienvenida?: 'welcome' | 'reconnected' | null;
+}) {
   const router = useRouter();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -90,7 +97,21 @@ export function ResetPasswordForm({ token }: { token: string }) {
         ) : (
           <>
             <div className="mb-6">
-              <h2 className="text-2xl font-bold text-white">Elegir nueva contraseña</h2>
+              {/* Texto dentro de <span>: el traductor de Chrome convierte los
+                  nodos de texto sueltos en <font> y React revienta al
+                  re-renderizar (rechazo del App Store del 14-09-2026). */}
+              {bienvenida && (
+                <div className="mb-4 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.06] px-4 py-3 text-sm leading-relaxed text-cyan-100/90">
+                  <span>
+                    {bienvenida === 'welcome'
+                      ? 'Tu tienda de Shopify ya quedó conectada. Elegí una contraseña para entrar a tu panel. También te mandamos este link por mail, por si preferís hacerlo después.'
+                      : 'Tu tienda volvió a quedar conectada. Elegí una contraseña para entrar a tu panel.'}
+                  </span>
+                </div>
+              )}
+              <h2 className="text-2xl font-bold text-white">
+                <span>{bienvenida ? 'Elegí tu contraseña' : 'Elegir nueva contraseña'}</span>
+              </h2>
               <p className="text-zinc-500 text-sm mt-1">
                 Elegí una contraseña de al menos 8 caracteres.
               </p>

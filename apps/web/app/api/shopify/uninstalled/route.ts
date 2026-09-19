@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { verifyShopifyWebhook } from '@/lib/shopify-webhook';
 import { normalizeShopDomain } from '@/lib/shopify-oauth';
@@ -49,6 +50,31 @@ export async function POST(req: NextRequest) {
   const shopFromHeader = normalizeShopDomain(req.headers.get('x-shopify-shop-domain'));
   if (shopFromHeader && shopFromHeader !== shopFromBody) {
     return NextResponse.json({ error: 'domain mismatch' }, { status: 401 });
+  }
+
+  // 🔴 UNA ENTREGA REPETIDA NO PUEDE MATAR UNA REINSTALACIÓN. Shopify reintenta
+  // este webhook hasta 8 veces en 4 h si no vio un 2xx a tiempo (5 s), y la
+  // reentrega trae el MISMO X-Shopify-Webhook-Id. Escenario real: desinstala,
+  // la primera entrega la procesamos pero Shopify no alcanzó a ver el 200
+  // (arranque en frío), el comerciante reinstala en 30 s —el callback escribe
+  // un token NUEVO— y recién ahí llega el reintento del uninstalled viejo y
+  // pone ese token nuevo en null. El revisor del App Store hace exactamente
+  // eso: desinstalar y reinstalar seguido. Mismo recibo idempotente que ya
+  // usan orders/paid y app_purchases_one_time/update.
+  const webhookId = req.headers.get('x-shopify-webhook-id');
+  if (webhookId) {
+    try {
+      await db.webhookReceipt.create({
+        data: { source: 'shopify', topic: 'app/uninstalled', webhookId, shopDomain: shopFromBody },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return NextResponse.json({ ok: true, duplicate: true });
+      }
+      // Un fallo al anotar el recibo no bloquea la limpieza: es el camino
+      // que existía antes, y la limpieza en sí es idempotente.
+      console.error('[shopify/uninstalled] WebhookReceipt insert falló:', (err as Error).message);
+    }
   }
 
   // Se limpia SÓLO el token.

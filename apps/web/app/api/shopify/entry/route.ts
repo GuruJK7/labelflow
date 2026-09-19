@@ -12,7 +12,8 @@ import {
   FLOW_APPSTORE,
   STATE_TTL_SECONDS,
 } from '@/lib/shopify-oauth';
-import { vitalidadDelToken } from '@/lib/shopify-token-liveness';
+import { vitalidadDelToken, type VitalidadDelToken } from '@/lib/shopify-token-liveness';
+import { getAuthenticatedUser } from '@/lib/api-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -96,9 +97,19 @@ export async function GET(req: NextRequest) {
     // nunca. El revisor del App Store desinstala y reinstala (está en el
     // historial, dos veces): ese camino terminaba en una tienda instalada en
     // Shopify y muerta acá. Por eso se le pregunta a Shopify.
-    const vitalidad = await vitalidadDelToken(yaConectada, shop);
+    let vitalidad: VitalidadDelToken = 'indeterminada';
+    try {
+      vitalidad = await vitalidadDelToken(yaConectada, shop);
+    } catch {
+      // Cualquier excepción acá es un fallo nuestro, no una respuesta de
+      // Shopify: no puede convertir una apertura en un 500 ni en un OAuth.
+    }
     if (vitalidad !== 'muerta') {
-      const r = NextResponse.redirect(new URL('/login?shopify=open', origin));
+      // Con sesión viva no tiene sentido pedirle usuario y contraseña de
+      // nuevo: abrir la app desde el admin de Shopify aterriza adentro. La
+      // cookie de sesión es sameSite=lax, así que viaja en esta navegación.
+      const sesion = await getAuthenticatedUser().catch(() => null);
+      const r = NextResponse.redirect(new URL(sesion ? '/dashboard' : '/login?shopify=open', origin));
       r.cookies.delete(STATE_COOKIE);
       r.cookies.delete(FLOW_COOKIE);
       r.cookies.delete(TENANT_COOKIE);

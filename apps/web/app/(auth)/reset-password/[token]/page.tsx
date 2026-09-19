@@ -18,9 +18,16 @@ export const metadata = {
 
 type Props = {
   params: Promise<{ token: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default async function ResetPasswordPage({ params }: Props) {
+export default async function ResetPasswordPage({ params, searchParams }: Props) {
   const { token } = await params;
-  return <ResetPasswordForm token={token} />;
+  // La instalación desde el Shopify App Store trae al comerciante DIRECTO acá
+  // (callback → /reset-password/<token>?shopify=welcome|reconnected): para él
+  // no es "restablecer" nada, es elegir la primera contraseña de una cuenta
+  // que se creó sola. La pantalla tiene que decírselo.
+  const motivo = (await searchParams).shopify;
+  const bienvenida = motivo === 'welcome' || motivo === 'reconnected' ? motivo : null;
+  return <ResetPasswordForm token={token} bienvenida={bienvenida} />;
 }

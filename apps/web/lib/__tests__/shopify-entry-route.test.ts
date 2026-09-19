@@ -4,13 +4,19 @@ process.env.SHOPIFY_API_SECRET = 'secreto-de-test';
 process.env.SHOPIFY_API_KEY = 'client-id-de-test';
 process.env.NEXT_PUBLIC_APP_URL = 'https://autoenvia.com';
 
-const mocks = vi.hoisted(() => ({ tenantFindFirst: vi.fn(), tenantUpdateMany: vi.fn(), vitalidad: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  tenantFindFirst: vi.fn(),
+  tenantUpdateMany: vi.fn(),
+  vitalidad: vi.fn(),
+  sesion: vi.fn(),
+}));
 vi.mock('@/lib/db', () => ({
   db: { tenant: { findFirst: mocks.tenantFindFirst, updateMany: mocks.tenantUpdateMany } },
 }));
 // El ping a Shopify se mockea: acá se prueba la DECISIÓN de /entry, la tabla
 // de vitalidad tiene su propio test (shopify-token-liveness.test.ts).
 vi.mock('@/lib/shopify-token-liveness', () => ({ vitalidadDelToken: mocks.vitalidad }));
+vi.mock('@/lib/api-utils', () => ({ getAuthenticatedUser: mocks.sesion }));
 
 import { GET } from '@/app/api/shopify/entry/route';
 import { STATE_COOKIE, TENANT_COOKIE, FLOW_COOKIE, FLOW_APPSTORE } from '../shopify-oauth';
@@ -36,6 +42,8 @@ beforeEach(() => {
   // Por default el token está vivo: es el caso de "abrir la app", que tiene
   // que seguir mandando al login sin reiniciar OAuth (D12).
   mocks.vitalidad.mockResolvedValue('viva');
+  // Y sin sesión: el revisor abre la app desde el admin de Shopify en limpio.
+  mocks.sesion.mockResolvedValue(null);
 });
 
 describe('/api/shopify/entry', () => {
@@ -125,6 +133,34 @@ describe('/api/shopify/entry', () => {
     mocks.tenantUpdateMany.mockRejectedValue(new Error('db caída'));
     const res = await GET(makeRequest('/api/shopify/entry', signedQuery()));
     expect(location(res).pathname).toBe('/admin/oauth/authorize');
+  });
+
+  it('con sesión viva y token vivo: adentro (/dashboard), no al login otra vez', async () => {
+    // Abrir la app desde el admin de Shopify estando logueado pedía usuario
+    // y contraseña de nuevo: la cookie de sesión viaja (sameSite=lax) y nadie
+    // la leía.
+    mocks.tenantFindFirst.mockResolvedValue({ id: 't1', shopifyStoreUrl: SHOP, shopifyToken: 'enc' });
+    mocks.sesion.mockResolvedValue({ userId: 'u1' });
+    const res = await GET(makeRequest('/api/shopify/entry', signedQuery()));
+    expect(location(res).pathname).toBe('/dashboard');
+    expect(res.cookies.get(STATE_COOKIE)?.value ?? '').toBe('');
+  });
+
+  it('con sesión viva pero token MUERTO: igual reinicia OAuth (la sesión no revive un token revocado)', async () => {
+    mocks.tenantFindFirst.mockResolvedValue({ id: 't1', shopifyStoreUrl: SHOP, shopifyToken: 'enc' });
+    mocks.sesion.mockResolvedValue({ userId: 'u1' });
+    mocks.vitalidad.mockResolvedValue('muerta');
+    const res = await GET(makeRequest('/api/shopify/entry', signedQuery()));
+    expect(location(res).pathname).toBe('/admin/oauth/authorize');
+  });
+
+  it('si el chequeo de vitalidad TIRA, es una apertura normal (login), nunca un 500 ni un OAuth', async () => {
+    mocks.tenantFindFirst.mockResolvedValue({ id: 't1', shopifyStoreUrl: SHOP, shopifyToken: 'enc' });
+    mocks.vitalidad.mockRejectedValue(new Error('boom'));
+    const res = await GET(makeRequest('/api/shopify/entry', signedQuery()));
+    expect(location(res).pathname).toBe('/login');
+    expect(location(res).searchParams.get('shopify')).toBe('open');
+    expect(mocks.tenantUpdateMany).not.toHaveBeenCalled();
   });
 
   it('con token en null la misma fila NO cuenta como conectada (desinstalada → reinstala)', async () => {

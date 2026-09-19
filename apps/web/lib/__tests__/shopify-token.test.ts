@@ -208,6 +208,23 @@ describe('refreshShopifyCredential', () => {
       refreshShopifyCredential({ shop: SHOP, refresh: 'shprt_viejo', clientId: CLIENT, secret: SECRET, fetchImpl }),
     ).rejects.toBeInstanceOf(ShopifyRefreshInvalidGrant);
   });
+  it('🔴 401 con el cuerpo DOCUMENTADO de app desinstalada ({"error":"invalid_request"}) → ShopifyRefreshInvalidGrant', async () => {
+    // Doc oficial (implement-token-exchange): «When a refresh token can no
+    // longer be used, Shopify returns 401 Unauthorized with {"error":
+    // "invalid_request"} … for every terminal case, including … a revoked or
+    // uninstalled app … Treat that 401 as final». El patrón de invalid_grant
+    // NO matchea este cuerpo: sin esto, la app desinstalada era «reintentable».
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ error: 'invalid_request', error_description: 'This request requires an active refresh_token' }),
+          { status: 401 },
+        ),
+    );
+    await expect(
+      refreshShopifyCredential({ shop: SHOP, refresh: 'shprt_viejo', clientId: CLIENT, secret: SECRET, fetchImpl }),
+    ).rejects.toBeInstanceOf(ShopifyRefreshInvalidGrant);
+  });
 
   it('400 con otro error NO es invalid_grant (es un ShopifyRefreshError genérico)', async () => {
     const fetchImpl = vi.fn(async () => new Response('{"error":"invalid_request"}', { status: 400 }));

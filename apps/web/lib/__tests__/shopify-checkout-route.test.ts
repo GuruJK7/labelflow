@@ -53,6 +53,15 @@ const TIENDA_SHOPIFY = {
   shopifyToken: 'enc:token',
 };
 
+/** El motivo con el que el checkout devuelve al panel (`/settings/billing?error=…`). */
+function motivoDe(res: Response): string | null {
+  const loc = res.headers.get('location');
+  if (!loc) return null;
+  const u = new URL(loc);
+  if (u.pathname !== '/settings/billing') return `fuera:${u.pathname}`;
+  return u.searchParams.get('error');
+}
+
 function pedir(pack: string | null) {
   const url = pack
     ? `https://autoenvia.com/api/credit-packs/shopify-checkout?pack=${pack}`
@@ -86,37 +95,39 @@ describe('el monto sale del catálogo, no del cliente', () => {
     );
   });
 
-  it('un pack inventado se rechaza antes de crear nada', async () => {
+  it('un pack inventado se rechaza antes de crear nada, y vuelve al panel con el motivo', async () => {
     const res = await pedir('pack_1');
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(307);
+    expect(motivoDe(res)).toBe('pack');
     expect(mocks.purchaseCreate).not.toHaveBeenCalled();
     expect(mocks.createOneTimeCharge).not.toHaveBeenCalled();
   });
 
-  it('sin parámetro pack, 400', async () => {
-    expect((await pedir(null)).status).toBe(400);
+  it('sin parámetro pack, vuelve al panel con error=pack', async () => {
+    expect(motivoDe(await pedir(null))).toBe('pack');
     expect(mocks.createOneTimeCharge).not.toHaveBeenCalled();
   });
 
-  it('sin sesión no se llega a mirar el pack', async () => {
+  it('sin sesión: al login, sin mirar el pack', async () => {
     mocks.getAuthenticatedTenant.mockResolvedValue(null);
-    expect((await pedir('pack_250')).status).toBe(401);
+    const res = await pedir('pack_250');
+    expect(new URL(res.headers.get('location')!).pathname).toBe('/login');
     expect(mocks.purchaseCreate).not.toHaveBeenCalled();
   });
 });
 
 describe('sólo tiendas conectadas por Shopify', () => {
-  it('una tienda sin Shopify recibe 409 y no se le crea compra', async () => {
+  it('una tienda sin Shopify vuelve al panel con error=tienda y no se le crea compra', async () => {
     mocks.tenantFindUnique.mockResolvedValue({ ...TIENDA_SHOPIFY, shopifyStoreUrl: null });
     const res = await pedir('pack_250');
-    expect(res.status).toBe(409);
+    expect(motivoDe(res)).toBe('tienda');
     expect(mocks.purchaseCreate).not.toHaveBeenCalled();
   });
 
-  it('un token que no se puede resolver también corta antes de crear', async () => {
+  it('un token que no se puede resolver también corta antes de crear: error=token', async () => {
     mocks.shopifyAccessForTenant.mockResolvedValue(null);
     const res = await pedir('pack_250');
-    expect(res.status).toBe(409);
+    expect(motivoDe(res)).toBe('token');
     expect(mocks.purchaseCreate).not.toHaveBeenCalled();
   });
 });
@@ -135,29 +146,31 @@ describe('tienda de desarrollo', () => {
 });
 
 describe('cuando Shopify falla', () => {
-  it('🔴 si no se pudo saber si es tienda de desarrollo, NO se crea cargo y el mensaje dice que reintente', async () => {
+  it('🔴 si no se pudo saber si es tienda de desarrollo, NO se crea cargo y el panel dice que reintente', async () => {
     // Antes un "no sé" se convertía en `test:false`: en una dev store Shopify
-    // rechaza el cargo real y el revisor comía un 502 sin explicación.
+    // rechaza el cargo real y el revisor comía un 502 sin explicación. Y el
+    // 502 era JSON crudo en la pestaña: ahora es un redirect con motivo.
     const { ShopifyPlanUnresolvedError } = await import('@/lib/shopify-billing');
     mocks.isDevelopmentStore.mockRejectedValue(new ShopifyPlanUnresolvedError('status=429'));
     const res = await pedir('pack_250');
-    expect(res.status).toBe(502);
-    const body = await res.json();
-    expect(JSON.stringify(body)).toContain('No pudimos verificar tu tienda');
-    expect(JSON.stringify(body)).toContain('No se te cobró nada');
+    expect(res.status).toBe(307);
+    expect(motivoDe(res)).toBe('verificacion_tienda');
     expect(mocks.createOneTimeCharge).not.toHaveBeenCalled();
     // Y la compra no queda PENDING colgada.
     expect(mocks.purchaseUpdate).toHaveBeenCalledWith({ where: { id: 'cp_1' }, data: { status: 'FAILED' } });
   });
 
-  it('la compra queda FAILED, no PENDING colgada', async () => {
+  it('la compra queda FAILED, no PENDING colgada, y el panel muestra el error (no JSON crudo)', async () => {
     mocks.createOneTimeCharge.mockRejectedValue(new Error('boom'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = await pedir('pack_250');
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(307);
+    expect(motivoDe(res)).toBe('cobro_shopify');
     expect(mocks.purchaseUpdate).toHaveBeenCalledWith({
       where: { id: 'cp_1' },
       data: { status: 'FAILED' },
     });
+    spy.mockRestore();
   });
 });
 

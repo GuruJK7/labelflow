@@ -90,21 +90,32 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // Look up the user. If they don't exist (or don't have a passwordHash —
-  // OAuth-only account), we silently no-op and return the same shape.
-  let user: { id: string; email: string; name: string | null; passwordHash: string | null } | null;
+  // Look up the user. If they don't exist (or are OAuth-only), we silently
+  // no-op and return the same shape.
+  let user:
+    | { id: string; email: string; name: string | null; passwordHash: string | null; accounts: { id: string }[] }
+    | null;
   try {
     user = await db.user.findUnique({
       where: { email: emailLower },
-      select: { id: true, email: true, name: true, passwordHash: true },
+      select: { id: true, email: true, name: true, passwordHash: true, accounts: { select: { id: true }, take: 1 } },
     });
   } catch {
     return NextResponse.json({ ok: true });
   }
 
-  // No matching user, OR user has no password (OAuth-only). Both look
-  // identical to the caller — no information leaks.
-  if (!user || !user.passwordHash) {
+  // 🔴 "SIN CONTRASEÑA" NO ES LO MISMO QUE "SÓLO OAUTH". Antes cualquier
+  // usuario sin passwordHash se ignoraba como cuenta de Google. Pero las
+  // cuentas que crea la instalación desde el Shopify App Store nacen SIN
+  // contraseña y SIN cuenta OAuth: para ellas, «¿La olvidaste?» era un no-op
+  // silencioso que decía «revisá tu mail» con un mail que nunca salía. Si el
+  // mail de bienvenida se perdía, no había ningún camino para entrar.
+  //
+  // La exclusión se conserva para lo que era: cuentas que SÍ tienen un
+  // proveedor OAuth y ninguna contraseña. Una cuenta sin ninguna de las dos
+  // cosas necesita este mail más que nadie.
+  const soloOAuth = !user?.passwordHash && (user?.accounts.length ?? 0) > 0;
+  if (!user || soloOAuth) {
     return NextResponse.json({ ok: true });
   }
 

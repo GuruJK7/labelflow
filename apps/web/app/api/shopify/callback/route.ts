@@ -19,7 +19,11 @@ import {
 import { fetchShopInfo, provisionFromShopify } from '@/lib/shopify-provision';
 import { sealPendingInstall } from '@/lib/shopify-pending-install';
 import { credentialFromTokenResponse, serializeShopifyCredential } from '@/lib/shopify-token';
-import { issueAndSendPasswordResetEmail } from '@/lib/password-reset';
+import {
+  issueAndSendPasswordResetEmail,
+  issuePasswordResetToken,
+  sendPasswordResetEmail,
+} from '@/lib/password-reset';
 import { registerShopifyWebhooks } from '@/lib/shopify-register-webhooks';
 import { safeRelativePath } from '@/lib/safe-next';
 
@@ -257,24 +261,50 @@ export async function GET(req: NextRequest) {
     // Es best-effort a propósito: si el mail no sale, la cuenta YA quedó
     // creada y con la tienda conectada — el comerciante puede entrar por
     // "olvidé mi contraseña". Perder el mail no puede costar la instalación.
-    const necesitaMail =
+    const necesitaContrasena =
       alta.kind === 'created' ||
       (alta.kind === 'existing' && (await usuarioSinContrasena(alta.userId)));
-    if (necesitaMail) {
-      try {
-        await issueAndSendPasswordResetEmail({
-          userId: alta.userId,
-          email: alta.email,
-          name: info.name,
-          origin,
-        });
-      } catch {
-        // silencioso a propósito, ver arriba
+
+    const motivo = alta.kind === 'created' ? 'welcome' : 'reconnected';
+    let destino = new URL('/login', origin);
+    destino.searchParams.set('shopify', motivo);
+
+    if (necesitaContrasena) {
+      // 🔴 EL NAVEGADOR VA DIRECTO A ELEGIR CONTRASEÑA. EL MAIL ES LA COPIA.
+      //
+      // Hasta acá, después del OAuth el comerciante caía en /login y la ÚNICA
+      // llave era un mail al email de contacto de la tienda: un buzón que
+      // Shopify no verifica, que un revisor del App Store no siempre mira, y
+      // que si no llega deja la app inaccesible sin ningún camino alternativo
+      // («¿La olvidaste?» no manda nada a una cuenta sin contraseña). Y el
+      // revisor, con las credenciales del listing en la mano, entraba a OTRA
+      // cuenta, atada a otra tienda, y no veía sus pedidos.
+      //
+      // El OAuth con HMAC verificado y state anti-CSRF ya probó que quien está
+      // en este navegador controla la tienda: es mejor prueba de identidad que
+      // el mail. Así que se emite el token y se lo lleva a elegir contraseña
+      // ahora mismo. El token es el mismo de siempre (SHA-256 en la base, un
+      // solo uso, 1 h) y viaja igual que en el link del mail: sólo cambia
+      // quién lo lleva al navegador. Si emitirlo falla, se cae al camino
+      // viejo (/login + mail), no a un error.
+      const token = await issuePasswordResetToken({ userId: alta.userId });
+      if (token) {
+        try {
+          await sendPasswordResetEmail({ email: alta.email, name: info.name, origin, plaintext: token });
+        } catch {
+          // best-effort: el navegador ya lleva el token
+        }
+        destino = new URL(`/reset-password/${token}`, origin);
+        destino.searchParams.set('shopify', motivo);
+      } else {
+        try {
+          await issueAndSendPasswordResetEmail({ userId: alta.userId, email: alta.email, name: info.name, origin });
+        } catch {
+          // silencioso a propósito, ver arriba
+        }
       }
     }
 
-    const destino = new URL('/login', origin);
-    destino.searchParams.set('shopify', alta.kind === 'created' ? 'welcome' : 'reconnected');
     return limpiar(NextResponse.redirect(destino));
   }
 

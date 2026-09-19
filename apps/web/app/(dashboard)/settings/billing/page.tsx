@@ -133,6 +133,21 @@ const MENSAJE_ERROR: Record<string, { titulo: string; detalle: string }> = {
     titulo: 'Link incompleto',
     detalle: 'Volvé a elegir el pack desde esta pantalla.',
   },
+  // Los del arranque del cobro (/api/credit-packs/shopify-checkout). Ese
+  // endpoint es el destino de una navegación entera, no de un fetch: si
+  // contestara JSON, el comerciante vería el JSON crudo en la pestaña.
+  pack: {
+    titulo: 'Ese pack no existe',
+    detalle: 'Elegí uno de los packs de esta pantalla.',
+  },
+  verificacion_tienda: {
+    titulo: 'No pudimos verificar tu tienda con Shopify',
+    detalle: 'No se te cobró nada. Fue un problema momentáneo del lado de Shopify: reintentá en un momento.',
+  },
+  cobro_shopify: {
+    titulo: 'Shopify no pudo iniciar el cobro',
+    detalle: 'No se te cobró nada. Probá de nuevo y, si sigue pasando, escribinos.',
+  },
 };
 
 export default function BillingPage() {

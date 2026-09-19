@@ -63,6 +63,29 @@ export async function issueAndSendPasswordResetEmail(opts: {
   requestIp?: string | null;
 }): Promise<IssueAndSendResetResult> {
   const { userId, email, name, origin, requestIp } = opts;
+  const plaintext = await issuePasswordResetToken({ userId, requestIp });
+  if (!plaintext) return { issued: false, send: null };
+  const send = await sendPasswordResetEmail({ email, name, origin, plaintext });
+  return { issued: true, send };
+}
+
+/**
+ * Emite un token de reset y devuelve el TEXTO PLANO (o null si la base no
+ * lo pudo guardar). Es la mitad "emitir" de `issueAndSendPasswordResetEmail`,
+ * separada para el alta desde el Shopify App Store: ahí el navegador va
+ * DIRECTO a la pantalla de elegir contraseña con este token, y el mail es la
+ * copia, no la única llave. La persona del otro lado acaba de probar que
+ * controla la tienda por OAuth con HMAC, que es una prueba de identidad mejor
+ * que un mail de contacto que Shopify no verifica.
+ *
+ * Misma disciplina que siempre: se persiste SHA-256, se invalidan los
+ * tokens previos, y el texto plano nunca se loguea.
+ */
+export async function issuePasswordResetToken(opts: {
+  userId: string;
+  requestIp?: string | null;
+}): Promise<string | null> {
+  const { userId, requestIp } = opts;
 
   // Invalidate prior unused tokens so a stale link in an old email becomes
   // useless once a fresh request is made. We delete (rather than mark used)
@@ -79,7 +102,6 @@ export async function issueAndSendPasswordResetEmail(opts: {
   const plaintext = crypto.randomBytes(32).toString('base64url');
   const tokenHash = crypto.createHash('sha256').update(plaintext).digest('hex');
 
-  let issued = false;
   try {
     await db.passwordResetToken.create({
       data: {
@@ -89,11 +111,20 @@ export async function issueAndSendPasswordResetEmail(opts: {
         requestIp: requestIp?.slice(0, 64) ?? null,
       },
     });
-    issued = true;
   } catch {
-    return { issued: false, send: null };
+    return null;
   }
+  return plaintext;
+}
 
+/** La mitad "mandar": arma el link con el token y lo envía. Nunca tira. */
+export async function sendPasswordResetEmail(opts: {
+  email: string;
+  name: string | null;
+  origin: string;
+  plaintext: string;
+}): Promise<SendResult> {
+  const { email, name, origin, plaintext } = opts;
   // The URL is a GET-able page (not the API endpoint) so the user lands
   // on a form to type their new password. The page POSTs the token + new
   // password to /api/auth/password-reset/confirm.
@@ -103,15 +134,13 @@ export async function issueAndSendPasswordResetEmail(opts: {
     resetUrl,
   });
 
-  const send = await sendSystemEmail({
+  return sendSystemEmail({
     to: email,
     subject,
     html,
     text,
     tag: 'password_reset',
   });
-
-  return { issued, send };
 }
 
 /**

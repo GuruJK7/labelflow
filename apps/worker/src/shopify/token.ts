@@ -211,7 +211,12 @@ export async function refreshShopifyCredential(input: {
   }
   if (res.status === 400 || res.status === 401) {
     const body = await res.text().catch(() => '');
-    if (INVALID_GRANT_PATTERN.test(body)) throw new ShopifyRefreshInvalidGrant(res.status);
+    // 🔴 UN 401 DEL REFRESH ES TERMINAL, DIGA LO QUE DIGA EL CUERPO. Doc
+    // oficial (implement-token-exchange, 19-09-2026): Shopify devuelve
+    // «401 {"error":"invalid_request"}» para TODO caso terminal, incluida la
+    // app desinstalada, y pide tratarlo como final. El patrón no matchea ese
+    // cuerpo. Misma corrección que apps/web/lib/shopify-token.ts.
+    if (res.status === 401 || INVALID_GRANT_PATTERN.test(body)) throw new ShopifyRefreshInvalidGrant(res.status);
     throw new ShopifyRefreshError(`HTTP ${res.status} al renovar el token`, res.status);
   }
   if (!res.ok) throw new ShopifyRefreshError(`HTTP ${res.status} al renovar el token`, res.status);

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getAuthenticatedTenant, apiError } from '@/lib/api-utils';
+import { getAuthenticatedTenant } from '@/lib/api-utils';
 import { getPack, packIdList } from '@/lib/credit-packs';
 import { getUsdUyuRateMilli, usdMilliToUyuWhole } from '@/lib/pricing';
 import { shopifyAccessForTenant } from '@/lib/shopify-access';
@@ -41,33 +41,41 @@ import { registerShopifyWebhooks } from '@/lib/shopify-register-webhooks';
  * total en USD del catálogo.
  */
 export async function GET(req: NextRequest) {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+
+  // 🔴 ESTE ENDPOINT ES EL DESTINO DE UNA NAVEGACIÓN, NO DE UN FETCH. El botón
+  // «Pagar con Shopify» hace `window.location.href = …` (la pestaña entera va
+  // acá y de acá a Shopify). Todo error tiene que volver al panel con un
+  // motivo que la pantalla sepa pintar: contestar JSON era mostrarle al
+  // comerciante —y al revisor del App Store— un `{"error":…}` crudo en la
+  // pestaña, sin botón de volver. Los motivos viven en MENSAJE_ERROR de
+  // settings/billing/page.tsx.
+  const destino = (motivo: string) => NextResponse.redirect(`${appUrl}/settings/billing?error=${motivo}`);
+
   const auth = await getAuthenticatedTenant();
-  if (!auth) return apiError('No autorizado', 401);
+  if (!auth) return NextResponse.redirect(`${appUrl}/login`);
 
   const packParam = req.nextUrl.searchParams.get('pack');
-  if (!packParam) return apiError('Falta parámetro pack', 400);
+  if (!packParam) return destino('pack');
 
   const rateMilli = getUsdUyuRateMilli();
   const pack = getPack(packParam, rateMilli);
-  if (!pack) return apiError(`Pack inválido. Opciones: ${packIdList()}`, 400);
+  if (!pack) {
+    console.warn(`[shopify-billing] pack inválido «${packParam}»; opciones: ${packIdList()}`);
+    return destino('pack');
+  }
 
   const tenant = await db.tenant.findUnique({
     where: { id: auth.tenantId },
     select: { id: true, shopifyStoreUrl: true, shopifyToken: true },
   });
-  if (!tenant) return apiError('Tenant no encontrado', 404);
+  if (!tenant) return destino('tienda');
 
   const shop = tenant.shopifyStoreUrl?.trim().toLowerCase();
-  if (!shop) {
-    return apiError('Esta tienda no está conectada por Shopify. Comprá por MercadoPago.', 409);
-  }
+  if (!shop) return destino('tienda');
 
   const accessToken = await shopifyAccessForTenant(tenant);
-  if (!accessToken) {
-    return apiError('Reconectá tu tienda con Shopify para poder comprar desde acá.', 409);
-  }
-
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  if (!accessToken) return destino('token');
 
   const purchase = await db.creditPurchase.create({
     data: {
@@ -129,9 +137,6 @@ export async function GET(req: NextRequest) {
     console.error(`[shopify-billing] no se pudo crear el cargo purchase=${purchase.id}: ${detail}`);
     // El "no sé si es tienda de desarrollo" tiene su propio mensaje: no se
     // creó ningún cargo y reintentar alcanza. El genérico queda para el resto.
-    if (err instanceof ShopifyPlanUnresolvedError) {
-      return apiError('No pudimos verificar tu tienda con Shopify. No se te cobró nada: reintentá en un momento.', 502);
-    }
-    return apiError('No se pudo iniciar el cobro con Shopify. Intentá de nuevo.', 502);
+    return destino(err instanceof ShopifyPlanUnresolvedError ? 'verificacion_tienda' : 'cobro_shopify');
   }
 }

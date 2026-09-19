@@ -211,7 +211,20 @@ export async function refreshShopifyCredential(input: {
   }
   if (res.status === 400 || res.status === 401) {
     const body = await res.text().catch(() => '');
-    if (INVALID_GRANT_PATTERN.test(body)) throw new ShopifyRefreshInvalidGrant(res.status);
+    // 🔴 UN 401 DEL REFRESH ES TERMINAL, DIGA LO QUE DIGA EL CUERPO. Doc
+    // oficial (implement-token-exchange, leída el 19-09-2026): «When a refresh
+    // token can no longer be used, Shopify returns 401 Unauthorized with
+    // {"error": "invalid_request"} … Shopify returns this same response for
+    // every terminal case, including … a revoked or uninstalled app, so don't
+    // branch on which one it was. Treat that 401 as final: stop retrying, and
+    // re-authenticate».
+    //
+    // El patrón de abajo NO matchea ese cuerpo (probado en Node contra el
+    // texto exacto). Sólo con el patrón, la app DESINSTALADA caía en «fallo
+    // reintentable», y /entry nunca volvía a pedir OAuth: reinstalar después
+    // de la hora de vida del access dejaba la tienda muerta para siempre. El
+    // 400 sigue mirando el cuerpo: puede ser un request mal armado nuestro.
+    if (res.status === 401 || INVALID_GRANT_PATTERN.test(body)) throw new ShopifyRefreshInvalidGrant(res.status);
     throw new ShopifyRefreshError(`HTTP ${res.status} al renovar el token`, res.status);
   }
   if (!res.ok) throw new ShopifyRefreshError(`HTTP ${res.status} al renovar el token`, res.status);
